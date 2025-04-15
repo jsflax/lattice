@@ -1,0 +1,37 @@
+// swift-tools-version: 6.1
+// The swift-tools-version declares the minimum version of Swift required to build this package.
+import PackageDescription
+import CompilerPluginSupport
+
+let package = Package(
+    name: "Lattice",
+    platforms: [.macOS(.v14)],
+    products: [
+        // Products define the executables and libraries a package produces, making them visible to other packages.
+        .library(
+            name: "Lattice",
+            targets: ["Lattice"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/apple/swift-syntax.git", branch: "main"),
+    ],
+    targets: [
+        // Targets are the basic building blocks of a package, defining a module or a test suite.
+        // Targets can depend on other targets in this package and products from dependencies.
+        .macro(
+            name: "LatticeMacros",
+            dependencies: [
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+            ]
+        ),
+        .target(
+            name: "Lattice",
+            dependencies: ["LatticeMacros"]),
+        .testTarget(
+            name: "LatticeTests",
+            dependencies: ["Lattice"]
+        ),
+    ]
+)
