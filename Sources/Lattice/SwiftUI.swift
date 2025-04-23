@@ -4,9 +4,9 @@ import SwiftUI
 import Combine
 
 @MainActor
-@propertyWrapper public struct DynamicQuery<T: Model>: @preconcurrency DynamicProperty {
+@propertyWrapper public struct LatticeQuery<T: Model>: @preconcurrency DynamicProperty {
 
-    private class Wrapper: ObservableObject {
+    private class Wrapper: ObservableObject, @unchecked Sendable {
         @MainActor var wrappedValue: Results<T>
         let predicate: Predicate<T>
         var lastFetched = Date.now
@@ -47,11 +47,18 @@ import Combine
         }
         
         private let historyDispatchQueue = DispatchQueue(label: "io.trader.wrapper.history")
+        private var cancellable: AnyCancellable?
         
         @MainActor func updateWrappedValue(lattice: Lattice) {
             guard self.lattice == nil else { return
             }
             self.lattice = lattice
+            
+            lattice.objects().where(predicate).observe { _ in
+                Task { @MainActor in
+                    await self.fetch()
+                }
+            }.store(in: &tokens)
             let entityName = T.entityName
             fetch()
         }
@@ -66,7 +73,7 @@ import Combine
     @ObservedObject
     private var wrapper: Wrapper
     
-    @MainActor public var projectedValue: DynamicQuery<T> {
+    @MainActor public var projectedValue: LatticeQuery<T> {
         self
     }
 
@@ -98,11 +105,19 @@ import Combine
 public struct LatticeEnvironmentKey: EnvironmentKey {
     nonisolated(unsafe) public static var defaultValue: Lattice = try! Lattice()
 }
+public struct LatticeSchemaEnvironmentKey: EnvironmentKey {
+    nonisolated(unsafe) public static var defaultValue: [any Model.Type] = []
+}
 
 extension EnvironmentValues {
-    var lattice: Lattice {
+    public var lattice: Lattice {
         get { self[LatticeEnvironmentKey.self] }
         set { self[LatticeEnvironmentKey.self] = newValue }
+    }
+    
+    public var latticeSchema: [any Model.Type] {
+        get { self[LatticeSchemaEnvironmentKey.self] }
+        set { self[LatticeSchemaEnvironmentKey.self] = newValue }
     }
 }
 #endif

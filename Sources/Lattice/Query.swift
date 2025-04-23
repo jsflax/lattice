@@ -27,7 +27,7 @@ public struct StringOptions: OptionSet, Sendable {
 
  You would then use the above function like so:
  ```swift
- let results = realm.objects(Person.self).query {
+ let results = lattice.objects(Person.self).where {
     $0.name == "Foo" || $0.name == "Bar" && $0.age >= 21
  }
  ```
@@ -37,7 +37,7 @@ public struct StringOptions: OptionSet, Sendable {
  ### Prefix
  - NOT `!`
  ```swift
- let results = realm.objects(Person.self).query {
+ let results = lattice.objects(Person.self).where {
     !$0.dogsName.contains("Fido") || !$0.name.contains("Foo")
  }
  ```
@@ -70,7 +70,7 @@ public struct StringOptions: OptionSet, Sendable {
  - @sum `.sum`
  - @count `.count`
  ```swift
- let results = realm.objects(Person.self).query {
+ let results = lattice.objects(Person.self).where {
     !$0.dogs.age.avg >= 0 || !$0.dogsAgesArray.avg >= 0
  }
  ```
@@ -81,10 +81,10 @@ public struct StringOptions: OptionSet, Sendable {
 
  */
 @dynamicMemberLookup
-public struct Query<T> {
+public struct Query<T>: Sendable {
     /// This initaliser should be used from callers who require queries on primitive collections.
     /// - Parameter isPrimitive: True if performing a query on a primitive collection.
-    internal init(isPrimitive: Bool = false, isAuditing: Bool = false) {
+    package init(isPrimitive: Bool = false, isAuditing: Bool = false) {
         if isPrimitive {
             node = .keyPath(["self"], options: [.isCollection])
         } else {
@@ -179,11 +179,17 @@ public struct Query<T> {
 
     /// :nodoc:
     public static func == (_ lhs: Query, _ rhs: T) -> Query<Bool> {
-        .init(.comparison(operator: .equal, lhs.node, .constant(rhs), options: []))
+        if let rhs = rhs as? any LatticeEnum {
+            return .init(.comparison(operator: .equal, lhs.node, .constant(rhs.rawValue), options: []))
+        }
+        return .init(.comparison(operator: .equal, lhs.node, .constant(rhs), options: []))
     }
     /// :nodoc:
     public static func == (_ lhs: Query, _ rhs: T) -> Query<Bool> where T: LatticeEnum {
         .init(.comparison(operator: .equal, lhs.node, .constant(rhs.rawValue), options: []))
+    }
+    public static func == (_ lhs: Query, _ rhs: T) -> Query<Bool> where T == UUID {
+        .init(.comparison(operator: .equal, lhs.node, .constant(rhs.uuidString.lowercased()), options: []))
     }
     /// :nodoc:
     public static func == (_ lhs: Query, _ rhs: Query) -> Query<Bool> {
@@ -204,7 +210,14 @@ public struct Query<T> {
     public func `in`<U: Sequence>(_ collection: U) -> Query<Bool> where U.Element == T {
         .init(.comparison(operator: .in, node, .constant(collection), options: []))
     }
-
+    public func `in`<U: Sequence>(_ collection: U) -> Query<Bool> where U.Element == UUID, T == UUID {
+        .init(.comparison(operator: .in, node, .constant(collection.map(\.uuidString.localizedLowercase)), options: []))
+    }
+//
+//    /// Checks if the value is present in the collection.
+//    public func `in`<U: Collection>(_ collection: Query<U>) -> Query<Bool> where U.Element == T {
+//        .init(.comparison(operator: .in, node, .constant(collection), options: []))
+//    }
     // MARK: Subscript
 
     /// :nodoc:
@@ -212,8 +225,13 @@ public struct Query<T> {
         .init(appendKeyPath(_name(for: member), options: []), isAuditing: isAuditing)
     }
     
+    public subscript<V: Model>(dynamicMember member: KeyPath<T, V?>) -> Query<V> where T: Model {
+        .init(appendKeyPath(_name(for: member), options: []), isAuditing: isAuditing)
+    }
+    
+    
     public subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> where T: EmbeddedModel {
-        .init(appendEmbeddedKeyPath(String(reflecting: member), options: []), isAuditing: isAuditing)
+        return .init(appendEmbeddedKeyPath(String(reflecting: member), options: []), isAuditing: isAuditing)
     }
     
     /// :nodoc:
@@ -243,7 +261,7 @@ public struct Query<T> {
     /// - Returns: A tuple containing the predicate string and an array of arguments.
 
     /// Creates an NSPredicate from the query expression.
-    internal var predicate: String {
+    package var predicate: String {
         let predicate = _constructPredicate()
         return String(format: predicate.0, arguments: predicate.1 as! [CVarArg])
     }
@@ -946,7 +964,7 @@ extension Optional: _QueryBinary where Wrapped: PrimitiveProperty, Wrapped: _Que
 // MARK: QueryNode -
 
 extension Query {
-    func convertKeyPathsToEmbedded(rootPath: String? = nil) -> Query {
+    package func convertKeyPathsToEmbedded(rootPath: String? = nil) -> Query {
         func convertKeyPath(_ node: inout QueryNode) {
             switch node {
             case .keyPath(let value, let options):
@@ -968,7 +986,7 @@ extension Query {
     }
 }
 
-private indirect enum QueryNode {
+private indirect enum QueryNode: @unchecked Sendable {
     enum Operator: String {
         case or = "OR"
         case and = "AND"
@@ -1070,14 +1088,27 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
     func build(_ node: QueryNode, prefix: String? = nil, isNewNode: Bool = false) {
         switch node {
         case .constant(let value):
-            if value is String {
-                formatStr.append("'")
+            if let array = value as? [String] {
+                array.forEach(arguments.add)
+                formatStr.append("(")
+                formatStr.append(array.map { _ in
+                    "'%@'"
+                }.joined(separator: ","))
+                formatStr.append(")")
+            } else {
+                if value is String {
+                    formatStr.append("'")
+                }
+                formatStr.append("%@")
+                if value is String {
+                    formatStr.append("'")
+                }
+                if let value = value as? Date {
+                    arguments.add(value.timeIntervalSince1970)
+                } else {
+                    arguments.add(value ?? NSNull())
+                }
             }
-            formatStr.append("%@")
-            if value is String {
-                formatStr.append("'")
-            }
-            arguments.add(value ?? NSNull())
         case .embeddedKeyPath(var kp, options: let options):
             if isNewNode {
                 buildBool(node)
@@ -1112,7 +1143,24 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
             case .and, .or:
                 buildCompoundExpression(lhs, op.rawValue, rhs, prefix: prefix)
             default:
-                buildExpression(lhs, "\(op.rawValue)\(strOptions(options))", rhs, prefix: prefix)
+                switch op {
+                case .beginsWith:
+                    switch rhs {
+                    case .constant(let rhsValue):
+                        buildExpression(lhs, "LIKE", .constant("\(rhsValue ?? NSNull())%"), prefix: prefix)
+                    default:
+                        buildExpression(lhs, "LIKE", rhs, prefix: prefix)
+                    }
+                case .endsWith:
+                    switch rhs {
+                    case .constant(let rhsValue):
+                        buildExpression(lhs, "LIKE", .constant("%\(rhsValue ?? NSNull())"), prefix: prefix)
+                    default:
+                        buildExpression(lhs, "LIKE", rhs, prefix: prefix)
+                    }
+                default:
+                    buildExpression(lhs, "\(op.rawValue)\(strOptions(options))", rhs, prefix: prefix)
+                }
             }
         case .between(let lhs, let lowerBound, let upperBound):
             formatStr.append("(")
@@ -1214,5 +1262,13 @@ private struct SubqueryRewriter {
     }
 }
 
-public typealias Predicate<T> = ((Query<T>) -> Query<Bool>)
+//extension Query where T: Model {
+//    var asBuiltinQuery: (T) -> Bool {
+//        switch node {
+//        case .keyPath(let kp, let options):
+//            
+//        }
+//    }
+//}
+public typealias Predicate<T> = (@Sendable (Query<T>) -> Query<Bool>)
 public typealias LatticePredicate<T> = ((Query<T>) -> Query<Bool>)

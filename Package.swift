@@ -5,7 +5,7 @@ import CompilerPluginSupport
 
 let package = Package(
     name: "Lattice",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15), .iOS(.v17)],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
@@ -14,6 +14,11 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-syntax.git", branch: "main"),
+        .package(
+          url: "https://github.com/apple/swift-collections.git",
+          .upToNextMinor(from: "1.1.0") // or `.upToNextMajor
+        ),
+        .package(url: "https://github.com/vapor/vapor.git", from: "4.76.0"),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -28,10 +33,11 @@ let package = Package(
         ),
         .target(
             name: "Lattice",
-            dependencies: ["LatticeMacros"]),
+            dependencies: ["LatticeMacros",
+                .product(name: "Collections", package: "swift-collections")]),
         .testTarget(
             name: "LatticeTests",
-            dependencies: ["Lattice"]
+            dependencies: ["Lattice", .product(name: "Vapor", package: "vapor")]
         ),
     ]
 )
