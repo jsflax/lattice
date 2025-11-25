@@ -12,6 +12,9 @@ public protocol LinkProperty {
 
 extension Array: Property where Element: Property {
     public typealias DefaultValue = Self
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .string
+    }
 }
 
 extension Array: LinkProperty where Element: Model {
@@ -33,11 +36,7 @@ extension Array: LinkProperty where Element: Model {
             var elements: [Element] = []
             while sqlite3_step(queryStatement) == SQLITE_ROW {
                 // Extract id, name, and age from the row.
-                let t = Element.init(isolation: #isolation)
-                t.primaryKey = Int64(sqlite3_column_int64(queryStatement, 0))
-                lattice.dbPtr.insertModelObserver(tableName: Element.entityName, primaryKey: t.primaryKey!, t.weakCapture(isolation: #isolation))
-                t._assign(lattice: lattice)
-                elements.append(t)
+                elements.append(lattice.newObject(Element.self, primaryKey: Int64(sqlite3_column_int64(queryStatement, 0))))
             }
             return elements
         }
@@ -82,7 +81,7 @@ extension Optional: LinkProperty where Wrapped: Model {
                 t._assign(lattice: lattice)
                 return t
             } else {
-                print("No field \(name) found on \(type(of: parent).entityName) with id \(primaryKey).")
+                print("No field `\(name)` found on \(type(of: parent).entityName) with id \(primaryKey).")
                 return nil
             }
         }

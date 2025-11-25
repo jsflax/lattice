@@ -4,6 +4,7 @@ import SwiftSyntax
 import Foundation
 import SwiftSyntaxBuilder   // gives you the convenient factory methods
 import SwiftSyntaxMacroExpansion
+import SwiftDiagnostics
 
 private struct MemberView {
     let name: String
@@ -40,7 +41,7 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
         return nil
     }
     
-    var memberView = MemberView(name: "\(identifier)", type: "\(type)", attributeKey: nil)
+    var memberView = MemberView(name: "\(identifier.trimmed)", type: type.trimmedDescription, attributeKey: nil)
 
     // Extract attributeKey if available.
 //    if let attribute = decl.attributes.first?.as(AttributeSyntax.self),
@@ -96,16 +97,21 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
     if let accessorBlock = binding.accessorBlock {
         switch accessorBlock.accessors {
         case .accessors(let accessors):
-            if accessors.contains(where: {
-                $0.accessorSpecifier.text == "get" || $0.accessorSpecifier.text == "set"
-            }) {
+            // Only treat as computed if it has a get/set/didSet/willSet with a body
+            // Skip if it's just access level modifiers like private(set)
+            let hasComputedAccessor = accessors.contains(where: { accessor in
+                let specifier = accessor.accessorSpecifier.text
+                return (specifier == "get" || specifier == "set" || specifier == "didSet" || specifier == "willSet")
+                    && accessor.body != nil
+            })
+            if hasComputedAccessor {
                 memberView.isComputed = true
+                memberView.computedBlock = "\(accessorBlock)"
             }
         case .getter(let getter):
             memberView.isComputed = true
+            memberView.computedBlock = "\(accessorBlock)"
         }
-        
-        memberView.computedBlock = "\(accessorBlock)"
     }
     if let initializerValue = binding.initializer?.value {
         // For stored properties, capture the initializer if present.
@@ -121,8 +127,23 @@ private func view(for member: MemberBlockItemListSyntax.Element) throws -> Membe
     return view(for: decl)
 }
 
-enum MacroError: Error {
+enum MacroError: Error, DiagnosticMessage {
     case message(String)
+
+    var severity: DiagnosticSeverity {
+        .error
+    }
+
+    var message: String {
+        switch self {
+        case .message(let text):
+            return text
+        }
+    }
+
+    var diagnosticID: MessageID {
+        MessageID(domain: "Lattice", id: "MacroError")
+    }
 }
 
 class TransientMacro: PeerMacro {
@@ -264,8 +285,8 @@ class PropertyMacro: AccessorMacro, MemberMacro {
                 _$observationRegistrar.access(self, keyPath: \\.\(id.identifier))
                 if let isolation = self.isolation {
                     return isolation.assumeIsolated { [_\(raw: id.identifier)Accessor] iso in
-                        return _\(raw: id.identifier)Accessor.get()
-                    }
+                        return _UncheckedSendable(_\(raw: id.identifier)Accessor.get(isolation: iso))
+                    }.value
                 }
                 return _\(raw: id.identifier)Accessor.get()
             }
@@ -357,7 +378,21 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             // Not a property; do not attach @Property.
             return []
         }
-        
+
+        // Check for reserved property names
+        for binding in variableDecl.bindings {
+            if let pattern = binding.pattern.as(IdentifierPatternSyntax.self) {
+                let propertyName = pattern.identifier.text
+                if propertyName == "id" || propertyName == "globalId" {
+                    context.diagnose(Diagnostic(
+                        node: Syntax(pattern.identifier),
+                        message: MacroError.message("Property name '\(propertyName)' is reserved by Lattice. The 'id' and 'globalId' columns are automatically created. Use a different name like 'identifier' or 'uniqueId'.")
+                    ))
+                    return []
+                }
+            }
+        }
+
         // Check if the variable already has the @Property attribute.
         let attributes = variableDecl.attributes
         for attr in attributes {
@@ -376,9 +411,23 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             if let accessorBlock = binding.accessorBlock {
                 switch accessorBlock.accessors {
                 case .accessors(let accessors):
-                    if accessors.contains(where: {
-                        $0.accessorSpecifier.text == "get" || $0.accessorSpecifier.text == "set"
-                    }) {
+                    // Allow private(set) - it only has a 'set' accessor with no body
+                    let isPrivateSet = accessors.count == 1
+                        && accessors.first?.accessorSpecifier.text == "set"
+                        && accessors.first?.body == nil
+
+                    if isPrivateSet {
+                        // This is private(set), treat as stored property
+                        break
+                    }
+
+                    // Otherwise check if it's computed
+                    let hasComputedAccessor = accessors.contains(where: { accessor in
+                        let specifier = accessor.accessorSpecifier.text
+                        return (specifier == "get" || specifier == "set" || specifier == "didSet" || specifier == "willSet")
+                            && accessor.body != nil
+                    })
+                    if hasComputedAccessor {
                         return []
                     }
                 case .getter(let getter):
@@ -486,6 +535,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             public var lattice: Lattice?
             public var primaryKey: Int64?
             private var isolation: (any Actor)?
+            public var _objectWillChange: ObservableObjectPublisher = .init()
             
             public required init(isolation: isolated (any Actor)? = #isolation) {
                 self.isolation = isolation
@@ -512,7 +562,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
               try _$observationRegistrar.withMutation(of: self, keyPath: keyPath, mutation)
             }
             
-            public func _objectWillChange_send() { objectWillChange.send() } 
+            public func _objectWillChange_send() { _objectWillChange.send() } 
             
             public func _triggerObservers_send(keyPath: String) {
                 switch keyPath {

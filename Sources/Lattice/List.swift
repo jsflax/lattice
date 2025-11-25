@@ -71,11 +71,8 @@ private final class ManagedList<Element: Model>: Collection {
             
             if sqlite3_step(queryStatement) == SQLITE_ROW {
                 // Extract id, name, and age from the row.
-                let t = Element.init(isolation: #isolation)
-                t.primaryKey = Int64(sqlite3_column_int64(queryStatement, 0))
-                lattice.dbPtr.insertModelObserver(tableName: Element.entityName, primaryKey: t.primaryKey!, t.weakCapture(isolation: #isolation))
-                t._assign(lattice: lattice)
-                return t
+                let id = Int64(sqlite3_column_int64(queryStatement, 0))
+                return lattice.newObject(Element.self, primaryKey: id)
             } else {
                 print(lattice.readError() ?? "Unknown")
             }
@@ -273,7 +270,7 @@ private final class ManagedList<Element: Model>: Collection {
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(lattice.db, sql, -1, &stmt, nil) == SQLITE_OK else {
-          print("⚠️ Could not prepare delete(where:)")
+            print("⚠️ Could not prepare delete(where:)", lattice.readError() ?? "unknown")
           return
         }
         
@@ -297,18 +294,19 @@ private class UnmanagedList<Element> {
     }
 }
 
-public struct List<T>: MutableCollection, Property, ListProperty,
-                        PersistableUnkeyedCollection, LinkProperty
-where T: Model {
+public struct List<T>: MutableCollection, BidirectionalCollection, Property, ListProperty,
+                       PersistableUnkeyedCollection, LinkProperty, Sendable, RandomAccessCollection where T: Model {
     public typealias ModelType = T
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .string
+    }
     public static var modelType: any Model.Type {
         T.self
     }
     
     public typealias DefaultValue = Array<T>
     
-    private enum Storage {
+    private enum Storage: @unchecked Sendable {
         case unmanaged(UnmanagedList<T>)
         case managed(ManagedList<T>)
     }
@@ -335,7 +333,9 @@ where T: Model {
     public func index(after i: Int) -> Int {
         i + 1
     }
-
+    public func index(before i: Int) -> Int {
+        i - 1
+    }
     public enum CollectionChange {
         case insert(Int64)
         case delete(Int64)
@@ -363,6 +363,22 @@ where T: Model {
             }
         }
     }
+//    
+//    public subscript(safe: Int) -> T? {
+//        get {
+//            switch storage {
+//            case .unmanaged(let unmanaged): unmanaged.storage[safe]
+//            case .managed(let managed): managed[safe]
+//            }
+//        } set {
+//            switch storage {
+//            case .unmanaged(let unmanaged):
+//                unmanaged.storage[safe] = newValue
+//            case .managed(let managed):
+//                managed[safe] = newValue
+//            }
+//        }
+//    }
     
     public func append(_ newElement: T) {
         switch storage {
@@ -451,3 +467,35 @@ where T: Model {
     }
 }
 
+extension List {
+    public static func +(lhs: List, rhs: List) -> Array<Element> {
+        lhs.map { $0 } + rhs.map { $0 }
+    }
+}
+
+// MARK: Codable Support
+extension List: Codable where Element: Codable {
+    public init(from decoder: any Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        guard let count = container.count else {
+            self.storage = .unmanaged(UnmanagedList.init(storage: []))
+            return
+        }
+        
+        self.storage = .unmanaged(UnmanagedList.init(storage: try (0..<(container.count ?? 0)).map { _ in
+            try container.decode(Element.self)
+        }))
+    }
+    
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.unkeyedContainer()
+        try container.encode(contentsOf: self.map(\.self))
+    }
+}
+
+
+public typealias LatticeList = List
+
+extension Lattice {
+    public typealias List = LatticeList
+}

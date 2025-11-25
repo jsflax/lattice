@@ -13,7 +13,6 @@ public actor LatticeActor {
         self.configuration = configuration
     }
     
-    
     public func withModelContext<T: Sendable>(
         _ closure: @Sendable (Lattice) throws -> T
     ) async throws -> T {

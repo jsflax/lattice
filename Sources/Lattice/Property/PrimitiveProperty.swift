@@ -10,7 +10,8 @@ public protocol PrimitiveProperty: PersistableProperty where DefaultValue == Sel
 }
 
 extension PrimitiveProperty {
-    public static func _get(name: String, parent: some Model, lattice: Lattice, primaryKey: Int64) -> Self? {
+    public static func _get(isolation: isolated (any Actor)? = #isolation,
+                            name: String, parent: some Model, lattice: Lattice, primaryKey: Int64) -> Self? {
         let queryStatementString = "SELECT \(name) FROM \(type(of: parent).entityName) WHERE id = ?;"
         var queryStatement: OpaquePointer?
         defer { sqlite3_finalize(queryStatement) }
@@ -45,7 +46,11 @@ extension PrimitiveProperty {
             if sqlite3_step(updateStatement) == SQLITE_DONE {
                 lattice.logger.debug("Successfully updated \(type(of: parent).entityName) with id \(primaryKey) to \(name): \(type(of: newValue)).")
             } else {
-                print("Could not update \(type(of: parent).entityName) with id \(primaryKey) with value: \(newValue).")
+                if let error = lattice.readError() {
+                    print("Could not update \(type(of: parent).entityName) with id \(primaryKey) on property \(name) with value \(newValue): \(error).")
+                } else {
+                    print("Could not update \(type(of: parent).entityName) with id \(primaryKey) on property \(name) with value \(newValue).")
+                }
             }
         } else {
             print("UPDATE statement could not be prepared.")
@@ -56,7 +61,9 @@ extension PrimitiveProperty {
 extension String: PrimitiveProperty {
     public static var defaultValue: String { .init() }
     public static var sqlType: String { "TEXT" }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .string
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         guard let queryResultCol1 = sqlite3_column_text(statement, columnId) else {
             sqlite3_finalize(statement)
@@ -74,7 +81,9 @@ extension String: PrimitiveProperty {
 extension UUID: PrimitiveProperty {
     public static var defaultValue: UUID { .init() }
     public static var sqlType: String { "TEXT" }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .string
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         self = UUID(uuidString: String.init(from: statement, with: columnId))!
     }
@@ -87,7 +96,9 @@ extension UUID: PrimitiveProperty {
 extension URL: PrimitiveProperty {
     public static var defaultValue: URL { .init(filePath: "") }
     public static var sqlType: String { "TEXT" }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .string
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         self = URL(string: String.init(from: statement, with: columnId))!
     }
@@ -102,7 +113,9 @@ extension Bool: PrimitiveProperty {
         .init()
     }
     public static var sqlType: String { "INTEGER" }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .int
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         self = sqlite3_column_int(statement, columnId) == 1 ? true : false
     }
@@ -117,7 +130,9 @@ extension Int: PrimitiveProperty {
         .init()
     }
     public static var sqlType: String { "INTEGER" }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .int
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         self = Int(sqlite3_column_int(statement, columnId))
     }
@@ -132,7 +147,9 @@ extension Int8: PrimitiveProperty {
         .init()
     }
     public static var sqlType: String { "SMALLINT" }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .int
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         self = Int8(sqlite3_column_int(statement, columnId))
     }
@@ -147,7 +164,9 @@ extension Int16: PrimitiveProperty {
         .init()
     }
     public static var sqlType: String { "INT" }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .int
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         self = Int16(sqlite3_column_int(statement, columnId))
     }
@@ -162,7 +181,9 @@ extension Int32: PrimitiveProperty {
         .init()
     }
     public static var sqlType: String { "INTEGER" }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .int
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         self = Int32(sqlite3_column_int(statement, columnId))
     }
@@ -177,7 +198,9 @@ extension Int64: PrimitiveProperty {
         .init()
     }
     public static var sqlType: String { "BIGINT" }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .int64
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         self = Int64(sqlite3_column_int64(statement, columnId))
     }
@@ -187,12 +210,15 @@ extension Int64: PrimitiveProperty {
     }
 }
 
+// MARK: Float
 extension Float: PrimitiveProperty {
     public static var defaultValue: Float {
         .init()
     }
-    public static var sqlType: String { "FLOAT" }
-    
+    public static var sqlType: String { "REAL" }
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .float
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         self = Float(sqlite3_column_double(statement, columnId))
     }
@@ -207,7 +233,9 @@ extension Double: PrimitiveProperty {
         .init()
     }
     public static var sqlType: String { "DOUBLE" }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .double
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         self = sqlite3_column_double(statement, columnId)
     }
@@ -222,14 +250,16 @@ extension Date: PrimitiveProperty {
     public static var defaultValue: Date {
         .init()
     }
-    public static var sqlType: String { "INTEGER" }
-    
+    public static var sqlType: String { "REAL" }
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .date
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = Date(timeIntervalSince1970: Double(sqlite3_column_int(statement, columnId)))
+        self = Date(timeIntervalSince1970: sqlite3_column_double(statement, columnId))
     }
     
     public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        sqlite3_bind_int(statement, columnId, Int32(self.timeIntervalSince1970))
+        sqlite3_bind_double(statement, columnId, self.timeIntervalSince1970)
     }
 }
 
@@ -238,7 +268,9 @@ extension Data: PrimitiveProperty {
         .init()
     }
     public static var sqlType: String { "TEXT" }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .data
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         let blob = sqlite3_column_text(statement, columnId)!
         self = Data(base64Encoded: String(cString: blob))!
@@ -257,7 +289,9 @@ extension Dictionary: PrimitiveProperty, PersistableProperty, Property where Key
     public static var sqlType: String {
         "TEXT"
     }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .string
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         let blob = String(cString: sqlite3_column_text(statement, columnId)!)
         self = try! JSONDecoder().decode(Self.self, from: blob.data(using: .utf8)!)
@@ -277,7 +311,9 @@ extension Array: PrimitiveProperty, PersistableProperty where Element: Property 
     public static var sqlType: String {
         "TEXT"
     }
-    
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .string
+    }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         let blob = String(cString: sqlite3_column_text(statement, columnId)!)
         self = try! JSONDecoder().decode(Self.self, from: blob.data(using: .utf8)!)
@@ -305,6 +341,9 @@ extension Array: PrimitiveProperty, PersistableProperty where Element: Property 
 
 extension Optional: Property where Wrapped: Property {
     public typealias DefaultValue = Self
+    public static var anyPropertyKind: AnyProperty.Kind {
+        Wrapped.anyPropertyKind
+    }
 }
 
 extension Optional: PrimitiveProperty, PersistableProperty where Wrapped: PrimitiveProperty {
@@ -333,20 +372,53 @@ extension Optional: PrimitiveProperty, PersistableProperty where Wrapped: Primit
     }
 }
 
-enum AnyProperty: PrimitiveProperty, Codable {
-    static var defaultValue: AnyProperty {
+public enum AnyProperty: PrimitiveProperty, Codable, Sendable {
+    public static var defaultValue: AnyProperty {
         .int(0)
     }
-    
-    static var sqlType: String {
+    public static var anyPropertyKind: Kind {
+        .string
+    }
+    public static var sqlType: String {
         fatalError()
     }
     
-    init(from statement: OpaquePointer?, with columnId: Int32) {
+    public init(from statement: OpaquePointer?, with columnId: Int32) {
         fatalError()
     }
     
-    func encode(to statement: OpaquePointer?, with columnId: Int32) {
+    case int(Int)
+    case int64(Int64)
+    case float(Float)
+    case double(Double)
+    case string(String)
+    case date(Date)
+    case data(Data)
+    case null
+    
+    enum CodingKeys: String, CodingKey {
+        case kind, value
+    }
+    
+    public enum Kind: Int, Codable {
+        case int, int64, string, date, null, float, data, double
+    }
+    
+    var kind: Kind {
+        switch self {
+        case .int(_): return .int
+        case .int64(_): return .int64
+        case .string(_): return .string
+        case .date(_): return .date
+        case .float(_): return .float
+        case .double(_): return .double
+        case .data(_): return .data
+        case .null: return .null
+        }
+    }
+    
+    
+    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
         switch self {
         case .int(let a0):
             a0.encode(to: statement, with: columnId)
@@ -367,63 +439,33 @@ enum AnyProperty: PrimitiveProperty, Codable {
         }
     }
     
-    case int(Int)
-    case int64(Int64)
-    case float(Float)
-    case double(Double)
-    case string(String)
-    case date(Date)
-    case data(Data)
-    case null
-    
-    enum CodingKeys: String, CodingKey {
-        case kind, value
-    }
-    
-    enum Kind: Int, Codable {
-        case int, int64, string, date, null, float, data, double
-    }
-    
-    var kind: Kind {
-        switch self {
-        case .int(_): return .int
-        case .int64(_): return .int64
-        case .string(_): return .string
-        case .date(_): return .date
-        case .float(_): return .float
-        case .double(_): return .double
-        case .data(_): return .data
-        case .null: return .null
-        }
-    }
-    
-    
-    func encode(to encoder: any Encoder) throws {
-        var container = encoder.singleValueContainer()
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
         switch self {
         case .int(let a0):
-            try container.encode(a0)
+            try container.encode(a0, forKey: .value)
         case .int64(let a0):
-            try container.encode(a0)
+            try container.encode(a0, forKey: .value)
         case .string(let a0):
-            try container.encode(a0)
+            try container.encode(a0, forKey: .value)
         case .date(let a0):
-            try container.encode(a0)
+            try container.encode(a0, forKey: .value)
         case .float(let a0):
-            try container.encode(a0)
+            try container.encode(a0, forKey: .value)
         case .data(let a0):
-            try container.encode(a0)
+            try container.encode(a0, forKey: .value)
         case .double(let a0):
-            try container.encode(a0)
+            try container.encode(a0, forKey: .value)
         case .null:
-            try container.encodeNil()
+            try container.encodeNil(forKey: .value)
         }
     }
-    
-    init(from decoder: any Decoder) throws {
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decode(Kind.self, forKey: .kind)
         do {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            let kind = try container.decode(Kind.self, forKey: .kind)
             switch kind {
             case .int: self = .int(try container.decode(Int.self, forKey: .value))
             case .int64: self = .int64(try container.decode(Int64.self, forKey: .value))
@@ -435,29 +477,7 @@ enum AnyProperty: PrimitiveProperty, Codable {
             case .null: self = .null
             }
         } catch {
-            do {
-                let container = try decoder.singleValueContainer()
-                if let intValue = try? container.decode(Int.self) {
-                    self = .int(intValue)
-                } else if let int64Value = try? container.decode(Int64.self) {
-                    self = .int64(int64Value)
-                } else if let stringValue = try? container.decode(String.self) {
-                    self = .string(stringValue)
-                } else if let dateValue = try? container.decode(Date.self) {
-                    self = .date(dateValue)
-                } else if let dataValue = try? container.decode(Data.self) {
-                    self = .data(dataValue)
-                } else if let floatValue = try? container.decode(Float.self) {
-                    self = .float(floatValue)
-                } else if let doubleValue = try? container.decode(Double.self) {
-                    self = .double(doubleValue)
-                }
-                else {
-                    self = .null
-                }
-            } catch {
-                self = .null
-            }
+            self = .null
         }
     }
 }

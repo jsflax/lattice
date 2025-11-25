@@ -11,6 +11,7 @@ let package = Package(
         .library(
             name: "Lattice",
             targets: ["Lattice"]),
+        .library(name: "LatticeServerKit", targets: ["LatticeServerKit"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-syntax.git", branch: "main"),
@@ -19,6 +20,8 @@ let package = Package(
           .upToNextMinor(from: "1.1.0") // or `.upToNextMajor
         ),
         .package(url: "https://github.com/vapor/vapor.git", from: "4.76.0"),
+        .package(url: "https://github.com/vapor/fluent.git", from: "4.0.0"),
+        .package(url: "https://github.com/vapor/jwt.git",    from: "4.0.0"),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -39,5 +42,13 @@ let package = Package(
             name: "LatticeTests",
             dependencies: ["Lattice", .product(name: "Vapor", package: "vapor")]
         ),
+        .target(
+            name: "LatticeServerKit",
+            dependencies: [
+                "Lattice",
+                .product(name: "Vapor", package: "vapor"),
+                .product(name: "Fluent", package: "fluent"),
+                .product(name: "JWT",      package: "jwt"),
+            ]),
     ]
 )

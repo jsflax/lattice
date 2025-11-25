@@ -1,5 +1,8 @@
 import Foundation
 import SQLite3
+#if canImport(Combine)
+@_exported import Combine
+#endif
 
 public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, Property {
     init(isolation: isolated (any Actor)?)
@@ -17,21 +20,38 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     var _lastKeyPathUsed: String? { get set }
     static func _nameForKeyPath(_ keyPath: AnyKeyPath) -> String
     static var constraints: [Constraint] { get }
+    var _objectWillChange: Combine.ObservableObjectPublisher { get }
 }
 
 extension Model {
-    public static var sqlType: String { "BIGINT" }
-
-//    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-//        _encode(statement: statement)
-//    }
-//    
-//    public init(from statement: OpaquePointer?, with columnId: Int32) {
-//        fatalError()
-//    }
     
-    public var id: ObjectIdentifier {
-        ObjectIdentifier(self)
+    public static var sqlType: String { "BIGINT" }
+    public static var anyPropertyKind: AnyProperty.Kind { .int }
+    public typealias ObservableObjectPublisher = AnyPublisher<Void, Never>
+    // 3️⃣ override the protocol’s publisher
+    public var objectWillChange: Publishers.HandleEvents<Combine.ObservableObjectPublisher> {
+      // each new subscriber bumps the count…
+      _objectWillChange
+        .handleEvents(
+            receiveSubscription: { [weak self] _ in
+                self.map {
+                    $0.lattice?.beginObserving($0)
+                }
+            },
+            receiveCancel: { [weak self] in
+                self.map {
+                    $0.lattice?.finishObserving($0)
+                }
+            }
+        )
+    }
+    
+    public var id: some Hashable {
+        if let primaryKey {
+            AnyHashable(primaryKey)
+        } else {
+            AnyHashable(ObjectIdentifier(self))
+        }
     }
     
     public func hash(into hasher: inout Hasher) {
@@ -46,32 +66,6 @@ extension Model {
             lhs === rhs
         }
     }
-    
-//    public var __globalId: UUID {
-//        _lastKeyPathUsed = "globalId"
-//        guard let lattice, let primaryKey else {
-//            return UUID()
-//        }
-//        let queryStatementString = "SELECT globalId FROM \(Self.entityName) WHERE id = ?;"
-//        var queryStatement: OpaquePointer?
-//        defer { sqlite3_finalize(queryStatement) }
-//        if sqlite3_prepare_v2(lattice.db, queryStatementString, -1, &queryStatement, nil) == SQLITE_OK {
-//            // Bind the provided id to the statement.
-//            sqlite3_bind_int64(queryStatement, 1, primaryKey)
-//            
-//            if sqlite3_step(queryStatement) == SQLITE_ROW {
-//                // Extract id, name, and age from the row.
-//                let t = UUID(from: queryStatement, with: 0)
-//                return t
-//            } else {
-//                print("SELECT statement could not be prepared:", lattice.readError() ?? "Unknown error")
-//                print("No field globalId found on \(Self.entityName) with id \(primaryKey).")
-//            }
-//        } else {
-//            print("SELECT statement could not be prepared:", lattice.readError() ?? "Unknown error")
-//        }
-//        fatalError()
-//    }
 }
 
 func _name<T>(for keyPath: PartialKeyPath<T>) -> String where T: Model {
@@ -118,4 +112,9 @@ public struct Constraint {
         self.columns = columns
         self.allowsUpsert = allowsUpsert
     }
+}
+
+public typealias LatticeModel = Model
+extension Lattice {
+    public typealias Model = LatticeModel
 }

@@ -1,6 +1,10 @@
 import Foundation
 import SQLite3
 
+public protocol DefaultInitializable {
+    init()
+}
+
 public protocol EmbeddedModel: Codable, PrimitiveProperty {
 }
 
@@ -13,6 +17,7 @@ extension EmbeddedModel {
         "TEXT"
     }
     
+    public static var anyPropertyKind: AnyProperty.Kind { .string }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
         self = try! JSONDecoder().decode(Self.self, from: String(from: statement, with: columnId).data(using: .utf8)!)
     }

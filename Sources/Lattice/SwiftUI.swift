@@ -17,7 +17,7 @@ import Combine
                 fetch()
             }
         }
-        @MainActor var sortBy: [SortDescriptor<T>] = [] {
+        @MainActor var sortBy: SortDescriptor<T>? {
             didSet {
                 fetch()
             }
@@ -28,7 +28,7 @@ import Combine
         }
         
         @MainActor init(predicate: @escaping Predicate<T>, fetchLimit: Int? = nil,
-                        sortBy: [SortDescriptor<T>] = []) {
+                        sortBy: SortDescriptor<T>?) {
             self.predicate = predicate
             self.fetchLimit = fetchLimit
             self.sortBy = sortBy
@@ -41,6 +41,9 @@ import Combine
             }
             
             wrappedValue = lattice.objects().where(predicate)
+            if let sortBy {
+                wrappedValue = wrappedValue.sortedBy(sortBy)
+            }
             DispatchQueue.main.async {
                 self.objectWillChange.send()
             }
@@ -88,12 +91,12 @@ import Combine
     }
     public var sortBy: [SortDescriptor<T>] = []
     
-    @MainActor public init(predicate: @escaping Predicate<T> = { _ in true },
-                           fetchLimit: Int? = nil,
-                           sortBy: [SortDescriptor<T>] = []) {
+    @MainActor public init<V>(predicate: @escaping Predicate<T> = { _ in true },
+                              fetchLimit: Int? = nil,
+                              sort: (any KeyPath<T, V> & Sendable)? = nil,
+                              order: SortOrder? = nil) where V: Comparable {
         self.predicate = predicate
-        
-        self._wrapper = .init(wrappedValue: Wrapper(predicate: predicate, fetchLimit: fetchLimit, sortBy: sortBy))
+        self._wrapper = .init(wrappedValue: Wrapper(predicate: predicate, fetchLimit: fetchLimit, sortBy: sort.map { SortDescriptor($0, order: order ?? .forward) }))
     }
     
 
@@ -119,5 +122,44 @@ extension EnvironmentValues {
         get { self[LatticeSchemaEnvironmentKey.self] }
         set { self[LatticeSchemaEnvironmentKey.self] = newValue }
     }
+}
+
+import SwiftUI
+
+@Model final class Person: @unchecked Sendable {
+    var name: String
+    var age: Int
+}
+
+
+struct TestView: View {
+    @ObservedObject var person: Person
+    
+    var body: some View {
+        VStack {
+            Text("Age: \(person.age)")
+        }.padding()
+        Button("Increment Age") {
+            person.age += 1
+        }
+    }
+}
+
+#Preview {
+    let lattice = try! Lattice(Person.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "preview_lattice.sqlite")))
+    let person = {
+        var person = Person()
+        lattice.add(person)
+        Task.detached { [ref = person.sendableReference] in
+            let lattice = try! Lattice(Person.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "preview_lattice.sqlite")))
+            let person = ref.resolve(on: lattice)!
+            while true {
+                try await Task.sleep(for: .seconds(2))
+                person.age += 1
+            }
+        }
+        return person
+    }()
+    TestView(person: lattice.object(primaryKey: person.primaryKey!)!)
 }
 #endif

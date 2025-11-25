@@ -3,11 +3,14 @@ import SQLite3
 
 public protocol Property {
     associatedtype DefaultValue
+    
+    static var anyPropertyKind: AnyProperty.Kind { get }
 }
 
 public protocol PersistableProperty: Property {
     static var sqlType: String { get }
-    static func _get(name: String, parent: some Model, lattice: Lattice, primaryKey: Int64) -> Self?
+    static func _get(isolation: isolated (any Actor)?,
+                     name: String, parent: some Model, lattice: Lattice, primaryKey: Int64) -> Self?
     static func _set(name: String,
                      parent: some Model, lattice: Lattice, primaryKey: Int64, newValue: Self)
 }
@@ -25,9 +28,11 @@ extension RawRepresentable where Self.RawValue: PrimitiveProperty {
     }
 }
 
-public protocol LatticeEnum: RawRepresentable, PrimitiveProperty {
+public protocol LatticeEnum: RawRepresentable, PrimitiveProperty where RawValue: Property {
 }
-
+extension LatticeEnum {
+    public static var anyPropertyKind: AnyProperty.Kind { RawValue.anyPropertyKind }
+}
 public protocol OptionalProtocol: ExpressibleByNilLiteral {
     associatedtype Wrapped
 }

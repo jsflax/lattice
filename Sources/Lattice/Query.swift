@@ -91,9 +91,15 @@ public struct Query<T>: Sendable {
             node = .keyPath([], options: [])
         }
         self.isAuditing = isAuditing
+        if let modelType = T.self as? any Model.Type {
+            self.rootEntityName = modelType.entityName
+        } else {
+            self.rootEntityName = nil
+        }
     }
 
     private var node: QueryNode
+    private var rootEntityName: String?
 
     /**
      The `Query` struct works by compounding `QueryNode`s together in a tree structure.
@@ -116,27 +122,35 @@ public struct Query<T>: Sendable {
      When it comes time to build the predicate string with its arguments call `_constructPredicate()`. This will
      recursively traverse the tree and build the NSPredicate compatible string.
      */
-    private init(_ node: QueryNode, isAuditing: Bool = false) {
+    private init(_ node: QueryNode, isAuditing: Bool = false, rootEntityName: String? = nil) {
         self.node = node
         self.isAuditing = isAuditing
+        self.rootEntityName = rootEntityName
     }
 
     private func appendKeyPath(_ keyPath: String, options: KeyPathOptions) -> QueryNode {
         if case let .keyPath(kp, ops) = node {
             return .keyPath(kp + [keyPath], options: ops.union(options))
+        } else if case let .linkKeyPath(source, link, target, continuation) = node {
+            // Recursively append to the continuation
+            let updatedContinuation = Query(continuation, isAuditing: isAuditing, rootEntityName: rootEntityName)
+                .appendKeyPath(keyPath, options: options)
+            return .linkKeyPath(sourceEntity: source, linkField: link, targetEntity: target,
+                               continuation: updatedContinuation)
         } else if case .mapSubscript = node {
             fatalError("Cannot apply key path to Map subscripts.")
         }
         fatalError("Cannot apply a keypath to \(buildPredicate(node))")
     }
     
-    private func appendEmbeddedKeyPath(_ keyPath: String, options: KeyPathOptions) -> QueryNode {
+    private func appendEmbeddedKeyPath(_ keyPath: String, isAnyProperty: Bool,
+                                       options: KeyPathOptions) -> QueryNode {
         if case let .keyPath(kp, ops) = node {
-            return .embeddedKeyPath(kp + [keyPath], options: ops.union(options))
+            return .embeddedKeyPath(kp + [keyPath], isAnyProperty: isAnyProperty, options: ops.union(options))
         } else if case .mapSubscript = node {
             fatalError("Cannot apply key path to Map subscripts.")
-        } else if case let .embeddedKeyPath(kp, ops) = node {
-            return .embeddedKeyPath(kp + [keyPath], options: ops.union(options))
+        } else if case let .embeddedKeyPath(kp, isAnyProperty, ops) = node {
+            return .embeddedKeyPath(kp + [keyPath], isAnyProperty: isAnyProperty, options: ops.union(options))
         }
         fatalError("Cannot apply a keypath to \(buildPredicate(node))")
     }
@@ -224,14 +238,38 @@ public struct Query<T>: Sendable {
     public subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> where T: Model {
         .init(appendKeyPath(_name(for: member), options: []), isAuditing: isAuditing)
     }
-    
+
+    /// Handle EmbeddedModel properties on Model
+    public subscript<V: EmbeddedModel>(dynamicMember member: KeyPath<T, V>) -> Query<V> where T: Model {
+        .init(appendEmbeddedKeyPath(_name(for: member), isAnyProperty: false, options: []), isAuditing: isAuditing)
+    }
+
+    /// Handle optional EmbeddedModel properties on Model
+    public subscript<V: EmbeddedModel>(dynamicMember member: KeyPath<T, V?>) -> Query<V> where T: Model {
+        .init(appendEmbeddedKeyPath(_name(for: member), isAnyProperty: false, options: []), isAuditing: isAuditing)
+    }
+
     public subscript<V: Model>(dynamicMember member: KeyPath<T, V?>) -> Query<V> where T: Model {
-        .init(appendKeyPath(_name(for: member), options: []), isAuditing: isAuditing)
+        let linkField = _name(for: member)
+        let sourceEntity = T.entityName
+        let targetEntity = V.entityName
+
+        // Create a linkKeyPath node with an empty keyPath continuation
+        let linkNode = QueryNode.linkKeyPath(
+            sourceEntity: sourceEntity,
+            linkField: linkField,
+            targetEntity: targetEntity,
+            continuation: .keyPath([], options: [])
+        )
+        return .init(linkNode, isAuditing: isAuditing, rootEntityName: rootEntityName)
     }
     
     
     public subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> where T: EmbeddedModel {
-        return .init(appendEmbeddedKeyPath(String(reflecting: member), options: []), isAuditing: isAuditing)
+        let input = String(reflecting: member)
+        let components = input.split(separator: ".")
+        let trimmed = components.dropFirst().joined(separator: ".")
+        return .init(appendEmbeddedKeyPath(trimmed, isAnyProperty: false, options: []), isAuditing: isAuditing)
     }
     
     /// :nodoc:
@@ -349,15 +387,43 @@ extension Query: ExpressibleByBooleanLiteral where T == Bool {
 extension Query where T: OptionalProtocol {
     /// :nodoc:
     public subscript<V>(dynamicMember member: KeyPath<T.Wrapped, V>) -> Query<V> where T.Wrapped: Model {
-        .init(appendKeyPath(_name(for: member), options: []))
+        .init(appendKeyPath(_name(for: member), options: []), isAuditing: isAuditing, rootEntityName: rootEntityName)
+    }
+
+    /// Handle nested links
+    public subscript<V: Model>(dynamicMember member: KeyPath<T.Wrapped, V?>) -> Query<V> where T.Wrapped: Model {
+        let linkField = _name(for: member)
+        let sourceEntity = T.Wrapped.entityName
+        let targetEntity = V.entityName
+
+        // If current node is already a linkKeyPath, nest it
+        if case let .linkKeyPath(outerSource, outerLink, outerTarget, outerContinuation) = node {
+            let nestedLink = QueryNode.linkKeyPath(
+                sourceEntity: sourceEntity,
+                linkField: linkField,
+                targetEntity: targetEntity,
+                continuation: .keyPath([], options: [])
+            )
+            return .init(.linkKeyPath(sourceEntity: outerSource, linkField: outerLink,
+                                     targetEntity: outerTarget, continuation: nestedLink),
+                        isAuditing: isAuditing, rootEntityName: rootEntityName)
+        }
+
+        // Otherwise create a new linkKeyPath
+        let linkNode = QueryNode.linkKeyPath(
+            sourceEntity: sourceEntity,
+            linkField: linkField,
+            targetEntity: targetEntity,
+            continuation: .keyPath([], options: [])
+        )
+        return .init(linkNode, isAuditing: isAuditing, rootEntityName: rootEntityName)
     }
     /// :nodoc:
     public subscript<V>(dynamicMember member: KeyPath<T.Wrapped, V>) -> Query<V> where T.Wrapped: EmbeddedModel {
         let input = String(reflecting: member)
         let components = input.split(separator: ".")
         let trimmed = components.dropFirst().joined(separator: ".")
-        print(trimmed)  // "bar"
-        return .init(appendEmbeddedKeyPath(trimmed, options: []))
+        return .init(appendEmbeddedKeyPath(trimmed, isAnyProperty: false, options: []), isAuditing: isAuditing)
     }
 }
 
@@ -964,14 +1030,15 @@ extension Optional: _QueryBinary where Wrapped: PrimitiveProperty, Wrapped: _Que
 // MARK: QueryNode -
 
 extension Query {
-    package func convertKeyPathsToEmbedded(rootPath: String? = nil) -> Query {
+    package func convertKeyPathsToEmbedded(rootPath: String? = nil, isAnyProperty: Bool = false) -> Query {
         func convertKeyPath(_ node: inout QueryNode) {
             switch node {
             case .keyPath(let value, let options):
                 if let rootPath {
-                    node = .embeddedKeyPath([rootPath] + value, options: options)
+                    node = .embeddedKeyPath([rootPath] + value, isAnyProperty: isAnyProperty,
+                                            options: options)
                 } else {
-                    node = .embeddedKeyPath(value, options: options)
+                    node = .embeddedKeyPath(value, isAnyProperty: isAnyProperty, options: options)
                 }
             case .comparison(operator: let op, var lhs, var rhs, let options):
                 convertKeyPath(&lhs)
@@ -1007,8 +1074,9 @@ private indirect enum QueryNode: @unchecked Sendable {
     case constant(_ value: Any?)
 
     case keyPath(_ value: [String], options: KeyPathOptions)
-    case embeddedKeyPath(_ value: [String], options: KeyPathOptions)
-    
+    case embeddedKeyPath(_ value: [String], isAnyProperty: Bool, options: KeyPathOptions)
+    case linkKeyPath(sourceEntity: String, linkField: String, targetEntity: String, continuation: QueryNode)
+
     case comparison(operator: Operator, _ lhs: QueryNode, _ rhs: QueryNode, options: StringOptions)
     case between(_ lhs: QueryNode, lowerBound: QueryNode, upperBound: QueryNode)
 
@@ -1039,6 +1107,36 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
            lhsOptions.contains(.isCollection), rhsOptions.contains(.isCollection) {
             fatalError("Comparing two collection columns is not permitted.")
         }
+
+        // Special handling for linkKeyPath comparisons
+        if case let .linkKeyPath(sourceEntity, linkField, targetEntity, continuation) = lhs {
+            let joinTable = "_\(sourceEntity)_\(targetEntity)_\(linkField)"
+
+            formatStr.append("(")
+            if let prefix = prefix {
+                formatStr.append(prefix)
+            }
+
+            // Check if continuation is just accessing primaryKey
+            if case let .keyPath(contKp, _) = continuation, contKp == ["id"] {
+                // Simple case: $0.parent.primaryKey == 5
+                // Generate: id IN (SELECT lhs FROM _Child_Parent_parent WHERE rhs = 5)
+                formatStr.append("id IN (SELECT lhs FROM \(joinTable) WHERE rhs \(op) ")
+                build(rhs)
+                formatStr.append(")")
+            } else {
+                // Complex case: $0.parent.name == "John" or nested links
+                // Generate: id IN (SELECT lhs FROM _Child_Parent_parent WHERE rhs IN (SELECT id FROM Parent WHERE ...))
+                formatStr.append("id IN (SELECT lhs FROM \(joinTable) WHERE rhs IN (SELECT id FROM \(targetEntity) WHERE ")
+                build(continuation)
+                formatStr.append(" \(op) ")
+                build(rhs)
+                formatStr.append("))")
+            }
+            formatStr.append(")")
+            return
+        }
+
         formatStr.append("(")
         if let prefix = prefix {
             formatStr.append(prefix)
@@ -1109,7 +1207,7 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
                     arguments.add(value ?? NSNull())
                 }
             }
-        case .embeddedKeyPath(var kp, options: let options):
+        case .embeddedKeyPath(var kp, var isAnyProperty, options: let options):
             if isNewNode {
                 buildBool(node)
                 return
@@ -1119,9 +1217,15 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
             }
             
             let root = kp.removeFirst()
-            formatStr.append("""
-            json_extract(\(root), '$.\(kp.joined(separator: "."))')
-            """)
+            if isAnyProperty {
+                formatStr.append("""
+                json_extract(\(root), '$.\(kp.joined(separator: ".")).value')
+                """)
+            } else {
+                formatStr.append("""
+                json_extract(\(root), '$.\(kp.joined(separator: "."))')
+                """)
+            }
         case .keyPath(let kp, let options):
             if isNewNode {
                 buildBool(node)
@@ -1192,6 +1296,10 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
                     arguments.add("#any")
                 }
             }
+        case .linkKeyPath(_, _, _, _):
+            // linkKeyPath nodes should be handled by buildExpression when in a comparison
+            // If we get here, it's a standalone linkKeyPath which shouldn't happen
+            fatalError("linkKeyPath nodes must be used in comparisons")
         case .geoWithin(let keyPath, let value):
             buildExpression(keyPath, QueryNode.Operator.in.rawValue, value, prefix: nil)
         }
@@ -1208,6 +1316,7 @@ private struct KeyPathOptions: OptionSet {
 
     static let isCollection = KeyPathOptions(rawValue: 1)
     static let requiresAny = KeyPathOptions(rawValue: 2)
+    static let isLink = KeyPathOptions(rawValue: 4)
 }
 
 private struct SubqueryRewriter {
@@ -1215,7 +1324,7 @@ private struct SubqueryRewriter {
     private var counter: Int
     private mutating func rewrite(_ node: QueryNode) -> QueryNode {
         switch node {
-        case .embeddedKeyPath(let kp, let options):
+        case .embeddedKeyPath(let kp, let isAnyProperty, let options):
             if options.contains(.isCollection) {
                 precondition(kp.count > 0)
                 collectionName = kp[0]
@@ -1249,6 +1358,9 @@ private struct SubqueryRewriter {
             fatalError("Subqueries do not support AnyRealmValue subscripts.")
         case .geoWithin(let keyPath, let value):
             return .geoWithin(keyPath, value)
+        case .linkKeyPath(let source, let link, let target, let continuation):
+            return .linkKeyPath(sourceEntity: source, linkField: link, targetEntity: target,
+                               continuation: rewrite(continuation))
         }
     }
 
@@ -1272,3 +1384,7 @@ private struct SubqueryRewriter {
 //}
 public typealias Predicate<T> = (@Sendable (Query<T>) -> Query<Bool>)
 public typealias LatticePredicate<T> = ((Query<T>) -> Query<Bool>)
+
+extension Lattice {
+    public typealias Predicate<T> = (@Sendable (Query<T>) -> Query<Bool>)
+}

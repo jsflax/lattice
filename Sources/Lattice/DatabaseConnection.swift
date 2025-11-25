@@ -1,6 +1,12 @@
 import Foundation
 @preconcurrency import Combine
 import SQLite3
+import os.lock
+
+private final class IsolationKeyBox {
+    let key: IsolationKey
+    init(_ key: IsolationKey) { self.key = key }
+}
 
 // Define callback function for update hook.
 // This function must match the expected C function pointer signature.
@@ -27,10 +33,11 @@ private func updateHookCallback(
     let dbNameStr = databaseName.map { String(cString: $0) } ?? "unknown"
     let tableNameStr = tableName.map { String(cString: $0) } ?? "unknown"
 
-    guard let db = Lattice.latticeIsolationRegistrar[pArg!.assumingMemoryBound(to: IsolationKey.self).pointee]?.db else {
+    let key = Unmanaged<IsolationKeyBox>.fromOpaque(pArg!).takeUnretainedValue().key
+    guard let db = Lattice.latticeIsolationRegistrar[key]?.db else {
         return
     }
-    
+
     guard tableNameStr == "AuditLog" else {
         return
     }
@@ -39,7 +46,7 @@ private func updateHookCallback(
         return
     }
 
-    db.changeBuffer.append(audit)
+    db.appendToChangeBuffer(audit)
 //    lattice.logger.debug("Hook callback at \(audit.timestamp.formatted())")
 //    let keyPath = audit.changedFieldsNames?.compactMap({ $0 }).first!
 //
@@ -80,13 +87,16 @@ package struct IsolationKey: Hashable, Equatable {
     }
 }
 
-public final class SharedDBPointer {
+public final class SharedDBPointer: @unchecked Sendable {
     
     /// The underlying raw pointer
     var db: OpaquePointer?
+    var readDb: OpaquePointer?
     let configuration: Lattice.Configuration
     var isolation: (any Actor)?
     var key: IsolationKey
+    private var keyBox: IsolationKeyBox!
+    private var keyUserData: UnsafeMutableRawPointer!
     var isSyncDisabled = false
     var modelTypes: [any Model.Type]
     var changeBuffer: [AuditLog] = []
@@ -112,43 +122,55 @@ public final class SharedDBPointer {
         self.configuration = configuration
         self.isolation = isolation
         self.key = IsolationKey(isolation: isolation, configuration: configuration)
+        self.keyBox = IsolationKeyBox(self.key)
+        self.keyUserData = Unmanaged.passRetained(self.keyBox).toOpaque()
         self.modelTypes = schema
-        if sqlite3_open(configuration.fileURL.path, &self.db) != SQLITE_OK {
-            throw NSError(domain: "SQLite", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to open database."])
+        if sqlite3_open_v2(configuration.fileURL.path, &self.db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) != SQLITE_OK {
+            throw NSError(domain: "SQLite", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to open database at path: \(configuration.fileURL.path)."])
         }
-        
-        withUnsafePointer(to: self) { ptr in
-            sqlite3_wal_hook(db, { ptr, _,_,_  in
-                let key = ptr!.assumingMemoryBound(to: IsolationKey.self).pointee
-                guard let db = Lattice.latticeIsolationRegistrar[key]?.db,
-                    !db.isFlushing else {
-                    return 0
+        if sqlite3_open_v2(configuration.fileURL.path, &self.readDb, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) != SQLITE_OK {
+            throw NSError(domain: "SQLite", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to open database at path: \(configuration.fileURL.path)."])
+        }
+
+        // Register SQLite hooks, passing &keyUserData as user data pointer
+        // The keyUserData property lives as long as this SharedDBPointer instance
+        sqlite3_wal_hook(db, { ptr, _,_,_  in
+            let key = Unmanaged<IsolationKeyBox>.fromOpaque(ptr!).takeUnretainedValue().key
+            guard let db = Lattice.latticeIsolationRegistrar[key]?.db,
+                !db.isFlushing else {
+                return 0
+            }
+            db.flushChanges()
+//            Lattice(db).logger.debug("Commited")
+            return SQLITE_OK
+        }, keyUserData)
+        sqlite3_update_hook(db, updateHookCallback, keyUserData)
+        sqlite3_create_function_v2(
+            db,
+            "sync_disabled",       // SQL name
+            0,                     // number of args
+            SQLITE_UTF8,
+            keyUserData,                   // user data pointer
+            { ctx, argc, argv in
+                // called on each trigger fire
+                let key = Unmanaged<IsolationKeyBox>.fromOpaque(sqlite3_user_data(ctx)).takeUnretainedValue().key
+                guard let db = Lattice.latticeIsolationRegistrar[key]?.db else {
+                    return
                 }
-                db.flushChanges()
-//                Lattice(db).logger.debug("Commited")
-                return SQLITE_OK
-            }, &key)
-            sqlite3_update_hook(db, updateHookCallback, &key)
-            sqlite3_create_function_v2(
-                db,
-                "sync_disabled",       // SQL name
-                0,                     // number of args
-                SQLITE_UTF8,
-                &key,                   // user data pointer
-                { ctx, argc, argv in
-                    // called on each trigger fire
-                    let key = sqlite3_user_data(ctx).assumingMemoryBound(to: IsolationKey.self).pointee
-                    guard let db = Lattice.latticeIsolationRegistrar[key]?.db else {
-                        return
-                    }
-                    let cInt = db.isSyncDisabled ? 1 : 0
-                    sqlite3_result_int(ctx, Int32(cInt))
-                },
-                nil, nil, nil
-            )
-        }
+                let cInt = db.isSyncDisabled ? 1 : 0
+                sqlite3_result_int(ctx, Int32(cInt))
+            },
+            nil, nil, nil
+        )
     }
     private let lock = NSLock()
+
+    func appendToChangeBuffer(_ audit: AuditLog) {
+        lock.withLock {
+            changeBuffer.append(audit)
+        }
+    }
+
     func flushChanges() {
         lock.withLock {
             guard !changeBuffer.isEmpty else {
@@ -167,56 +189,78 @@ public final class SharedDBPointer {
                               for configuration: Lattice.Configuration) async {
         let isolatedLattices = Lattice.latticeIsolationRegistrar.filter({ $0.key.configuration == configuration })
         for (isolationKey, dbRef) in isolatedLattices {
-            try? await dbRef.db?.isolation?.invoke { _ in
-                guard let db = dbRef.db else {
-                    Lattice.latticeIsolationRegistrar.removeValue(forKey: isolationKey)
-                    return
-                }
-                let lattice = Lattice(db)
-                var resolvedEvents: [AuditLog] = []
-                
-                for event in events {
-                    event.resolve(on: lattice).map {
-                        resolvedEvents.append($0)
+            Task {
+                if let isolation = dbRef.db?.isolation {
+                    await isolation.invoke { _ in
+                        guard let db = dbRef.db else {
+                            Lattice.latticeIsolationRegistrar.removeValue(forKey: isolationKey)
+                            return
+                        }
+                        let lattice = Lattice(db)
+                        var resolvedEvents: [AuditLog] = []
+
+                        for event in events {
+                            event.resolve(on: lattice).map {
+                                resolvedEvents.append($0)
+                            }
+                        }
+                        db.tableObservationRegistrar["AuditLog"]?.forEach { observer in
+                            observer.value(resolvedEvents)
+                        }
+                        for auditLogEntry in resolvedEvents {
+                            db.triggerTableObservers(tableName: auditLogEntry.tableName, audit: [auditLogEntry])
+                            db.triggerKeyPathObservers(tableName: auditLogEntry.tableName,
+                                                       rowId: auditLogEntry.rowId,
+                                                       keyPath: auditLogEntry.changedFieldsNames?.compactMap({ $0 }).first!)
+                        }
                     }
-                }
-//                db.triggerAuditObservers(events)
-                db.tableObservationRegistrar["AuditLog"]?.forEach { observer in
-                    observer.value(resolvedEvents)
-                }
-                for auditLogEntry in resolvedEvents {
-                    await db.triggerTableObservers(tableName: auditLogEntry.tableName, audit: [auditLogEntry])
-                    await db.triggerKeyPathObservers(tableName: auditLogEntry.tableName,
-                                               rowId: auditLogEntry.rowId,
-                                               keyPath: auditLogEntry.changedFieldsNames?.compactMap({ $0 }).first!)
+                } else {
+                    guard let db = dbRef.db else {
+                        Lattice.latticeIsolationRegistrar.removeValue(forKey: isolationKey)
+                        return
+                    }
+                    let lattice = Lattice(db)
+                    var resolvedEvents: [AuditLog] = []
+
+                    for event in events {
+                        event.resolve(on: lattice).map {
+                            resolvedEvents.append($0)
+                        }
+                    }
+                    db.tableObservationRegistrar["AuditLog"]?.forEach { observer in
+                        observer.value(resolvedEvents)
+                    }
+                    for auditLogEntry in resolvedEvents {
+                        db.triggerTableObservers(tableName: auditLogEntry.tableName, audit: [auditLogEntry])
+                        db.triggerKeyPathObservers(tableName: auditLogEntry.tableName,
+                                                   rowId: auditLogEntry.rowId,
+                                                   keyPath: auditLogEntry.changedFieldsNames?.compactMap({ $0 }).first!)
+                    }
                 }
             }
         }
     }
     
-    var insertLock = NSLock()
-    var removeLock = NSLock()
-    @globalActor struct ObserverActor {
-        static let shared = ActorType()
-        actor ActorType {}
-    }
-    
-    var observerQueue = DispatchQueue.init(label: "observer")
+    private let observerLock = OSAllocatedUnfairLock<Void>()
+
     func insertModelObserver(tableName: String, primaryKey: Int64,
                              _ observation: IsolationWeakRef) {
-        observerQueue.sync {
+        observerLock.withLock {
             observationRegistrar[tableName, default: [:]][primaryKey, default: []].append(observation)
         }
     }
     
     public func removeModelObserver(tableName: String, primaryKey: Int64) {
-        _ = observerQueue.sync {
+        observerLock.withLock {
             observationRegistrar[tableName, default: [:]].removeValue(forKey: primaryKey)
         }
     }
+
     public func removeModelObserver(isolation: isolated (any Actor)? = #isolation,
                                     tableName: String, primaryKey: Int64) async {
-        observationRegistrar[tableName, default: [:]].removeValue(forKey: primaryKey)
+        observerLock.withLock {
+            observationRegistrar[tableName, default: [:]].removeValue(forKey: primaryKey)
+        }
     }
     
     public func triggerAuditObservers(_ audit: [AuditLog]) {
@@ -263,21 +307,31 @@ public final class SharedDBPointer {
     public func triggerKeyPathObservers(tableName: String,
                                         rowId: Int64,
                                         keyPath: String?) {
-        observationRegistrar[tableName]?[rowId]?.forEach { ref in
+        // Copy observers under lock, then iterate outside lock to avoid holding lock during callbacks
+        let observers = observerLock.withLock {
+            observationRegistrar[tableName]?[rowId] ?? []
+        }
+
+        observers.forEach { ref in
             guard let model = ref.value else {
                 return
             }
-            
+
             model._objectWillChange_send()
             model._triggerObservers_send(keyPath: keyPath!)
         }
-        
     }
     
     /// When the last `SharedPointer` instance goes away, deinit runs
     deinit {
+        if let keyUserData {
+            Unmanaged<IsolationKeyBox>.fromOpaque(keyUserData).release()
+        }
+        keyUserData = nil
+        keyBox = nil
         // If you only stored a single T:
         sqlite3_close(db)
+        sqlite3_close(readDb)
         Lattice.latticeIsolationRegistrar.removeValue(forKey: IsolationKey(isolation: isolation,
                                                                            configuration: configuration))
     }
@@ -336,3 +390,4 @@ extension Array {
 //        self.
 //    }
 //}
+

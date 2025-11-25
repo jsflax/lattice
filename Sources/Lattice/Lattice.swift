@@ -21,6 +21,13 @@ extension Actor {
 
 @preconcurrency import Combine
 
+public struct _UncheckedSendable<T>: @unchecked Sendable {
+    public let value: T
+    
+    public init(_ value: T) {
+        self.value = value
+    }
+}
 //class LatticeSubscriber<T>: Subscription {
 //    func request(_ demand: Subscribers.Demand) {
 //
@@ -176,6 +183,10 @@ public struct Lattice {
     private var ptr: SharedPointer<Lattice>?
     nonisolated(unsafe) static var synchronizers: [URL: Synchronizer] = [:]
     
+    public struct SyncConfiguration {
+        
+    }
+    
     public struct Configuration: Sendable, Equatable, Hashable {
         public var isStoredInMemoryOnly: Bool = false
         public var fileURL: URL
@@ -183,7 +194,7 @@ public struct Lattice {
         public var wssEndpoint: URL?
         
         public init(isStoredInMemoryOnly: Bool = false, fileURL: URL? = nil,
-                      authorizationToken: String? = nil, wssEndpoint: URL? = nil) {
+                    authorizationToken: String? = nil, wssEndpoint: URL? = nil) {
             self.isStoredInMemoryOnly = isStoredInMemoryOnly
             let fileURL = if isStoredInMemoryOnly {
                 URL(fileURLWithPath: ":memory:")
@@ -213,7 +224,7 @@ public struct Lattice {
     public var configuration: Configuration {
         dbPtr.configuration
     }
-    var modelTypes: [any Model.Type] {
+    public var modelTypes: [any Model.Type] {
         self.dbPtr.modelTypes
     }
     private var synchronizer: Synchronizer?
@@ -300,7 +311,7 @@ public struct Lattice {
                     changedFieldsNames TEXT,
                     isFromRemote INTEGER DEFAULT 0,
                     isSynchronized INTEGER DEFAULT 0,
-                    timestamp INTEGER DEFAULT (CAST(ROUND((julianday('now') - 2440587.5)*86400000) As INTEGER))
+                    timestamp REAL DEFAULT (unixepoch('subsec'))
                 );
                 """
                 var statement: OpaquePointer?
@@ -311,7 +322,7 @@ public struct Lattice {
                         logger.debug("Could not create Audit table.")
                     }
                 } else {
-                    logger.debug("CREATE TABLE statement could not be prepared.")
+                    logger.error("CREATE TABLE statement could not be prepared.")
                 }
                 sqlite3_finalize(statement)
                 executeStatement("""
@@ -323,16 +334,23 @@ public struct Lattice {
                 executeStatement("""
                 INSERT OR IGNORE INTO _SyncControl(id, disabled) VALUES(1, 0);
                 """)
-                for type in schema {
+
+                // Discover all linked Model types recursively
+                let completeSchema = discoverAllTypes(from: schema)
+
+                // Update modelTypes in SharedDBPointer to include all discovered types
+                dbPtr.modelTypes = completeSchema
+
+                for type in completeSchema {
                     createTable(type)
                 }
             }
             sqlite3_busy_timeout(db, 5000)
             // A simple global we flip on/off around your sync pass.
             // Register the function:
-            
+
             if !isSynchronizing, Self.synchronizers[configuration.fileURL] == nil {
-                Self.synchronizers[configuration.fileURL] = Synchronizer(modelTypes: modelTypes, configuration: configuration)
+                Self.synchronizers[configuration.fileURL] = Synchronizer(modelTypes: UncheckedSendable(modelTypes), configuration: configuration)
             }
         }
     }
@@ -424,7 +442,7 @@ public struct Lattice {
                 OLD.globalId,
                 json_object(
                     \(primitiveProperties.map {
-                        "'\($0.0)', CASE WHEN OLD.\($0.0) IS NOT NEW.\($0.0) THEN NEW.\($0.0) ELSE NULL END"
+                        "'\($0.0)', json_object('kind', \($0.1.anyPropertyKind.rawValue), 'value', CASE WHEN OLD.\($0.0) IS NOT NEW.\($0.0) THEN NEW.\($0.0) ELSE NULL END)"
                     }.joined(separator: ","))
                 ),
                 json_array(
@@ -432,7 +450,7 @@ public struct Lattice {
                         "CASE WHEN OLD.\($0.0) IS NOT NEW.\($0.0) THEN '\($0.0)' ELSE NULL END"
                     }.joined(separator: ","))
                 ),
-                ((CAST(ROUND((julianday('now') - 2440587.5)*86400000) As INTEGER)))
+                unixepoch('subsec')
             );
         END;    
         """
@@ -460,7 +478,7 @@ public struct Lattice {
             NEW.globalId,
             json_object(
                 \(primitiveProperties.map {
-            "'\($0.0)', NEW.\($0.0)"
+            "'\($0.0)', json_object('kind', \($0.1.anyPropertyKind.rawValue), 'value', NEW.\($0.0))"
                 }.joined(separator: ","))
             ),
             json_array(
@@ -468,7 +486,7 @@ public struct Lattice {
             "'\($0.0)'"
                 }.joined(separator: ","))
             ),
-            ((CAST(ROUND((julianday('now') - 2440587.5)*86400000) As INTEGER)))
+            unixepoch('subsec')
           );
         END;
         """)
@@ -485,7 +503,7 @@ public struct Lattice {
             OLD.globalId,
             json_object(
                 \(primitiveProperties.map {
-            "'\($0.0)', OLD.\($0.0)"
+            "'\($0.0)', json_object('kind', \($0.1.anyPropertyKind.rawValue), 'value', OLD.\($0.0))"
                 }.joined(separator: ","))
             ),
             json_array(
@@ -493,7 +511,7 @@ public struct Lattice {
             "'\($0.0)'"
                 }.joined(separator: ","))
             ),
-           ((CAST(ROUND((julianday('now') - 2440587.5)*86400000) As INTEGER)))
+            unixepoch('subsec')
          );
         END;
         """)
@@ -509,14 +527,72 @@ public struct Lattice {
     }
     
     private func createLinkTable(name: String, lhs: any Model.Type, rhs: any Model.Type) {
+        let linkTableName = "_\(lhs.entityName)_\(rhs.entityName)_\(name)"
+
+        // Create link table with globalId for sync deduplication
         executeStatement("""
-          CREATE TABLE IF NOT EXISTS _\(lhs.entityName)_\(rhs.entityName)_\(name)(
+          CREATE TABLE IF NOT EXISTS \(linkTableName)(
             lhs        INTEGER NOT NULL
               REFERENCES \(lhs.entityName)(id) ON DELETE CASCADE,
             rhs INTEGER NOT NULL
               REFERENCES \(rhs.entityName)(id) ON DELETE CASCADE,
+            globalId TEXT UNIQUE COLLATE NOCASE DEFAULT (
+              lower(hex(randomblob(4)))   || '-' ||
+              lower(hex(randomblob(2)))   || '-' ||
+              '4' || substr(lower(hex(randomblob(2))),2) || '-' ||
+              substr('89AB', 1 + (abs(random()) % 4), 1) ||
+                substr(lower(hex(randomblob(2))),2)     || '-' ||
+              lower(hex(randomblob(6)))
+            ),
             PRIMARY KEY(lhs, rhs)
           );
+        """)
+
+        // Create INSERT trigger for link table
+        // Stores the globalIds of both lhs and rhs so we can look them up on remote
+        executeStatement("""
+        CREATE TRIGGER IF NOT EXISTS Audit\(linkTableName)Insert AFTER INSERT ON \(linkTableName)
+          WHEN ( sync_disabled() = 0 )
+        BEGIN
+          INSERT INTO AuditLog (tableName, operation, rowId, globalRowId, changedFields, changedFieldsNames, timestamp)
+          VALUES (
+            '\(linkTableName)',
+            'INSERT',
+            NEW.lhs,
+            NEW.globalId,
+            json_object(
+                'lhsGlobalId', json_object('kind', 6, 'value', (SELECT globalId FROM \(lhs.entityName) WHERE id = NEW.lhs)),
+                'rhsGlobalId', json_object('kind', 6, 'value', (SELECT globalId FROM \(rhs.entityName) WHERE id = NEW.rhs)),
+                'lhsTable', json_object('kind', 5, 'value', '\(lhs.entityName)'),
+                'rhsTable', json_object('kind', 5, 'value', '\(rhs.entityName)')
+            ),
+            json_array('lhsGlobalId', 'rhsGlobalId', 'lhsTable', 'rhsTable'),
+            unixepoch('subsec')
+          );
+        END;
+        """)
+
+        // Create DELETE trigger for link table
+        executeStatement("""
+        CREATE TRIGGER IF NOT EXISTS Audit\(linkTableName)Delete AFTER DELETE ON \(linkTableName)
+          WHEN ( sync_disabled() = 0 )
+        BEGIN
+          INSERT INTO AuditLog (tableName, operation, rowId, globalRowId, changedFields, changedFieldsNames, timestamp)
+          VALUES (
+            '\(linkTableName)',
+            'DELETE',
+            OLD.lhs,
+            OLD.globalId,
+            json_object(
+                'lhsGlobalId', json_object('kind', 6, 'value', (SELECT globalId FROM \(lhs.entityName) WHERE id = OLD.lhs)),
+                'rhsGlobalId', json_object('kind', 6, 'value', (SELECT globalId FROM \(rhs.entityName) WHERE id = OLD.rhs)),
+                'lhsTable', json_object('kind', 5, 'value', '\(lhs.entityName)'),
+                'rhsTable', json_object('kind', 5, 'value', '\(rhs.entityName)')
+            ),
+            json_array('lhsGlobalId', 'rhsGlobalId', 'lhsTable', 'rhsTable'),
+            unixepoch('subsec')
+          );
+        END;
         """)
     }
     
@@ -569,12 +645,16 @@ public struct Lattice {
         }
         sqlite3_finalize(stmt)
         
-        let primitiveProperties: [(String, any PrimitiveProperty.Type)] = modelType.properties.compactMap {
+        var primitiveProperties: [(String, any PrimitiveProperty.Type)] = modelType.properties.compactMap {
             if let primitiveType = $0.1 as? (any PrimitiveProperty.Type) {
                 return ($0.0, primitiveType)
             }
             return nil
         }
+        primitiveProperties.append(("id", Int64.self))
+        primitiveProperties.append(("globalId", UUID.self))
+        existing["id"] = "BIGINT"
+        existing["globalId"] = "TEXT"
         let linkProperties: [(String, any LinkProperty.Type)] = modelType.properties.compactMap {
             if let primitiveType = $0.1 as? (any LinkProperty.Type) {
                 return ($0.0, primitiveType)
@@ -660,7 +740,41 @@ public struct Lattice {
             executeStatement("DROP TABLE \(tmp);")
         }
     }
-    
+
+    /// Recursively discover all Model types linked from the given schema
+    private func discoverAllTypes(from initialSchema: [any Model.Type]) -> [any Model.Type] {
+        var discoveredTypes = Set<ObjectIdentifier>()
+        var typesToProcess = initialSchema
+        var completeSchema: [any Model.Type] = []
+
+        while !typesToProcess.isEmpty {
+            let currentType = typesToProcess.removeFirst()
+            let typeId = ObjectIdentifier(currentType)
+
+            // Skip if already processed
+            guard !discoveredTypes.contains(typeId) else { continue }
+
+            // Mark as discovered and add to result
+            discoveredTypes.insert(typeId)
+            completeSchema.append(currentType)
+
+            // Find all LinkProperty types in this Model's properties
+            for (_, propertyType) in currentType.properties {
+                if let linkPropertyType = propertyType as? any LinkProperty.Type {
+                    let linkedModelType = linkPropertyType.modelType
+                    let linkedTypeId = ObjectIdentifier(linkedModelType)
+
+                    // Add to processing queue if not already discovered
+                    if !discoveredTypes.contains(linkedTypeId) {
+                        typesToProcess.append(linkedModelType)
+                    }
+                }
+            }
+        }
+
+        return completeSchema
+    }
+
     private func createTable(_ modelType: any Model.Type) {
         if tableExists(modelType.entityName) {
             migrateTable(modelType)
@@ -686,6 +800,8 @@ public struct Lattice {
     
     // MARK: Add
     public func add<T: Model>(_ object: T) {
+        precondition(object.primaryKey == nil, "Cannot add object that was already inserted into the database. Object already has primaryKey: \(object.primaryKey!)")
+
         let primitiveProperties = T.properties.compactMap {
             if let primitiveType = $0.1 as? (any PrimitiveProperty.Type) {
                 return ($0.0, primitiveType)
@@ -709,8 +825,8 @@ public struct Lattice {
             sqlite3_finalize(insertStatement)
         }
         if sqlite3_prepare_v2(db, insertStatementString, -1, &insertStatement, nil) == SQLITE_OK {
-            object._assign(lattice: self)
             object._encode(statement: insertStatement)
+            object._assign(lattice: self)
             if sqlite3_step(insertStatement) == SQLITE_DONE {
                 // Retrieve the last inserted rowid.
                 let id = sqlite3_last_insert_rowid(db)
@@ -729,7 +845,8 @@ public struct Lattice {
                 //                fatalError()
             }
         } else {
-            logger.debug("INSERT statement could not be prepared.")
+            logger.error("INSERT statement could not be prepared.: \(readError() ?? "<unknown_error>")")
+            preconditionFailure("INSERT statement could not be prepared. Check the logs for more information.")
         }
     }
     
@@ -799,15 +916,17 @@ public struct Lattice {
         
         // 3) Prepare once
         var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             let err = String(cString: sqlite3_errmsg(db))
             logger.debug("🔴 failed to prepare bulk‐insert: \(err)")
             return
         }
-        defer { sqlite3_finalize(stmt) }
         
         // 4) Loop and insert each element
         for element in newElements {
+            precondition(element.primaryKey == nil, "Cannot add object that was already inserted into the database. Object already has primaryKey: \(element.primaryKey!)")
+
             // 4a) Populate bindings
             element._assign(lattice: self)
             element._encode(statement: stmt)
@@ -856,6 +975,40 @@ public struct Lattice {
         sqlite3_finalize(updateStatement)
     }
     
+    internal func newObject<T: Model>(_ objectType: T.Type, primaryKey id: Int64) -> T {
+        if let isolation {
+            return isolation.assumeIsolated { [configuration] isolation in
+                let object = T(isolation: isolation)
+                guard let weakDb = Lattice.latticeIsolationRegistrar[IsolationKey(isolation: isolation, configuration: configuration)], let dbPtr = weakDb.db else {
+                    fatalError()
+                }
+                object._assign(lattice: Lattice(dbPtr))
+                object.primaryKey = id
+                
+                dbPtr.insertModelObserver(tableName: T.entityName, primaryKey: id, object.weakCapture(isolation: isolation))
+                return _UncheckedSendable(object)
+            }.value
+        } else {
+            let object = T(isolation: #isolation)
+            object._assign(lattice: self)
+            object.primaryKey = id
+            
+//            dbPtr.insertModelObserver(tableName: T.entityName, primaryKey: id, object.weakCapture(isolation: isolation))
+            return object
+        }
+    }
+    
+    func beginObserving<T: Model>(_ object: T) {
+        object.primaryKey.map {
+            dbPtr.insertModelObserver(tableName: T.entityName, primaryKey: $0, object.weakCapture(isolation: isolation))
+        }
+    }
+    func finishObserving<T: Model>(_ object: T) {
+        object.primaryKey.map {
+            dbPtr.removeModelObserver(tableName: T.entityName, primaryKey: $0)
+        }
+    }
+    
     public func object<T>(_ type: T.Type = T.self, primaryKey: Int64) -> T? where T: Model {
         let queryStatementString = "SELECT id FROM \(T.entityName) WHERE id = ?;"
         var queryStatement: OpaquePointer?
@@ -868,11 +1021,7 @@ public struct Lattice {
                 // Extract id, name, and age from the row.
                 let id = sqlite3_column_int64(queryStatement, 0)
                 //                logger.debug( sqlite3_column_int(queryStatement, 2))
-                let object = T(isolation: #isolation) // Person(id: personId, name: name, age: age)
-                object._assign(lattice: self)
-                object.primaryKey = id
-                dbPtr.insertModelObserver(tableName: T.entityName, primaryKey: id, object.weakCapture(isolation: isolation))
-                return object
+                return newObject(T.self, primaryKey: id)
             }
         } else {
             logger.debug("SELECT statement could not be prepared.")
@@ -892,12 +1041,7 @@ public struct Lattice {
             if sqlite3_step(queryStatement) == SQLITE_ROW {
                 // Extract id, name, and age from the row.
                 let id = sqlite3_column_int64(queryStatement, 0)
-                //                logger.debug( sqlite3_column_int(queryStatement, 2))
-                let object = T(isolation: #isolation) // Person(id: personId, name: name, age: age)
-                object._assign(lattice: self)
-                object.primaryKey = id
-                dbPtr.insertModelObserver(tableName: T.entityName, primaryKey: id, object.weakCapture(isolation: isolation))
-                return object
+                return newObject(T.self, primaryKey: id)
             }
         } else {
             logger.debug("SELECT statement could not be prepared.")
@@ -1092,7 +1236,7 @@ public struct Lattice {
                 case .insert:
                     if let `where` {
                         if let row = Results<AuditLog>(self).where({
-                            $0.rowId == rowId && `where`(Query<T>()).convertKeyPathsToEmbedded(rootPath: "changedFields") && $0.operation == .insert
+                            $0.rowId == rowId && `where`(Query<T>()).convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: true) && $0.operation == .insert
                         }).first {
                             block(.insert(rowId))
                         }
@@ -1104,7 +1248,7 @@ public struct Lattice {
                 case .delete:
                     if let `where` {
                         if let row = Results<AuditLog>(self).where({
-                            $0.rowId == rowId && `where`(Query<T>()).convertKeyPathsToEmbedded(rootPath: "changedFields") && $0.operation == .delete
+                            $0.rowId == rowId && `where`(Query<T>()).convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: true) && $0.operation == .delete
                         }).first {
                             block(.delete(row.rowId))
                         }
@@ -1128,37 +1272,17 @@ public struct Lattice {
         return nil
     }
     
-    public func beginTransaction() {
-        // Start the transaction.
-        if sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, nil) != SQLITE_OK {
-            logger.debug("Error beginning transaction")
-            if let errorMessage = sqlite3_errmsg(db) {
-                let errorString = String(cString: errorMessage)
-                logger.debug("Error during sqlite3_step: \(errorString)")
-            } else {
-                logger.debug("Unknown error during sqlite3_step")
-            }
-            fatalError()
+    private func checkedLeakedStatements() {
+        var pStmt: OpaquePointer?
+        while ((pStmt = sqlite3_next_stmt(db, pStmt)) != nil) {
+            let sql = sqlite3_sql(pStmt)
+            print("Leaked statement: \(pStmt) — \(String(cString: sql!))")
         }
     }
     
-    public func commitTransaction() {
-        if sqlite3_exec(db, "COMMIT", nil, nil, nil) != SQLITE_OK {
-            if let errorMessage = sqlite3_errmsg(db) {
-                let errorString = String(cString: errorMessage)
-                logger.debug("Error during sqlite3_step: \(errorString)")
-            } else {
-                logger.debug("Unknown error during sqlite3_step")
-            }
-            fatalError()
-        } else {
-            logger.debug("Transaction committed successfully")
-        }
-    }
-    
-    public func transaction<T>(isolation: isolated (any Actor)? = #isolation,
-                               _ block: () throws -> T) rethrows -> T {
+    public func beginTransaction(isolation: isolated (any Actor)? = #isolation) {
         // Start the transaction.
+
         var rc = sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil)
         while rc != SQLITE_OK {
             if rc == SQLITE_BUSY {
@@ -1170,10 +1294,34 @@ public struct Lattice {
             } else if rc != SQLITE_DONE {
                 let err = String(cString: sqlite3_errmsg(db))
                 logger.debug("❌ SQLite error: \(err)")
-                fatalError()
+                if sqlite3_get_autocommit(db) == 1 {
+                    rc = sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil)
+                } else {
+                    break
+                }
             }
         }
         
+    }
+    
+    public func commitTransaction(isolation: isolated (any Actor)? = #isolation) {
+        if sqlite3_exec(db, "COMMIT", nil, nil, nil) != SQLITE_OK {
+            if let errorMessage = sqlite3_errmsg(db) {
+                let errorString = String(cString: errorMessage)
+                logger.debug("Error during sqlite3_step: \(errorString)")
+            } else {
+                logger.debug("Unknown error during sqlite3_step")
+            }
+//            fatalError()
+        } else {
+            logger.debug("Transaction committed successfully")
+        }
+    }
+    
+    public func transaction<T>(isolation: isolated (any Actor)? = #isolation,
+                               _ block: () throws -> T) rethrows -> T {
+        // Start the transaction.
+        beginTransaction()
         do {
             let value = try block()
             // If all statements succeed, commit the transaction.
@@ -1247,44 +1395,14 @@ public struct Lattice {
     }
 }
 
-
-import SwiftUI
-
-@Model final class Person: @unchecked Sendable {
-    var name: String
-    var age: Int
-}
-
-
-struct TestView: View {
-    @Bindable var person: Person
-    
-    var body: some View {
-        VStack {
-            Text("Age: \(person.age)")
-        }.padding()
-        Button("Increment Age") {
-            person.age += 1
-        }
-    }
-}
-
-#Preview {
-    let lattice = try! Lattice(Person.self)
-    let person = {
-        var person = Person()
-        lattice.add(person)
-        Task {
-            while true {
-                try await Task.sleep(for: .seconds(2))
-                person.age += 1
-            }
-        }
-        return person
-    }()
-    TestView(person: lattice.object(primaryKey: person.primaryKey!)!)
-}
-
-struct IsolatedModel {
-    
-}
+//@dynamicCallable public struct BlockIsolated {
+//    private let block: @isolated(any) () -> Void
+//    public init(isolation: isolated (any Actor)? = #isolation,
+//                _ block: @escaping @isolated(any) () -> Void) {
+//        self.block = block
+//    }
+//    
+//    public func dynamicallyCall(withArguments arguments: [Any]) {
+//        block()
+//    }
+//}

@@ -6,7 +6,7 @@ public protocol SendableReference<NonSendable>: Sendable {
     func resolve(on lattice: Lattice) -> NonSendable
 }
 
-public struct ModelThreadSafeReference<T: Model>: SendableReference {
+public struct ModelThreadSafeReference<T: Model>: SendableReference, Equatable {
     private let key: Int64?
     public init(_ model: T) {
         self.key = model.primaryKey
@@ -14,14 +14,7 @@ public struct ModelThreadSafeReference<T: Model>: SendableReference {
     
     public func resolve(on lattice: Lattice) -> T? {
         if let key {
-            let object = T(isolation: #isolation)
-            object._assign(lattice: lattice)
-            object.primaryKey = key
-            lattice.dbPtr.insertModelObserver(
-                tableName: T.entityName,
-                primaryKey: key,
-                object.weakCapture(isolation: #isolation))
-            return object
+            return lattice.newObject(T.self, primaryKey: key)
         }
         return nil
     }
@@ -39,6 +32,10 @@ public struct ModelThreadSafeReference<T: Model>: SendableReference {
 //        }
 //        return nil
 //    }
+    
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.key == rhs.key
+    }
 }
 
 extension Model {

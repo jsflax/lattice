@@ -21,20 +21,30 @@ extension Array {
     }
 }
 
+struct UncheckedSendable<T>: @unchecked Sendable {
+    let value: T
+    
+    init(_ value: T) {
+        self.value = value
+    }
+}
+
 actor Synchronizer: NSObject, URLSessionWebSocketDelegate {
     private var webSocketTask: URLSessionWebSocketTask!
     private var lattice: Lattice!
     private var isConnected = false
     private let logger = Logger.sync
     
-    init?(modelTypes: [any Model.Type], configuration: Lattice.Configuration) {
+    init?(modelTypes: UncheckedSendable<[any Model.Type]>, configuration: Lattice.Configuration) {
         super.init()
         guard let url = configuration.wssEndpoint,
               let authorizationToken = configuration.authorizationToken else {
             return nil
         }
-        Task {
-            await _isolatedInit(modelTypes: modelTypes, configuration: configuration, url: url,
+        Task { [modelTypes] in
+            await _isolatedInit(modelTypes: modelTypes.value,
+                                configuration: configuration,
+                                url: url,
                                 authorizationToken: authorizationToken)
         }
     }
@@ -58,6 +68,9 @@ actor Synchronizer: NSObject, URLSessionWebSocketDelegate {
     
     private func set(isConnected: Bool) {
         self.isConnected = isConnected
+        if isConnected {
+            reconnectAttempts = 0
+        }
     }
     
     nonisolated func urlSession(_ session: URLSession,
@@ -111,17 +124,17 @@ actor Synchronizer: NSObject, URLSessionWebSocketDelegate {
             guard eventsToEncode.count > 0 else {
                 return
             }
-            for events in eventsToEncode.chunked(into: 1000) {
-                let eventData = try! JSONEncoder().encode(ServerSentEvent.auditLog(events))
-                let byteCount = eventData.count
-                // Human‑readable formatting
-                let formatter = ByteCountFormatter()
-                formatter.allowedUnits = [.useBytes, .useKB, .useMB]
-                formatter.countStyle    = .file
-                let humanSize = formatter.string(fromByteCount: Int64(byteCount))
-                
-                self.logger.debug("🧦 Sending \(events.count) (\(humanSize)) events.")
-                Task {
+            Task {
+                for events in eventsToEncode.chunked(into: 1000) {
+                    let eventData = try! JSONEncoder().encode(ServerSentEvent.auditLog(events))
+                    let byteCount = eventData.count
+                    // Human‑readable formatting
+                    let formatter = ByteCountFormatter()
+                    formatter.allowedUnits = [.useBytes, .useKB, .useMB]
+                    formatter.countStyle    = .file
+                    let humanSize = formatter.string(fromByteCount: Int64(byteCount))
+
+                    self.logger.debug("🧦 Sending \(events.count) (\(humanSize)) events.")
                     do {
                         try await self.webSocketTask.send(.data(eventData))
                     } catch {
@@ -158,12 +171,15 @@ actor Synchronizer: NSObject, URLSessionWebSocketDelegate {
         }
     }
     
+    private var reconnectAttempts = 0
+    private let maxReconnectAttempts = 6   // give up after 64 s back-off
+    private let baseDelay: TimeInterval = 1
+    
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
-        self.logger.error("❌ WebSocket Closed with error")
+        // 2^0, 2^1, 2^2, … * baseDelay
+      
         Task {
-            try await Task.sleep(for: .seconds(1))
-            await set(isConnected: false)
-            await reset()
+            try await reconnect()
         }
     }
     
@@ -181,13 +197,24 @@ actor Synchronizer: NSObject, URLSessionWebSocketDelegate {
                                 reason: Data?) {
         logger.error("❌ WebSocket Closed")
         Task {
-            await set(isConnected: false)
-            while await !isConnected {
-                await reset()
-                if await !isConnected {
-                    try await Task.sleep(for: .seconds(5))
-                }
-            }
+            try await reconnect()
+        }
+    }
+    
+    private func reconnect() async throws {
+        set(isConnected: false)
+        
+        let seconds = pow(2.0, Double(reconnectAttempts)) * baseDelay
+        logger.info("⏳ Reconnecting in \(seconds)s (attempt \(self.reconnectAttempts + 1))")
+        reconnectAttempts += 1
+        try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        
+        reset()
+        
+        // if you have an `isConnected` flag you can break out early:
+        if isConnected {
+            logger.info("✅ Reconnected on attempt \(self.reconnectAttempts)")
+            return
         }
     }
     
@@ -243,20 +270,14 @@ extension Lattice {
                 let primaryKey = lastSentEvent.primaryKey
                 
                 var events: [AuditLog] = []
-                for event in objects(AuditLog.self).where({ [lastPrimaryKey = primaryKey ?? 0] in
+                return objects(AuditLog.self).where({ [lastPrimaryKey = primaryKey ?? 0] in
                     $0.primaryKey > lastPrimaryKey
-                }).sortedBy(.init(\.primaryKey, order: .forward)) {
-                    events.append(event)
-                }
+                }).sortedBy(.init(\.primaryKey, order: .forward)).snapshot()
             }
             return events
         } else {
             // if they have not synced before, start bringing them up to date
-            var events = [AuditLog]()
-            for event in objects(AuditLog.self).sortedBy(.init(\.primaryKey, order: .forward)) {
-                events.append(event)
-            }
-            return events
+            return objects(AuditLog.self).sortedBy(.init(\.primaryKey, order: .forward)).snapshot()
         }
     }
 }
