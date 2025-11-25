@@ -42,15 +42,16 @@ import Vapor
 }
 import NIOCore
 
-@Suite("Sync Tests", .serialized) class SyncTests: @unchecked Sendable {
+@Suite("Sync Tests")
+class SyncTests: @unchecked Sendable {
     let app: Application
     let syncLatticeURL = FileManager.default.temporaryDirectory
-        .appending(path: "\(String.random(length: 10)).sqlite")
+        .appending(path: "\(String.random(length: 30)).sqlite")
     let lattice1URL = FileManager.default.temporaryDirectory
-        .appending(path: "\(String.random(length: 10)).sqlite")
+        .appending(path: "\(String.random(length: 30)).sqlite")
     let lattice2URL = FileManager.default.temporaryDirectory
-        .appending(path: "\(String.random(length: 10)).sqlite")
-    let port = isPortOpen(port: 1337) ? 1337 : 1338
+        .appending(path: "\(String.random(length: 30)).sqlite")
+    var port = isPortOpen(port: 1337) ? 1337 : 1338
     let sem = DispatchSemaphore(value: 0)
     var localLattice1: Lattice!
     var localLattice2: Lattice!
@@ -158,14 +159,20 @@ import NIOCore
         app.http.server.configuration.port = port
         
         try await launchServer()
-        do {
-            try await app.startup()
-        } catch let error as IOError {
-            if error.errnoCode == 48 {
-                app.http.server.configuration.port += 1
+        var retries = 0
+        while retries < 5 {
+            do {
                 try await app.startup()
-            } else {
-                throw error
+                break  // Successfully started, exit loop
+            } catch let error as IOError {
+                if error.errnoCode == 48 {
+                    app.http.server.configuration.port += 1
+                    port = app.http.server.configuration.port
+                }
+                retries += 1
+                if retries == 5 {
+                    throw error
+                }
             }
         }
     }
@@ -175,62 +182,80 @@ import NIOCore
         let lattice = localLattice1!
         let lattice2 = localLattice2!
         
-        var task = Task { @MainActor in
-            let lattice2 = try Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
-            for await changes in lattice2.changeStream {
-                if changes.contains(where: { $0.operation == .insert }) {
-                    break
+        var task: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            task = Task { @MainActor in
+                let lattice2 = try Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    if changes.contains(where: { $0.operation == .insert }) {
+                        break
+                    }
                 }
             }
         }
         let object = SimpleSyncObject(value: 42, floatValue: 42.42)
-        let taskForSynchronization = Task { @MainActor in
-            let lattice1 = try Lattice(SimpleSyncObject.self, configuration: localLattice1Configuration)
-            for await changes in lattice1.changeStream {
-                if changes.allSatisfy({ $0.isSynchronized }) {
-                    break
+        var taskForSynchronization: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            taskForSynchronization = Task { @MainActor in
+                let lattice1 = try Lattice(SimpleSyncObject.self, configuration: localLattice1Configuration)
+                let changeStream = lattice1.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    if changes.allSatisfy({ $0.isSynchronized }) {
+                        break
+                    }
                 }
             }
         }
         lattice.add(object)
         
         
-        try await taskForSynchronization.value
-        try await task.value
-        
+        try await taskForSynchronization?.value
+        try await task?.value
+
         #expect(lattice.objects(AuditLog.self).first?.isSynchronized == true)
-        
+
         #expect(lattice2.objects(SimpleSyncObject.self).first?.value == 42)
         #expect(lattice2.objects(SimpleSyncObject.self).first?.floatValue == 42.42)
-        
-        task = Task { @MainActor in
-            let lattice2 = try Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
-            var changeCount = 0
-            for await _ in lattice2.changeStream {
-                changeCount += 1
-                if changeCount == 2 {
-                    break
+
+        await withCheckedContinuation { continuation in
+            task = Task { @MainActor in
+                let lattice2 = try Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                var changeCount = 0
+                for await _ in changeStream {
+                    changeCount += 1
+                    if changeCount == 2 {
+                        break
+                    }
                 }
             }
         }
-        
+
         object.value = 84
         object.floatValue = 84.84
-        try await task.value
+        try await task?.value
         #expect(lattice2.objects(SimpleSyncObject.self).first?.value == 84)
         #expect(lattice2.objects(SimpleSyncObject.self).first?.floatValue == 84.84)
-        
-        task = Task { @MainActor in
-            let lattice2 = try Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
-            for await changes in lattice2.changeStream {
-                if changes.contains(where: { $0.operation == .delete }) {
-                    break
+
+        await withCheckedContinuation { continuation in
+            task = Task { @MainActor in
+                let lattice2 = try Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    if changes.contains(where: { $0.operation == .delete }) {
+                        break
+                    }
                 }
             }
         }
-        
+
         _ = lattice.delete(object)
-        try await task.value
+        try await task?.value
         #expect(lattice2.objects(SimpleSyncObject.self).count == 0)
     }
     
@@ -238,15 +263,20 @@ import NIOCore
     @Test(.timeLimit(.minutes(1))) func test_BigSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
-        
-        let task = Task { @MainActor in
-            let lattice2 = try Lattice(SequenceSyncObject.self, configuration: localLattice2Configuration)
-            var changeCount = 0
-            let cs = lattice2.changeStream
-            for await changes in cs {
-                changeCount += changes.count(where: { $0.tableName == "SequenceSyncObject" && $0.operation == .insert }) // why? updating isSynchronized will also update this block
-                if changeCount == 100_000 {
-                    break
+
+        var task: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            task = Task { @MainActor in
+                let lattice2 = try Lattice(SequenceSyncObject.self, configuration: localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                var changeCount = 0
+                for await changes in changeStream {
+                    changeCount += changes.count(where: { $0.tableName == "SequenceSyncObject" && $0.operation == .insert }) // why? updating isSynchronized will also update this block
+                    print("Change count: \(changeCount)")
+                    if changeCount == 100_000 {
+                        break
+                    }
                 }
             }
         }
@@ -254,7 +284,7 @@ import NIOCore
         lattice.transaction {
             lattice.add(contentsOf: objects)
         }
-        try await task.value
+        try await task?.value
         
         #expect(lattice2.objects(SequenceSyncObject.self).count == 100_000)
         #expect(lattice2.objects(AuditLog.self).count == 100_000)
@@ -275,6 +305,40 @@ import NIOCore
     @Test(.timeLimit(.minutes(1))) func test_ListRelationshipSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
+
+        // Set up changeStreams BEFORE adding data to avoid race conditions
+        var task: Task<Void, any Error>?
+        var taskForSynchronization: Task<Void, any Error>?
+
+        await withCheckedContinuation { continuation in
+            task = Task { @MainActor in
+                let lattice2 = try Lattice(SyncParent.self, SyncChild.self, configuration: localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                var insertCount = 0
+                for await changes in changeStream {
+                    insertCount += changes.count(where: { $0.operation == .insert })
+                    // We need at least 3 inserts: 1 parent + 2 children
+                    // If links are synced, we'd also see link table changes (5 total)
+                    if insertCount >= 3 {
+                        break
+                    }
+                }
+            }
+        }
+
+        await withCheckedContinuation { continuation in
+            taskForSynchronization = Task { @MainActor in
+                let lattice1 = try Lattice(SyncParent.self, SyncChild.self, configuration: localLattice1Configuration)
+                let changeStream = lattice1.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    if changes.allSatisfy({ $0.isSynchronized }) {
+                        break
+                    }
+                }
+            }
+        }
 
         // Create parent with children on lattice1
         let parent = SyncParent(name: "Parent")
@@ -303,33 +367,12 @@ import NIOCore
         // THIS IS THE KEY TEST: Link table operations should be in the audit log
         #expect(linkTableLogs.count >= 2, "Link table INSERT operations should be in AuditLog for sync to work. Found: \(linkTableLogs.count)")
 
-        // Now test the full sync flow
-        let task = Task { @MainActor in
-            let lattice2 = try Lattice(SyncParent.self, SyncChild.self, configuration: localLattice2Configuration)
-            var insertCount = 0
-            for await changes in lattice2.changeStream {
-                insertCount += changes.count(where: { $0.operation == .insert })
-                // We need at least 3 inserts: 1 parent + 2 children
-                // If links are synced, we'd also see link table changes (5 total)
-                if insertCount >= 3 {
-                    break
-                }
-            }
-        }
-
-        // Also wait for lattice1 to confirm sync
-        let taskForSynchronization = Task { @MainActor in
-            let lattice1 = try Lattice(SyncParent.self, SyncChild.self, configuration: localLattice1Configuration)
-            for await changes in lattice1.changeStream {
-                if changes.allSatisfy({ $0.isSynchronized }) {
-                    break
-                }
-            }
-        }
-
-        try await taskForSynchronization.value
-        try await task.value
-
+        // Wait for sync to complete
+        print("Waiting for sync to complete")
+        try await taskForSynchronization?.value
+        print("Waiting for next task to complete")
+        try await task?.value
+        print("Sync complete")
         // Verify lattice2 received the objects
         #expect(lattice2.objects(SyncParent.self).count == 1, "Parent should sync")
         #expect(lattice2.objects(SyncChild.self).count == 2, "Children should sync")

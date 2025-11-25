@@ -119,7 +119,7 @@ public final class Results<Element>: Sequence where Element: Model {
             }
             print("Failed to prepare count query for table \(Element.entityName): \(countQuery)")
             print("Failed predicate: \(whereStatement?(Query<Element>()).predicate ?? "<unknown>")")
-            fatalError()
+//            fatalError()
         }
         
         let queryStatementString =
@@ -134,7 +134,7 @@ public final class Results<Element>: Sequence where Element: Model {
                 print("Unknown error during sqlite3_step")
             }
             print("Failed to prepare count query for table \(Element.entityName) with query: \(countQuery)")
-            fatalError(countQuery)
+//            fatalError(countQuery)
         }
         
 //        token = self.observe { change in

@@ -4,17 +4,10 @@ import SwiftUI
 import Lattice
 import Observation
 
-@Suite("Results Tests") class ResultsTests {
-    deinit {
-        try? Lattice.delete(for: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "lattice.sqlite")))
-    }
-    
-    init() throws {
-        Lattice.defaultConfiguration.fileURL = FileManager.default.temporaryDirectory.appending(path: "lattice.sqlite")
-    }
-    
+@Suite("Results Tests")
+class ResultsTests: BaseTest {
     @Test func testQuery_In() async throws {
-        let lattice = try Lattice(for: [Person.self, Dog.self])
+        let lattice = try testLattice(Person.self, Dog.self)
         let person = Person()
         person.age = 10
         lattice.add(person)
@@ -32,7 +25,7 @@ import Observation
     }
     
     @Test func testCursor() async throws {
-        let lattice = try Lattice(for: [SequenceSyncObject.self])
+        let lattice = try testLattice(SequenceSyncObject.self)
         let objects = (0..<1_000_000).map { _ in SequenceSyncObject() }
         lattice.transaction {
             lattice.add(contentsOf: objects)
@@ -58,7 +51,7 @@ import Observation
     }
     
     @Test func test_WriteWhileIterating() async throws {
-        let lattice = try Lattice(for: [SequenceSyncObject.self])
+        let lattice = try testLattice(SequenceSyncObject.self)
         let objects = (0..<1000).map { _ in SequenceSyncObject() }
         lattice.transaction {
             lattice.add(contentsOf: objects)

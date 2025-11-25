@@ -171,6 +171,8 @@ public final class SharedDBPointer: @unchecked Sendable {
         }
     }
 
+    package var publishEventTask: Task<Void, Never>?
+    
     func flushChanges() {
         lock.withLock {
             guard !changeBuffer.isEmpty else {
@@ -179,7 +181,9 @@ public final class SharedDBPointer: @unchecked Sendable {
             let changeBuffer = changeBuffer
             self.changeBuffer.removeAll()
             let sendableEvents = changeBuffer.map(\.sendableReference)
-            Task { [configuration] in
+            let lastTask = publishEventTask
+            publishEventTask = Task { [configuration] in
+                await lastTask?.value
                 await Self.publishEvents(sendableEvents, for: configuration)
             }
         }
@@ -188,17 +192,41 @@ public final class SharedDBPointer: @unchecked Sendable {
     static func publishEvents(_ events: [any SendableReference<AuditLog?>],
                               for configuration: Lattice.Configuration) async {
         let isolatedLattices = Lattice.latticeIsolationRegistrar.filter({ $0.key.configuration == configuration })
-        for (isolationKey, dbRef) in isolatedLattices {
-            Task {
-                if let isolation = dbRef.db?.isolation {
-                    await isolation.invoke { _ in
+        await withDiscardingTaskGroup { group in
+            for (isolationKey, dbRef) in isolatedLattices {
+                group.addTask {
+                    if let isolation = dbRef.db?.isolation {
+                        await isolation.invoke { _ in
+                            guard let db = dbRef.db else {
+                                Lattice.latticeIsolationRegistrar.removeValue(forKey: isolationKey)
+                                return
+                            }
+                            let lattice = Lattice(db)
+                            var resolvedEvents: [AuditLog] = []
+                            
+                            for event in events {
+                                event.resolve(on: lattice).map {
+                                    resolvedEvents.append($0)
+                                }
+                            }
+                            db.tableObservationRegistrar["AuditLog"]?.forEach { observer in
+                                observer.value(resolvedEvents)
+                            }
+                            for auditLogEntry in resolvedEvents {
+                                db.triggerTableObservers(tableName: auditLogEntry.tableName, audit: [auditLogEntry])
+                                db.triggerKeyPathObservers(tableName: auditLogEntry.tableName,
+                                                           rowId: auditLogEntry.rowId,
+                                                           keyPath: auditLogEntry.changedFieldsNames?.compactMap({ $0 }).first!)
+                            }
+                        }
+                    } else {
                         guard let db = dbRef.db else {
                             Lattice.latticeIsolationRegistrar.removeValue(forKey: isolationKey)
                             return
                         }
                         let lattice = Lattice(db)
                         var resolvedEvents: [AuditLog] = []
-
+                        
                         for event in events {
                             event.resolve(on: lattice).map {
                                 resolvedEvents.append($0)
@@ -213,28 +241,6 @@ public final class SharedDBPointer: @unchecked Sendable {
                                                        rowId: auditLogEntry.rowId,
                                                        keyPath: auditLogEntry.changedFieldsNames?.compactMap({ $0 }).first!)
                         }
-                    }
-                } else {
-                    guard let db = dbRef.db else {
-                        Lattice.latticeIsolationRegistrar.removeValue(forKey: isolationKey)
-                        return
-                    }
-                    let lattice = Lattice(db)
-                    var resolvedEvents: [AuditLog] = []
-
-                    for event in events {
-                        event.resolve(on: lattice).map {
-                            resolvedEvents.append($0)
-                        }
-                    }
-                    db.tableObservationRegistrar["AuditLog"]?.forEach { observer in
-                        observer.value(resolvedEvents)
-                    }
-                    for auditLogEntry in resolvedEvents {
-                        db.triggerTableObservers(tableName: auditLogEntry.tableName, audit: [auditLogEntry])
-                        db.triggerKeyPathObservers(tableName: auditLogEntry.tableName,
-                                                   rowId: auditLogEntry.rowId,
-                                                   keyPath: auditLogEntry.changedFieldsNames?.compactMap({ $0 }).first!)
                     }
                 }
             }
@@ -324,6 +330,7 @@ public final class SharedDBPointer: @unchecked Sendable {
     
     /// When the last `SharedPointer` instance goes away, deinit runs
     deinit {
+        print("🗑️ SharedDBPointer deinit for \(configuration.fileURL.lastPathComponent)")
         if let keyUserData {
             Unmanaged<IsolationKeyBox>.fromOpaque(keyUserData).release()
         }

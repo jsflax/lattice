@@ -4,16 +4,17 @@ import SQLite3
 @_exported import Combine
 #endif
 
-public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, Property {
+public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, Property, SendableMetatype {
     init(isolation: isolated (any Actor)?)
     var lattice: Lattice? { get set }
     static var entityName: String { get }
     static var properties: [(String, any Property.Type)] { get }
     var primaryKey: Int64? { get set }
+    var __globalId: UUID { get }  // Unique identifier for sync across clients
     func _assign(lattice: Lattice?)
     func _encode(statement: OpaquePointer?)
     func _didEncode()
-    
+
     var _$observationRegistrar: Observation.ObservationRegistrar { get }
     func _objectWillChange_send()
     func _triggerObservers_send(keyPath: String)

@@ -6,6 +6,42 @@ import SwiftSyntaxBuilder   // gives you the convenient factory methods
 import SwiftSyntaxMacroExpansion
 import SwiftDiagnostics
 
+/// Qualifies type references within a property type string.
+/// For example, if the full type path is "MigrationV1.Person" and the property type is "Person?",
+/// this returns "MigrationV1.Person?" to ensure correct type resolution.
+private func qualifyTypeReferences(propertyType: String, fullTypePath: String, simpleTypeName: String) -> String {
+    // If the full path equals the simple name, no qualification needed
+    guard fullTypePath != simpleTypeName else { return propertyType }
+
+    var result = propertyType
+
+    // Pattern to match the simple type name as a standalone word (not part of another identifier)
+    // We need to be careful to only match the exact type name, not substrings
+    let patterns: [(String, String)] = [
+        // Optional<Person> -> Optional<FullPath>
+        ("Optional<\(simpleTypeName)>", "Optional<\(fullTypePath)>"),
+        // Person? -> FullPath?
+        ("\(simpleTypeName)?", "\(fullTypePath)?"),
+        // Array<Person> -> Array<FullPath>
+        ("Array<\(simpleTypeName)>", "Array<\(fullTypePath)>"),
+        // [Person] -> [FullPath]
+        ("[\(simpleTypeName)]", "[\(fullTypePath)]"),
+        // List<Person> -> List<FullPath>
+        ("List<\(simpleTypeName)>", "List<\(fullTypePath)>"),
+        // Standalone Person (exact match only)
+        (simpleTypeName, fullTypePath),
+    ]
+
+    for (pattern, replacement) in patterns {
+        if result == pattern {
+            result = replacement
+            break
+        }
+    }
+
+    return result
+}
+
 private struct MemberView {
     let name: String
     var mappedName: String?
@@ -544,7 +580,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             private struct __GlobalIdKey: StaticInt32 { static var int32: Int32 { 1 } }
             private var ___globalIdAccessor: Accessor<UUID, __GlobalIdName, __GlobalIdKey> = .init(columnId: 1, name: \"globalId\", unmanagedValue: UUID())
             @Property(name: "globalId")
-            package var __globalId: UUID
+            public var __globalId: UUID
             
             public let _$observationRegistrar = Observation.ObservationRegistrar()
             public var _lastKeyPathUsed: String?
@@ -663,15 +699,8 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         if declaration is EnumDeclSyntax {
             return []
         }
-        let modelProperties = members.filter { !$0.isComputed }
-            .filter { !$0.isTransient && !$0.isRelation }
-            .map { "(\"\($0.name)\", \($0.type).self)" }
-            .joined(separator: ", ")
-        let accessors = members.filter { !$0.isComputed }
-            .filter { !$0.isTransient && !$0.isRelation }
-            .map { "self._\($0.name)Accessor" }
-//            .joined(separator: ", ")
-        var dtoInheritedTypes = inheritedTypes
+        // Get full type path for qualifying self-referential types
+        let fullTypePath = type.trimmedDescription
         let typeName = if let type = type.as(IdentifierTypeSyntax.self) {
             type.name.text
         } else if let type = type.as(MemberTypeSyntax.self) {
@@ -679,6 +708,23 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         } else {
             throw MacroError.message(type.debugDescription)
         }
+
+        // Include globalId first (synthesized by macro), then user-defined properties
+        // Filter out globalId from user properties since it's added explicitly
+        // Qualify type references to handle nested types (e.g., MigrationV1.Person)
+        let userProperties = members.filter { !$0.isComputed }
+            .filter { !$0.isTransient && !$0.isRelation }
+            .filter { $0.name != "globalId" }
+            .map { member in
+                let qualifiedType = qualifyTypeReferences(propertyType: member.type, fullTypePath: fullTypePath, simpleTypeName: typeName)
+                return "(\"\(member.name)\", \(qualifiedType).self)"
+            }
+        let modelProperties = (["(\"globalId\", UUID.self)"] + userProperties).joined(separator: ", ")
+        let accessors = members.filter { !$0.isComputed }
+            .filter { !$0.isTransient && !$0.isRelation }
+            .map { "self._\($0.name)Accessor" }
+//            .joined(separator: ", ")
+        var dtoInheritedTypes = inheritedTypes
         let constraints = members.compactMap {
             $0.constraint
         }.map {
@@ -725,6 +771,9 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                     
                         public func _encode(statement: OpaquePointer?) {
                             var columnId = Int32(1)
+                            // Encode globalId first (matches properties order)
+                            self.___globalIdAccessor.encode(to: statement, with: &columnId)
+                            columnId += 1
                             \(raw: accessors.map({
                                 """
                                 \($0).encode(to: statement, with: &columnId)

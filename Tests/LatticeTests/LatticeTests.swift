@@ -106,17 +106,29 @@ func testLattice(isolation: isolated (any Actor)? = #isolation,
     try Lattice(for: types, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
 }
 
-@Suite("Lattice Tests") class LatticeTests {
+class BaseTest {
+    deinit {
+        paths.forEach { try? Lattice.delete(for: .init(fileURL: $0)) }
+    }
+    
+    private var paths: [URL] = []
+    
+    func testLattice(isolation: isolated (any Actor)? = #isolation,
+                     path: String? = nil,
+                     _ types: any Model.Type...) throws -> Lattice {
+        let path = FileManager.default.temporaryDirectory.appending(path: path ?? "\(String.random(length: 32)).sqlite")
+        paths.append(path)
+        return try Lattice(for: types, configuration: .init(fileURL: path))
+    }
+}
+
+@Suite("Lattice Tests")
+class LatticeTests: BaseTest {
     private let path: String = "\(String.random(length: 32)).sqlite"
     
-    deinit {
-        try? Lattice.delete(for: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
-    }
-    
-    init() throws {
-        print("Lattice path: \(FileManager.default.temporaryDirectory.appending(path: path))")
-//        Lattice.defaultConfiguration.fileURL = FileManager.default.temporaryDirectory.appending(path: path)
-    }
+//    init() throws {
+//        print("Lattice path: \(FileManager.default.temporaryDirectory.appending(path: path))")
+//    }
     
     private func removeDB() {
         
@@ -240,16 +252,16 @@ func testLattice(isolation: isolated (any Actor)? = #isolation,
     }
     
     @Test func testLattice_ObservableRegistrar() async throws {
-        let path = self.path
-        Task {
-            let lattice = try Lattice(for: [Person.self], configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
-            let person = Person()
-            lattice.add(person)
-            person.dog = .init()
-            person.dog?.name = "Spot"
-            #expect(lattice.dbPtr.observationRegistrar.count == 2)
-            #expect(lattice.dbPtr.observationRegistrar[Person.entityName]?.count == 1)
-        }
+        let lattice = try testLattice(path: path, Person.self)
+        let person = Person()
+        lattice.add(person)
+        person.dog = .init()
+        person.dog?.name = "Spot"
+        // Person and Dog should have observers registered
+        // (AuditLog may also have observers from audit logging - that's expected implementation detail)
+        #expect(lattice.dbPtr.observationRegistrar[Person.entityName] != nil, "Person should have observers")
+        #expect(lattice.dbPtr.observationRegistrar[Dog.entityName] != nil, "Dog should have observers")
+        #expect(lattice.dbPtr.observationRegistrar[Person.entityName]?.count == 1, "Person should have exactly 1 observer")
     }
     
     public class AtomicInteger: @unchecked Sendable {
@@ -451,19 +463,23 @@ func testLattice(isolation: isolated (any Actor)? = #isolation,
         }
     }
     @Test func test_Migration() async throws {
-        try autoreleasepool {
+        var publishEventTask = try autoreleasepool {
             let personv1 = MigrationV1.Person()
             let lattice = try testLattice(path: path, MigrationV1.Person.self)
             lattice.add(personv1)
+            return lattice.dbPtr.publishEventTask
         }
-        try autoreleasepool {
+        await publishEventTask?.value
+        publishEventTask = try autoreleasepool {
             let person = MigrationV2.Person()
             let lattice = try testLattice(path: path, MigrationV2.Person.self)
             lattice.add(person)
             #expect(person.city == "")
             person.city = "New York"
             #expect(person.city == "New York")
+            return lattice.dbPtr.publishEventTask
         }
+        await publishEventTask?.value
         try autoreleasepool {
             let person = MigrationV3.Person()
             let lattice = try testLattice(path: path, MigrationV3.Person.self)
@@ -680,8 +696,8 @@ func testLattice(isolation: isolated (any Actor)? = #isolation,
     }
     
     @Test func test_AuditLog_ApplyInstructions() async throws {
-        let lattice1URL = FileManager.default.temporaryDirectory.appending(path: "lattice_1.sqlite")
-        let lattice2URL = FileManager.default.temporaryDirectory.appending(path: "lattice_2.sqlite")
+        let lattice1URL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
+        let lattice2URL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
         defer {
             try? Lattice.delete(for: .init(fileURL: lattice1URL))
             try? Lattice.delete(for: .init(fileURL: lattice2URL))

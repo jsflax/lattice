@@ -12,27 +12,33 @@ private final class ManagedList<Element: Model>: Collection {
     private var countStatement: OpaquePointer?
     private var queryStatement: OpaquePointer?
     private var primaryKey: Int64
+    private var parentGlobalId: String  // Store parent's globalId for link table queries
     private let name: String
-    
+
     var tableName: String {
         let entityName = Element.entityName
         let parentEntityName = type(of: parent).entityName
         return "_\(parentEntityName)_\(entityName)_\(name)"
     }
-    
-    
+
+
     deinit {
         sqlite3_finalize(countStatement)
         sqlite3_finalize(queryStatement)
     }
-    
+
     init(name: String, parent: any Model, lattice: Lattice, primaryKey: Int64) {
         self.lattice = lattice
         self.parent = parent
         self.primaryKey = primaryKey
         self.name = name
-        let countQuery = "SELECT COUNT(*) FROM \(tableName) WHERE lhs = \(primaryKey);"
-        
+
+        // Get parent's globalId for link table queries
+        self.parentGlobalId = parent.__globalId.uuidString.lowercased()
+
+        // Link table uses globalIds (TEXT), so we need to quote the value
+        let countQuery = "SELECT COUNT(*) FROM \(tableName) WHERE lhs = '\(parentGlobalId)';"
+
         if sqlite3_prepare_v2(lattice.db, countQuery, -1, &countStatement, nil) != SQLITE_OK {
             if let errorMessage = sqlite3_errmsg(lattice.db) {
                 let errorString = String(cString: errorMessage)
@@ -43,8 +49,16 @@ private final class ManagedList<Element: Model>: Collection {
             print("Failed to prepare count query for table \(Element.entityName)")
             fatalError()
         }
-        
-        let queryStatementString = "SELECT rhs FROM \(tableName) WHERE lhs = \(primaryKey) LIMIT 1 OFFSET ?;"
+
+        // Query joins link table (by globalId) to child table to get child's local id
+        // Order by link.rowid to preserve insertion order
+        let queryStatementString = """
+            SELECT e.id FROM \(Element.entityName) e
+            INNER JOIN \(tableName) link ON link.rhs = e.globalId
+            WHERE link.lhs = '\(parentGlobalId)'
+            ORDER BY link.rowid
+            LIMIT 1 OFFSET ?;
+        """
         if sqlite3_prepare_v2(lattice.db, queryStatementString, -1, &queryStatement, nil) != SQLITE_OK {
             if let errorMessage = sqlite3_errmsg(lattice.db) {
                 let errorString = String(cString: errorMessage)
@@ -52,49 +66,43 @@ private final class ManagedList<Element: Model>: Collection {
             } else {
                 print("Unknown error during sqlite3_step")
             }
-            print("Failed to prepare count query for table \(Element.entityName) with query: \(countQuery)")
+            print("Failed to prepare query for table \(Element.entityName) with query: \(queryStatementString)")
             fatalError(queryStatementString)
         }
     }
 
     public subscript(index: Int) -> Element {
         get {
-            //        let queryStatementString =
-            //        String(format: "SELECT * FROM \(T.entityName) %@ %@ LIMIT 1 OFFSET \(index);",
-            //               whereStatement == nil ? "" : "WHERE \(whereStatement!(Query<T>()).predicate)",
-            //               sortStatement == nil ? "" : "ORDER BY \(_name(for: sortStatement!.keyPath!)) \(sortStatement!.order == .forward ? "ASC" : "DESC")")
-
             defer { sqlite3_reset(queryStatement) }
-            
-            // Bind the provided id to the statement.
+
+            // Bind the offset
             sqlite3_bind_int(queryStatement, 1, Int32(index))
-            
+
             if sqlite3_step(queryStatement) == SQLITE_ROW {
-                // Extract id, name, and age from the row.
+                // Get the child's local id from the JOIN result
                 let id = Int64(sqlite3_column_int64(queryStatement, 0))
                 return lattice.newObject(Element.self, primaryKey: id)
             } else {
                 print(lattice.readError() ?? "Unknown")
             }
-            
+
             fatalError()
         }
         set {
             if newValue.primaryKey == nil {
                 lattice.add(newValue)
             }
-            let queryStatementString = "UPDATE rhs FROM \(tableName) SET ? WHERE lhs = ?;"
-            var queryStatement: OpaquePointer?
-            defer { sqlite3_finalize(queryStatement) }
-            if sqlite3_prepare_v2(lattice.db, queryStatementString, -1, &queryStatement, nil) == SQLITE_OK {
-                // Bind the provided id to the statement.
-                sqlite3_bind_int64(queryStatement, 1, newValue.primaryKey!)
-                sqlite3_bind_int64(queryStatement, 2, primaryKey)
-                
-                if sqlite3_step(queryStatement) == SQLITE_DONE {
-                    // Extract id, name, and age from the row.
-                } else {
-                    print("No person found with id \(primaryKey).")
+            let rhsGlobalId = newValue.__globalId.uuidString.lowercased()
+            // Update using globalIds
+            let updateSQL = "UPDATE \(tableName) SET rhs = ? WHERE lhs = ?;"
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            if sqlite3_prepare_v2(lattice.db, updateSQL, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (rhsGlobalId as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 2, (parentGlobalId as NSString).utf8String, -1, nil)
+
+                if sqlite3_step(stmt) != SQLITE_DONE {
+                    print("Failed to update link in \(tableName)")
                 }
             }
         }
@@ -167,9 +175,13 @@ private final class ManagedList<Element: Model>: Collection {
     }
     
     public func removeAll() {
-        let queryStatementString = "DELETE FROM \(tableName) WHERE lhs = \(primaryKey);"
-        if sqlite3_prepare_v2(lattice.db, queryStatementString, -1, &queryStatement, nil) == SQLITE_OK {
-            if sqlite3_step(queryStatement) != SQLITE_DONE {
+        // Use globalId for the WHERE clause
+        let deleteSQL = "DELETE FROM \(tableName) WHERE lhs = ?;"
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        if sqlite3_prepare_v2(lattice.db, deleteSQL, -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_text(stmt, 1, (parentGlobalId as NSString).utf8String, -1, nil)
+            if sqlite3_step(stmt) != SQLITE_DONE {
                 if let errorMessage = lattice.readError() {
                     print("Error during sqlite3_step: \(errorMessage)")
                 } else {
@@ -209,74 +221,74 @@ private final class ManagedList<Element: Model>: Collection {
         // Table names
         let childTable = Element.entityName
         let linkTable  = tableName
-        
+
         // Build the SQL WHERE fragment from your Swift predicate
         let filterSQL = predicate(Query<Element>()).predicate
-        
-        // Join child ↔ link on id = rhs, filter on lhs = parentPK + your filter
+
+        // Join child ↔ link on globalId = rhs, filter on lhs = parentGlobalId + your filter
         let sql = """
-        SELECT c.* 
+        SELECT c.*
           FROM \(childTable) AS c
           JOIN \(linkTable)   AS l
-            ON c.id = l.rhs
+            ON c.globalId = l.rhs
          WHERE l.lhs = ?
            AND \(filterSQL)
          LIMIT 1;
         """
-        
+
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(lattice.db, sql, -1, &stmt, nil) == SQLITE_OK else {
           print("⚠️ could not prepare first(where:)")
           return nil
         }
-        
-        // bind the parent’s primary key as the lhs filter
-        sqlite3_bind_int64(stmt, 1, primaryKey)
-        
+
+        // bind the parent's globalId as the lhs filter
+        sqlite3_bind_text(stmt, 1, (parentGlobalId as NSString).utf8String, -1, nil)
+
         guard sqlite3_step(stmt) == SQLITE_ROW else {
           // no match
           return nil
         }
-        
+
         // materialize the Element from the row
         let child = Element(isolation: #isolation)
         child.primaryKey = sqlite3_column_int64(stmt, 0)
         child._assign(lattice: lattice)
         return child
     }
-    
+
     public func remove(where predicate: Predicate<Element>) {
         // 1) Table names
         let childTable  = Element.entityName
         let linkTable   = tableName
-        
+
         // 2) Turn the Swift predicate into an SQL WHERE fragment:
         let filterSQL = predicate(Query<Element>()).predicate
-        
+
         // 3) Delete from the link table where:
-        //     • lhs = this parent’s PK
-        //     • rhs IN (all child IDs matching your filter)
+        //     • lhs = this parent's globalId
+        //     • rhs IN (all child globalIds matching your filter)
         let sql = """
         DELETE FROM \(linkTable)
          WHERE lhs = ?
            AND rhs IN (
-             SELECT id
+             SELECT globalId
                FROM \(childTable)
               WHERE \(filterSQL)
            );
         """
-        
+
         var stmt: OpaquePointer?
         defer { sqlite3_finalize(stmt) }
         guard sqlite3_prepare_v2(lattice.db, sql, -1, &stmt, nil) == SQLITE_OK else {
             print("⚠️ Could not prepare delete(where:)", lattice.readError() ?? "unknown")
           return
         }
-        
-        // 4) Bind the parent’s primary key:
-        sqlite3_bind_int64(stmt, 1, primaryKey)
-        
+
+        // 4) Bind the parent's globalId:
+        sqlite3_bind_text(stmt, 1, (parentGlobalId as NSString).utf8String, -1, nil)
+
         // 5) Execute the DELETE
         if sqlite3_step(stmt) != SQLITE_DONE {
           let err = String(cString: sqlite3_errmsg(lattice.db))
@@ -322,7 +334,7 @@ public struct List<T>: MutableCollection, BidirectionalCollection, Property, Lis
     }
     
     public static func _set(name: String, parent: some Model, lattice: Lattice, primaryKey: Int64, newValue: List<T>) {
-        newValue.forEach { model in
+        for model in newValue {
             Optional<T>._set(name: name, parent: parent, lattice: lattice, primaryKey: primaryKey, newValue: model)
         }
     }

@@ -181,6 +181,7 @@ public struct Lattice {
     
     //    var observers: [AnyObject: () -> Void] = [:]
     private var ptr: SharedPointer<Lattice>?
+    private static let synchronizersLock = OSAllocatedUnfairLock<Void>()
     nonisolated(unsafe) static var synchronizers: [URL: Synchronizer] = [:]
     
     public struct SyncConfiguration {
@@ -268,10 +269,14 @@ public struct Lattice {
                   for schema: [any Model.Type],
                   configuration: Configuration = defaultConfiguration,
                   isSynchronizing: Bool) throws {
-        if let db = Self.latticeIsolationRegistrar[IsolationKey(isolation: isolation, configuration: configuration)]?.db {
+        print("🔷 Lattice.init START for \(configuration.fileURL)")
+        let cacheKey = IsolationKey(isolation: isolation, configuration: configuration)
+        if let db = Self.latticeIsolationRegistrar[cacheKey]?.db {
+            print("🔷 Lattice.init CACHE HIT")
             self.init(db)
             return
         } else {
+            print("🔷 Lattice.init CACHE MISS - creating new")
             self.init(try SharedDBPointer(configuration: configuration, for: schema))
             Self.latticeIsolationRegistrar[IsolationKey(isolation: isolation, configuration: configuration)] = WeakRef(db: dbPtr)
             // Register the update hook to listen for changes.
@@ -288,9 +293,7 @@ public struct Lattice {
             sqlite3_exec(db, "PRAGMA temp_store = MEMORY;",   nil, nil, nil)
             sqlite3_exec(db, "ANALYZE;",                      nil, nil, nil)
             logger.debug("Running SQLite version: \(SQLITE_VERSION)")
-            
-            //        var this = self
-            
+
             transaction {
                 let auditTableSQL = """
                 CREATE TABLE IF NOT EXISTS AuditLog(
@@ -329,29 +332,37 @@ public struct Lattice {
                 CREATE TABLE IF NOT EXISTS _SyncControl (
                   id       INTEGER PRIMARY KEY CHECK(id=1),
                   disabled INTEGER NOT NULL DEFAULT 0
-                );   
+                );
                 """)
                 executeStatement("""
                 INSERT OR IGNORE INTO _SyncControl(id, disabled) VALUES(1, 0);
                 """)
 
                 // Discover all linked Model types recursively
+                print("🔷 discoverAllTypes START")
                 let completeSchema = discoverAllTypes(from: schema)
+                print("🔷 discoverAllTypes END - found \(completeSchema.count) types")
 
                 // Update modelTypes in SharedDBPointer to include all discovered types
                 dbPtr.modelTypes = completeSchema
 
-                for type in completeSchema {
-                    createTable(type)
+                print("🔷 createTable START")
+                for modelType in completeSchema {
+                    print("🔷 createTable for \(modelType.entityName)")
+                    createTable(modelType)
                 }
+                print("🔷 createTable END")
             }
             sqlite3_busy_timeout(db, 5000)
-            // A simple global we flip on/off around your sync pass.
-            // Register the function:
 
-            if !isSynchronizing, Self.synchronizers[configuration.fileURL] == nil {
-                Self.synchronizers[configuration.fileURL] = Synchronizer(modelTypes: UncheckedSendable(modelTypes), configuration: configuration)
+            print("🔷 Synchronizer check START")
+            Self.synchronizersLock.withLock { [modelTypes] in
+                if !isSynchronizing, Self.synchronizers[configuration.fileURL] == nil {
+                    print("🔷 Creating Synchronizer")
+                    Self.synchronizers[configuration.fileURL] = Synchronizer(modelTypes: UncheckedSendable(modelTypes), configuration: configuration)
+                }
             }
+            print("🔷 Lattice.init END")
         }
     }
     
@@ -414,6 +425,8 @@ public struct Lattice {
             }.joined(separator: ",\n")
         }
 
+        // Filter out globalId from primitiveProperties since it's defined explicitly above
+        let userPrimitiveProperties = primitiveProperties.filter { $0.0 != "globalId" }
         let createTableSQL = """
             CREATE TABLE IF NOT EXISTS \(modelType.entityName)(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -424,15 +437,16 @@ public struct Lattice {
                 substr('89AB', 1 + (abs(random()) % 4), 1) ||
                   substr(lower(hex(randomblob(2))),2)     || '-' ||
                 lower(hex(randomblob(6)))
-                ),
-                \(primitiveProperties.map { "\($0.0) \($0.1.sqlType)" }.joined(separator: ",\n"))
+                )\(userPrimitiveProperties.isEmpty ? "" : ",")
+                \(userPrimitiveProperties.map { "\($0.0) \($0.1.sqlType)" }.joined(separator: ",\n"))
                 \(constraintsString.isEmpty ? "" : ",\n" + constraintsString)
             );
             """
         
+        // Use userPrimitiveProperties (without globalId) since generateInstruction adds globalId separately
         let createAuditTriggerSQL = """
         CREATE TRIGGER AuditLog_Update_\(modelType.entityName) AFTER UPDATE ON \(modelType.entityName)
-        WHEN ((sync_disabled() = 0) AND (\(primitiveProperties.map { "OLD.\($0.0) IS NOT NEW.\($0.0)" }.joined(separator: " OR "))))
+        WHEN ((sync_disabled() = 0) AND (\(userPrimitiveProperties.map { "OLD.\($0.0) IS NOT NEW.\($0.0)" }.joined(separator: " OR "))))
         BEGIN
             INSERT INTO AuditLog (tableName, operation, rowId, globalRowId, changedFields, changedFieldsNames, timestamp)
             VALUES (
@@ -441,18 +455,18 @@ public struct Lattice {
                 OLD.id,
                 OLD.globalId,
                 json_object(
-                    \(primitiveProperties.map {
+                    \(userPrimitiveProperties.map {
                         "'\($0.0)', json_object('kind', \($0.1.anyPropertyKind.rawValue), 'value', CASE WHEN OLD.\($0.0) IS NOT NEW.\($0.0) THEN NEW.\($0.0) ELSE NULL END)"
                     }.joined(separator: ","))
                 ),
                 json_array(
-                    \(primitiveProperties.map {
+                    \(userPrimitiveProperties.map {
                         "CASE WHEN OLD.\($0.0) IS NOT NEW.\($0.0) THEN '\($0.0)' ELSE NULL END"
                     }.joined(separator: ","))
                 ),
                 unixepoch('subsec')
             );
-        END;    
+        END;
         """
         var statement: OpaquePointer?
         if sqlite3_prepare_v2(db, createTableSQL, -1, &statement, nil) == SQLITE_OK {
@@ -465,7 +479,7 @@ public struct Lattice {
             logger.debug("CREATE TABLE statement could not be prepared.")
         }
         executeStatement(createAuditTriggerSQL)
-        // Trigger for insertions
+        // Trigger for insertions (use userPrimitiveProperties - globalId is added by generateInstruction)
         executeStatement("""
         CREATE TRIGGER Audit\(modelType.entityName)Insert AFTER INSERT ON \(modelType.entityName)
           WHEN ( sync_disabled() = 0 )
@@ -477,12 +491,12 @@ public struct Lattice {
             NEW.id,
             NEW.globalId,
             json_object(
-                \(primitiveProperties.map {
+                \(userPrimitiveProperties.map {
             "'\($0.0)', json_object('kind', \($0.1.anyPropertyKind.rawValue), 'value', NEW.\($0.0))"
                 }.joined(separator: ","))
             ),
             json_array(
-                \(primitiveProperties.map {
+                \(userPrimitiveProperties.map {
             "'\($0.0)'"
                 }.joined(separator: ","))
             ),
@@ -490,7 +504,7 @@ public struct Lattice {
           );
         END;
         """)
-        // Trigger for deletions
+        // Trigger for deletions (use userPrimitiveProperties - globalId is added by generateInstruction)
         executeStatement("""
         CREATE TRIGGER Audit\(modelType.entityName)Delete AFTER DELETE ON \(modelType.entityName)
           WHEN ( sync_disabled() = 0 )
@@ -502,12 +516,12 @@ public struct Lattice {
             OLD.id,
             OLD.globalId,
             json_object(
-                \(primitiveProperties.map {
+                \(userPrimitiveProperties.map {
             "'\($0.0)', json_object('kind', \($0.1.anyPropertyKind.rawValue), 'value', OLD.\($0.0))"
                 }.joined(separator: ","))
             ),
             json_array(
-                \(primitiveProperties.map {
+                \(userPrimitiveProperties.map {
             "'\($0.0)'"
                 }.joined(separator: ","))
             ),
@@ -529,13 +543,12 @@ public struct Lattice {
     private func createLinkTable(name: String, lhs: any Model.Type, rhs: any Model.Type) {
         let linkTableName = "_\(lhs.entityName)_\(rhs.entityName)_\(name)"
 
-        // Create link table with globalId for sync deduplication
+        // Create link table using globalIds (TEXT) for sync-friendly references
+        // This allows links to sync without ID translation between clients
         executeStatement("""
           CREATE TABLE IF NOT EXISTS \(linkTableName)(
-            lhs        INTEGER NOT NULL
-              REFERENCES \(lhs.entityName)(id) ON DELETE CASCADE,
-            rhs INTEGER NOT NULL
-              REFERENCES \(rhs.entityName)(id) ON DELETE CASCADE,
+            lhs TEXT NOT NULL,
+            rhs TEXT NOT NULL,
             globalId TEXT UNIQUE COLLATE NOCASE DEFAULT (
               lower(hex(randomblob(4)))   || '-' ||
               lower(hex(randomblob(2)))   || '-' ||
@@ -549,7 +562,7 @@ public struct Lattice {
         """)
 
         // Create INSERT trigger for link table
-        // Stores the globalIds of both lhs and rhs so we can look them up on remote
+        // lhs and rhs are already globalIds, so we just store them directly
         executeStatement("""
         CREATE TRIGGER IF NOT EXISTS Audit\(linkTableName)Insert AFTER INSERT ON \(linkTableName)
           WHEN ( sync_disabled() = 0 )
@@ -558,15 +571,13 @@ public struct Lattice {
           VALUES (
             '\(linkTableName)',
             'INSERT',
-            NEW.lhs,
+            0,
             NEW.globalId,
             json_object(
-                'lhsGlobalId', json_object('kind', 6, 'value', (SELECT globalId FROM \(lhs.entityName) WHERE id = NEW.lhs)),
-                'rhsGlobalId', json_object('kind', 6, 'value', (SELECT globalId FROM \(rhs.entityName) WHERE id = NEW.rhs)),
-                'lhsTable', json_object('kind', 5, 'value', '\(lhs.entityName)'),
-                'rhsTable', json_object('kind', 5, 'value', '\(rhs.entityName)')
+                'lhs', json_object('kind', 2, 'value', NEW.lhs),
+                'rhs', json_object('kind', 2, 'value', NEW.rhs)
             ),
-            json_array('lhsGlobalId', 'rhsGlobalId', 'lhsTable', 'rhsTable'),
+            json_array('lhs', 'rhs'),
             unixepoch('subsec')
           );
         END;
@@ -581,15 +592,13 @@ public struct Lattice {
           VALUES (
             '\(linkTableName)',
             'DELETE',
-            OLD.lhs,
+            0,
             OLD.globalId,
             json_object(
-                'lhsGlobalId', json_object('kind', 6, 'value', (SELECT globalId FROM \(lhs.entityName) WHERE id = OLD.lhs)),
-                'rhsGlobalId', json_object('kind', 6, 'value', (SELECT globalId FROM \(rhs.entityName) WHERE id = OLD.rhs)),
-                'lhsTable', json_object('kind', 5, 'value', '\(lhs.entityName)'),
-                'rhsTable', json_object('kind', 5, 'value', '\(rhs.entityName)')
+                'lhs', json_object('kind', 2, 'value', OLD.lhs),
+                'rhs', json_object('kind', 2, 'value', OLD.rhs)
             ),
-            json_array('lhsGlobalId', 'rhsGlobalId', 'lhsTable', 'rhsTable'),
+            json_array('lhs', 'rhs'),
             unixepoch('subsec')
           );
         END;
@@ -644,15 +653,15 @@ public struct Lattice {
             }
         }
         sqlite3_finalize(stmt)
-        
+
         var primitiveProperties: [(String, any PrimitiveProperty.Type)] = modelType.properties.compactMap {
             if let primitiveType = $0.1 as? (any PrimitiveProperty.Type) {
                 return ($0.0, primitiveType)
             }
             return nil
         }
+        // id is handled separately (not from model properties); globalId now comes from model properties
         primitiveProperties.append(("id", Int64.self))
-        primitiveProperties.append(("globalId", UUID.self))
         existing["id"] = "BIGINT"
         existing["globalId"] = "TEXT"
         let linkProperties: [(String, any LinkProperty.Type)] = modelType.properties.compactMap {
@@ -684,7 +693,6 @@ public struct Lattice {
             }
             return false
         }.map(\.key)
-        
         // 2d. Simply add brand-new columns in place.
         for col in added {
             let type = modelCols[col]!
@@ -741,7 +749,7 @@ public struct Lattice {
         }
     }
 
-    /// Recursively discover all Model types linked from the given schema
+    /// Recursively discover all Model types linked from the given schema.
     private func discoverAllTypes(from initialSchema: [any Model.Type]) -> [any Model.Type] {
         var discoveredTypes = Set<ObjectIdentifier>()
         var typesToProcess = initialSchema
@@ -752,7 +760,9 @@ public struct Lattice {
             let typeId = ObjectIdentifier(currentType)
 
             // Skip if already processed
-            guard !discoveredTypes.contains(typeId) else { continue }
+            guard !discoveredTypes.contains(typeId) else {
+                continue
+            }
 
             // Mark as discovered and add to result
             discoveredTypes.insert(typeId)
@@ -809,16 +819,12 @@ public struct Lattice {
             return nil
         }
         
-        let insertStatementString = """
-        INSERT INTO \(T.entityName) (\(primitiveProperties.map(\.0).joined(separator: ", "))) VALUES (\(primitiveProperties.map { _ in "?" }.joined(separator: ", ")))
-        \(T.constraints.isEmpty ? "" : T.constraints.filter { $0.allowsUpsert }.map({
-            """
-            ON CONFLICT(\($0.columns.joined(separator: ","))) DO UPDATE SET \(primitiveProperties.map({
-                $0.0 + " = excluded.\($0.0)"
-            }).joined(separator: ","))
-            """
-        }).joined(separator: ","));
-        """
+        // Exclude globalId from upsert SET clause - we want to preserve the original globalId on conflict
+        let upsertProperties = primitiveProperties.filter { $0.0 != "globalId" }
+        let conflictClause = T.constraints.isEmpty ? "" : T.constraints.filter { $0.allowsUpsert }.map({
+            "ON CONFLICT(\($0.columns.joined(separator: ","))) DO UPDATE SET \(upsertProperties.map({ $0.0 + " = excluded.\($0.0)" }).joined(separator: ","))"
+        }).joined(separator: " ")
+        let insertStatementString = "INSERT INTO \(T.entityName) (\(primitiveProperties.map(\.0).joined(separator: ", "))) VALUES (\(primitiveProperties.map { _ in "?" }.joined(separator: ", "))) \(conflictClause);"
         var insertStatement: OpaquePointer?
         
         defer {
@@ -845,7 +851,10 @@ public struct Lattice {
                 //                fatalError()
             }
         } else {
-            logger.error("INSERT statement could not be prepared.: \(readError() ?? "<unknown_error>")")
+            let error = readError() ?? "<unknown_error>"
+            print("❌ INSERT failed for \(T.entityName): \(error)")
+            print("   SQL: \(insertStatementString)")
+            logger.error("INSERT statement could not be prepared.: \(error)")
             preconditionFailure("INSERT statement could not be prepared. Check the logs for more information.")
         }
     }
@@ -896,8 +905,10 @@ public struct Lattice {
             guard let p = type as? PrimitiveProperty.Type else { return nil }
             return (name, p)
         }
-        
+
         // 2) Build the SQL with exactly N columns and N placeholders
+        // Exclude globalId from upsert SET clause - we want to preserve the original globalId on conflict
+        let upsertPrimitives = primitives.filter { $0.0 != "globalId" }
         let columnList      = primitives.map(\.0).joined(separator: ", ")
         let placeholderList = primitives.map { _ in "?" }.joined(separator: ", ")
         let sql = """
@@ -907,7 +918,7 @@ public struct Lattice {
             (\(placeholderList))
           \(S.Element.constraints.isEmpty ? "" : S.Element.constraints.filter { $0.allowsUpsert }.map({
               """
-              ON CONFLICT(\($0.columns.joined(separator: ","))) DO UPDATE SET \(primitives.map({
+              ON CONFLICT(\($0.columns.joined(separator: ","))) DO UPDATE SET \(upsertPrimitives.map({
                   $0.0 + " = excluded.\($0.0)"
               }).joined(separator: ","))
               """
@@ -1193,14 +1204,16 @@ public struct Lattice {
     public var changeStream: AsyncStream<[AuditLog]> {
         AsyncStream { stream in
             let token = _observe { [modelTypes, configuration] changes in
-                let lattice = try! Lattice(for: modelTypes, configuration: configuration)
-                var resolvedChanges: [AuditLog] = []
-                for change in changes {
-                    change.resolve(on: lattice).map {
-                        resolvedChanges.append($0)
+                autoreleasepool {
+                    let lattice = try! Lattice(for: modelTypes, configuration: configuration)
+                    var resolvedChanges: [AuditLog] = []
+                    for change in changes {
+                        change.resolve(on: lattice).map {
+                            resolvedChanges.append($0)
+                        }
                     }
+                    stream.yield(resolvedChanges)
                 }
-                stream.yield(resolvedChanges)
             }
             stream.onTermination = { _ in
                 token.cancel()

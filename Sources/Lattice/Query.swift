@@ -254,6 +254,19 @@ public struct Query<T>: Sendable {
         let sourceEntity = T.entityName
         let targetEntity = V.entityName
 
+        // If current node is already a linkKeyPath, nest the new link as continuation
+        if case let .linkKeyPath(outerSource, outerLink, outerTarget, _) = node {
+            let nestedLink = QueryNode.linkKeyPath(
+                sourceEntity: sourceEntity,
+                linkField: linkField,
+                targetEntity: targetEntity,
+                continuation: .keyPath([], options: [])
+            )
+            return .init(.linkKeyPath(sourceEntity: outerSource, linkField: outerLink,
+                                     targetEntity: outerTarget, continuation: nestedLink),
+                        isAuditing: isAuditing, rootEntityName: rootEntityName)
+        }
+
         // Create a linkKeyPath node with an empty keyPath continuation
         let linkNode = QueryNode.linkKeyPath(
             sourceEntity: sourceEntity,
@@ -1109,6 +1122,7 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
         }
 
         // Special handling for linkKeyPath comparisons
+        // Link tables now use globalId (TEXT) for lhs and rhs columns
         if case let .linkKeyPath(sourceEntity, linkField, targetEntity, continuation) = lhs {
             let joinTable = "_\(sourceEntity)_\(targetEntity)_\(linkField)"
 
@@ -1117,17 +1131,32 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
                 formatStr.append(prefix)
             }
 
-            // Check if continuation is just accessing primaryKey
+            // Check if continuation is just accessing primaryKey (id)
             if case let .keyPath(contKp, _) = continuation, contKp == ["id"] {
                 // Simple case: $0.parent.primaryKey == 5
-                // Generate: id IN (SELECT lhs FROM _Child_Parent_parent WHERE rhs = 5)
-                formatStr.append("id IN (SELECT lhs FROM \(joinTable) WHERE rhs \(op) ")
+                // Link table stores globalIds, so we need to:
+                // 1. Join source entity to link table via globalId = lhs
+                // 2. Join link table to target entity via rhs = globalId
+                // 3. Filter on target's primaryKey (id)
+                // Generate: globalId IN (SELECT lhs FROM link WHERE rhs IN (SELECT globalId FROM Target WHERE id = 5))
+                formatStr.append("globalId IN (SELECT lhs FROM \(joinTable) WHERE rhs IN (SELECT globalId FROM \(targetEntity) WHERE id \(op) ")
                 build(rhs)
-                formatStr.append(")")
+                formatStr.append("))")
+            } else if case let .linkKeyPath(innerSource, innerLink, innerTarget, innerContinuation) = continuation {
+                // Nested links case: $0.parent.grandparent.name == "Smith"
+                // The continuation itself is a linkKeyPath, so we need to recursively build it
+                // Generate: globalId IN (SELECT lhs FROM link WHERE rhs IN (SELECT globalId FROM Target WHERE <nested subquery>))
+                let innerJoinTable = "_\(innerSource)_\(innerTarget)_\(innerLink)"
+                formatStr.append("globalId IN (SELECT lhs FROM \(joinTable) WHERE rhs IN (SELECT globalId FROM \(targetEntity) WHERE ")
+                // Recursively handle the nested link by calling buildExpression with the nested comparison
+                buildExpression(.linkKeyPath(sourceEntity: innerSource, linkField: innerLink,
+                                            targetEntity: innerTarget, continuation: innerContinuation),
+                               op, rhs)
+                formatStr.append("))")
             } else {
-                // Complex case: $0.parent.name == "John" or nested links
-                // Generate: id IN (SELECT lhs FROM _Child_Parent_parent WHERE rhs IN (SELECT id FROM Parent WHERE ...))
-                formatStr.append("id IN (SELECT lhs FROM \(joinTable) WHERE rhs IN (SELECT id FROM \(targetEntity) WHERE ")
+                // Complex case: $0.parent.name == "John"
+                // Generate: globalId IN (SELECT lhs FROM link WHERE rhs IN (SELECT globalId FROM Target WHERE ...))
+                formatStr.append("globalId IN (SELECT lhs FROM \(joinTable) WHERE rhs IN (SELECT globalId FROM \(targetEntity) WHERE ")
                 build(continuation)
                 formatStr.append(" \(op) ")
                 build(rhs)
