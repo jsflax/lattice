@@ -12,22 +12,22 @@ public protocol PrimitiveProperty: PersistableProperty where DefaultValue == Sel
 extension PrimitiveProperty {
     public static func _get(isolation: isolated (any Actor)? = #isolation,
                             name: String, parent: some Model, lattice: Lattice, primaryKey: Int64) -> Self? {
-        let queryStatementString = "SELECT \(name) FROM \(type(of: parent).entityName) WHERE id = ?;"
-        var queryStatement: OpaquePointer?
-        defer { sqlite3_finalize(queryStatement) }
-        if sqlite3_prepare_v2(lattice.db, queryStatementString, -1, &queryStatement, nil) == SQLITE_OK {
-            // Bind the provided id to the statement.
-            sqlite3_bind_int64(queryStatement, 1, primaryKey)
-            if sqlite3_step(queryStatement) == SQLITE_ROW {
-                // Extract id, name, and age from the row.
-                return Self.init(from: queryStatement, with: 0)
-            } else {
-                lattice.logger.error("SELECT statement could not be prepared: \(lattice.readError() ?? "Unknown error")")
-                lattice.logger.error("No field \(name) found on \(type(of: parent).entityName) with id \(primaryKey).")
-            }
-        } else {
-            lattice.logger.error("SELECT statement could not be prepared: \(lattice.readError() ?? "Unknown error")")
-        }
+//        let queryStatementString = "SELECT \(name) FROM \(type(of: parent).entityName) WHERE id = ?;"
+//        var queryStatement: OpaquePointer?
+//        defer { sqlite3_finalize(queryStatement) }
+//        if sqlite3_prepare_v2(lattice.db, queryStatementString, -1, &queryStatement, nil) == SQLITE_OK {
+//            // Bind the provided id to the statement.
+//            sqlite3_bind_int64(queryStatement, 1, primaryKey)
+//            if sqlite3_step(queryStatement) == SQLITE_ROW {
+//                // Extract id, name, and age from the row.
+//                return Self.init(from: queryStatement, with: 0)
+//            } else {
+//                lattice.logger.error("SELECT statement could not be prepared: \(lattice.readError() ?? "Unknown error")")
+//                lattice.logger.error("No field \(name) found on \(type(of: parent).entityName) with id \(primaryKey).")
+//            }
+//        } else {
+//            lattice.logger.error("SELECT statement could not be prepared: \(lattice.readError() ?? "Unknown error")")
+//        }
         return nil
     }
     
@@ -36,25 +36,25 @@ extension PrimitiveProperty {
                             lattice: Lattice,
                             primaryKey: Int64,
                             newValue: Self) {
-        let updateStatementString = "UPDATE \(type(of: parent).entityName) SET \(name) = ? WHERE id = ?;"
-        var updateStatement: OpaquePointer?
-        defer { sqlite3_finalize(updateStatement) }
-        if sqlite3_prepare_v2(lattice.db, updateStatementString, -1, &updateStatement, nil) == SQLITE_OK {
-            newValue.encode(to: updateStatement, with: 1)
-            sqlite3_bind_int64(updateStatement, 2, primaryKey)
-            
-            if sqlite3_step(updateStatement) == SQLITE_DONE {
-                lattice.logger.debug("Successfully updated \(type(of: parent).entityName) with id \(primaryKey) to \(name): \(type(of: newValue)).")
-            } else {
-                if let error = lattice.readError() {
-                    print("Could not update \(type(of: parent).entityName) with id \(primaryKey) on property \(name) with value \(newValue): \(error).")
-                } else {
-                    print("Could not update \(type(of: parent).entityName) with id \(primaryKey) on property \(name) with value \(newValue).")
-                }
-            }
-        } else {
-            print("UPDATE statement could not be prepared.")
-        }
+//        let updateStatementString = "UPDATE \(type(of: parent).entityName) SET \(name) = ? WHERE id = ?;"
+//        var updateStatement: OpaquePointer?
+//        defer { sqlite3_finalize(updateStatement) }
+//        if sqlite3_prepare_v2(lattice.db, updateStatementString, -1, &updateStatement, nil) == SQLITE_OK {
+//            newValue.encode(to: updateStatement, with: 1)
+//            sqlite3_bind_int64(updateStatement, 2, primaryKey)
+//            
+//            if sqlite3_step(updateStatement) == SQLITE_DONE {
+//                lattice.logger.debug("Successfully updated \(type(of: parent).entityName) with id \(primaryKey) to \(name): \(type(of: newValue)).")
+//            } else {
+//                if let error = lattice.readError() {
+//                    print("Could not update \(type(of: parent).entityName) with id \(primaryKey) on property \(name) with value \(newValue): \(error).")
+//                } else {
+//                    print("Could not update \(type(of: parent).entityName) with id \(primaryKey) on property \(name) with value \(newValue).")
+//                }
+//            }
+//        } else {
+//            print("UPDATE statement could not be prepared.")
+//        }
     }
 }
 
@@ -267,21 +267,27 @@ extension Data: PrimitiveProperty {
     public static var defaultValue: Data {
         .init()
     }
-    public static var sqlType: String { "TEXT" }
+    public static var sqlType: String { "BLOB" }
     public static var anyPropertyKind: AnyProperty.Kind {
         .data
     }
     public init(from statement: OpaquePointer?, with columnId: Int32) {
-        let blob = sqlite3_column_text(statement, columnId)!
-        self = Data(base64Encoded: String(cString: blob))!
+        guard let blob = sqlite3_column_blob(statement, columnId) else {
+            self = Data()
+            return
+        }
+        let bytes = sqlite3_column_bytes(statement, columnId)
+        self = Data(bytes: blob, count: Int(bytes))
     }
-    
+
     public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        base64EncodedString().encode(to: statement, with: columnId)
+        _ = self.withUnsafeBytes { buffer in
+            sqlite3_bind_blob(statement, columnId, buffer.baseAddress, Int32(buffer.count), nil)
+        }
     }
 }
 
-extension Dictionary: PrimitiveProperty, PersistableProperty, Property where Key: PrimitiveProperty & Codable, Value: Property & Codable {
+extension Dictionary: PrimitiveProperty, PersistableProperty, SchemaProperty where Key: PrimitiveProperty & Codable, Value: SchemaProperty & Codable {
     public static var defaultValue: Dictionary<Key, Value> {
         [:]
     }
@@ -303,7 +309,7 @@ extension Dictionary: PrimitiveProperty, PersistableProperty, Property where Key
     }
 }
 
-extension Array: PrimitiveProperty, PersistableProperty where Element: Property & Codable {
+extension Array: PrimitiveProperty, PersistableProperty where Element: SchemaProperty & Codable {
     public static var defaultValue: Array {
         []
     }
@@ -339,8 +345,9 @@ extension Array: PrimitiveProperty, PersistableProperty where Element: Property 
 //    }
 //}
 
-extension Optional: Property where Wrapped: Property {
+extension Optional: SchemaProperty where Wrapped: SchemaProperty {
     public typealias DefaultValue = Self
+    public static var defaultValue: Optional<Wrapped> { nil }
     public static var anyPropertyKind: AnyProperty.Kind {
         Wrapped.anyPropertyKind
     }

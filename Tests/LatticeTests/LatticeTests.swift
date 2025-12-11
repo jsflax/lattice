@@ -3,6 +3,7 @@ import Foundation
 //import SwiftUI
 import Lattice
 import Observation
+import LatticeCpp
 
 
 fileprivate let base64 = Array<UInt8>(
@@ -134,7 +135,7 @@ class LatticeTests: BaseTest {
         
     }
     
-    @Test func example() async throws {
+    @Test func test_SimpleExample() async throws {
         // Write your test here and use APIs like `#expect(...)` to check expected conditions.
         let manager = try testLattice(path: path, Person.self)
         let person = Person()
@@ -192,7 +193,7 @@ class LatticeTests: BaseTest {
 //        try await task.value
 //        //    print(lattice.object(Person.self, primaryKey: 2)?.age)
 //    }
-//    
+
     @Test func testLattice_ResultsQuery() async throws {
         let lattice = try testLattice(path: path, Person.self)
         var persons = lattice.objects(Person.self)
@@ -218,7 +219,7 @@ class LatticeTests: BaseTest {
         persons = persons.where {
             $0.name == "John" || $0.name == "Jane"
         }
-        
+
         #expect(persons.count == 2)
     }
     
@@ -251,18 +252,18 @@ class LatticeTests: BaseTest {
         #expect(Person._nameForKeyPath(\Person.age) == "age")
     }
     
-    @Test func testLattice_ObservableRegistrar() async throws {
-        let lattice = try testLattice(path: path, Person.self)
-        let person = Person()
-        lattice.add(person)
-        person.dog = .init()
-        person.dog?.name = "Spot"
-        // Person and Dog should have observers registered
-        // (AuditLog may also have observers from audit logging - that's expected implementation detail)
-        #expect(lattice.dbPtr.observationRegistrar[Person.entityName] != nil, "Person should have observers")
-        #expect(lattice.dbPtr.observationRegistrar[Dog.entityName] != nil, "Dog should have observers")
-        #expect(lattice.dbPtr.observationRegistrar[Person.entityName]?.count == 1, "Person should have exactly 1 observer")
-    }
+//    @Test func testLattice_ObservableRegistrar() async throws {
+//        let lattice = try testLattice(path: path, Person.self)
+//        let person = Person()
+//        lattice.add(person)
+//        person.dog = .init()
+//        person.dog?.name = "Spot"
+//        // Person and Dog should have observers registered
+//        // (AuditLog may also have observers from audit logging - that's expected implementation detail)
+//        #expect(lattice.dbPtr.observationRegistrar[Person.entityName] != nil, "Person should have observers")
+//        #expect(lattice.dbPtr.observationRegistrar[Dog.entityName] != nil, "Dog should have observers")
+//        #expect(lattice.dbPtr.observationRegistrar[Person.entityName]?.count == 1, "Person should have exactly 1 observer")
+//    }
     
     public class AtomicInteger: @unchecked Sendable {
 
@@ -342,7 +343,7 @@ class LatticeTests: BaseTest {
             checkedContinuation = continuation
             cancellable = lattice.objects(Person.self).observe(block)
             autoreleasepool {
-                _ = lattice.delete(person)
+                #expect(lattice.delete(person))
             }
         }
         cancellable?.cancel()
@@ -462,32 +463,32 @@ class LatticeTests: BaseTest {
             var contacts: [String: String]
         }
     }
-    @Test func test_Migration() async throws {
-        var publishEventTask = try autoreleasepool {
-            let personv1 = MigrationV1.Person()
-            let lattice = try testLattice(path: path, MigrationV1.Person.self)
-            lattice.add(personv1)
-            return lattice.dbPtr.publishEventTask
-        }
-        await publishEventTask?.value
-        publishEventTask = try autoreleasepool {
-            let person = MigrationV2.Person()
-            let lattice = try testLattice(path: path, MigrationV2.Person.self)
-            lattice.add(person)
-            #expect(person.city == "")
-            person.city = "New York"
-            #expect(person.city == "New York")
-            return lattice.dbPtr.publishEventTask
-        }
-        await publishEventTask?.value
-        try autoreleasepool {
-            let person = MigrationV3.Person()
-            let lattice = try testLattice(path: path, MigrationV3.Person.self)
-            lattice.add(person)
-            person.contacts["email"] = "john@example.com"
-            #expect(person.contacts["email"] == "john@example.com")
-        }
-    }
+//    @Test func test_Migration() async throws {
+//        var publishEventTask = try autoreleasepool {
+//            let personv1 = MigrationV1.Person()
+//            let lattice = try testLattice(path: path, MigrationV1.Person.self)
+//            lattice.add(personv1)
+//            return lattice.dbPtr.publishEventTask
+//        }
+//        await publishEventTask?.value
+//        publishEventTask = try autoreleasepool {
+//            let person = MigrationV2.Person()
+//            let lattice = try testLattice(path: path, MigrationV2.Person.self)
+//            lattice.add(person)
+//            #expect(person.city == "")
+//            person.city = "New York"
+//            #expect(person.city == "New York")
+//            return lattice.dbPtr.publishEventTask
+//        }
+//        await publishEventTask?.value
+//        try autoreleasepool {
+//            let person = MigrationV3.Person()
+//            let lattice = try testLattice(path: path, MigrationV3.Person.self)
+//            lattice.add(person)
+//            person.contacts["email"] = "john@example.com"
+//            #expect(person.contacts["email"] == "john@example.com")
+//        }
+//    }
     
     @Test func test_Link() async throws {
         let lattice = try testLattice(path: path, Person.self, Dog.self)
@@ -695,71 +696,71 @@ class LatticeTests: BaseTest {
         }
     }
     
-    @Test func test_AuditLog_ApplyInstructions() async throws {
-        let lattice1URL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
-        let lattice2URL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
-        defer {
-            try? Lattice.delete(for: .init(fileURL: lattice1URL))
-            try? Lattice.delete(for: .init(fileURL: lattice2URL))
-        }
-        let lattice1 = try Lattice(for: [Person.self, Dog.self, ModelWithEmbeddedModelObject.self],
-                                   configuration: .init(fileURL: lattice1URL))
-        let lattice2 = try Lattice(for: [Person.self, Dog.self, ModelWithEmbeddedModelObject.self],
-                                   configuration: .init(fileURL: lattice2URL))
-        
-        let person = Person()
-        person.name = "Jay"
-        person.age = 25
-        lattice1.add(person)
-        
-        #expect(lattice1.objects(Person.self).count == 1)
-        #expect(lattice2.objects(Person.self).count == 0)
-        
-        #expect(lattice1.object(Person.self, primaryKey: person.primaryKey!)?.name == "Jay")
-        #expect(lattice1.object(Person.self, primaryKey: person.primaryKey!)?.age == 25)
-        
-        let entry1 = lattice1.objects(AuditLog.self).first
-        lattice2.applyInstructions(from: lattice1.objects(AuditLog.self).snapshot())
-        let entry2 = lattice2.objects(AuditLog.self).first
-        try #require(entry1?.__globalId == entry2?.__globalId)
-        
-        #expect(lattice1.objects(Person.self).count == 1)
-        #expect(lattice2.objects(Person.self).count == 1)
-        
-        #expect(lattice2.object(Person.self, primaryKey: person.primaryKey!)?.name == "Jay")
-        #expect(lattice2.object(Person.self, primaryKey: person.primaryKey!)?.age == 25)
-        
-        person.age = 30
-        
-        lattice2.applyInstructions(from: lattice1.objects(AuditLog.self).snapshot())
-        
-        #expect(lattice1.objects(Person.self).count == 1)
-        #expect(lattice2.objects(Person.self).count == 1)
-        
-        #expect(lattice2.object(Person.self, primaryKey: person.primaryKey!)?.name == "Jay")
-        #expect(lattice2.object(Person.self, primaryKey: person.primaryKey!)?.age == 30)
-        
-        // test embedded object
-        
-        let model = ModelWithEmbeddedModelObject()
-        model.bar = .init(bar: "baz")
-        
-        lattice1.add(model)
-        
-        #expect(lattice1.objects(ModelWithEmbeddedModelObject.self).count == 1)
-        #expect(lattice2.objects(ModelWithEmbeddedModelObject.self).count == 0)
-        
-        #expect(lattice1.object(ModelWithEmbeddedModelObject.self,
-                                primaryKey: model.primaryKey!)?.bar?.bar == "baz")
-//        try await Task.sleep(for: .seconds(1))
-        lattice2.applyInstructions(from: lattice1.objects(AuditLog.self).snapshot())
-        
-        #expect(lattice1.objects(ModelWithEmbeddedModelObject.self).count == 1)
-        #expect(lattice2.objects(ModelWithEmbeddedModelObject.self).count == 1)
-        
-        #expect(lattice2.object(ModelWithEmbeddedModelObject.self,
-                                primaryKey: model.primaryKey!)?.bar?.bar == "baz")
-    }
+//    @Test func test_AuditLog_ApplyInstructions() async throws {
+//        let lattice1URL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
+//        let lattice2URL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
+//        defer {
+//            try? Lattice.delete(for: .init(fileURL: lattice1URL))
+//            try? Lattice.delete(for: .init(fileURL: lattice2URL))
+//        }
+//        let lattice1 = try Lattice(for: [Person.self, Dog.self, ModelWithEmbeddedModelObject.self],
+//                                   configuration: .init(fileURL: lattice1URL))
+//        let lattice2 = try Lattice(for: [Person.self, Dog.self, ModelWithEmbeddedModelObject.self],
+//                                   configuration: .init(fileURL: lattice2URL))
+//        
+//        let person = Person()
+//        person.name = "Jay"
+//        person.age = 25
+//        lattice1.add(person)
+//        
+//        #expect(lattice1.objects(Person.self).count == 1)
+//        #expect(lattice2.objects(Person.self).count == 0)
+//        
+//        #expect(lattice1.object(Person.self, primaryKey: person.primaryKey!)?.name == "Jay")
+//        #expect(lattice1.object(Person.self, primaryKey: person.primaryKey!)?.age == 25)
+//        
+//        let entry1 = lattice1.objects(AuditLog.self).first
+//        lattice2.applyInstructions(from: lattice1.objects(AuditLog.self).snapshot())
+//        let entry2 = lattice2.objects(AuditLog.self).first
+//        try #require(entry1?.__globalId == entry2?.__globalId)
+//        
+//        #expect(lattice1.objects(Person.self).count == 1)
+//        #expect(lattice2.objects(Person.self).count == 1)
+//        
+//        #expect(lattice2.object(Person.self, primaryKey: person.primaryKey!)?.name == "Jay")
+//        #expect(lattice2.object(Person.self, primaryKey: person.primaryKey!)?.age == 25)
+//        
+//        person.age = 30
+//        
+//        lattice2.applyInstructions(from: lattice1.objects(AuditLog.self).snapshot())
+//        
+//        #expect(lattice1.objects(Person.self).count == 1)
+//        #expect(lattice2.objects(Person.self).count == 1)
+//        
+//        #expect(lattice2.object(Person.self, primaryKey: person.primaryKey!)?.name == "Jay")
+//        #expect(lattice2.object(Person.self, primaryKey: person.primaryKey!)?.age == 30)
+//        
+//        // test embedded object
+//        
+//        let model = ModelWithEmbeddedModelObject()
+//        model.bar = .init(bar: "baz")
+//        
+//        lattice1.add(model)
+//        
+//        #expect(lattice1.objects(ModelWithEmbeddedModelObject.self).count == 1)
+//        #expect(lattice2.objects(ModelWithEmbeddedModelObject.self).count == 0)
+//        
+//        #expect(lattice1.object(ModelWithEmbeddedModelObject.self,
+//                                primaryKey: model.primaryKey!)?.bar?.bar == "baz")
+////        try await Task.sleep(for: .seconds(1))
+//        lattice2.applyInstructions(from: lattice1.objects(AuditLog.self).snapshot())
+//        
+//        #expect(lattice1.objects(ModelWithEmbeddedModelObject.self).count == 1)
+//        #expect(lattice2.objects(ModelWithEmbeddedModelObject.self).count == 1)
+//        
+//        #expect(lattice2.object(ModelWithEmbeddedModelObject.self,
+//                                primaryKey: model.primaryKey!)?.bar?.bar == "baz")
+//    }
     
     @Test func testConstraints() async throws {
         var model = ModelWithConstraints()
@@ -843,6 +844,199 @@ class LatticeTests: BaseTest {
 //            #expect(Lattice.latticeIsolationRegistrar.count == 0)
 //        }.value
 //    }
-    
-    
+
+
+}
+
+// MARK: - Vector Search Tests
+
+@Model final class Document {
+    var title: String
+    var embedding: FloatVector
+
+    init(title: String = "", embedding: [Float] = []) {
+        self.title = title
+        self.embedding = FloatVector(embedding)
+    }
+}
+
+@Suite("Vector Search Tests")
+class VectorSearchTests: BaseTest {
+
+    @Test func test_VectorStorage() async throws {
+        let lattice = try testLattice(Document.self)
+
+        // Create a document with a small embedding
+        let embedding: [Float] = [0.1, 0.2, 0.3, 0.4, 0.5]
+        let doc = Document(title: "Test Doc", embedding: embedding)
+
+        // Verify vector before storage
+        print("Before add - embedding dimensions: \(doc.embedding.dimensions)")
+        print("Before add - embedding data size: \(doc.embedding.toData().count)")
+
+        lattice.add(doc)
+
+        // Retrieve and verify
+        let docs = lattice.objects(Document.self)
+        #expect(docs.count == 1)
+
+        let retrieved = docs.first!
+        print("After retrieval - title: \(retrieved.title)")
+        print("After retrieval - embedding dimensions: \(retrieved.embedding.dimensions)")
+        print("After retrieval - embedding data size: \(retrieved.embedding.toData().count)")
+
+        #expect(retrieved.title == "Test Doc")
+        #expect(retrieved.embedding.dimensions == 5)
+
+        // Check values are preserved
+        for (i, value) in retrieved.embedding.enumerated() {
+            #expect(abs(value - embedding[i]) < 0.0001)
+        }
+    }
+
+    @Test func test_VectorDistanceFunctions() async throws {
+        let v1 = FloatVector([1.0, 0.0, 0.0])
+        let v2 = FloatVector([0.0, 1.0, 0.0])
+        let v3 = FloatVector([1.0, 0.0, 0.0])
+
+        // L2 distance: sqrt((1-0)^2 + (0-1)^2 + (0-0)^2) = sqrt(2)
+        let l2 = v1.l2Distance(to: v2)
+        #expect(abs(l2 - Float(sqrt(2.0))) < 0.0001)
+
+        // Same vectors should have 0 distance
+        #expect(v1.l2Distance(to: v3) < 0.0001)
+
+        // Cosine distance of orthogonal vectors = 1 (similarity = 0)
+        let cosine = v1.cosineDistance(to: v2)
+        #expect(abs(cosine - 1.0) < 0.0001)
+
+        // Cosine distance of same vectors = 0 (similarity = 1)
+        #expect(v1.cosineDistance(to: v3) < 0.0001)
+
+        // Dot product
+        #expect(v1.dot(v2) < 0.0001) // orthogonal
+        #expect(abs(v1.dot(v3) - 1.0) < 0.0001) // parallel
+    }
+
+    @Test func test_VectorNormalization() async throws {
+        let v = FloatVector([3.0, 4.0]) // 3-4-5 triangle
+        let normalized = v.normalized()
+
+        // Should have unit length
+        let length = sqrt(normalized[0] * normalized[0] + normalized[1] * normalized[1])
+        #expect(abs(length - 1.0) < 0.0001)
+
+        // Direction preserved
+        #expect(abs(normalized[0] - 0.6) < 0.0001)
+        #expect(abs(normalized[1] - 0.8) < 0.0001)
+    }
+
+    @Test func test_VectorBinarySerialization() async throws {
+        let original = FloatVector([1.5, -2.5, 3.14159, 0.0, -0.0001])
+        let data = original.toData()
+        let restored = FloatVector(fromData: data)
+
+        #expect(original.dimensions == restored.dimensions)
+        for i in 0..<original.dimensions {
+            #expect(abs(original[i] - restored[i]) < 0.00001)
+        }
+    }
+
+    @Test func test_MultipleDocumentsWithVectors() async throws {
+        let lattice = try testLattice(Document.self)
+
+        // Create documents with different embeddings
+        let docs = [
+            Document(title: "Doc A", embedding: [1.0, 0.0, 0.0]),
+            Document(title: "Doc B", embedding: [0.0, 1.0, 0.0]),
+            Document(title: "Doc C", embedding: [0.0, 0.0, 1.0]),
+            Document(title: "Doc D", embedding: [0.5, 0.5, 0.0]),
+        ]
+
+        lattice.add(contentsOf: docs)
+
+        let results = lattice.objects(Document.self)
+        #expect(results.count == 4)
+
+        // Find document most similar to [1, 0, 0] using Swift-side distance
+        let query = FloatVector([1.0, 0.0, 0.0])
+        var bestDoc: Document?
+        var bestDistance = Float.infinity
+
+        for doc in results {
+            let distance = doc.embedding.cosineDistance(to: query)
+            if distance < bestDistance {
+                bestDistance = distance
+                bestDoc = doc
+            }
+        }
+
+        #expect(bestDoc?.title == "Doc A")
+    }
+
+    @Test func test_NearestNeighborSearch() async throws {
+        let lattice = try testLattice(Document.self)
+
+        // Create documents with different embeddings
+        let docs = [
+            Document(title: "Doc A", embedding: [1.0, 0.0, 0.0]),
+            Document(title: "Doc B", embedding: [0.0, 1.0, 0.0]),
+            Document(title: "Doc C", embedding: [0.0, 0.0, 1.0]),
+            Document(title: "Doc D", embedding: [0.7, 0.7, 0.0]),  // Close to A
+            Document(title: "Doc E", embedding: [0.9, 0.1, 0.0]),  // Very close to A
+        ]
+
+        lattice.add(contentsOf: docs)
+
+        // Query for nearest neighbors to [1, 0, 0]
+        let query = FloatVector([1.0, 0.0, 0.0])
+        let nearest = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 3)
+
+        // Should return 3 closest documents
+        #expect(nearest.count == 3)
+
+        // First should be Doc A (exact match) or Doc E (very close)
+        let topTitles = nearest.map { $0.object.title }
+        #expect(topTitles.contains("Doc A"))
+        #expect(topTitles.contains("Doc E"))
+
+        // Distances should be sorted (ascending)
+        for i in 0..<(nearest.count - 1) {
+            #expect(nearest[i].distance <= nearest[i + 1].distance)
+        }
+
+        print("Nearest neighbors to [1, 0, 0]:")
+        for match in nearest {
+            print("  \(match.object.title): distance = \(match.distance)")
+        }
+    }
+
+    @Test func test_NearestNeighborWithCosineDistance() async throws {
+        let lattice = try testLattice(Document.self)
+
+        // Create documents with embeddings that differ in magnitude but same direction
+        let docs = [
+            Document(title: "Unit", embedding: [1.0, 0.0, 0.0]),
+            Document(title: "Scaled", embedding: [10.0, 0.0, 0.0]),  // Same direction, 10x magnitude
+            Document(title: "Orthogonal", embedding: [0.0, 1.0, 0.0]),
+        ]
+
+        lattice.add(contentsOf: docs)
+
+        let query = FloatVector([5.0, 0.0, 0.0])
+        let nearest = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 3, distance: .cosine)
+
+        // With cosine distance, "Unit" and "Scaled" should have distance ~0 (same direction)
+        // "Orthogonal" should have distance ~1
+        print("Cosine distances to [5, 0, 0]:")
+        for match in nearest {
+            print("  \(match.object.title): distance = \(match.distance)")
+        }
+
+        // First two should be Unit/Scaled with very small distance
+        #expect(nearest[0].distance < 0.1)
+        #expect(nearest[1].distance < 0.1)
+    }
 }

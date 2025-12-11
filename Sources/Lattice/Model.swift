@@ -3,12 +3,21 @@ import SQLite3
 #if canImport(Combine)
 @_exported import Combine
 #endif
+import LatticeSwiftCppBridge
 
-public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, Property, SendableMetatype {
+public enum _ModelStorage {
+    case unmanaged(lattice.swift_dynamic_object)
+    case managed(lattice.ManagedModel)
+}
+
+public typealias CxxLatticeObject = lattice.swift_dynamic_object
+public typealias CxxManagedLatticeObject = lattice.ManagedModel
+
+public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, SendableMetatype, CxxManaged {
     init(isolation: isolated (any Actor)?)
     var lattice: Lattice? { get set }
     static var entityName: String { get }
-    static var properties: [(String, any Property.Type)] { get }
+    static var properties: [(String, any SchemaProperty.Type)] { get }
     var primaryKey: Int64? { get set }
     var __globalId: UUID { get }  // Unique identifier for sync across clients
     func _assign(lattice: Lattice?)
@@ -22,12 +31,42 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     static func _nameForKeyPath(_ keyPath: AnyKeyPath) -> String
     static var constraints: [Constraint] { get }
     var _objectWillChange: Combine.ObservableObjectPublisher { get }
+    var _storage: _ModelStorage { get set }
 }
 
 extension Model {
-    
+    public static var defaultValue: Self {
+        .init(isolation: #isolation)
+    }
     public static var sqlType: String { "BIGINT" }
     public static var anyPropertyKind: AnyProperty.Kind { .int }
+
+    // CxxManaged conformance
+    public func toCxxValue() -> lattice.ManagedModel? {
+        if case let .managed(cxxObject) = _storage {
+            return cxxObject
+        }
+        return nil
+    }
+
+    public static func fromCxxValue(_ value: lattice.ManagedModel?) -> Self {
+        let object = Self(isolation: #isolation)
+        if let value {
+            object._storage = .managed(value)
+        }
+        return object
+    }
+
+    public static func getUnmanaged(from object: lattice.swift_dynamic_object, name: std.string) -> Self {
+        // Models aren't stored inline in dynamic objects - return a new unmanaged instance
+        let model = Self(isolation: #isolation)
+        return model
+    }
+
+    public func setUnmanaged(to object: inout lattice.swift_dynamic_object, name: std.string) {
+        // Models aren't stored inline in dynamic objects
+        // Links are handled separately via link tables
+    }
     public typealias ObservableObjectPublisher = AnyPublisher<Void, Never>
     // 3️⃣ override the protocol’s publisher
     public var objectWillChange: Publishers.HandleEvents<Combine.ObservableObjectPublisher> {
@@ -67,6 +106,54 @@ extension Model {
             lhs === rhs
         }
     }
+    typealias SwiftSchema = lattice.SwiftSchema
+    
+    internal static func cxxPropertyDescriptor() -> lattice.SwiftSchema {
+        var schema = SwiftSchema()
+        // Filter out id and globalId - these are auto-added by C++
+        let filteredProperties = properties.filter { $0.0 != "id" && $0.0 != "globalId" }
+
+        let primitiveProperties: [(String, any PrimitiveProperty.Type)] = filteredProperties.compactMap {
+            if let primitiveType = $0.1 as? (any PrimitiveProperty.Type) {
+                return ($0.0, primitiveType)
+            }
+            return nil
+        }
+        let linkProperties: [(String, any LinkProperty.Type)] = filteredProperties.compactMap {
+            if let primitiveType = $0.1 as? (any LinkProperty.Type) {
+                return ($0.0, primitiveType)
+            }
+            return nil
+        }
+        for (name, property) in primitiveProperties {
+            // Map Swift property kind to C++ column_type
+            let columnType: lattice.column_type = switch property.anyPropertyKind {
+            case .int, .int64: .integer
+            case .float, .double, .date: .real
+            case .data: .blob
+            case .string, .null: .text
+            }
+            // Check if this is a Vector type for automatic vec0 indexing
+            let isVector = property is Vector<Float>.Type || property is Vector<Double>.Type
+            schema[std.string(name)] = .init(name: std.string(name), type: columnType, kind: .primitive,
+                                             target_table: .init(), link_table: .init(), nullable: false,
+                                             is_vector: isVector)
+        }
+
+        for (name, property) in linkProperties {
+            schema[std.string(name)] = .init(name: std.string(name), type: .integer, kind: .link,
+                                             target_table: std.string(property.modelType.entityName),
+                                             link_table: .init(Self.entityName),
+                                             nullable: true, is_vector: false)
+        }
+
+
+        return schema
+    }
+    
+    public static var defaultCxxLatticeObject: CxxLatticeObject {
+        CxxLatticeObject(std.string(entityName), cxxPropertyDescriptor())
+    }
 }
 
 func _name<T>(for keyPath: PartialKeyPath<T>) -> String where T: Model {
@@ -91,9 +178,9 @@ public macro Transient() = #externalMacro(module: "LatticeMacros",
                                       type: "TransientMacro")
 
 
-@attached(accessor, names: arbitrary)
-public macro Property(name mappedTo: String? = nil) = #externalMacro(module: "LatticeMacros",
-                                                                     type: "PropertyMacro")
+//@attached(accessor, names: arbitrary)
+//public macro Property(name mappedTo: String? = nil) = #externalMacro(module: "LatticeMacros",
+//                                                                     type: "PropertyMacro")
 
 
 @attached(peer)

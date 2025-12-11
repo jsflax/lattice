@@ -1,13 +1,15 @@
 import Foundation
 import SQLite3
+import LatticeSwiftCppBridge
 
-public protocol Property {
+public protocol SchemaProperty {
     associatedtype DefaultValue
     
     static var anyPropertyKind: AnyProperty.Kind { get }
+    static var defaultValue: Self { get }
 }
 
-public protocol PersistableProperty: Property {
+public protocol PersistableProperty: SchemaProperty {
     static var sqlType: String { get }
     static func _get(isolation: isolated (any Actor)?,
                      name: String, parent: some Model, lattice: Lattice, primaryKey: Int64) -> Self?
@@ -28,10 +30,39 @@ extension RawRepresentable where Self.RawValue: PrimitiveProperty {
     }
 }
 
-public protocol LatticeEnum: RawRepresentable, PrimitiveProperty where RawValue: Property {
+public protocol LatticeEnum: RawRepresentable, PrimitiveProperty, CxxManaged where RawValue: SchemaProperty & CxxManaged {
 }
 extension LatticeEnum {
     public static var anyPropertyKind: AnyProperty.Kind { RawValue.anyPropertyKind }
+    public typealias CxxManagedSpecialization = RawValue.CxxManagedSpecialization
+
+    // Convert from C++ via RawValue's conversion
+    public static func fromCxxValue(_ value: RawValue.CxxManagedSpecialization.SwiftType) -> Self {
+        let rawValue = RawValue.fromCxxValue(value)
+        guard let result = Self(rawValue: rawValue) else {
+            fatalError("Invalid raw value for \(Self.self): \(rawValue)")
+        }
+        return result
+    }
+
+    // Convert to C++ via RawValue's conversion
+    public func toCxxValue() -> RawValue.CxxManagedSpecialization.SwiftType {
+        return rawValue.toCxxValue()
+    }
+
+    // Get from unmanaged via RawValue
+    public static func getUnmanaged(from object: lattice.swift_dynamic_object, name: std.string) -> Self {
+        let rawValue = RawValue.getUnmanaged(from: object, name: name)
+        guard let result = Self(rawValue: rawValue) else {
+            fatalError("Invalid raw value for \(Self.self): \(rawValue)")
+        }
+        return result
+    }
+
+    // Set to unmanaged via RawValue
+    public func setUnmanaged(to object: inout lattice.swift_dynamic_object, name: std.string) {
+        rawValue.setUnmanaged(to: &object, name: name)
+    }
 }
 public protocol OptionalProtocol: ExpressibleByNilLiteral {
     associatedtype Wrapped

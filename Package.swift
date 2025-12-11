@@ -14,6 +14,7 @@ let package = Package(
         .library(name: "LatticeServerKit", targets: ["LatticeServerKit"])
     ],
     dependencies: [
+        .package(path: "../LatticeCpp"),
         .package(url: "https://github.com/apple/swift-syntax.git", branch: "main"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -37,10 +38,13 @@ let package = Package(
         .target(
             name: "Lattice",
             dependencies: ["LatticeMacros",
-                .product(name: "Collections", package: "swift-collections")]),
+                .product(name: "LatticeSwiftCppBridge", package: "LatticeCpp"),
+                .product(name: "Collections", package: "swift-collections")],
+            swiftSettings: [.interoperabilityMode(.Cxx)]),
         .testTarget(
             name: "LatticeTests",
-            dependencies: ["Lattice", .product(name: "Vapor", package: "vapor")]
+            dependencies: ["Lattice", .product(name: "Vapor", package: "vapor")],
+            swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         .target(
             name: "LatticeServerKit",
@@ -49,6 +53,7 @@ let package = Package(
                 .product(name: "Vapor", package: "vapor"),
                 .product(name: "Fluent", package: "fluent"),
                 .product(name: "JWT",      package: "jwt"),
-            ]),
+            ],
+            swiftSettings: [.interoperabilityMode(.Cxx)]),
     ]
 )

@@ -1,215 +1,148 @@
 import Foundation
 import SQLite3
 import Combine
+import LatticeSwiftCppBridge
 
 public final class Results<Element>: Sequence where Element: Model {
-    private let lattice: Lattice
+    private let _lattice: Lattice
     internal let whereStatement: Predicate<Element>?
     internal let sortStatement: SortDescriptor<Element>?
-    private var countStatement: OpaquePointer?
-    private var queryStatement: OpaquePointer?
-    
+
+    // Helper to build query parameters - always fetches fresh from DB (live results)
+    private func queryObjects(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
+        let tableName = std.string(Element.entityName)
+        let whereClause: lattice.OptionalString = if let whereStatement {
+            lattice.string_to_optional(std.string(whereStatement(Query<Element>()).predicate))
+        } else {
+            .init()
+        }
+        let orderBy: lattice.OptionalString = if let sortStatement, let keyPath = sortStatement.keyPath {
+            lattice.string_to_optional(std.string("\(_name(for: keyPath)) \(sortStatement.order == .forward ? "ASC" : "DESC")"))
+        } else {
+            .init()
+        }
+        let limitOpt: lattice.OptionalInt64 = if let limit { lattice.int64_to_optional(limit) } else { .init() }
+        let offsetOpt: lattice.OptionalInt64 = if let offset { lattice.int64_to_optional(offset) } else { .init() }
+
+        let cxxResults = _lattice.cxxLattice.objects(tableName, whereClause, orderBy, limitOpt, offsetOpt)
+
+        var objects: [Element] = []
+        objects.reserveCapacity(cxxResults.size())
+
+        for i in 0..<cxxResults.size() {
+            let cxxObject = cxxResults[i]
+            let object = _lattice.newObject(Element.self, primaryKey: cxxObject.id(), cxxObject: cxxObject)
+            objects.append(object)
+        }
+
+        return objects
+    }
+
     public final class Cursor: IteratorProtocol {
-        private var queryStatement: OpaquePointer?
-        private let lattice: Lattice
-        
-        package init(_ results: Results, limit: Int? = nil, offset: Int? = nil) {
-            self.lattice = results.lattice
-            let queryStatementString =
-            String(format: "SELECT id FROM \(Element.entityName) %@ %@ %@ %@;",
-                   results.whereStatement == nil ? "" : "WHERE \(results.whereStatement!(Query<Element>()).predicate)",
-                   results.sortStatement == nil ? "" : "ORDER BY \(_name(for: results.sortStatement!.keyPath!)) \(results.sortStatement!.order == .forward ? "ASC" : "DESC")",
-                   limit == nil ? "" : "LIMIT \(limit!)",
-                   offset == nil ? "" : "OFFSET \(offset!)")
-            if sqlite3_prepare_v2(results.lattice.dbPtr.readDb, queryStatementString, -1, &queryStatement, nil) != SQLITE_OK {
-                if let errorMessage = sqlite3_errmsg(results.lattice.dbPtr.readDb) {
-                    let errorString = String(cString: errorMessage)
-                    print("Error during sqlite3_step: \(errorString)")
-                } else {
-                    print("Unknown error during sqlite3_step")
-                }
-                print("Failed to prepare SELECT query for table \(Element.entityName) with query: \(queryStatementString)")
-                fatalError(queryStatementString)
-            }
+        private let results: Results<Element>
+        private var index: Int64 = 0
+
+        package init(_ results: Results<Element>) {
+            self.results = results
         }
-        
-        fileprivate var cache: [Int: Element] = [:]
-        fileprivate var index = 0
+
         public func next() -> Element? {
-            if sqlite3_step(queryStatement) == SQLITE_ROW {
-                index += 1
-                let id = sqlite3_column_int64(queryStatement, 0)
-                let newObject = lattice.newObject(Element.self, primaryKey: id)
-    //            cache[index] = newObject
-                return newObject
-            }
-            return nil
-        }
-        
-        public var startIndex: Int = 0
-        
-        deinit {
-            sqlite3_finalize(queryStatement)
+            // Fetch one object at a time from the live results
+            let objects = results.queryObjects(limit: 1, offset: index)
+            guard let obj = objects.first else { return nil }
+            index += 1
+            return obj
         }
     }
 
-            
     public func makeIterator() -> Cursor {
         Cursor(self)
     }
-    
+
     public typealias SubSequence = Slice
-    
+
     public class Slice: RandomAccessCollection {
-        public var startIndex: Int = 0
-        
+        public var startIndex: Int
         public var endIndex: Int
-        private let cursor: Cursor
+        private let results: Results<Element>
         public typealias Index = Int
-        
-        fileprivate init(cursor: Cursor, startIndex: Int, endIndex: Int) {
+
+        fileprivate init(results: Results<Element>, startIndex: Int, endIndex: Int) {
             self.startIndex = startIndex
             self.endIndex = endIndex
-            self.cursor = cursor
+            self.results = results
         }
-        
+
         public subscript(bounds: Range<Int>) -> SubSequence {
-            .init(cursor: cursor, startIndex: bounds.lowerBound, endIndex: bounds.upperBound)
+            .init(results: results, startIndex: bounds.lowerBound, endIndex: bounds.upperBound)
         }
-        
-        private var cache: [Int: Element] = [:]
+
         public subscript(position: Int) -> Element {
-            
             get {
-                let localPosition = (endIndex - startIndex) - (endIndex - position)
-                while cursor.index <= localPosition, let element = cursor.next() {
-                    cache[cursor.index - 1] = element
+                // Fetch single element at position (live)
+                let objects = results.queryObjects(limit: 1, offset: Int64(position))
+                guard let obj = objects.first else {
+                    fatalError("Index out of bounds: \(position)")
                 }
-                if let element = cache[localPosition] {
-                    return element
-                } else {
-                    fatalError()
-                }
+                return obj
             }
         }
-        
+
         public func index(after i: Int) -> Int {
             i + 1
         }
+
+        public func index(before i: Int) -> Int {
+            i - 1
+        }
     }
-    
+
     private var token: AnyCancellable?
-    
+
     init(_ lattice: Lattice, whereStatement: Predicate<Element>? = nil, sortStatement: SortDescriptor<Element>? = nil) {
-        self.lattice = lattice
+        self._lattice = lattice
         self.whereStatement = whereStatement
         self.sortStatement = sortStatement
-        let countQuery = if let whereStatement {
-            "SELECT COUNT(*) FROM \(Element.entityName) WHERE \(whereStatement(Query<Element>()).predicate);"
-        } else {
-            "SELECT COUNT(*) FROM \(Element.entityName);"
-        }
-        
-        if sqlite3_prepare_v2(lattice.dbPtr.readDb, countQuery, -1, &countStatement, nil) != SQLITE_OK {
-            if let errorMessage = sqlite3_errmsg(lattice.db) {
-                let errorString = String(cString: errorMessage)
-                print("Error during sqlite3_step: \(errorString)")
-            } else {
-                print("Unknown error during sqlite3_step")
-            }
-            print("Failed to prepare count query for table \(Element.entityName): \(countQuery)")
-            print("Failed predicate: \(whereStatement?(Query<Element>()).predicate ?? "<unknown>")")
-//            fatalError()
-        }
-        
-        let queryStatementString =
-        String(format: "SELECT id FROM \(Element.entityName) %@ %@ LIMIT 1 OFFSET ?;",
-               whereStatement == nil ? "" : "WHERE \(whereStatement!(Query<Element>()).predicate)",
-               sortStatement == nil ? "" : "ORDER BY \(_name(for: sortStatement!.keyPath!)) \(sortStatement!.order == .forward ? "ASC" : "DESC")")
-        if sqlite3_prepare_v2(lattice.dbPtr.readDb, queryStatementString, -1, &queryStatement, nil) != SQLITE_OK {
-            if let errorMessage = sqlite3_errmsg(lattice.db) {
-                let errorString = String(cString: errorMessage)
-                print("Error during sqlite3_step: \(errorString)")
-            } else {
-                print("Unknown error during sqlite3_step")
-            }
-            print("Failed to prepare count query for table \(Element.entityName) with query: \(countQuery)")
-//            fatalError(countQuery)
-        }
-        
-//        token = self.observe { change in
-//            self.lastCount = nil
-//        }
     }
-    
-    public subscript(index: Int) ->  Element {
-//        let queryStatementString =
-//        String(format: "SELECT * FROM \(Element.entityName) %@ %@ LIMIT 1 OFFSET \(index);",
-//               whereStatement == nil ? "" : "WHERE \(whereStatement!(Query<Element>()).predicate)",
-//               sortStatement == nil ? "" : "ORDER BY \(_name(for: sortStatement!.keyPath!)) \(sortStatement!.order == .forward ? "ASC" : "DESC")")
-                
-        sqlite3_bind_int(queryStatement, 1, Int32(index))
-        defer { sqlite3_reset(queryStatement) }
-//        if sqlite3_prepare_v2(lattice.db, queryStatementString, -1, &queryStatement, nil) == SQLITE_OK {
-            // Bind the provided id to the statement.
-            if sqlite3_step(queryStatement) == SQLITE_ROW {
-                let id = sqlite3_column_int64(queryStatement, 0)
-                return lattice.newObject(Element.self, primaryKey: id)
-            }
-//        } else {
-//            print("SELECT statement could not be prepared.")
-//        }
-        
-        fatalError()
+
+    public subscript(index: Int) -> Element {
+        // Live fetch - always queries DB
+        let objects = queryObjects(limit: 1, offset: Int64(index))
+        guard let obj = objects.first else {
+            fatalError("Index out of bounds: \(index)")
+        }
+        return obj
     }
-    
+
     public subscript(bounds: Range<Int>) -> Slice {
-        return Slice.init(cursor: Cursor(self, limit: bounds.upperBound - bounds.lowerBound,
-                                         offset: bounds.lowerBound),
-                          startIndex: bounds.lowerBound, endIndex: bounds.upperBound)
+        Slice(results: self, startIndex: bounds.lowerBound, endIndex: bounds.upperBound)
     }
-    
+
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Results<Element> {
-        return Results(lattice, whereStatement: whereStatement, sortStatement: sortDescriptor)
+        return Results(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor)
     }
-    
+
     public func `where`(_ query: @escaping @Sendable Predicate<Element>) -> Results<Element> {
-        return Results(lattice, whereStatement: query)
+        return Results(_lattice, whereStatement: query)
     }
-    
-    public var startIndex: Int = 0
-    
+
+    public var startIndex: Int { 0 }
+
     deinit {
-        sqlite3_finalize(countStatement)
-        sqlite3_finalize(queryStatement)
         token?.cancel()
     }
-    
-    private var lastCount: Int?
-    private var dynamicCount: Int {
-        var count = 0
-        
-        if sqlite3_step(countStatement) == SQLITE_ROW {
-            count = Int(sqlite3_column_int(countStatement, 0))
-        } else {
-            if let errorMessage = sqlite3_errmsg(lattice.db) {
-                let errorString = String(cString: errorMessage)
-                print("Error during sqlite3_step: \(errorString)")
-            } else {
-                print("Unknown error during sqlite3_step")
-            }
-            print("Failed to prepare count query for table \(Element.entityName)")
-            fatalError()
-        }
-        sqlite3_reset(countStatement)
-        lastCount = count
-        return count
-    }
-    
+
     public var endIndex: Int {
-        dynamicCount
+        // Live count from C++
+        let tableName = std.string(Element.entityName)
+        let whereClause: lattice.OptionalString = if let whereStatement {
+            lattice.string_to_optional(std.string(whereStatement(Query<Element>()).predicate))
+        } else {
+            .init()
+        }
+        return Int(_lattice.cxxLattice.count(tableName, whereClause))
     }
-    
+
     public func index(after i: Int) -> Int {
         i + 1
     }
@@ -218,99 +151,79 @@ public final class Results<Element>: Sequence where Element: Model {
         case insert(Int64)
         case delete(Int64)
     }
-    
+
     public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
-        lattice.observe(Element.self, where: self.whereStatement) { change in
+        _lattice.observe(Element.self, where: self.whereStatement) { change in
             observer(change)
         }
     }
-    
-    
-//    public func first(where: ((Query<Element>) -> Query<Bool>)) -> T? {
-//        let queryStmtString = """
-//        SELECT id
-//          FROM \(Element.entityName)
-//         WHERE \(whereStatement!(Query<Element>()).predicate)
-//         ORDER BY id   ASC
-//         LIMIT 1;
-//        """
-//        var queryStatement: OpaquePointer?
-//        defer { sqlite3_finalize(queryStatement) }
-//        if sqlite3_prepare_v2(lattice.db, queryStmtString, -1, &queryStatement, nil) == SQLITE_OK {
-//            
-//            if sqlite3_step(queryStatement) == SQLITE_ROW {
-//                let id = sqlite3_column_int64(queryStatement, 0)
-//                let object = T(isolation: #isolation) // Person(id: personId, name: name, age: age)
-//                object._assign(lattice: lattice)
-//                object.primaryKey = id
-//                lattice.dbPtr.insertModelObserver(tableName: Element.entityName, primaryKey: id, object.weakCapture(isolation: lattice.isolation))
-//                return object
-//            } else {
-//                if let errorMessage = sqlite3_errmsg(lattice.db) {
-//                    let errorString = String(cString: errorMessage)
-//                    print("Error during sqlite3_step: \(errorString)")
-//                } else {
-//                    print("Unknown error during sqlite3_step")
-//                }
-//            }
-//        }
-//        
-//        fatalError()
-//    }
-//    
-//    public func last(where: ((Query<Element>) -> Query<Bool>)) -> T? {
-//        let queryStmtString = """
-//        SELECT id
-//          FROM \(Element.entityName)
-//         WHERE \(whereStatement!(Query<Element>()).predicate)
-//         ORDER BY id DESC
-//         LIMIT 1;
-//        """
-//        var queryStatement: OpaquePointer?
-//        defer { sqlite3_finalize(queryStatement) }
-//        if sqlite3_prepare_v2(lattice.db, queryStmtString, -1, &queryStatement, nil) == SQLITE_OK {
-//            
-//            if sqlite3_step(queryStatement) == SQLITE_ROW {
-//                let id = sqlite3_column_int64(queryStatement, 0)
-//                let object = Element(isolation: #isolation) // Person(id: personId, name: name, age: age)
-//                object._assign(lattice: lattice)
-//                object.primaryKey = id
-//                lattice.dbPtr.insertModelObserver(tableName: Element.entityName, primaryKey: id, object.weakCapture(isolation: lattice.isolation))
-//                return object
-//            } else {
-//                if let errorMessage = sqlite3_errmsg(lattice.db) {
-//                    let errorString = String(cString: errorMessage)
-//                    print("Error during sqlite3_step: \(errorString)")
-//                } else {
-//                    print("Unknown error during sqlite3_step")
-//                }
-//            }
-//        }
-//        
-//        fatalError()
-//    }
-//    
+
+    /// Returns a frozen snapshot of the current results (not live)
     public func snapshot() -> [Element] {
-        let queryStatementString =
-        String(format: "SELECT id FROM \(Element.entityName) %@ %@;",
-               whereStatement == nil ? "" : "WHERE \(whereStatement!(Query<Element>()).predicate)",
-               sortStatement == nil ? "" : "ORDER BY \(_name(for: sortStatement!.keyPath!)) \(sortStatement!.order == .forward ? "ASC" : "DESC")")
-        
-        defer { sqlite3_reset(queryStatement) }
-        if sqlite3_prepare_v2(lattice.db, queryStatementString, -1, &queryStatement, nil) == SQLITE_OK {
-            // Bind the provided id to the statement.
-            var objects = [Element]()
-            while sqlite3_step(queryStatement) == SQLITE_ROW {
-                // Extract id, name, and age from the row.
-                let id = sqlite3_column_int64(queryStatement, 0)
-                objects.append(lattice.newObject(Element.self, primaryKey: id))
-            }
-            return objects
-        } else {
-            print("SELECT statement could not be prepared.")
+        queryObjects()
+    }
+
+    // MARK: - Vector Search
+
+    /// Result from a nearest neighbor query
+    public struct NearestMatch {
+        public let object: Element
+        public let distance: Double
+    }
+
+    /// Distance metric for vector search
+    public enum DistanceMetric: Int32 {
+        case l2 = 0      // Euclidean distance (default)
+        case cosine = 1  // Cosine distance
+        case l1 = 2      // Manhattan distance
+    }
+
+    /// Find the k nearest neighbors to a query vector.
+    /// Returns objects sorted by distance (closest first).
+    ///
+    /// Example:
+    /// ```swift
+    /// let similar = lattice.objects(Document.self)
+    ///     .nearest(to: queryEmbedding, on: \.embedding, limit: 10)
+    /// for match in similar {
+    ///     print("\(match.object.title): \(match.distance)")
+    /// }
+    /// ```
+    public func nearest<V: VectorElement>(
+        to queryVector: Vector<V>,
+        on keyPath: KeyPath<Element, Vector<V>>,
+        limit k: Int = 10,
+        distance metric: DistanceMetric = .l2
+    ) -> [NearestMatch] {
+        let propertyName = _name(for: keyPath)
+        let queryData = queryVector.toData()
+
+        var byteVec = lattice.ByteVector()
+        for byte in queryData {
+            byteVec.push_back(byte)
         }
-                
-        fatalError()
+
+        let cxxResults = _lattice.cxxLattice.nearest_neighbors(
+            std.string(Element.entityName),
+            std.string(propertyName),
+            byteVec,
+            Int32(k),
+            metric.rawValue
+        )
+
+        var results: [NearestMatch] = []
+        results.reserveCapacity(cxxResults.size())
+
+        for i in 0..<cxxResults.size() {
+            let pair = cxxResults[i]
+            let managedObj = pair.first
+            let distance = pair.second
+
+            let swiftObj = _lattice.newObject(Element.self, primaryKey: managedObj.id(), cxxObject: managedObj)
+            results.append(NearestMatch(object: swiftObj, distance: distance))
+        }
+
+        return results
     }
 }
 

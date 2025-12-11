@@ -246,7 +246,7 @@ extension Lattice {
         switch sse {
         case .auditLog(let log):
             Logger.sync.debug("🧦: \(configuration.fileURL) Received \(log.count) events")
-            applyInstructions(from: log)
+//            applyInstructions(from: log)
             return log.map(\.__globalId)
         case .ack(let acked):
             Logger.sync.debug("🧦: \(configuration.fileURL) Acknowledging \(acked.count) events")

@@ -416,19 +416,26 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         }
 
         // Check for reserved property names
+        var propertyName: String?
         for binding in variableDecl.bindings {
             if let pattern = binding.pattern.as(IdentifierPatternSyntax.self) {
-                let propertyName = pattern.identifier.text
+                propertyName = pattern.identifier.text
                 if propertyName == "id" || propertyName == "globalId" {
                     context.diagnose(Diagnostic(
                         node: Syntax(pattern.identifier),
-                        message: MacroError.message("Property name '\(propertyName)' is reserved by Lattice. The 'id' and 'globalId' columns are automatically created. Use a different name like 'identifier' or 'uniqueId'.")
+                        message: MacroError.message("Property name '\(propertyName!)' is reserved by Lattice. The 'id' and 'globalId' columns are automatically created. Use a different name like 'identifier' or 'uniqueId'.")
                     ))
                     return []
                 }
             }
         }
-
+        guard let propertyName else {
+            context.diagnose(Diagnostic(
+                node: variableDecl,
+                message: MacroError.message("Missing property name.")
+            ))
+            return []
+        }
         // Check if the variable already has the @Property attribute.
         let attributes = variableDecl.attributes
         for attr in attributes {
@@ -474,7 +481,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
 
         // If all checks pass, then create and return the @Property attribute.
         // You can construct the attribute using SwiftSyntaxBuilder.
-        return ["@Property"]
+        return ["@Property(name: \"\(raw: propertyName)\")"]
     }
     
     static func expansion(
@@ -566,15 +573,19 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         }
         return [
             """
+            public typealias CxxManagedSpecialization = CxxManagedLatticeObject?
             public typealias DefaultValue = Optional<\(name)>
             \(raw: dtoProperties)
             public var lattice: Lattice?
+            @Property(name: "id")
             public var primaryKey: Int64?
             private var isolation: (any Actor)?
             public var _objectWillChange: ObservableObjectPublisher = .init()
-            
+            public var _storage: _ModelStorage = .unmanaged(defaultCxxLatticeObject)
             public required init(isolation: isolated (any Actor)? = #isolation) {
                 self.isolation = isolation
+                self._storage = .unmanaged(Self.defaultCxxLatticeObject)
+                \(raw: allowedMembers.map { "_\($0.name).pushDefaultToStorage(&_storage)" }.joined(separator: "\n\t\t"))
             }
             private struct __GlobalIdName: StaticString { static var string: String { "globalId" } }
             private struct __GlobalIdKey: StaticInt32 { static var int32: Int32 { 1 } }
@@ -627,11 +638,11 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                 }
             }
             
-            deinit {           
-                self.primaryKey.map { id in
-                    lattice?.dbPtr.removeModelObserver(tableName: Self.entityName, primaryKey: id)
-                }
-            }
+            // deinit {           
+            //    self.primaryKey.map { id in
+            //        lattice?.dbPtr.removeModelObserver(tableName: Self.entityName, primaryKey: id)
+            //    }
+            // }
             """
         ]
     }
@@ -752,11 +763,21 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                         public static var entityName: String {
                             "\(raw: typeName)"
                         }
-                    
-                        public static var properties: [(String, any Property.Type)] {
+
+                        public static var properties: [(String, any SchemaProperty.Type)] {
                             [\(raw: modelProperties)]
                         }
-                    
+
+                        public static func fromCxxValue(_ value: CxxManagedLatticeObject?) -> Self {
+                            guard let value else {
+                                return Self(isolation: #isolation)
+                            }
+                            let instance = Self(isolation: #isolation)
+                            instance._storage = .managed(value)
+                            instance.primaryKey = value.id()
+                            return instance
+                        }
+
                         public func _assign(lattice: Lattice?) {
                             self.lattice = lattice
                             self.___globalIdAccessor.lattice = lattice

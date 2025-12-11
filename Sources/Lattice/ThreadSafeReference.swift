@@ -14,7 +14,7 @@ public struct ModelThreadSafeReference<T: Model>: SendableReference, Equatable {
     
     public func resolve(on lattice: Lattice) -> T? {
         if let key {
-            return lattice.newObject(T.self, primaryKey: key)
+            return lattice.object(T.self, primaryKey: key)
         }
         return nil
     }

@@ -644,7 +644,7 @@ extension Query where T: OptionalProtocol {
 
 // MARK: - PersistableEnum
 
-extension Query where T: LatticeEnum, T.RawValue: Property {
+extension Query where T: LatticeEnum, T.RawValue: SchemaProperty {
     /// Query on the rawValue of the Enum rather than the Enum itself.
     ///
     /// This can be used to write queries which can be expressed on the
@@ -825,7 +825,7 @@ extension Query where T: _QueryBinary {
      - parameter column: The other column.
      - parameter options: A Set of options used to evaluate the search query.
      */
-    public func contains<U>(_ column: Query<U>, options: StringOptions = []) -> Query<Bool> where U: Property, U: _QueryBinary {
+    public func contains<U>(_ column: Query<U>, options: StringOptions = []) -> Query<Bool> where U: SchemaProperty, U: _QueryBinary {
         .init(.comparison(operator: .contains, node, column.node, options: options))
     }
 
@@ -1017,7 +1017,7 @@ extension Query where T: _QueryNumeric {
 //}
 
 /// Tag protocol for all numeric types.
-public protocol _QueryNumeric: Property { }
+public protocol _QueryNumeric: SchemaProperty { }
 extension Int: _QueryNumeric { }
 extension Int8: _QueryNumeric { }
 extension Int16: _QueryNumeric { }
