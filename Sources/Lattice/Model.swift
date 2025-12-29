@@ -4,6 +4,7 @@ import SQLite3
 @_exported import Combine
 #endif
 import LatticeSwiftCppBridge
+import LatticeSwiftModule
 
 public enum _ModelStorage {
     case unmanaged(lattice.swift_dynamic_object)
@@ -12,18 +13,20 @@ public enum _ModelStorage {
 
 public typealias CxxLatticeObject = lattice.swift_dynamic_object
 public typealias CxxManagedLatticeObject = lattice.ManagedModel
+public typealias CxxManagedModel = lattice.ManagedModel
+public typealias CxxManagedLink = lattice.ManagedLink
+public typealias CxxManagedInt = lattice.ManagedInt
+public typealias CxxDynamicObject = lattice.dynamic_object
+public typealias CxxDynamicObjectRef = lattice.dynamic_object_ref
 
-public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, SendableMetatype, CxxManaged {
+public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, SendableMetatype, CxxManaged, LatticeIsolated {
     init(isolation: isolated (any Actor)?)
-    var lattice: Lattice? { get set }
+//    var lattice: Lattice? { get set }
     static var entityName: String { get }
     static var properties: [(String, any SchemaProperty.Type)] { get }
     var primaryKey: Int64? { get set }
-    var __globalId: UUID { get }  // Unique identifier for sync across clients
-    func _assign(lattice: Lattice?)
-    func _encode(statement: OpaquePointer?)
-    func _didEncode()
-
+    var __globalId: UUID? { get }  // Unique identifier for sync across clients
+    
     var _$observationRegistrar: Observation.ObservationRegistrar { get }
     func _objectWillChange_send()
     func _triggerObservers_send(keyPath: String)
@@ -31,59 +34,54 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     static func _nameForKeyPath(_ keyPath: AnyKeyPath) -> String
     static var constraints: [Constraint] { get }
     var _objectWillChange: Combine.ObservableObjectPublisher { get }
-    var _storage: _ModelStorage { get set }
+    var _dynamicObject: CxxDynamicObjectRef { get set }
 }
 
 extension Model {
+    package init(isolation: isolated (any Actor)? = #isolation,
+                 dynamicObject: CxxDynamicObjectRef) {
+        self.init(isolation: isolation)
+        self._dynamicObject = dynamicObject
+    }
+    
     public static var defaultValue: Self {
         .init(isolation: #isolation)
     }
     public static var sqlType: String { "BIGINT" }
     public static var anyPropertyKind: AnyProperty.Kind { .int }
 
-    // CxxManaged conformance
-    public func toCxxValue() -> lattice.ManagedModel? {
-        if case let .managed(cxxObject) = _storage {
-            return cxxObject
-        }
-        return nil
+    public var lattice: Lattice? {
+        _dynamicObject.lattice.map { Lattice.init(ref: $0) }
     }
 
-    public static func fromCxxValue(_ value: lattice.ManagedModel?) -> Self {
-        let object = Self(isolation: #isolation)
-        if let value {
-            object._storage = .managed(value)
-        }
-        return object
-    }
-
-    public static func getUnmanaged(from object: lattice.swift_dynamic_object, name: std.string) -> Self {
-        // Models aren't stored inline in dynamic objects - return a new unmanaged instance
+    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> Self {
         let model = Self(isolation: #isolation)
+        model._dynamicObject = object.getObject(named: std.string(name))
         return model
     }
-
-    public func setUnmanaged(to object: inout lattice.swift_dynamic_object, name: std.string) {
-        // Models aren't stored inline in dynamic objects
-        // Links are handled separately via link tables
+    
+    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: Self) {
+        object.setObject(named: std.string(name), value._dynamicObject)
     }
+
     public typealias ObservableObjectPublisher = AnyPublisher<Void, Never>
+    
     // 3️⃣ override the protocol’s publisher
     public var objectWillChange: Publishers.HandleEvents<Combine.ObservableObjectPublisher> {
-      // each new subscriber bumps the count…
-      _objectWillChange
-        .handleEvents(
-            receiveSubscription: { [weak self] _ in
-                self.map {
-                    $0.lattice?.beginObserving($0)
+        // each new subscriber bumps the count…
+        _objectWillChange
+            .handleEvents(
+                receiveSubscription: { [weak self] _ in
+                    self.map {
+                        $0.lattice?.beginObserving($0)
+                    }
+                },
+                receiveCancel: { [weak self] in
+                    self.map {
+                        $0.lattice?.finishObserving($0)
+                    }
                 }
-            },
-            receiveCancel: { [weak self] in
-                self.map {
-                    $0.lattice?.finishObserving($0)
-                }
-            }
-        )
+            )
     }
     
     public var id: some Hashable {
@@ -136,23 +134,36 @@ extension Model {
             // Check if this is a Vector type for automatic vec0 indexing
             let isVector = property is Vector<Float>.Type || property is Vector<Double>.Type
             schema[std.string(name)] = .init(name: std.string(name), type: columnType, kind: .primitive,
-                                             target_table: .init(), link_table: .init(), nullable: false,
+                                             target_table: .init(), link_table: .init(),
+                                             nullable: property is (any OptionalProtocol.Type),
                                              is_vector: isVector)
         }
 
         for (name, property) in linkProperties {
-            schema[std.string(name)] = .init(name: std.string(name), type: .integer, kind: .link,
+            let isVector = property is (any ListProperty.Type)
+            schema[std.string(name)] = .init(name: std.string(name), type: .integer,
+                                             kind: isVector ? .list : .link,
                                              target_table: std.string(property.modelType.entityName),
                                              link_table: .init(Self.entityName),
-                                             nullable: true, is_vector: false)
+                                             nullable: true, is_vector: isVector)
         }
 
 
         return schema
     }
     
-    public static var defaultCxxLatticeObject: CxxLatticeObject {
-        CxxLatticeObject(std.string(entityName), cxxPropertyDescriptor())
+    public static var defaultCxxLatticeObject: CxxDynamicObject {
+        CxxDynamicObject(CxxLatticeObject(std.string(entityName), cxxPropertyDescriptor()))
+    }
+}
+
+public func _defaultCxxLatticeObject<M>(_ model: M.Type) -> CxxDynamicObject where M: Model {
+    CxxDynamicObject(CxxLatticeObject(std.string(M.entityName), M.cxxPropertyDescriptor()))
+}
+
+extension Model {
+    public var debugDescription: String {
+        String(_dynamicObject.debug_description())
     }
 }
 
@@ -168,6 +179,14 @@ func _name<T>(for keyPath: PartialKeyPath<T>) -> String where T: Model {
 public macro Model() = #externalMacro(module: "LatticeMacros",
                                       type: "ModelMacro")
 
+@attached(extension, conformances: LatticeEnum, names: arbitrary)
+public macro LatticeEnum() = #externalMacro(module: "LatticeMacros",
+                                            type: "EnumMacro")
+
+@attached(member, conformances: EmbeddedModel, names: arbitrary)
+public macro EmbeddedModel() = #externalMacro(module: "LatticeMacros",
+                                              type: "EmbeddedModelMacro")
+
 @attached(member, names: arbitrary)
 @attached(extension, conformances: Codable, names: arbitrary)
 public macro Codable() = #externalMacro(module: "LatticeMacros",
@@ -178,9 +197,9 @@ public macro Transient() = #externalMacro(module: "LatticeMacros",
                                       type: "TransientMacro")
 
 
-//@attached(accessor, names: arbitrary)
-//public macro Property(name mappedTo: String? = nil) = #externalMacro(module: "LatticeMacros",
-//                                                                     type: "PropertyMacro")
+@attached(accessor, names: arbitrary)
+public macro Property(name mappedTo: String? = nil) = #externalMacro(module: "LatticeMacros",
+                                                                     type: "PropertyMacro")
 
 
 @attached(peer)
@@ -189,8 +208,8 @@ public macro Unique<T>(compoundedWith: PartialKeyPath<T>...,
                                                            type: "UniqueMacro")
 
 @attached(peer)
-public macro Unique() = #externalMacro(module: "LatticeMacros",
-                                       type: "UniqueMacro")
+public macro Unique(allowsUpsert: Bool = false) = #externalMacro(module: "LatticeMacros",
+                                                                 type: "UniqueMacro")
 
 // MARK: Constraints
 public struct Constraint {

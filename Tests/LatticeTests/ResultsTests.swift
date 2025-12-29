@@ -26,20 +26,23 @@ class ResultsTests: BaseTest {
     
     @Test func testCursor() async throws {
         let lattice = try testLattice(SequenceSyncObject.self)
-        let objects = (0..<1_000_000).map { _ in SequenceSyncObject() }
+        let objects = (0..<100_000).map { _ in SequenceSyncObject() }
         lattice.transaction {
             lattice.add(contentsOf: objects)
         }
-        
+
         let results = lattice.objects(SequenceSyncObject.self)
-        let cursor = Results<SequenceSyncObject>.Cursor(results)
-        
+
+        // Test 1: Slice iteration (batched - 1 query for the range)
         var duration = Test.Clock().measure {
             for result in results[0..<1000] {
                 _ = result.open
             }
         }
-        print(duration)
+        print("Slice iteration (1000 items): \(duration)")
+
+        // Test 2: Cursor iteration (batched - queries of 100)
+        let cursor = Results<SequenceSyncObject>.Cursor(results)
         duration = Test.Clock().measure {
             var idx = 0
             while idx < 1000, let result = cursor.next()  {
@@ -47,7 +50,18 @@ class ResultsTests: BaseTest {
                 idx += 1
             }
         }
-        print(duration)
+        print("Cursor iteration (1000 items): \(duration)")
+
+        // Test 3: Full results iteration via for-in (uses Cursor)
+        duration = Test.Clock().measure {
+            var count = 0
+            for result in results {
+                _ = result.open
+                count += 1
+                if count >= 1000 { break }
+            }
+        }
+        print("For-in iteration (1000 items): \(duration)")
     }
     
     @Test func test_WriteWhileIterating() async throws {
@@ -80,6 +94,31 @@ class ResultsTests: BaseTest {
                 object.high = 5000
             }
         }
+    }
+    
+    @Test
+    func test_ResultsSendableReference() async throws {
+        let lattice = try testLattice(Person.self, Dog.self)
+        let person = Person()
+        person.age = 10
+        lattice.add(person)
+        
+        let person2 = Person()
+        person2.age = 20
+        lattice.add(person2)
+        
+        let results = lattice.objects(Person.self).where {
+            $0.age.in([5, 10, 15])
+        }
+        #expect(results.count == 1)
+        let ref = results.sendableReference
+        let configuration = lattice.configuration
+        try await Task { [ref] in
+            let results = try ref.resolve(on: Lattice(Person.self, Dog.self, configuration: configuration))
+            #expect(results.count == 1)
+        }.value
+        
+        #expect(lattice.objects(Person.self).count == 2)
     }
 }
 

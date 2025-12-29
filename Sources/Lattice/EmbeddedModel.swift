@@ -1,54 +1,45 @@
 import Foundation
 import SQLite3
 import LatticeSwiftCppBridge
+import LatticeSwiftModule
 
 public protocol DefaultInitializable {
     init()
 }
 
-public protocol EmbeddedModel: Codable, PrimitiveProperty, CxxManaged, DefaultInitializable {
+public typealias CxxManagedStringList = lattice.ManagedStringList
+public typealias CxxManagedString = lattice.ManagedString
+
+public protocol EmbeddedModel: Codable, PrimitiveProperty, CxxListManaged, DefaultInitializable where CxxManagedListType == CxxManagedStringList {
 }
 
 extension EmbeddedModel {
-    public typealias CxxManagedSpecialization = lattice.ManagedString
-
-    public static func fromCxxValue(_ value: String) -> Self {
-        return try! JSONDecoder().decode(Self.self, from: value.data(using: .utf8)!)
+    public static func getManagedList(from object: lattice.ManagedModel, name: std.string) -> CxxManagedStringList {
+        fatalError()
     }
-
-    public func toCxxValue() -> String {
-        return String(data: try! JSONEncoder().encode(self), encoding: .utf8)!
-    }
-
-    public static func getUnmanaged(from object: lattice.swift_dynamic_object, name: std.string) -> Self {
-        let jsonStr = String(object.get_string(name))
+    
+    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> Self {
+        let jsonStr = String(object.getString(named: std.string(name)))
         if jsonStr.isEmpty {
-            return Self.init()
+            fatalError()
         }
         return try! JSONDecoder().decode(Self.self, from: jsonStr.data(using: .utf8)!)
     }
-
-    public func setUnmanaged(to object: inout lattice.swift_dynamic_object, name: std.string) {
-        let jsonStr = String(data: try! JSONEncoder().encode(self), encoding: .utf8)!
-        object.set_string(name, std.string(jsonStr))
+    
+    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: Self) {
+        let jsonStr = String(data: try! JSONEncoder().encode(value), encoding: .utf8)!
+        object.setString(named: std.string(name), std.string(jsonStr))
     }
 
     public static var defaultValue: Self {
-        Self.init()
-    }
-
-    public static var sqlType: String {
-        "TEXT"
+        .init()
     }
 
     public static var anyPropertyKind: AnyProperty.Kind { .string }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = try! JSONDecoder().decode(Self.self, from: String(from: statement, with: columnId).data(using: .utf8)!)
-    }
-
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        let text = String(data: try! JSONEncoder().encode(self), encoding: .utf8)!
-        sqlite3_bind_text(statement, columnId, (text as NSString).utf8String, -1, nil)
-    }
 }
 
+#if DEBUG
+private struct TestEmbedded: EmbeddedModel {
+    var foo = ""
+}
+#endif

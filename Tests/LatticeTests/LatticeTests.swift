@@ -3,8 +3,9 @@ import Foundation
 //import SwiftUI
 import Lattice
 import Observation
-import LatticeCpp
-
+#if canImport(CoreLocation)
+import CoreLocation
+#endif
 
 fileprivate let base64 = Array<UInt8>(
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".utf8
@@ -64,7 +65,60 @@ struct Embedded: EmbeddedModel {
 }
 
 @Model final class AllTypesObject {
+    // MARK: - String
+    var string: String
+    var stringOpt: String?
+    var stringArray: [String]
+    var stringArrayOpt: [String]?
+
+    // MARK: - UUID
+    var uuid: UUID
+    var uuidOpt: UUID?
+
+    // MARK: - URL
+    var url: URL
+    var urlOpt: URL?
+
+    // MARK: - Bool
+    var bool: Bool
+    var boolOpt: Bool?
+
+    // MARK: - Int64 (primary integer type with CxxManaged support)
+    var int64: Int64
+    var int64Opt: Int64?
+
+    // MARK: - Float
+    var float: Float
+    var floatOpt: Float?
+
+    // MARK: - Double
+    var double: Double
+    var doubleOpt: Double?
+
+    // MARK: - Date
+    var date: Date
+    var dateOpt: Date?
+
+    // MARK: - Data
     var data: Data
+    var dataOpt: Data?
+
+    // MARK: - Dictionary
+    var dict: [String: String]
+    var dictOpt: [String: String]?
+
+    // MARK: - Embedded
+    var embedded: Embedded
+    var embeddedOpt: Embedded?
+    var embeddedArray: [Embedded]
+    var embeddedArrayOpt: [Embedded]?
+
+#if canImport(CoreLocation)
+    var customType: CLLocationCoordinate2D
+    var customTypeOpt: CLLocationCoordinate2D?
+    var customTypeArray: [CLLocationCoordinate2D]
+    var customTypeArrayOpt: [CLLocationCoordinate2D]?
+#endif
 }
 
 
@@ -119,6 +173,7 @@ class BaseTest {
                      _ types: any Model.Type...) throws -> Lattice {
         let path = FileManager.default.temporaryDirectory.appending(path: path ?? "\(String.random(length: 32)).sqlite")
         paths.append(path)
+        print("Lattice path: \(path)")
         return try Lattice(for: types, configuration: .init(fileURL: path))
     }
 }
@@ -141,12 +196,174 @@ class LatticeTests: BaseTest {
         let person = Person()
         person.name = "John"
         person.age = 30
+        #expect(person.age == 30)
         manager.add(person)
         
         person.age = 31
-        print(person)
+        #expect(person.age == 31)
+        print(person.age)
     }
     
+    @Test func test_AllTypes() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        // Test values
+        let testUUID = UUID()
+        let testURL = URL(string: "https://example.com/path")!
+        let testDate = Date(timeIntervalSince1970: 1700000000)
+        let testData = Data([0x01, 0x02, 0x03, 0xAB, 0xCD])
+        let emptyData = Data()
+
+        let obj = AllTypesObject()
+
+        // MARK: - Set all values
+        // String
+        obj.string = "Hello World"
+        obj.stringOpt = "Optional String"
+        obj.stringArray = ["one", "two", "three"]
+        obj.stringArrayOpt = ["opt1", "opt2"]
+
+        // UUID
+        obj.uuid = testUUID
+        obj.uuidOpt = UUID()
+
+        // URL
+        obj.url = testURL
+        obj.urlOpt = URL(string: "https://optional.com")!
+
+        // Bool
+        obj.bool = true
+        obj.boolOpt = false
+
+        // Int64
+        obj.int64 = 9223372036854775807
+        obj.int64Opt = -9223372036854775808
+
+        // Float
+        obj.float = 3.14159
+        obj.floatOpt = -2.71828
+
+        // Double
+        obj.double = 3.141592653589793
+        obj.doubleOpt = -2.718281828459045
+
+        // Date
+        obj.date = testDate
+        obj.dateOpt = Date(timeIntervalSince1970: 0)
+
+        // Data
+        obj.data = testData
+        obj.dataOpt = emptyData
+
+        // Dictionary
+        obj.dict = ["key1": "value1", "key2": "value2"]
+        obj.dictOpt = ["optKey": "optValue"]
+
+        // Embedded
+        obj.embedded = Embedded(bar: "embedded value")
+        obj.embeddedOpt = Embedded(bar: "optional embedded")
+        obj.embeddedArray = [Embedded(bar: "arr1"), Embedded(bar: "arr2")]
+        obj.embeddedArrayOpt = [Embedded(bar: "optArr1")]
+
+        // MARK: - Persist
+        lattice.add(obj)
+
+        // MARK: - Retrieve and verify
+        let results = lattice.objects(AllTypesObject.self)
+        #expect(results.count == 1)
+
+        guard let retrieved = results.first else {
+            Issue.record("No object retrieved")
+            return
+        }
+
+        // String
+        #expect(retrieved.string == "Hello World")
+        #expect(retrieved.stringOpt == "Optional String")
+        #expect(retrieved.stringArray == ["one", "two", "three"])
+        #expect(retrieved.stringArrayOpt == ["opt1", "opt2"])
+
+        // UUID
+        #expect(retrieved.uuid == testUUID)
+        #expect(retrieved.uuidOpt != nil)
+
+        // URL
+        #expect(retrieved.url == testURL)
+        #expect(retrieved.urlOpt == URL(string: "https://optional.com")!)
+
+        // Bool
+        #expect(retrieved.bool == true)
+        #expect(retrieved.boolOpt == false)
+
+        // Int64
+        #expect(retrieved.int64 == 9223372036854775807)
+        #expect(retrieved.int64Opt == -9223372036854775808)
+
+        // Float (use approximate comparison due to floating point)
+        #expect(Swift.abs(retrieved.float - 3.14159) < 0.0001)
+        #expect(retrieved.floatOpt != nil)
+        #expect(Swift.abs(retrieved.floatOpt! - (-2.71828)) < 0.0001)
+
+        // Double
+        #expect(Swift.abs(retrieved.double - 3.141592653589793) < 0.0000001)
+        #expect(retrieved.doubleOpt != nil)
+        #expect(Swift.abs(retrieved.doubleOpt! - (-2.718281828459045)) < 0.0000001)
+
+        // Date
+        #expect(retrieved.date == testDate)
+        #expect(retrieved.dateOpt == Date(timeIntervalSince1970: 0))
+
+        // Data
+        #expect(retrieved.data == testData)
+        #expect(retrieved.dataOpt == emptyData)
+
+        // Dictionary
+        #expect(retrieved.dict == ["key1": "value1", "key2": "value2"])
+        #expect(retrieved.dictOpt == ["optKey": "optValue"])
+
+        // Embedded
+        #expect(retrieved.embedded.bar == "embedded value")
+        #expect(retrieved.embeddedOpt?.bar == "optional embedded")
+        #expect(retrieved.embeddedArray.count == 2)
+        #expect(retrieved.embeddedArray[0].bar == "arr1")
+        #expect(retrieved.embeddedArrayOpt?.count == 1)
+
+        // MARK: - Test nil optionals
+        let obj2 = AllTypesObject()
+        obj2.string = "test"
+        obj2.uuid = UUID()
+        obj2.url = URL(string: "https://test.com")!
+        obj2.bool = false
+        obj2.int64 = 0
+        obj2.float = 0
+        obj2.double = 0
+        obj2.date = Date()
+        obj2.data = Data()
+        obj2.dict = [:]
+        obj2.embedded = Embedded(bar: "")
+        // Leave all optionals as nil
+
+        lattice.add(obj2)
+
+        let results2 = lattice.objects(AllTypesObject.self)
+        #expect(results2.count == 2)
+
+        // Find the one with nil optionals
+        let nilObj = results2.first { $0.stringOpt == nil }
+        #expect(nilObj != nil)
+        #expect(nilObj?.uuidOpt == nil)
+        #expect(nilObj?.urlOpt == nil)
+        #expect(nilObj?.boolOpt == nil)
+        #expect(nilObj?.int64Opt == nil)
+        #expect(nilObj?.floatOpt == nil)
+        #expect(nilObj?.doubleOpt == nil)
+        #expect(nilObj?.dateOpt == nil)
+        #expect(nilObj?.dataOpt == nil)
+        #expect(nilObj?.dictOpt == nil)
+        #expect(nilObj?.embeddedOpt == nil)
+        #expect(nilObj?.stringArrayOpt == nil)
+        #expect(nilObj?.embeddedArrayOpt == nil)
+    }
 //    @Test func testLattice_Objects() async throws {
 //        let lattice = try testLattice(path: path, Person.self)
 //        let persons = lattice.objects(Person.self)
@@ -321,7 +538,8 @@ class LatticeTests: BaseTest {
         let block = { (change: Results<Person>.CollectionChange) -> Void in
             switch change {
             case .insert(let id):
-                #expect(lattice.object(Person.self, primaryKey: id)?.name == person.name)
+                let found = lattice.object(Person.self, primaryKey: id)
+                #expect(found?.name == person.name)
                 insertHitCount += 1
             case .delete(_):
                 deleteHitCount += 1
@@ -399,6 +617,80 @@ class LatticeTests: BaseTest {
         #expect(deleteHitCount == 2)
     }
     
+    @Test
+    func test_AuditLogObserve_inMemory() async throws {
+        let lattice = try Lattice(Person.self, Dog.self, configuration: .init(isStoredInMemoryOnly: true))
+
+        var insertHitCount = 0
+        var deleteHitCount = 0
+
+        let person = Person()
+        person.name = "Test"
+        var checkedContinuation: CheckedContinuation<Void, Never>?
+        let block = { (changes: [AuditLog]) -> Void in
+            for change in changes {
+                switch change.operation {
+                case .insert:
+                    let found = lattice.object(Person.self, primaryKey: change.rowId)
+                    #expect(found?.name == person.name)
+                    insertHitCount += 1
+                case .delete:
+                    deleteHitCount += 1
+                default: break
+                }
+            }
+            checkedContinuation?.resume()
+        }
+        var cancellable: AnyCancellable?
+        await withCheckedContinuation { continuation in
+            checkedContinuation = continuation
+            cancellable = lattice.observe(block)
+            autoreleasepool {
+                lattice.add(person)
+            }
+        }
+        cancellable?.cancel()
+        #expect(insertHitCount == 1)
+        #expect(deleteHitCount == 0)
+    }
+    
+    @Test
+    func test_AuditLogObserve() async throws {
+        let lattice = try testLattice(path: path, Person.self, Dog.self)
+
+        var insertHitCount = 0
+        var deleteHitCount = 0
+
+        let person = Person()
+        person.name = "Test"
+        var checkedContinuation: CheckedContinuation<Void, Never>?
+        let block = { (changes: [AuditLog]) -> Void in
+            for change in changes {
+                switch change.operation {
+                case .insert:
+                    let found = lattice.object(Person.self, primaryKey: change.rowId)
+                    #expect(found?.name == person.name)
+                    insertHitCount += 1
+                case .delete:
+                    deleteHitCount += 1
+                default: break
+                }
+            }
+            checkedContinuation?.resume()
+        }
+        var cancellable: AnyCancellable?
+        await withCheckedContinuation { continuation in
+            checkedContinuation = continuation
+            cancellable = lattice.observe(block)
+            autoreleasepool {
+                lattice.add(person)
+            }
+        }
+        cancellable?.cancel()
+        #expect(insertHitCount == 1)
+        #expect(deleteHitCount == 0)
+    }
+    
     @Test func test_Embedded() async throws {
         try autoreleasepool {
             let lattice = try testLattice(path: path, ModelWithEmbeddedModelObject.self)
@@ -431,13 +723,25 @@ class LatticeTests: BaseTest {
         let p: LatticePredicate<Person> = {
             $0.name == "John"
         }
-        var query = p(Query<Person>())
+        let query = p(Query<Person>())
         print(query.convertKeyPathsToEmbedded(rootPath: "root").predicate)
     }
     
     @Test func test_Data() async throws {
-        let lattice = try testLattice(path: path, AllTypesObject.self)
+        let lattice = try testLattice(AllTypesObject.self)
         let object = AllTypesObject()
+        // Set required fields
+        object.string = "test"
+        object.uuid = UUID()
+        object.url = URL(string: "https://test.com")!
+        object.bool = false
+        object.int64 = 0
+        object.float = 0
+        object.double = 0
+        object.date = Date()
+        object.dict = [:]
+        object.embedded = Embedded(bar: "")
+        // Test Data
         object.data = Data([1, 2, 3])
         lattice.add(object)
         #expect(lattice.objects(AllTypesObject.self).first?.data == Data([1, 2, 3]))
@@ -463,37 +767,35 @@ class LatticeTests: BaseTest {
             var contacts: [String: String]
         }
     }
-//    @Test func test_Migration() async throws {
-//        var publishEventTask = try autoreleasepool {
-//            let personv1 = MigrationV1.Person()
-//            let lattice = try testLattice(path: path, MigrationV1.Person.self)
-//            lattice.add(personv1)
-//            return lattice.dbPtr.publishEventTask
-//        }
-//        await publishEventTask?.value
-//        publishEventTask = try autoreleasepool {
-//            let person = MigrationV2.Person()
-//            let lattice = try testLattice(path: path, MigrationV2.Person.self)
-//            lattice.add(person)
-//            #expect(person.city == "")
-//            person.city = "New York"
-//            #expect(person.city == "New York")
-//            return lattice.dbPtr.publishEventTask
-//        }
-//        await publishEventTask?.value
-//        try autoreleasepool {
-//            let person = MigrationV3.Person()
-//            let lattice = try testLattice(path: path, MigrationV3.Person.self)
-//            lattice.add(person)
-//            person.contacts["email"] = "john@example.com"
-//            #expect(person.contacts["email"] == "john@example.com")
-//        }
-//    }
+    
+    @Test func test_Migration() async throws {
+        try autoreleasepool {
+            let personv1 = MigrationV1.Person()
+            let lattice = try testLattice(path: path, MigrationV1.Person.self)
+            lattice.add(personv1)
+        }
+        try autoreleasepool {
+            let person = MigrationV2.Person()
+            let lattice = try testLattice(path: path, MigrationV2.Person.self)
+            lattice.add(person)
+            #expect(person.city == "")
+            person.city = "New York"
+            #expect(person.city == "New York")
+        }
+        try autoreleasepool {
+            let person = MigrationV3.Person()
+            let lattice = try testLattice(path: path, MigrationV3.Person.self)
+            lattice.add(person)
+            person.contacts["email"] = "john@example.com"
+            #expect(person.contacts["email"] == "john@example.com")
+        }
+    }
     
     @Test func test_Link() async throws {
         let lattice = try testLattice(path: path, Person.self, Dog.self)
         // add person with no link
         let person = Person()
+        #expect(person.dog == nil)
         lattice.add(person)
         #expect(person.dog == nil)
         
@@ -809,6 +1111,231 @@ class LatticeTests: BaseTest {
         lattice.add(person)
         person.dogs.append(Dog())
     }
+
+    @Test func test_StringIsEmptyQuery() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        // Create object with empty string
+        let objEmpty = AllTypesObject()
+        objEmpty.string = ""
+        objEmpty.uuid = UUID()
+        objEmpty.url = URL(string: "https://test.com")!
+        objEmpty.bool = false
+        objEmpty.int64 = 0
+        objEmpty.float = 0
+        objEmpty.double = 0
+        objEmpty.date = Date()
+        objEmpty.data = Data()
+        objEmpty.dict = [:]
+        objEmpty.embedded = Embedded(bar: "")
+
+        // Create object with non-empty string
+        let objFilled = AllTypesObject()
+        objFilled.string = "hello"
+        objFilled.uuid = UUID()
+        objFilled.url = URL(string: "https://test.com")!
+        objFilled.bool = false
+        objFilled.int64 = 0
+        objFilled.float = 0
+        objFilled.double = 0
+        objFilled.date = Date()
+        objFilled.data = Data()
+        objFilled.dict = [:]
+        objFilled.embedded = Embedded(bar: "")
+
+        lattice.add(objEmpty)
+        lattice.add(objFilled)
+
+        // Test isEmpty on non-optional string
+        let emptyResults = lattice.objects(AllTypesObject.self).where {
+            $0.string.isEmpty
+        }
+        #expect(emptyResults.count == 1)
+        #expect(emptyResults.first?.string == "")
+
+        // Test !isEmpty
+        let nonEmptyResults = lattice.objects(AllTypesObject.self).where {
+            !$0.string.isEmpty
+        }
+        #expect(nonEmptyResults.count == 1)
+        #expect(nonEmptyResults.first?.string == "hello")
+    }
+
+    @Test func test_NullQuery() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        // Create object with nil optional string
+        let objWithNull = AllTypesObject()
+        objWithNull.string = "hasNull"
+        objWithNull.stringOpt = nil
+        objWithNull.uuid = UUID()
+        objWithNull.url = URL(string: "https://test.com")!
+        objWithNull.bool = false
+        objWithNull.int64 = 0
+        objWithNull.float = 0
+        objWithNull.double = 0
+        objWithNull.date = Date()
+        objWithNull.data = Data()
+        objWithNull.dict = [:]
+        objWithNull.embedded = Embedded(bar: "")
+
+        // Create object with non-nil optional string
+        let objWithValue = AllTypesObject()
+        objWithValue.string = "hasValue"
+        objWithValue.stringOpt = "I have a value"
+        objWithValue.uuid = UUID()
+        objWithValue.url = URL(string: "https://test.com")!
+        objWithValue.bool = false
+        objWithValue.int64 = 0
+        objWithValue.float = 0
+        objWithValue.double = 0
+        objWithValue.date = Date()
+        objWithValue.data = Data()
+        objWithValue.dict = [:]
+        objWithValue.embedded = Embedded(bar: "")
+
+        lattice.add(objWithNull)
+        lattice.add(objWithValue)
+
+        // Test querying for null (IS NULL)
+        let nullResults = lattice.objects(AllTypesObject.self).where {
+            $0.stringOpt == nil
+        }
+        #expect(nullResults.count == 1)
+        #expect(nullResults.first?.string == "hasNull")
+
+        // Test querying for not null (IS NOT NULL)
+        let notNullResults = lattice.objects(AllTypesObject.self).where {
+            $0.stringOpt != nil
+        }
+        #expect(notNullResults.count == 1)
+        #expect(notNullResults.first?.string == "hasValue")
+    }
+
+    @Test func test_ArrayIsEmptyQuery() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        // Create object with empty array
+        let objEmpty = AllTypesObject()
+        objEmpty.string = "empty"
+        objEmpty.stringArray = []
+        objEmpty.uuid = UUID()
+        objEmpty.url = URL(string: "https://test.com")!
+        objEmpty.bool = false
+        objEmpty.int64 = 0
+        objEmpty.float = 0
+        objEmpty.double = 0
+        objEmpty.date = Date()
+        objEmpty.data = Data()
+        objEmpty.dict = [:]
+        objEmpty.embedded = Embedded(bar: "")
+
+        // Create object with non-empty array
+        let objFilled = AllTypesObject()
+        objFilled.string = "filled"
+        objFilled.stringArray = ["one", "two", "three"]
+        objFilled.uuid = UUID()
+        objFilled.url = URL(string: "https://test.com")!
+        objFilled.bool = false
+        objFilled.int64 = 0
+        objFilled.float = 0
+        objFilled.double = 0
+        objFilled.date = Date()
+        objFilled.data = Data()
+        objFilled.dict = [:]
+        objFilled.embedded = Embedded(bar: "")
+
+        lattice.add(objEmpty)
+        lattice.add(objFilled)
+
+        // Test isEmpty query
+        let emptyResults = lattice.objects(AllTypesObject.self).where {
+            $0.stringArray.isEmpty
+        }
+        #expect(emptyResults.count == 1)
+        #expect(emptyResults.first?.string == "empty")
+
+        // Test !isEmpty query (non-empty arrays)
+        let nonEmptyResults = lattice.objects(AllTypesObject.self).where {
+            !$0.stringArray.isEmpty
+        }
+        #expect(nonEmptyResults.count == 1)
+        #expect(nonEmptyResults.first?.string == "filled")
+
+        // Test count query
+        let countResults = lattice.objects(AllTypesObject.self).where {
+            $0.stringArray.count == 3
+        }
+        #expect(countResults.count == 1)
+        #expect(countResults.first?.string == "filled")
+
+        // Test count > 0 (alternative to !isEmpty)
+        let countGreaterThanZero = lattice.objects(AllTypesObject.self).where {
+            $0.stringArray.count > 0
+        }
+        #expect(countGreaterThanZero.count == 1)
+        #expect(countGreaterThanZero.first?.string == "filled")
+    }
+    @Test func test_QueryByGlobalId() async throws {
+        let lattice = try testLattice(Person.self)
+
+        // Create and add some objects
+        let person1 = Person()
+        person1.name = "Alice"
+        person1.age = 30
+
+        let person2 = Person()
+        person2.name = "Bob"
+        person2.age = 25
+
+        lattice.add(person1)
+        lattice.add(person2)
+
+        // Get the globalId of person1
+        let globalId = person1.__globalId
+        #expect(globalId != nil, "globalId should be set after adding to lattice")
+
+        // Query by globalId
+        let results = lattice.objects(Person.self).where {
+            $0.__globalId == globalId
+        }
+
+        #expect(results.count == 1)
+        #expect(results.first?.name == "Alice")
+        #expect(results.first?.__globalId == globalId)
+    }
+
+    @Model class Restaurant {
+        var name: String
+        
+        init(name: String) {
+            self.name = name
+        }
+    }
+    
+    @Model class Museum {
+        var name: String
+        
+        init(name: String) {
+            self.name = name
+        }
+    }
+    
+    @Test func test_Attach() {
+        var lattice1 = try! testLattice(Restaurant.self)
+        let lattice2 = try! testLattice(Museum.self)
+        
+        let museum = Museum(name: "The Louvre")
+        let restaurant = Restaurant(name: "Le Bernardin")
+        
+        lattice1.add(restaurant)
+        lattice2.add(museum)
+        
+        lattice1.attach(lattice: lattice2)
+        
+        #expect(lattice1.objects(Museum.self).count == 1)
+        #expect(lattice1.objects(Restaurant.self).count == 1)
+    }
     // TODO: Re-enable if we figure out publishEvents race for strong ref
 //    @Test func testLatticeCache() async throws {
 //        let uniquePath = "\(String.random(length: 32)).sqlite"
@@ -848,195 +1375,6 @@ class LatticeTests: BaseTest {
 
 }
 
-// MARK: - Vector Search Tests
-
-@Model final class Document {
-    var title: String
-    var embedding: FloatVector
-
-    init(title: String = "", embedding: [Float] = []) {
-        self.title = title
-        self.embedding = FloatVector(embedding)
-    }
-}
-
-@Suite("Vector Search Tests")
-class VectorSearchTests: BaseTest {
-
-    @Test func test_VectorStorage() async throws {
-        let lattice = try testLattice(Document.self)
-
-        // Create a document with a small embedding
-        let embedding: [Float] = [0.1, 0.2, 0.3, 0.4, 0.5]
-        let doc = Document(title: "Test Doc", embedding: embedding)
-
-        // Verify vector before storage
-        print("Before add - embedding dimensions: \(doc.embedding.dimensions)")
-        print("Before add - embedding data size: \(doc.embedding.toData().count)")
-
-        lattice.add(doc)
-
-        // Retrieve and verify
-        let docs = lattice.objects(Document.self)
-        #expect(docs.count == 1)
-
-        let retrieved = docs.first!
-        print("After retrieval - title: \(retrieved.title)")
-        print("After retrieval - embedding dimensions: \(retrieved.embedding.dimensions)")
-        print("After retrieval - embedding data size: \(retrieved.embedding.toData().count)")
-
-        #expect(retrieved.title == "Test Doc")
-        #expect(retrieved.embedding.dimensions == 5)
-
-        // Check values are preserved
-        for (i, value) in retrieved.embedding.enumerated() {
-            #expect(abs(value - embedding[i]) < 0.0001)
-        }
-    }
-
-    @Test func test_VectorDistanceFunctions() async throws {
-        let v1 = FloatVector([1.0, 0.0, 0.0])
-        let v2 = FloatVector([0.0, 1.0, 0.0])
-        let v3 = FloatVector([1.0, 0.0, 0.0])
-
-        // L2 distance: sqrt((1-0)^2 + (0-1)^2 + (0-0)^2) = sqrt(2)
-        let l2 = v1.l2Distance(to: v2)
-        #expect(abs(l2 - Float(sqrt(2.0))) < 0.0001)
-
-        // Same vectors should have 0 distance
-        #expect(v1.l2Distance(to: v3) < 0.0001)
-
-        // Cosine distance of orthogonal vectors = 1 (similarity = 0)
-        let cosine = v1.cosineDistance(to: v2)
-        #expect(abs(cosine - 1.0) < 0.0001)
-
-        // Cosine distance of same vectors = 0 (similarity = 1)
-        #expect(v1.cosineDistance(to: v3) < 0.0001)
-
-        // Dot product
-        #expect(v1.dot(v2) < 0.0001) // orthogonal
-        #expect(abs(v1.dot(v3) - 1.0) < 0.0001) // parallel
-    }
-
-    @Test func test_VectorNormalization() async throws {
-        let v = FloatVector([3.0, 4.0]) // 3-4-5 triangle
-        let normalized = v.normalized()
-
-        // Should have unit length
-        let length = sqrt(normalized[0] * normalized[0] + normalized[1] * normalized[1])
-        #expect(abs(length - 1.0) < 0.0001)
-
-        // Direction preserved
-        #expect(abs(normalized[0] - 0.6) < 0.0001)
-        #expect(abs(normalized[1] - 0.8) < 0.0001)
-    }
-
-    @Test func test_VectorBinarySerialization() async throws {
-        let original = FloatVector([1.5, -2.5, 3.14159, 0.0, -0.0001])
-        let data = original.toData()
-        let restored = FloatVector(fromData: data)
-
-        #expect(original.dimensions == restored.dimensions)
-        for i in 0..<original.dimensions {
-            #expect(abs(original[i] - restored[i]) < 0.00001)
-        }
-    }
-
-    @Test func test_MultipleDocumentsWithVectors() async throws {
-        let lattice = try testLattice(Document.self)
-
-        // Create documents with different embeddings
-        let docs = [
-            Document(title: "Doc A", embedding: [1.0, 0.0, 0.0]),
-            Document(title: "Doc B", embedding: [0.0, 1.0, 0.0]),
-            Document(title: "Doc C", embedding: [0.0, 0.0, 1.0]),
-            Document(title: "Doc D", embedding: [0.5, 0.5, 0.0]),
-        ]
-
-        lattice.add(contentsOf: docs)
-
-        let results = lattice.objects(Document.self)
-        #expect(results.count == 4)
-
-        // Find document most similar to [1, 0, 0] using Swift-side distance
-        let query = FloatVector([1.0, 0.0, 0.0])
-        var bestDoc: Document?
-        var bestDistance = Float.infinity
-
-        for doc in results {
-            let distance = doc.embedding.cosineDistance(to: query)
-            if distance < bestDistance {
-                bestDistance = distance
-                bestDoc = doc
-            }
-        }
-
-        #expect(bestDoc?.title == "Doc A")
-    }
-
-    @Test func test_NearestNeighborSearch() async throws {
-        let lattice = try testLattice(Document.self)
-
-        // Create documents with different embeddings
-        let docs = [
-            Document(title: "Doc A", embedding: [1.0, 0.0, 0.0]),
-            Document(title: "Doc B", embedding: [0.0, 1.0, 0.0]),
-            Document(title: "Doc C", embedding: [0.0, 0.0, 1.0]),
-            Document(title: "Doc D", embedding: [0.7, 0.7, 0.0]),  // Close to A
-            Document(title: "Doc E", embedding: [0.9, 0.1, 0.0]),  // Very close to A
-        ]
-
-        lattice.add(contentsOf: docs)
-
-        // Query for nearest neighbors to [1, 0, 0]
-        let query = FloatVector([1.0, 0.0, 0.0])
-        let nearest = lattice.objects(Document.self)
-            .nearest(to: query, on: \.embedding, limit: 3)
-
-        // Should return 3 closest documents
-        #expect(nearest.count == 3)
-
-        // First should be Doc A (exact match) or Doc E (very close)
-        let topTitles = nearest.map { $0.object.title }
-        #expect(topTitles.contains("Doc A"))
-        #expect(topTitles.contains("Doc E"))
-
-        // Distances should be sorted (ascending)
-        for i in 0..<(nearest.count - 1) {
-            #expect(nearest[i].distance <= nearest[i + 1].distance)
-        }
-
-        print("Nearest neighbors to [1, 0, 0]:")
-        for match in nearest {
-            print("  \(match.object.title): distance = \(match.distance)")
-        }
-    }
-
-    @Test func test_NearestNeighborWithCosineDistance() async throws {
-        let lattice = try testLattice(Document.self)
-
-        // Create documents with embeddings that differ in magnitude but same direction
-        let docs = [
-            Document(title: "Unit", embedding: [1.0, 0.0, 0.0]),
-            Document(title: "Scaled", embedding: [10.0, 0.0, 0.0]),  // Same direction, 10x magnitude
-            Document(title: "Orthogonal", embedding: [0.0, 1.0, 0.0]),
-        ]
-
-        lattice.add(contentsOf: docs)
-
-        let query = FloatVector([5.0, 0.0, 0.0])
-        let nearest = lattice.objects(Document.self)
-            .nearest(to: query, on: \.embedding, limit: 3, distance: .cosine)
-
-        // With cosine distance, "Unit" and "Scaled" should have distance ~0 (same direction)
-        // "Orthogonal" should have distance ~1
-        print("Cosine distances to [5, 0, 0]:")
-        for match in nearest {
-            print("  \(match.object.title): distance = \(match.distance)")
-        }
-
-        // First two should be Unit/Scaled with very small distance
-        #expect(nearest[0].distance < 0.1)
-        #expect(nearest[1].distance < 0.1)
-    }
+@Test func testR() throws {
+    try testUnion()
 }

@@ -6,15 +6,18 @@ public protocol SendableReference<NonSendable>: Sendable {
     func resolve(on lattice: Lattice) -> NonSendable
 }
 
-public struct ModelThreadSafeReference<T: Model>: SendableReference, Equatable {
+public protocol LatticeIsolated {
+}
+
+public struct ModelThreadSafeReference<NonSendable: Model>: SendableReference, Equatable {
     private let key: Int64?
-    public init(_ model: T) {
+    public init(_ model: NonSendable) {
         self.key = model.primaryKey
     }
     
-    public func resolve(on lattice: Lattice) -> T? {
+    public func resolve(on lattice: Lattice) -> NonSendable? {
         if let key {
-            return lattice.object(T.self, primaryKey: key)
+            return lattice.object(NonSendable.self, primaryKey: key)
         }
         return nil
     }
@@ -45,7 +48,7 @@ extension Model {
 }
 
 public struct ResultsThreadSafeReference<T: Model>: SendableReference {
-    private let whereStatement: Predicate<T>?
+    private let whereStatement: Query<Bool>?
     private let sortStatement: SortDescriptor<T>?
     
     public init(_ results: Results<T>) {

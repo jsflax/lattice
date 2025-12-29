@@ -138,15 +138,17 @@ extension Vector: PrimitiveProperty where Element: VectorElement {
 
 extension Vector: CxxManaged where Element: VectorElement {
     public typealias CxxManagedSpecialization = lattice.ManagedData
-
-    public static func fromCxxValue(_ value: Data) -> Vector<Element> {
-        Vector(fromData: value)
+    public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
+    public static func fromCxxValue(_ value: lattice.ManagedData.SwiftType) -> Vector<Element> {
+        Vector(fromData: Data(value.map { $0 }))
     }
 
-    public func toCxxValue() -> Data {
-        toData()
+    public func toCxxValue() -> lattice.ManagedData.SwiftType {
+        lattice.ManagedData.SwiftType(toData())
     }
-
+    public static func getManaged(from object: lattice.ManagedModel, name: std.string) -> CxxManagedSpecialization {
+        object.get_managed_field(name)
+    }
     public static func getUnmanaged(from object: lattice.swift_dynamic_object, name: std.string) -> Vector<Element> {
         let blob = object.get_blob(name)
         guard !blob.isEmpty else {
@@ -154,7 +156,19 @@ extension Vector: CxxManaged where Element: VectorElement {
         }
         return Vector(fromData: Data(blob))
     }
-
+    
+    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> Vector<Element> {
+        Vector(fromData: Data(object.getData(named: std.string(name))))
+    }
+    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: Vector<Element>) {
+        object.setData(named: std.string(name), value.toData().reduce(into: lattice.ByteVector(),
+                                                                      { $0.push_back($1) }))
+    }
+    
+    public static func getManagedOptional(from object: lattice.ManagedModel, name: std.string) -> CxxManagedSpecialization.OptionalType {
+        object.get_managed_field(name)
+    }
+    
     public func setUnmanaged(to object: inout lattice.swift_dynamic_object, name: std.string) {
         let data = toData()
         var vec = lattice.ByteVector()

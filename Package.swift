@@ -11,7 +11,8 @@ let package = Package(
         .library(
             name: "Lattice",
             targets: ["Lattice"]),
-        .library(name: "LatticeServerKit", targets: ["LatticeServerKit"])
+        .library(name: "LatticeServerKit", targets: ["LatticeServerKit"]),
+        .executable(name: "LatticeMain", targets: ["LatticeMain"])
     ],
     dependencies: [
         .package(path: "../LatticeCpp"),
@@ -39,11 +40,15 @@ let package = Package(
             name: "Lattice",
             dependencies: ["LatticeMacros",
                 .product(name: "LatticeSwiftCppBridge", package: "LatticeCpp"),
+                .product(name: "LatticeSwiftModule", package: "LatticeCpp"),
                 .product(name: "Collections", package: "swift-collections")],
             swiftSettings: [.interoperabilityMode(.Cxx)]),
         .testTarget(
             name: "LatticeTests",
-            dependencies: ["Lattice", .product(name: "Vapor", package: "vapor")],
+            dependencies: [
+                "Lattice",
+                    .product(name: "Vapor", package: "vapor")
+            ],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         .target(
@@ -55,5 +60,8 @@ let package = Package(
                 .product(name: "JWT",      package: "jwt"),
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]),
+        .executableTarget(name: "LatticeMain",
+                          dependencies: ["Lattice"],
+                          swiftSettings: [.interoperabilityMode(.Cxx)])
     ]
 )

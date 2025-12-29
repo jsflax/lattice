@@ -3,7 +3,7 @@ import Foundation
 // Assuming your model macro handles persistence, mapping, etc.
 @Model @Codable
 public class AuditLog: CustomStringConvertible {
-    public enum Operation: String, LatticeEnum, Codable, Sendable, CustomStringConvertible {
+    @LatticeEnum public enum Operation: String, Codable, Sendable, CustomStringConvertible {
         case insert = "INSERT", update = "UPDATE", delete = "DELETE"
         
         public var description: String { rawValue }
@@ -22,7 +22,7 @@ public class AuditLog: CustomStringConvertible {
     /// Operation type: "INSERT", "UPDATE", "DELETE", etc.
     public var operation: Operation = .insert
     /// The id of the record that was affected in the target table
-    var rowId: Int64
+    package var rowId: Int64
     /// The global id of the record that was affected in the target table
     var globalRowId: UUID?
     /// JSON string containing the changed fields (if any)

@@ -1,4 +1,5 @@
 import Foundation
+import LatticeSwiftModule
 
 /// Enum representing an option for `String` queries.
 public struct StringOptions: OptionSet, Sendable {
@@ -198,12 +199,31 @@ public struct Query<T>: Sendable {
         }
         return .init(.comparison(operator: .equal, lhs.node, .constant(rhs), options: []))
     }
+    public static func == (_ lhs: Self, _ rhs: T?) -> Query<Bool> {
+        if let rhs = rhs as? any LatticeEnum {
+            return .init(.comparison(operator: .equal, lhs.node, .constant(rhs.rawValue), options: []))
+        }
+        return .init(.comparison(operator: .equal, lhs.node, .constant(rhs), options: []))
+    }
+    
     /// :nodoc:
     public static func == (_ lhs: Query, _ rhs: T) -> Query<Bool> where T: LatticeEnum {
         .init(.comparison(operator: .equal, lhs.node, .constant(rhs.rawValue), options: []))
     }
     public static func == (_ lhs: Query, _ rhs: T) -> Query<Bool> where T == UUID {
         .init(.comparison(operator: .equal, lhs.node, .constant(rhs.uuidString.lowercased()), options: []))
+    }
+    public static func == (_ lhs: Query, _ rhs: T?) -> Query<Bool> where T == UUID {
+        if let rhs = rhs {
+            return .init(.comparison(operator: .equal, lhs.node, .constant(rhs.uuidString.lowercased()), options: []))
+        }
+        return .init(.comparison(operator: .equal, lhs.node, .constant(nil as String?), options: []))
+    }
+    public static func == (_ lhs: Query, _ rhs: T) -> Query<Bool> where T == UUID? {
+        if let rhs = rhs {
+            return .init(.comparison(operator: .equal, lhs.node, .constant(rhs.uuidString.lowercased()), options: []))
+        }
+        return .init(.comparison(operator: .equal, lhs.node, .constant(nil as String?), options: []))
     }
     /// :nodoc:
     public static func == (_ lhs: Query, _ rhs: Query) -> Query<Bool> {
@@ -239,6 +259,11 @@ public struct Query<T>: Sendable {
         .init(appendKeyPath(_name(for: member), options: []), isAuditing: isAuditing)
     }
 
+    /// For virtual queries
+    package func virtualMember<V>(_ keyPath: String, withType: V.Type) -> Query<V> where T: Model {
+        .init(appendKeyPath(keyPath, options: []), isAuditing: isAuditing)
+    }
+    
     /// Handle EmbeddedModel properties on Model
     public subscript<V: EmbeddedModel>(dynamicMember member: KeyPath<T, V>) -> Query<V> where T: Model {
         .init(appendEmbeddedKeyPath(_name(for: member), isAnyProperty: false, options: []), isAuditing: isAuditing)
@@ -787,6 +812,10 @@ extension Query where T: Comparable {
 // MARK: _QueryString
 
 extension Query where T: _QueryString {
+    public func hasPrefix(_ value: T, caseInsensitive: Bool = false) -> Query<Bool> {
+        .init(.comparison(operator: .beginsWith, node, .constant(value), options: caseInsensitive ? [.caseInsensitive] : []))
+    }
+    
     /**
      Checks for all elements in this collection that equal the given value.
      `?` and `*` are allowed as wildcard characters, where `?` matches 1 character and `*` matches 0 or more characters.
@@ -932,6 +961,39 @@ extension Query where T: _QueryBinary {
     /// :nodoc:
     public static func <= (_ lhs: Query, _ rhs: Query) -> Query<Bool> {
         .init(.comparison(operator: .lessThanEqual, lhs.node, rhs.node, options: []))
+    }
+}
+
+// MARK: JSON Array Queries
+
+extension Query where T: Collection, T: SchemaProperty, T: ExpressibleByArrayLiteral {
+    /// Returns true if the JSON array column is empty (length 0 or NULL).
+    public var isEmpty: Query<Bool> {
+        .init(.comparison(operator: .equal, .jsonArrayLength(node), .constant(0), options: []))
+    }
+
+    /// Returns the count of elements in the JSON array column.
+    public var count: Query<Int> {
+        .init(.jsonArrayLength(node))
+    }
+}
+
+// MARK: String Queries
+
+extension Query where T == String {
+    /// Returns true if the string column is empty (equals "").
+    public var isEmpty: Query<Bool> {
+        .init(.comparison(operator: .equal, node, .constant(""), options: []))
+    }
+}
+
+extension Query where T == String? {
+    /// Returns true if the string column is empty (equals "") or NULL.
+    public var isEmpty: Query<Bool> {
+        .init(.comparison(operator: .or,
+                          .comparison(operator: .equal, node, .constant(""), options: []),
+                          .comparison(operator: .equal, node, .constant(nil as String?), options: []),
+                          options: []))
     }
 }
 
@@ -1097,6 +1159,7 @@ private indirect enum QueryNode: @unchecked Sendable {
     case mapSubscript(_ keyPath: QueryNode, key: Any)
     case mapAnySubscripts(_ keyPath: QueryNode, keys: [CollectionSubscript])
     case geoWithin(_ keyPath: QueryNode, _ value: QueryNode)
+    case jsonArrayLength(_ keyPath: QueryNode)
 }
 
 private enum CollectionSubscript {
@@ -1166,6 +1229,38 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
             return
         }
 
+        // Helper to check if a boxed Any? value represents nil
+        // Handles: nil, NSNull, and Optional<T>.none boxed as Any
+        func isNilValue(_ value: Any?) -> Bool {
+            guard let value = value else { return true }
+            if value is NSNull { return true }
+            // Handle Optional<T>.none wrapped in Any
+            let mirror = Mirror(reflecting: value)
+            if mirror.displayStyle == .optional && mirror.children.isEmpty {
+                return true
+            }
+            return false
+        }
+
+        // Check for null comparison - SQL requires IS NULL / IS NOT NULL syntax
+        if case .constant(let value) = rhs, isNilValue(value) {
+            formatStr.append("(")
+            if let prefix = prefix {
+                formatStr.append(prefix)
+            }
+            build(lhs)
+            if op == "=" {
+                formatStr.append(" IS NULL")
+            } else if op == "!=" {
+                formatStr.append(" IS NOT NULL")
+            } else {
+                // For other operators with NULL, use standard syntax (comparison with NULL is always false in SQL)
+                formatStr.append(" \(op) NULL")
+            }
+            formatStr.append(")")
+            return
+        }
+
         formatStr.append("(")
         if let prefix = prefix {
             formatStr.append(prefix)
@@ -1213,10 +1308,15 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
     }
 
     func build(_ node: QueryNode, prefix: String? = nil, isNewNode: Bool = false) {
+        // Helper to escape single quotes for SQLite (doubles them)
+        func escapeSQLString(_ str: String) -> String {
+            str.replacingOccurrences(of: "'", with: "''")
+        }
+
         switch node {
         case .constant(let value):
             if let array = value as? [String] {
-                array.forEach(arguments.add)
+                array.map(escapeSQLString).forEach(arguments.add)
                 formatStr.append("(")
                 formatStr.append(array.map { _ in
                     "'%@'"
@@ -1232,6 +1332,8 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
                 }
                 if let value = value as? Date {
                     arguments.add(value.timeIntervalSince1970)
+                } else if let strValue = value as? String {
+                    arguments.add(escapeSQLString(strValue))
                 } else {
                     arguments.add(value ?? NSNull())
                 }
@@ -1291,6 +1393,13 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
                     default:
                         buildExpression(lhs, "LIKE", rhs, prefix: prefix)
                     }
+                case .contains:
+                    switch rhs {
+                    case .constant(let rhsValue):
+                        buildExpression(lhs, "LIKE", .constant("%\(rhsValue ?? NSNull())%"), prefix: prefix)
+                    default:
+                        buildExpression(lhs, "LIKE", rhs, prefix: prefix)
+                    }
                 default:
                     buildExpression(lhs, "\(op.rawValue)\(strOptions(options))", rhs, prefix: prefix)
                 }
@@ -1331,6 +1440,10 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
             fatalError("linkKeyPath nodes must be used in comparisons")
         case .geoWithin(let keyPath, let value):
             buildExpression(keyPath, QueryNode.Operator.in.rawValue, value, prefix: nil)
+        case .jsonArrayLength(let keyPath):
+            formatStr.append("COALESCE(json_array_length(")
+            build(keyPath)
+            formatStr.append("), 0)")
         }
     }
     build(root, isNewNode: true)
@@ -1390,6 +1503,8 @@ private struct SubqueryRewriter {
         case .linkKeyPath(let source, let link, let target, let continuation):
             return .linkKeyPath(sourceEntity: source, linkField: link, targetEntity: target,
                                continuation: rewrite(continuation))
+        case .jsonArrayLength(let keyPath):
+            return .jsonArrayLength(rewrite(keyPath))
         }
     }
 
@@ -1411,7 +1526,7 @@ private struct SubqueryRewriter {
 //        }
 //    }
 //}
-public typealias Predicate<T> = (@Sendable (Query<T>) -> Query<Bool>)
+public typealias Predicate<T> = ((Query<T>) -> Query<Bool>)
 public typealias LatticePredicate<T> = ((Query<T>) -> Query<Bool>)
 
 extension Lattice {

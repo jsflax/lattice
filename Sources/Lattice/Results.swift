@@ -5,14 +5,14 @@ import LatticeSwiftCppBridge
 
 public final class Results<Element>: Sequence where Element: Model {
     private let _lattice: Lattice
-    internal let whereStatement: Predicate<Element>?
+    internal let whereStatement: Query<Bool>?
     internal let sortStatement: SortDescriptor<Element>?
 
     // Helper to build query parameters - always fetches fresh from DB (live results)
     private func queryObjects(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
         let tableName = std.string(Element.entityName)
         let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement(Query<Element>()).predicate))
+            lattice.string_to_optional(std.string(whereStatement.predicate))
         } else {
             .init()
         }
@@ -30,8 +30,8 @@ public final class Results<Element>: Sequence where Element: Model {
         objects.reserveCapacity(cxxResults.size())
 
         for i in 0..<cxxResults.size() {
-            let cxxObject = cxxResults[i]
-            let object = _lattice.newObject(Element.self, primaryKey: cxxObject.id(), cxxObject: cxxObject)
+            var cxxObject = cxxResults[i]
+            let object = Element(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(cxxObject).make_shared()))
             objects.append(object)
         }
 
@@ -40,18 +40,25 @@ public final class Results<Element>: Sequence where Element: Model {
 
     public final class Cursor: IteratorProtocol {
         private let results: Results<Element>
-        private var index: Int64 = 0
+        private let batchSize: Int64 = 100
+        private var batch: [Element] = []
+        private var batchStart: Int64 = 0
+        private var indexInBatch: Int = 0
 
         package init(_ results: Results<Element>) {
             self.results = results
         }
 
         public func next() -> Element? {
-            // Fetch one object at a time from the live results
-            let objects = results.queryObjects(limit: 1, offset: index)
-            guard let obj = objects.first else { return nil }
-            index += 1
-            return obj
+            // Fetch in batches to avoid O(n²) OFFSET penalty
+            if indexInBatch >= batch.count {
+                batch = results.queryObjects(limit: batchSize, offset: batchStart)
+                batchStart += Int64(batch.count)
+                indexInBatch = 0
+            }
+            guard indexInBatch < batch.count else { return nil }
+            defer { indexInBatch += 1 }
+            return batch[indexInBatch]
         }
     }
 
@@ -61,7 +68,7 @@ public final class Results<Element>: Sequence where Element: Model {
 
     public typealias SubSequence = Slice
 
-    public class Slice: RandomAccessCollection {
+    public class Slice: RandomAccessCollection, Sequence {
         public var startIndex: Int
         public var endIndex: Int
         private let results: Results<Element>
@@ -95,16 +102,47 @@ public final class Results<Element>: Sequence where Element: Model {
         public func index(before i: Int) -> Int {
             i - 1
         }
+
+        // Efficient batch iterator - fetches entire range at once
+        public struct Iterator: IteratorProtocol {
+            private var elements: [Element]
+            private var index: Int = 0
+
+            fileprivate init(results: Results<Element>, start: Int, end: Int) {
+                let count = end - start
+                if count > 0 {
+                    self.elements = results.queryObjects(limit: Int64(count), offset: Int64(start))
+                } else {
+                    self.elements = []
+                }
+            }
+
+            public mutating func next() -> Element? {
+                guard index < elements.count else { return nil }
+                defer { index += 1 }
+                return elements[index]
+            }
+        }
+
+        public func makeIterator() -> Iterator {
+            Iterator(results: results, start: startIndex, end: endIndex)
+        }
     }
 
     private var token: AnyCancellable?
 
-    init(_ lattice: Lattice, whereStatement: Predicate<Element>? = nil, sortStatement: SortDescriptor<Element>? = nil) {
+    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement
         self.sortStatement = sortStatement
     }
 
+    init(_ lattice: Lattice, whereStatement: Predicate<Element>, sortStatement: SortDescriptor<Element>? = nil) {
+        self._lattice = lattice
+        self.whereStatement = whereStatement(Query())
+        self.sortStatement = sortStatement
+    }
+    
     public subscript(index: Int) -> Element {
         // Live fetch - always queries DB
         let objects = queryObjects(limit: 1, offset: Int64(index))
@@ -122,8 +160,8 @@ public final class Results<Element>: Sequence where Element: Model {
         return Results(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor)
     }
 
-    public func `where`(_ query: @escaping @Sendable Predicate<Element>) -> Results<Element> {
-        return Results(_lattice, whereStatement: query)
+    public func `where`(_ query: @escaping LatticePredicate<Element>) -> Results<Element> {
+        return Results(_lattice, whereStatement: query(Query()))
     }
 
     public var startIndex: Int { 0 }
@@ -136,7 +174,7 @@ public final class Results<Element>: Sequence where Element: Model {
         // Live count from C++
         let tableName = std.string(Element.entityName)
         let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement(Query<Element>()).predicate))
+            lattice.string_to_optional(std.string(whereStatement.predicate))
         } else {
             .init()
         }
@@ -181,13 +219,19 @@ public final class Results<Element>: Sequence where Element: Model {
     /// Find the k nearest neighbors to a query vector.
     /// Returns objects sorted by distance (closest first).
     ///
+    /// When called on filtered results (via `.where()`), only objects matching
+    /// the filter are considered for the search.
+    ///
     /// Example:
     /// ```swift
+    /// // Search all documents
     /// let similar = lattice.objects(Document.self)
     ///     .nearest(to: queryEmbedding, on: \.embedding, limit: 10)
-    /// for match in similar {
-    ///     print("\(match.object.title): \(match.distance)")
-    /// }
+    ///
+    /// // Search only in a specific category
+    /// let filtered = lattice.objects(Document.self)
+    ///     .where { $0.category == "science" }
+    ///     .nearest(to: queryEmbedding, on: \.embedding, limit: 10)
     /// ```
     public func nearest<V: VectorElement>(
         to queryVector: Vector<V>,
@@ -203,12 +247,21 @@ public final class Results<Element>: Sequence where Element: Model {
             byteVec.push_back(byte)
         }
 
+        // Build the where clause if we have a filter
+        // The predicate uses column names from the model table (aliased as 'm' in the JOIN)
+        let whereClause: lattice.OptionalString = if let whereStatement {
+            lattice.string_to_optional(std.string(whereStatement.predicate))
+        } else {
+            .init()
+        }
+
         let cxxResults = _lattice.cxxLattice.nearest_neighbors(
             std.string(Element.entityName),
             std.string(propertyName),
             byteVec,
             Int32(k),
-            metric.rawValue
+            metric.rawValue,
+            whereClause
         )
 
         var results: [NearestMatch] = []
@@ -216,10 +269,10 @@ public final class Results<Element>: Sequence where Element: Model {
 
         for i in 0..<cxxResults.size() {
             let pair = cxxResults[i]
-            let managedObj = pair.first
+            var managedObj = pair.first
             let distance = pair.second
 
-            let swiftObj = _lattice.newObject(Element.self, primaryKey: managedObj.id(), cxxObject: managedObj)
+            var swiftObj = Element(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(managedObj).make_shared()))
             results.append(NearestMatch(object: swiftObj, distance: distance))
         }
 

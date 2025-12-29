@@ -1,61 +1,10 @@
 import Foundation
 import SQLite3
 
-public protocol PrimitiveProperty: PersistableProperty where DefaultValue == Self {
-    static var sqlType: String { get }
-    static var defaultValue: Self { get }
-    
-    init(from statement: OpaquePointer?, with columnId: Int32)
-    func encode(to statement: OpaquePointer?, with columnId: Int32)
+public protocol PrimitiveProperty: PersistableProperty {
 }
 
 extension PrimitiveProperty {
-    public static func _get(isolation: isolated (any Actor)? = #isolation,
-                            name: String, parent: some Model, lattice: Lattice, primaryKey: Int64) -> Self? {
-//        let queryStatementString = "SELECT \(name) FROM \(type(of: parent).entityName) WHERE id = ?;"
-//        var queryStatement: OpaquePointer?
-//        defer { sqlite3_finalize(queryStatement) }
-//        if sqlite3_prepare_v2(lattice.db, queryStatementString, -1, &queryStatement, nil) == SQLITE_OK {
-//            // Bind the provided id to the statement.
-//            sqlite3_bind_int64(queryStatement, 1, primaryKey)
-//            if sqlite3_step(queryStatement) == SQLITE_ROW {
-//                // Extract id, name, and age from the row.
-//                return Self.init(from: queryStatement, with: 0)
-//            } else {
-//                lattice.logger.error("SELECT statement could not be prepared: \(lattice.readError() ?? "Unknown error")")
-//                lattice.logger.error("No field \(name) found on \(type(of: parent).entityName) with id \(primaryKey).")
-//            }
-//        } else {
-//            lattice.logger.error("SELECT statement could not be prepared: \(lattice.readError() ?? "Unknown error")")
-//        }
-        return nil
-    }
-    
-    public static func _set(name: String,
-                            parent: some Model,
-                            lattice: Lattice,
-                            primaryKey: Int64,
-                            newValue: Self) {
-//        let updateStatementString = "UPDATE \(type(of: parent).entityName) SET \(name) = ? WHERE id = ?;"
-//        var updateStatement: OpaquePointer?
-//        defer { sqlite3_finalize(updateStatement) }
-//        if sqlite3_prepare_v2(lattice.db, updateStatementString, -1, &updateStatement, nil) == SQLITE_OK {
-//            newValue.encode(to: updateStatement, with: 1)
-//            sqlite3_bind_int64(updateStatement, 2, primaryKey)
-//            
-//            if sqlite3_step(updateStatement) == SQLITE_DONE {
-//                lattice.logger.debug("Successfully updated \(type(of: parent).entityName) with id \(primaryKey) to \(name): \(type(of: newValue)).")
-//            } else {
-//                if let error = lattice.readError() {
-//                    print("Could not update \(type(of: parent).entityName) with id \(primaryKey) on property \(name) with value \(newValue): \(error).")
-//                } else {
-//                    print("Could not update \(type(of: parent).entityName) with id \(primaryKey) on property \(name) with value \(newValue).")
-//                }
-//            }
-//        } else {
-//            print("UPDATE statement could not be prepared.")
-//        }
-    }
 }
 
 extension String: PrimitiveProperty {
@@ -63,17 +12,6 @@ extension String: PrimitiveProperty {
     public static var sqlType: String { "TEXT" }
     public static var anyPropertyKind: AnyProperty.Kind {
         .string
-    }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        guard let queryResultCol1 = sqlite3_column_text(statement, columnId) else {
-            sqlite3_finalize(statement)
-            fatalError()
-        }
-        self = String(cString: queryResultCol1)
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        sqlite3_bind_text(statement, columnId, (self as NSString).utf8String, -1, nil)
     }
 }
 
@@ -84,13 +22,6 @@ extension UUID: PrimitiveProperty {
     public static var anyPropertyKind: AnyProperty.Kind {
         .string
     }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = UUID(uuidString: String.init(from: statement, with: columnId))!
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        uuidString.lowercased().encode(to: statement, with: columnId)
-    }
 }
 
 extension URL: PrimitiveProperty {
@@ -98,13 +29,6 @@ extension URL: PrimitiveProperty {
     public static var sqlType: String { "TEXT" }
     public static var anyPropertyKind: AnyProperty.Kind {
         .string
-    }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = URL(string: String.init(from: statement, with: columnId))!
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        absoluteString.encode(to: statement, with: columnId)
     }
 }
 
@@ -116,13 +40,6 @@ extension Bool: PrimitiveProperty {
     public static var anyPropertyKind: AnyProperty.Kind {
         .int
     }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = sqlite3_column_int(statement, columnId) == 1 ? true : false
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        sqlite3_bind_int(statement, columnId, self ? 1 : 0)
-    }
 }
 
 extension Int: PrimitiveProperty {
@@ -132,13 +49,6 @@ extension Int: PrimitiveProperty {
     public static var sqlType: String { "INTEGER" }
     public static var anyPropertyKind: AnyProperty.Kind {
         .int
-    }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = Int(sqlite3_column_int(statement, columnId))
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        sqlite3_bind_int(statement, columnId, Int32(self))
     }
 }
 
@@ -150,13 +60,6 @@ extension Int8: PrimitiveProperty {
     public static var anyPropertyKind: AnyProperty.Kind {
         .int
     }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = Int8(sqlite3_column_int(statement, columnId))
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        sqlite3_bind_int(statement, columnId, Int32(self))
-    }
 }
 
 extension Int16: PrimitiveProperty {
@@ -166,13 +69,6 @@ extension Int16: PrimitiveProperty {
     public static var sqlType: String { "INT" }
     public static var anyPropertyKind: AnyProperty.Kind {
         .int
-    }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = Int16(sqlite3_column_int(statement, columnId))
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        sqlite3_bind_int(statement, columnId, Int32(self))
     }
 }
 
@@ -201,13 +97,6 @@ extension Int64: PrimitiveProperty {
     public static var anyPropertyKind: AnyProperty.Kind {
         .int64
     }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = Int64(sqlite3_column_int64(statement, columnId))
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        sqlite3_bind_int64(statement, columnId, self)
-    }
 }
 
 // MARK: Float
@@ -219,13 +108,6 @@ extension Float: PrimitiveProperty {
     public static var anyPropertyKind: AnyProperty.Kind {
         .float
     }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = Float(sqlite3_column_double(statement, columnId))
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        sqlite3_bind_double(statement, columnId, Double(self))
-    }
 }
 
 extension Double: PrimitiveProperty {
@@ -235,13 +117,6 @@ extension Double: PrimitiveProperty {
     public static var sqlType: String { "DOUBLE" }
     public static var anyPropertyKind: AnyProperty.Kind {
         .double
-    }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = sqlite3_column_double(statement, columnId)
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        sqlite3_bind_double(statement, columnId, self)
     }
 }
 
@@ -254,13 +129,6 @@ extension Date: PrimitiveProperty {
     public static var anyPropertyKind: AnyProperty.Kind {
         .date
     }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = Date(timeIntervalSince1970: sqlite3_column_double(statement, columnId))
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        sqlite3_bind_double(statement, columnId, self.timeIntervalSince1970)
-    }
 }
 
 extension Data: PrimitiveProperty {
@@ -270,20 +138,6 @@ extension Data: PrimitiveProperty {
     public static var sqlType: String { "BLOB" }
     public static var anyPropertyKind: AnyProperty.Kind {
         .data
-    }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        guard let blob = sqlite3_column_blob(statement, columnId) else {
-            self = Data()
-            return
-        }
-        let bytes = sqlite3_column_bytes(statement, columnId)
-        self = Data(bytes: blob, count: Int(bytes))
-    }
-
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        _ = self.withUnsafeBytes { buffer in
-            sqlite3_bind_blob(statement, columnId, buffer.baseAddress, Int32(buffer.count), nil)
-        }
     }
 }
 
@@ -298,52 +152,33 @@ extension Dictionary: PrimitiveProperty, PersistableProperty, SchemaProperty whe
     public static var anyPropertyKind: AnyProperty.Kind {
         .string
     }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        let blob = String(cString: sqlite3_column_text(statement, columnId)!)
-        self = try! JSONDecoder().decode(Self.self, from: blob.data(using: .utf8)!)
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        let string = String(data: try! JSONEncoder().encode(self), encoding: .utf8)!
-        sqlite3_bind_text(statement, columnId, (string as NSString).utf8String, -1, nil)
-    }
 }
 
 extension Array: PrimitiveProperty, PersistableProperty where Element: SchemaProperty & Codable {
     public static var defaultValue: Array {
         []
     }
-    
+
     public static var sqlType: String {
         "TEXT"
     }
     public static var anyPropertyKind: AnyProperty.Kind {
         .string
     }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        let blob = String(cString: sqlite3_column_text(statement, columnId)!)
-        self = try! JSONDecoder().decode(Self.self, from: blob.data(using: .utf8)!)
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        let string = String(data: try! JSONEncoder().encode(self), encoding: .utf8)!
-        sqlite3_bind_text(statement, columnId, (string as NSString).utf8String, -1, nil)
-    }
 }
 
-//extension Optional: Property where Wrapped: Property {
-//    public func _set(parent: some Model, lattice: Lattice, primaryKey: Int64) {
-//        <#code#>
-//    }
-//    
-//    public func _get(parent: some Model, lattice: Lattice, primaryKey: Int64) {
-//        <#code#>
-//    }
-//    
-//    public static var sqlType: String {
-//        Wrapped.sqlType
-//    }
-//}
+extension Set: PrimitiveProperty, PersistableProperty where Element: SchemaProperty & Codable & Hashable {
+    public static var defaultValue: Set {
+        []
+    }
+
+    public static var sqlType: String {
+        "TEXT"
+    }
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .string
+    }
+}
 
 extension Optional: SchemaProperty where Wrapped: SchemaProperty {
     public typealias DefaultValue = Self
@@ -357,26 +192,6 @@ extension Optional: PrimitiveProperty, PersistableProperty where Wrapped: Primit
     public static var defaultValue: Optional<Wrapped> {
         nil
     }
-    
-    public static var sqlType: String {
-        Wrapped.sqlType
-    }
-    
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        if sqlite3_column_type(statement, columnId) == SQLITE_NULL {
-            self = nil
-        } else {
-            self = Wrapped.init(from: statement, with: columnId)
-        }
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        if let self {
-            self.encode(to: statement, with: columnId)
-        } else {
-            sqlite3_bind_null(statement, columnId)
-        }
-    }
 }
 
 public enum AnyProperty: PrimitiveProperty, Codable, Sendable {
@@ -387,10 +202,6 @@ public enum AnyProperty: PrimitiveProperty, Codable, Sendable {
         .string
     }
     public static var sqlType: String {
-        fatalError()
-    }
-    
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
         fatalError()
     }
     
@@ -421,28 +232,6 @@ public enum AnyProperty: PrimitiveProperty, Codable, Sendable {
         case .double(_): return .double
         case .data(_): return .data
         case .null: return .null
-        }
-    }
-    
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        switch self {
-        case .int(let a0):
-            a0.encode(to: statement, with: columnId)
-        case .int64(let a0):
-            a0.encode(to: statement, with: columnId)
-        case .string(let a0):
-            a0.encode(to: statement, with: columnId)
-        case .date(let a0):
-            a0.encode(to: statement, with: columnId)
-        case .float(let a0):
-            a0.encode(to: statement, with: columnId)
-        case .data(let a0):
-            a0.encode(to: statement, with: columnId)
-        case .double(let a0):
-            a0.encode(to: statement, with: columnId)
-        case .null:
-            Optional<String>.none.encode(to: statement, with: columnId)
         }
     }
     

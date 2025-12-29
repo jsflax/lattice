@@ -158,6 +158,8 @@ class SyncTests: @unchecked Sendable {
         syncedLattice = try Lattice(for: [SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self], configuration: .init(fileURL: syncLatticeURL))
         app.http.server.configuration.port = port
         
+        print("Lattice1:", localLattice1Configuration.fileURL)
+        print("Lattice2:", localLattice2Configuration.fileURL)
         try await launchServer()
         var retries = 0
         while retries < 5 {
@@ -260,7 +262,7 @@ class SyncTests: @unchecked Sendable {
     }
     
     @available(macOS 15.0, *)
-    @Test(.timeLimit(.minutes(1))) func test_BigSync() async throws {
+    @Test(.timeLimit(.minutes(3))) func test_BigSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 

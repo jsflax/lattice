@@ -147,7 +147,15 @@ extension UnsafeMutableRawPointer: @unchecked @retroactive Sendable {
 }
 extension lattice.swift_lattice: @unchecked @retroactive Sendable {
 }
-
+extension lattice.swift_lattice_ref: Hashable, Equatable, @unchecked @retroactive Sendable {
+    public var hashValue: Int {
+        Int(self.hash_value())
+    }
+    
+    public static func ==(_ lhs: Self, _ rhs: Self) -> Bool {
+        lhs.hashValue == rhs.hashValue
+    }
+}
 public struct Lattice {
     /// A simple Swift “shared_ptr” wrapper for an UnsafeMutablePointer<T>
     private final class SharedPointer<T> {
@@ -190,10 +198,229 @@ public struct Lattice {
     //    var observers: [AnyObject: () -> Void] = [:]
     private var ptr: SharedPointer<Lattice>?
     private static let synchronizersLock = OSAllocatedUnfairLock<Void>()
-    nonisolated(unsafe) static var synchronizers: [URL: Synchronizer] = [:]
+//    nonisolated(unsafe) static var synchronizers: [URL: Synchronizer] = [:]
     
     public struct SyncConfiguration {
         
+    }
+    
+    /// URLSession-backed websocket client that bridges to C++ generic_websocket_client
+    internal final class WebsocketClient {
+        private var webSocketTask: URLSessionWebSocketTask?
+        private var currentState: lattice.websocket_state = .closed
+        private let session: URLSession
+        private let delegateHandler: WebSocketDelegateHandler
+
+        // Pointers to trigger C++ callbacks - set after generic_websocket_client is created
+        private var cxxClientPtr: UnsafeMutableRawPointer?
+
+        final class WebSocketDelegateHandler: NSObject, URLSessionWebSocketDelegate {
+            weak var client: WebsocketClient?
+
+            func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                            didOpenWithProtocol protocol: String?) {
+                client?.handleOpen()
+            }
+
+            func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+                            didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+                let reasonString = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                client?.handleClose(code: Int(closeCode.rawValue), reason: reasonString)
+            }
+
+            func urlSession(_ session: URLSession,
+                            task: URLSessionTask,
+                            didCompleteWithError error: (any Swift.Error)?) {
+                if let error = error {
+                    client?.handleError(error.localizedDescription)
+                }
+            }
+        }
+
+        init() {
+            delegateHandler = WebSocketDelegateHandler()
+            session = URLSession(configuration: .default, delegate: delegateHandler, delegateQueue: nil)
+            delegateHandler.client = self
+        }
+
+        /// Creates the C++ generic_websocket_client that wraps this Swift client.
+        /// Returns a raw pointer that C++ will take ownership of via unique_ptr.
+        func createCxxClient() -> UnsafeMutableRawPointer {
+            let clientPtr = Unmanaged.passRetained(self).toOpaque()
+
+            let cxxClient = lattice.generic_websocket_client(
+                clientPtr,
+                // connect_block
+                { ptr, url, headers in
+                    guard let ptr = ptr else { return }
+                    let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
+                    client.performConnect(url: String(url), headers: headers)
+                },
+                // disconnect_block
+                { ptr in
+                    guard let ptr = ptr else { return }
+                    let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
+                    client.performDisconnect()
+                },
+                // state_block
+                { ptr in
+                    guard let ptr = ptr else { return .closed }
+                    let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
+                    return client.currentState
+                },
+                // send_block
+                { ptr, message in
+                    guard let ptr = ptr else { return }
+                    let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
+                    client.performSend(message)
+                }
+            )
+
+            // Allocate and store the C++ client so we can call trigger methods
+            let cxxPtr = UnsafeMutablePointer<lattice.generic_websocket_client>.allocate(capacity: 1)
+            cxxPtr.initialize(to: cxxClient)
+            self.cxxClientPtr = UnsafeMutableRawPointer(cxxPtr)
+
+            // Return as websocket_client* for unique_ptr
+            return UnsafeMutableRawPointer(cxxPtr)
+        }
+
+        private func performConnect(url urlString: String, headers: lattice.HeadersMap) {
+            guard let url = URL(string: urlString) else {
+                triggerError("Invalid URL: \(urlString)")
+                return
+            }
+
+            var request = URLRequest(url: url)
+            headers.forEach { (keyValuePair) in
+                let key = keyValuePair.first
+                let value = keyValuePair.second
+                request.setValue(String(value), forHTTPHeaderField: String(key))
+            }
+
+            currentState = .connecting
+            webSocketTask = session.webSocketTask(with: request)
+            webSocketTask?.resume()
+            // Try receiving immediately AND after open
+//            startReceiving()
+        }
+
+        private func performDisconnect() {
+            currentState = .closing
+            webSocketTask?.cancel(with: .normalClosure, reason: nil)
+        }
+
+        private func performSend(_ message: lattice.websocket_message) {
+            guard let task = webSocketTask else { return }
+
+            let wsMessage: URLSessionWebSocketTask.Message
+            if message.msg_type == .text {
+                wsMessage = .string(String(message.as_string()))
+            } else {
+                let data = Data(message.data)
+                wsMessage = .data(data)
+            }
+
+            task.send(wsMessage) { [weak self] error in
+                if let error = error {
+                    self?.triggerError(error.localizedDescription)
+                }
+            }
+        }
+
+        private func startReceiving() {
+            print("[WS] startReceiving called, task=\(webSocketTask != nil ? "exists" : "nil")")
+            webSocketTask?.receive { [weak self] result in
+                guard let self = self else {
+                    return
+                }
+                print("[WS] receive result: \(result)")
+                switch result {
+                case .success(let message):
+                    var cxxMessage = lattice.websocket_message()
+                    switch message {
+                    case .string(let text):
+                        cxxMessage = lattice.websocket_message.from_string(std.string(text))
+                    case .data(let data):
+                        var vec = lattice.ByteVector()
+                        for byte in data {
+                            vec.push_back(byte)
+                        }
+                        cxxMessage = lattice.websocket_message.from_binary(vec)
+                    @unknown default:
+                        break
+                    }
+                    self.triggerMessage(cxxMessage)
+                    self.startReceiving()
+
+                case .failure(let error):
+                    self.triggerError(error.localizedDescription)
+                }
+            }
+        }
+
+        private func handleOpen() {
+            currentState = .open
+            startReceiving()  // Also try receiving here
+            triggerOpen()
+        }
+
+        private func handleClose(code: Int, reason: String) {
+            currentState = .closed
+            webSocketTask = nil
+            triggerClose(code: code, reason: reason)
+        }
+
+        private func handleError(_ error: String) {
+            triggerError(error)
+        }
+
+        // MARK: - C++ trigger methods
+
+        private func triggerOpen() {
+            guard let ptr = cxxClientPtr else { return }
+            ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_open()
+        }
+
+        private func triggerMessage(_ message: lattice.websocket_message) {
+            guard let ptr = cxxClientPtr else { return }
+            ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_message(message)
+        }
+
+        private func triggerError(_ error: String) {
+            guard let ptr = cxxClientPtr else { return }
+            ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_error(std.string(error))
+        }
+
+        private func triggerClose(code: Int, reason: String) {
+            guard let ptr = cxxClientPtr else { return }
+            ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_close(Int32(code), std.string(reason))
+        }
+
+        deinit {
+            // Note: Don't deallocate cxxClientPtr - C++ owns it via unique_ptr
+            // The Swift WebsocketClient is kept alive by passRetained() and should be
+            // released when C++ destroys the websocket_client (not implemented yet)
+            print("[WS]", "deinitializing")
+        }
+    }
+
+    /// Registers the Swift network factory with C++ layer. Called once on first Lattice init.
+    private nonisolated(unsafe) static var networkFactoryRegistered = false
+    private static func registerNetworkFactoryIfNeeded() {
+        guard !networkFactoryRegistered else { return }
+        networkFactoryRegistered = true
+
+        lattice.register_generic_network_factory(
+            nil,  // no user_data needed
+            nil,  // http_block - not implemented yet
+            // websocket_block
+            { _ in
+                let client = WebsocketClient()
+                return client.createCxxClient().assumingMemoryBound(to: lattice.websocket_client.self)
+            },
+            nil   // destroy_fn
+        )
     }
     
     private struct Scheduler: Equatable, Hashable {
@@ -276,12 +503,21 @@ public struct Lattice {
         }
         
         fileprivate func cxxConfiguration(isolation: isolated (any Actor)? = #isolation) -> lattice.configuration {
-            .init(std.string(self.fileURL.path()),
-                  self.wssEndpoint.map {
+            if isStoredInMemoryOnly {
+                .init(std.string(":memory:"),
+                      self.wssEndpoint.map {
                     std.string($0.absoluteString)
-            } ?? std.string(),
-                  authorizationToken.map { std.string($0) } ?? std.string(),
-                  scheduler.scheduler)
+                } ?? std.string(),
+                      authorizationToken.map { std.string($0) } ?? std.string(),
+                      scheduler.scheduler)
+            } else {
+                .init(std.string(self.fileURL.path()),
+                      self.wssEndpoint.map {
+                    std.string($0.absoluteString)
+                } ?? std.string(),
+                      authorizationToken.map { std.string($0) } ?? std.string(),
+                      scheduler.scheduler)
+            }
         }
     }
     
@@ -290,10 +526,10 @@ public struct Lattice {
     public nonisolated(unsafe) static var defaultConfiguration: Configuration = .init()
     public let configuration: Configuration
     public let modelTypes: [any Model.Type]
-    private var synchronizer: Synchronizer?
+//    private var synchronizer: Synchronizer?
     
     private var isSyncDisabled = false
-    internal let logger = Logger.db
+    internal var logger = Logger.db
     
 //    deinit {
 //        defer { print("Lattice deinit") }
@@ -318,9 +554,20 @@ public struct Lattice {
     internal var isolation: (any Actor)?
 
     internal init(isolation: isolated (any Actor)? = #isolation,
+                  ref: lattice.swift_lattice_ref) {
+        self = Self.cacheLock.withLockUnchecked { Self.cache[ref]! }
+    }
+    
+    private static let cacheLock = OSAllocatedUnfairLock<Void>()
+    private nonisolated(unsafe) static var cache: [lattice.swift_lattice_ref: Lattice] = [:]
+    
+    internal init(isolation: isolated (any Actor)? = #isolation,
                   for schema: [any Model.Type],
                   configuration: Configuration = defaultConfiguration,
                   isSynchronizing: Bool) throws {
+        // Register Swift network factory on first use
+        Self.registerNetworkFactoryIfNeeded()
+
         self.isolation = isolation
         self.configuration = configuration
 
@@ -331,16 +578,31 @@ public struct Lattice {
         // Build SchemaVector for C++
         var cxxSchemas = lattice.SchemaVector()
         for modelType in allTypes {
+            // Convert Swift constraints to C++ constraints
+            var cxxConstraints = lattice.ConstraintVector()
+            for constraint in modelType.constraints {
+                var cols = lattice.StringVector()
+                for col in constraint.columns {
+                    cols.push_back(std.string(col))
+                }
+                let cxxConstraint = lattice.swift_constraint(cols, constraint.allowsUpsert)
+                cxxConstraints.push_back(cxxConstraint)
+            }
+
             let entry = lattice.swift_schema_entry(
                 std.string(modelType.entityName),
-                modelType.cxxPropertyDescriptor()
+                modelType.cxxPropertyDescriptor(),
+                cxxConstraints
             )
             cxxSchemas.push_back(entry)
         }
 
         self.cxxLatticeRef = lattice.swift_lattice_ref.create(configuration.cxxConfiguration(), cxxSchemas)
+        let ref = self.cxxLatticeRef
+        let latticeInstance = self
+        Self.cacheLock.withLockUnchecked { Self.cache[ref] = latticeInstance }
     }
-    
+
     public init(isolation: isolated (any Actor)? = #isolation,
                 for schema: [any Model.Type], configuration: Configuration = defaultConfiguration) throws {
         try self.init(for: schema, configuration: configuration, isSynchronizing: false)
@@ -431,75 +693,56 @@ public struct Lattice {
     }
     
     // MARK: Add
-    public func add<T: Model>(_ object: T) {
-        guard case var .unmanaged(o) = object._storage else {
+    public func add<T: Model>(_ object: borrowing T) {
+        guard object.lattice == nil else {
             fatalError()
         }
-        let managed = cxxLattice.add(consuming: o)
-        object._storage = .managed(managed)
+        var copy = object._dynamicObject // Break exclusive access
+        cxxLattice.add(&copy.shared().pointee)
+        object._dynamicObject = copy
     }
     
     public func add<S: Sequence>(contentsOf newElements: S) where S.Element: Model {
-        // Convert Swift models to C++ dynamic objects
-        var cxxObjects = lattice.ModelVector()
-        let schema = S.Element.cxxPropertyDescriptor()
-        let tableName = std.string(S.Element.entityName)
-
-        for element in newElements {
-            precondition(element.primaryKey == nil, "Cannot add object that was already inserted into the database. Object already has primaryKey: \(element.primaryKey!)")
-
-            guard case let .unmanaged(obj) = element._storage else {
-                fatalError("Cannot bulk add managed objects")
-            }
-            cxxObjects.push_back(obj)
-        }
-
         // Bulk insert via C++
-        let managedObjects = cxxLattice.add_bulk(consuming: cxxObjects)
-        // Update Swift models with their new storage
-        var idx: Int = 0
+        var cxxObjects = lattice.DynamicObjectRefPtrVector()
         for element in newElements {
-            element._storage = .managed(managedObjects[idx])
-            element.primaryKey = managedObjects[idx].id()
-            element.lattice = self
-            element._didEncode()
-            idx += 1
+            cxxObjects.push_back(element._dynamicObject)
         }
+        
+        cxxLattice.add_bulk(&cxxObjects)
     }
     
     internal func newObject<T: Model>(_ objectType: T.Type,
                                       primaryKey id: Int64,
                                       cxxObject: lattice.ManagedModel) -> T {
-        if let isolation {
-            return isolation.assumeIsolated { [configuration] isolation in
-                let object = T(isolation: isolation)
-                object._storage = .managed(cxxObject)
-                object.primaryKey = id
-                return _UncheckedSendable(object)
-            }.value
-        } else {
-            let object = T(isolation: #isolation)
-            object._storage = .managed(cxxObject)
-            object.primaryKey = id
-            return object
-        }
+        fatalError()
+//        if let isolation {
+//            let obj = isolation.assumeIsolated { [configuration] isolation in
+//                let object = T(isolation: isolation)
+//                object._dynamicObject = cxxObject
+//                object.primaryKey = id
+//                return _UncheckedSendable(object)
+//            }.value
+//            obj.lattice = self
+//            return obj
+//        } else {
+//            let object = T(isolation: #isolation)
+//            object._storage = .managed(cxxObject)
+//            object.primaryKey = id
+//            object.lattice = self
+//            return object
+//        }
     }
     
     func beginObserving<T: Model>(_ object: T) {
-//        object.primaryKey.map {
-//            dbPtr.insertModelObserver(tableName: T.entityName, primaryKey: $0, object.weakCapture(isolation: isolation))
-//        }
     }
     func finishObserving<T: Model>(_ object: T) {
-//        object.primaryKey.map {
-//            dbPtr.removeModelObserver(tableName: T.entityName, primaryKey: $0)
-//        }
     }
     
     public func object<T>(_ type: T.Type = T.self, primaryKey: Int64) -> T? where T: Model {
         let object = cxxLattice.object(primaryKey, std.string(type.entityName))
         if object.hasValue {
-            return newObject(type, primaryKey: primaryKey, cxxObject: object.pointee)
+            return T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(object.pointee).make_shared()))
         }
         return nil
     }
@@ -507,7 +750,7 @@ public struct Lattice {
     internal func object<T>(_ type: T.Type = T.self, globalKey: UUID) -> T? where T: Model {
         let globalIdString = globalKey.uuidString.lowercased()
         if let object = cxxLattice.object_by_global_id(std.string(globalIdString), std.string(type.entityName)).value {
-            return newObject(type, primaryKey: object.id(), cxxObject: object)
+            return T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(object.pointee).make_shared()))
         }
         return nil
     }
@@ -518,9 +761,10 @@ public struct Lattice {
     
     // MARK: Delete
     @discardableResult public func delete<T: Model>(_ object: consuming T) -> Bool {
-        guard object.primaryKey != nil, case var .managed(o) = object._storage else { return false }
-        object._storage = .unmanaged(o.source)
-        return cxxLattice.remove(&o)
+//        defer { object._dynamicObject = T.defaultCxxLatticeObject }
+//        var dynamicObject = consume object._dynamicObject
+        return cxxLattice.remove(object._dynamicObject)
+        
     }
     
     @discardableResult public func delete<T: Model>(_ modelType: T.Type = T.self,
@@ -639,16 +883,15 @@ public struct Lattice {
         }
     }
 
-    public func observe<T: Model>(_ modelType: T.Type, where: Predicate<T>? = nil,
-                                  block: @escaping (Results<T>.CollectionChange) -> ()) -> AnyCancellable {
+    func observe<T: Model>(_ modelType: T.Type, where: Query<Bool>? = nil,
+                           block: @escaping (Results<T>.CollectionChange) -> ()) -> AnyCancellable {
         let tableName = std.string(T.entityName)
 
         let context = TableObserverContext { [self] operation, rowId, globalRowId in
             switch operation {
             case "INSERT":
                 if let `where` {
-                    let whereQuery = `where`(Query<T>())
-                    let convertedQuery = whereQuery.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
+                    let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
                     let auditResults = Results<AuditLog>(self).where({
                         $0.rowId == rowId && convertedQuery && $0.operation == .insert
                     })
@@ -662,8 +905,7 @@ public struct Lattice {
                 }
             case "DELETE":
                 if let `where` {
-                    let whereQuery = `where`(Query<T>())
-                    let convertedQuery = whereQuery.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
+                    let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
                     let auditResults = Results<AuditLog>(self).where({
                         $0.rowId == rowId && convertedQuery && $0.operation == .delete
                     })
@@ -702,6 +944,11 @@ public struct Lattice {
         }
     }
     
+    public func observe<T: Model>(_ modelType: T.Type, where: LatticePredicate<T>? = nil,
+                                  block: @escaping (Results<T>.CollectionChange) -> ()) -> AnyCancellable {
+        observe(modelType, where: `where`?(Query()), block: block)
+    }
+    
     public func beginTransaction(isolation: isolated (any Actor)? = #isolation) {
         // Start the transaction.
         cxxLattice.begin_transaction()
@@ -717,6 +964,10 @@ public struct Lattice {
         let value = try block()
         commitTransaction()
         return value
+    }
+    
+    public mutating func attach(lattice: Lattice) {
+        cxxLattice.attach(lattice.cxxLattice)
     }
 }
 

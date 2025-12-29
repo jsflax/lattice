@@ -76,8 +76,16 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
           let type = binding.typeAnnotation?.type else {
         return nil
     }
-    
-    var memberView = MemberView(name: "\(identifier.trimmed)", type: type.trimmedDescription, attributeKey: nil)
+
+    // Unwrap implicitly unwrapped optionals (e.g., String! -> String)
+    let unwrappedType: TypeSyntax
+    if let iuo = type.as(ImplicitlyUnwrappedOptionalTypeSyntax.self) {
+        unwrappedType = iuo.wrappedType
+    } else {
+        unwrappedType = type
+    }
+
+    var memberView = MemberView(name: "\(identifier.trimmed)", type: unwrappedType.trimmedDescription, attributeKey: nil)
 
     // Extract attributeKey if available.
 //    if let attribute = decl.attributes.first?.as(AttributeSyntax.self),
@@ -115,7 +123,7 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
                 }
             } else if memberView.attributeKey == "Property" {
                 if let arguments = attribute.arguments?.as(LabeledExprListSyntax.self) {
-                    var constraint = Constraint(columns: [memberView.name], allowsUpsert: false)
+                    let constraint = Constraint(columns: [memberView.name], allowsUpsert: false)
                     
                     arguments.forEach {
                         if $0.label?.text == "name" {
@@ -319,16 +327,11 @@ class PropertyMacro: AccessorMacro, MemberMacro {
             get {
                 _lastKeyPathUsed = "\(raw: property.mappedName ?? property.name)"
                 _$observationRegistrar.access(self, keyPath: \\.\(id.identifier))
-                if let isolation = self.isolation {
-                    return isolation.assumeIsolated { [_\(raw: id.identifier)Accessor] iso in
-                        return _UncheckedSendable(_\(raw: id.identifier)Accessor.get(isolation: iso))
-                    }.value
-                }
-                return _\(raw: id.identifier)Accessor.get()
+                return \(raw: property.type).getField(from: &_dynamicObject, named: "\(raw: property.mappedName ?? property.name)")
             }
             set {
                 _$observationRegistrar.withMutation(of: self, keyPath: \\.\(id.identifier)) {
-                    _\(raw: id.identifier)Accessor.set(newValue)
+                    \(raw: property.type).setField(on: &_dynamicObject, named: "\(raw: property.mappedName ?? property.name)", newValue)
                 }
             }
             """
@@ -545,15 +548,9 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             let siName = context.makeUniqueName(member.name)
             if let assignment = member.assignment {
                 return """
-                private struct \(ssName): StaticString { static var string: String { "\(member.name)" } }
-                private struct \(siName): StaticInt32 { static var int32: Int32 { \(idx + 1) } }
-                private var _\(member.name)Accessor: Accessor<\(member.type), \(ssName), \(siName)> = .init(columnId: \(idx + 1), name: \"\(member.name)\", unmanagedValue: \(assignment))
                 """
             } else {
                 return """
-                private struct \(ssName): StaticString { static var string: String { "\(member.name)" } }
-                private struct \(siName): StaticInt32 { static var int32: Int32 { \(idx + 1) } }
-                private var _\(member.name)Accessor: Accessor<\(member.type), \(ssName), \(siName)> = .init(columnId: \(idx + 1), name: \"\(member.name)\")
                 """
             }
         }.joined(separator: "\n")
@@ -573,7 +570,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         }
         return [
             """
-            public typealias CxxManagedSpecialization = CxxManagedLatticeObject?
+            
             public typealias DefaultValue = Optional<\(name)>
             \(raw: dtoProperties)
             public var lattice: Lattice?
@@ -581,17 +578,23 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             public var primaryKey: Int64?
             private var isolation: (any Actor)?
             public var _objectWillChange: ObservableObjectPublisher = .init()
-            public var _storage: _ModelStorage = .unmanaged(defaultCxxLatticeObject)
+            
+            public var _dynamicObject: CxxDynamicObjectRef = {
+                var obj = CxxDynamicObjectRef.wrap(_defaultCxxLatticeObject(\(name.trimmed).self).make_shared())!
+                \(raw: allowedMembers.filter { $0.assignment != nil }.map { "\($0.type).setField(on: &obj, named: \"\($0.mappedName ?? $0.name)\", \($0.assignment ?? ".defaultValue"))" }.joined(separator: "\n\t\t"))
+                return obj
+            }()
+            
             public required init(isolation: isolated (any Actor)? = #isolation) {
                 self.isolation = isolation
-                self._storage = .unmanaged(Self.defaultCxxLatticeObject)
-                \(raw: allowedMembers.map { "_\($0.name).pushDefaultToStorage(&_storage)" }.joined(separator: "\n\t\t"))
+                // self._dynamicObject = _defaultCxxLatticeObject(\(name.trimmed).self)
+                
             }
             private struct __GlobalIdName: StaticString { static var string: String { "globalId" } }
             private struct __GlobalIdKey: StaticInt32 { static var int32: Int32 { 1 } }
-            private var ___globalIdAccessor: Accessor<UUID, __GlobalIdName, __GlobalIdKey> = .init(columnId: 1, name: \"globalId\", unmanagedValue: UUID())
+            
             @Property(name: "globalId")
-            public var __globalId: UUID
+            public var __globalId: UUID?
             
             public let _$observationRegistrar = Observation.ObservationRegistrar()
             public var _lastKeyPathUsed: String?
@@ -615,7 +618,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                 switch keyPath {
                     \(raw: allowedMembers.map {
                         """
-                        case "\($0.name)": try _$observationRegistrar.willSet(self, keyPath: \\\(name).\($0.name))
+                        case "\($0.name)": _$observationRegistrar.willSet(self, keyPath: \\\(name).\($0.name))
                         """
                     }.joined(separator: "\n\t\t"))
                     default: print("❌ Could not send key path \\(keyPath) to observer"); break
@@ -629,7 +632,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                         """
                     }.joined(separator: "\n\t\t"))
                     case \\\(name).primaryKey: "id"
-                    case \\(any Model).primaryKey: "id"
+                    case \\(any Lattice.Model).primaryKey: "id"
                     default: {        
                         let input = String(reflecting: keyPath)
                         let components = input.split(separator: ".")
@@ -754,9 +757,11 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             return [
                 ExtensionDeclSyntax(
                     extendedType: type,
-                    inheritanceClause: .init(inheritedTypes: .init(arrayLiteral: InheritedTypeSyntax(type: TypeSyntax("Model")))),
+                    inheritanceClause: .init(inheritedTypes: .init(arrayLiteral: InheritedTypeSyntax(type: TypeSyntax("Lattice.Model")))),
                     memberBlock: """
                     {
+                        public typealias CxxManagedSpecialization = CxxManagedModel
+                    
                         public static var constraints: [Constraint] {
                             [\(raw: constraints.joined(separator: ","))]
                         }
@@ -764,51 +769,20 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                             "\(raw: typeName)"
                         }
 
-                        public static var properties: [(String, any SchemaProperty.Type)] {
+                        public static var properties: [(String, any LatticeSchemaProperty.Type)] {
                             [\(raw: modelProperties)]
                         }
 
-                        public static func fromCxxValue(_ value: CxxManagedLatticeObject?) -> Self {
-                            guard let value else {
-                                return Self(isolation: #isolation)
-                            }
-                            let instance = Self(isolation: #isolation)
-                            instance._storage = .managed(value)
-                            instance.primaryKey = value.id()
-                            return instance
-                        }
-
-                        public func _assign(lattice: Lattice?) {
-                            self.lattice = lattice
-                            self.___globalIdAccessor.lattice = lattice
-                            self.___globalIdAccessor.parent = self
-                            \(raw: accessors.map({
-                                """
-                                \($0).lattice = lattice
-                                \($0).parent = self
-                                """
-                            }).joined(separator: "\n\t\t"))
+                        public static func fromCxxValue(_ value: CxxManagedSpecialization.SwiftType) -> Self {
+                            fatalError()
                         }
                     
-                        public func _encode(statement: OpaquePointer?) {
-                            var columnId = Int32(1)
-                            // Encode globalId first (matches properties order)
-                            self.___globalIdAccessor.encode(to: statement, with: &columnId)
-                            columnId += 1
-                            \(raw: accessors.map({
-                                """
-                                \($0).encode(to: statement, with: &columnId)
-                                columnId += 1
-                                """
-                            }).joined(separator: "\n\t\t"))
+                        public static func getManaged(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization {
+                            fatalError()
+                            // object.get_managed_field(name)
                         }
-                    
-                        public func _didEncode() {
-                            \(raw: accessors.map({
-                                """
-                                \($0)._didEncode(parent: self, lattice: lattice!, primaryKey: primaryKey!) 
-                                """
-                            }).joined(separator: "\n\t\t"))
+                        public static func getManagedOptional(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization.OptionalType {
+                            object.get_managed_field(name)
                         }
                     }
                     """
@@ -817,11 +791,61 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         }
 }
 
+class EnumMacro: ExtensionMacro {
+    static func expansion(of node: SwiftSyntax.AttributeSyntax, attachedTo declaration: some SwiftSyntax.DeclGroupSyntax, providingExtensionsOf type: some SwiftSyntax.TypeSyntaxProtocol, conformingTo protocols: [SwiftSyntax.TypeSyntax], in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.ExtensionDeclSyntax] {
+        return [
+            ExtensionDeclSyntax(
+                extendedType: type,
+                inheritanceClause: .init(inheritedTypes: .init(arrayLiteral: InheritedTypeSyntax(type: TypeSyntax("LatticeEnum")))),
+                memberBlock: """
+                {
+                    public typealias CxxManagedSpecialization = RawValue.CxxManagedSpecialization
+
+                    public static func fromCxxValue(_ value: CxxManagedSpecialization.SwiftType) -> Self {
+                        fatalError()
+                    }
+                
+                    public static func getManaged(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization {
+                        object.get_managed_field(name)
+                    }
+                
+                    public static func getManagedOptional(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization.OptionalType {
+                        object.get_managed_field(name)
+                    }
+                }
+                """
+            )
+        ]
+    }
+}
+
+class EmbeddedModelMacro: MemberMacro {
+    static func expansion(of node: AttributeSyntax, providingMembersOf declaration: some DeclGroupSyntax, in context: some MacroExpansionContext) throws -> [DeclSyntax] {
+        [
+            """
+            public typealias CxxManagedSpecialization = RawValue.CxxManagedSpecialization
+
+            public static func fromCxxValue(_ value: CxxManagedSpecialization.SwiftType) -> Self {
+                fatalError()
+            }
+            
+            public static func getManaged(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization {
+                object.get_managed_field(name)
+            }
+            
+            public static func getManagedOptional(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization.OptionalType {
+                object.get_managed_field(name)
+            }
+            """
+        ]
+    }
+}
+
 @main
 struct LatticeMacrosPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         ModelMacro.self, TransientMacro.self, PropertyMacro.self,
 //        LatticeMemberMacro.self,
-        UniqueMacro.self, CodableMacro.self
+        UniqueMacro.self, CodableMacro.self, EnumMacro.self, EmbeddedModelMacro.self
     ]
 }
