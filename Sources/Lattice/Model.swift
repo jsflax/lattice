@@ -123,6 +123,21 @@ extension Model {
             }
             return nil
         }
+        let geoProperties: [(String, any GeoboundsProperty.Type)] = filteredProperties.compactMap {
+            if let geotype = $0.1 as? (any GeoboundsProperty.Type) {
+                return ($0.0, geotype)
+            }
+            return nil
+        }
+        
+        for (name, property) in geoProperties {
+            schema[std.string(name)] = .init(name: std.string(name), type: .integer,
+                                             kind: .primitive, target_table: .init(),
+                                             link_table: .init(),
+                                             nullable: property is (any OptionalProtocol.Type),
+                                             is_vector: false, is_geo_bounds: true)
+        }
+        
         for (name, property) in primitiveProperties {
             // Map Swift property kind to C++ column_type
             let columnType: lattice.column_type = switch property.anyPropertyKind {
@@ -136,7 +151,7 @@ extension Model {
             schema[std.string(name)] = .init(name: std.string(name), type: columnType, kind: .primitive,
                                              target_table: .init(), link_table: .init(),
                                              nullable: property is (any OptionalProtocol.Type),
-                                             is_vector: isVector)
+                                             is_vector: isVector, is_geo_bounds: false)
         }
 
         for (name, property) in linkProperties {
@@ -145,9 +160,8 @@ extension Model {
                                              kind: isVector ? .list : .link,
                                              target_table: std.string(property.modelType.entityName),
                                              link_table: .init(Self.entityName),
-                                             nullable: true, is_vector: isVector)
+                                             nullable: true, is_vector: isVector, is_geo_bounds: false)
         }
-
 
         return schema
     }

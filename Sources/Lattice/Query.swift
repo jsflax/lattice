@@ -260,8 +260,12 @@ public struct Query<T>: Sendable {
     }
 
     /// For virtual queries
-    package func virtualMember<V>(_ keyPath: String, withType: V.Type) -> Query<V> where T: Model {
+    package func virtualMember<V>(_ keyPath: String, withType: V.Type) -> Query<V> {
         .init(appendKeyPath(keyPath, options: []), isAuditing: isAuditing)
+    }
+    
+    package func delegate<V>(_ member: KeyPath<T, V>) -> Query<V> where T: Model {
+        self[dynamicMember: member]
     }
     
     /// Handle EmbeddedModel properties on Model
@@ -1526,7 +1530,7 @@ private struct SubqueryRewriter {
 //        }
 //    }
 //}
-public typealias Predicate<T> = ((Query<T>) -> Query<Bool>)
+public typealias Predicate<T> = ((any _Query<T>) -> Query<Bool>)
 public typealias LatticePredicate<T> = ((Query<T>) -> Query<Bool>)
 
 extension Lattice {

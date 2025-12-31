@@ -47,23 +47,62 @@ extension Model {
     }
 }
 
-public struct ResultsThreadSafeReference<T: Model>: SendableReference {
+public struct ResultsThreadSafeReference<R: Results>: SendableReference {
+    private let anyResultsThreadSafeReference: any AnyResultsThreadSafeReference<R>
+    
+    fileprivate init(_ results: any AnyResultsThreadSafeReference<R>) {
+        self.anyResultsThreadSafeReference = results
+    }
+    
+    public func resolve(on lattice: Lattice) -> R {
+        anyResultsThreadSafeReference.resolve(on: lattice)
+    }
+}
+
+protocol AnyResultsThreadSafeReference<NonSendable>: SendableReference where NonSendable: Results {
+}
+
+private struct TableResultsThreadSafeReference<T: Model>: AnyResultsThreadSafeReference {
+    typealias Res = TableResults<T>
+    
     private let whereStatement: Query<Bool>?
     private let sortStatement: SortDescriptor<T>?
     
-    public init(_ results: Results<T>) {
+    public init(_ results: TableResults<T>) {
         self.whereStatement = results.whereStatement
         self.sortStatement = results.sortStatement
     }
     
-    public func resolve(on lattice: Lattice) -> Results<T> {
-        Results(lattice, whereStatement: whereStatement, sortStatement: sortStatement)
+    public func resolve(on lattice: Lattice) -> some Results<T> {
+        TableResults(lattice, whereStatement: whereStatement, sortStatement: sortStatement)
     }
 }
 
-extension Results {
-    public var sendableReference: ResultsThreadSafeReference<Element> {
-        .init(self)
+private struct VirtualResultsThreadSafeReference<each M: Model, Element>: AnyResultsThreadSafeReference {
+    typealias Res = _VirtualResults<repeat each M, Element>
+    
+    private let whereStatement: Query<Bool>?
+    private let sortStatement: SortDescriptor<Element>?
+    
+    public init(_ results: Res) {
+        self.whereStatement = results.whereStatement
+        self.sortStatement = results.sortStatement
+    }
+    
+    public func resolve(on lattice: Lattice) -> some Results<Element> {
+        Res(lattice, whereStatement: whereStatement, sortStatement: sortStatement)
+    }
+}
+
+extension TableResults {
+    public var sendableReference: ResultsThreadSafeReference<TableResults<Element>> {
+        .init(TableResultsThreadSafeReference(self) as! (any AnyResultsThreadSafeReference<TableResults<Element>>))
+    }
+}
+
+extension _VirtualResults {
+    public var sendableReference: ResultsThreadSafeReference<Self> {
+        .init(VirtualResultsThreadSafeReference(self) as! (any AnyResultsThreadSafeReference<Self>))
     }
 }
 

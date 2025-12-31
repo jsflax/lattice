@@ -59,6 +59,31 @@ Lattice/
 - Macro validation prevents users from using these names
 - Filtered out in `cxxPropertyDescriptor()` to avoid duplicate columns
 
+### 7. **VirtualModel (Polymorphic Queries)**
+- `VirtualModel` protocol enables querying across multiple model types
+- Models conforming to a shared protocol can be queried together
+- Uses UNION ALL queries under the hood with optimized pagination
+- Type-safe: `lattice.objects(POI.self)` returns `VirtualResults<POI>`
+- Results hydrate back to concrete types (Restaurant, Museum, etc.)
+- Implementation uses variadic generics with compile-time type building
+- Key files: `VirtualModel.swift`, `Schema` struct in `Lattice.swift`
+
+### 8. **Database Attachment**
+- `lattice.attach(lattice:)` attaches another database file
+- Uses SQLite's `ATTACH DATABASE` with automatic alias generation
+- Creates TEMP VIEWs to hide the alias prefix for transparent querying
+- Attached tables participate in VirtualModel/polymorphic queries
+- Both read and write connections are attached
+- Implementation in C++: `swift_lattice::attach()`
+
+### 9. **Vector Search**
+- Built on sqlite-vec extension for ANN (Approximate Nearest Neighbor) search
+- Each Vector property gets a vec0 virtual table: `_{Table}_{column}_vec`
+- Triggers auto-sync vectors from main table to vec0
+- Supports L2 (Euclidean), Cosine, and L1 (Manhattan) distance metrics
+- `Results.nearest(to:on:limit:distance:)` API for similarity search
+- Federated vector search for VirtualModel queries (queries each vec0, merges results)
+
 ## Current State
 
 ### Completed Features
@@ -70,14 +95,15 @@ Lattice/
 - ✅ Automatic schema discovery
 - ✅ Schema passing to C++ at init
 - ✅ Table creation in C++ layer
+- ✅ Vector search with sqlite-vec
+- ✅ VirtualModel / Polymorphic queries
+- ✅ Database attachment (ATTACH DATABASE)
+- ✅ UNION queries with optimized pagination
+- ✅ Federated vector search across VirtualModel types
 - ✅ `test_Basic` passing
-
-### In Progress
-- 🔄 `Results` queries (count returns 0 for filtered results)
-- 🔄 WHERE clause generation for Results
+- ✅ `test_Attach` passing
 
 ### Pending Work
-- ⏳ Fix `testLattice_ResultsQuery` - count returning 0
 - ⏳ AuditLog compaction (reduce sync payload size)
 - ⏳ Accessor init for non-optional EmbeddedModel/LatticeEnum
 
@@ -99,6 +125,31 @@ lattice.SwiftSchema       →    std::unordered_map<string, property_descriptor>
 - `swift_lattice_ref` uses `SWIFT_SHARED_REFERENCE` with retain/release
 - Internal `shared_ptr<swift_lattice>` cached by config path
 - `ref_count_` starts at 0 (Swift calls retain on creation)
+
+### Union Query Implementation
+```cpp
+// C++ generates optimized UNION ALL with pagination
+query_union_rows(table_names, where_clause, order_by, limit, offset)
+
+// Generates SQL like:
+SELECT * FROM (
+    SELECT * FROM (SELECT 'Restaurant' AS _type, * FROM Restaurant
+                   WHERE ... ORDER BY name LIMIT 30)  -- inner_limit = offset + limit
+    UNION ALL
+    SELECT * FROM (SELECT 'Museum' AS _type, * FROM Museum
+                   WHERE ... ORDER BY name LIMIT 30)
+)
+ORDER BY name LIMIT 10 OFFSET 20
+```
+
+### Database Attachment (C++)
+```cpp
+void swift_lattice::attach(swift_lattice& other) {
+    // ATTACH DATABASE 'path' AS "alias"
+    // Create TEMP VIEWs for each table to hide alias prefix
+    // Attaches to both read and write connections
+}
+```
 
 ## Testing
 
@@ -166,4 +217,50 @@ let results = lattice.objects(Trip.self)
 let token = results.observe { change in
     // Called on specified isolation
 }
+```
+
+### Polymorphic Queries (VirtualModel)
+```swift
+// Define protocol extending VirtualModel
+protocol POI: VirtualModel {
+    var name: String { get }
+    var country: String { get }
+}
+
+@Model class Restaurant: POI { ... }
+@Model class Museum: POI { ... }
+
+// Query across all conforming types
+let allPOIs = lattice.objects(POI.self)
+let frenchPOIs = lattice.objects(POI.self).where { $0.country == "France" }
+
+// Cast back to concrete type
+if let museum = frenchPOIs.first as? Museum { ... }
+```
+
+### Database Attachment
+```swift
+var lattice1 = try Lattice(Restaurant.self)
+let lattice2 = try Lattice(Museum.self)
+
+lattice1.attach(lattice: lattice2)
+
+// Now lattice1 can query both Restaurant and Museum
+let allPOIs = lattice1.objects(POI.self)  // Queries across both DBs
+```
+
+### Vector Search
+```swift
+// Single model vector search
+let similar = lattice.objects(Document.self)
+    .nearest(to: queryVector, on: \.embedding, limit: 10, distance: .cosine)
+
+// With filtering
+let filtered = lattice.objects(Document.self)
+    .where { $0.category == "science" }
+    .nearest(to: queryVector, on: \.embedding, limit: 10)
+
+// Polymorphic vector search (federated across tables)
+let similarPOIs = lattice.objects(POI.self)
+    .nearest(to: locationVector, on: \.embedding, limit: 10)
 ```

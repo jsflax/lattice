@@ -156,49 +156,9 @@ extension lattice.swift_lattice_ref: Hashable, Equatable, @unchecked @retroactiv
         lhs.hashValue == rhs.hashValue
     }
 }
+
 public struct Lattice {
-    /// A simple Swift “shared_ptr” wrapper for an UnsafeMutablePointer<T>
-    private final class SharedPointer<T> {
-        /// The underlying raw pointer
-        let pointer: UnsafeMutablePointer<T>
-
-        /// Initialize with an existing pointer.
-        /// You must ensure `pointer` was allocated (and, if appropriate, initialized).
-        init(pointer: UnsafeMutablePointer<T>) {
-            self.pointer = pointer
-        }
-
-        /// Convenience init that allocates space for one T and
-        /// initializes it from a value.
-        convenience init(_ value: T) {
-            let ptr = UnsafeMutablePointer<T>.allocate(capacity: 1)
-            ptr.initialize(to: value)
-            self.init(pointer: ptr)
-        }
-
-        /// Access the pointee
-        var pointee: T {
-            get { pointer.pointee }
-            set { pointer.pointee = newValue }
-        }
-
-        /// When the last `SharedPointer` instance goes away, deinit runs
-        deinit {
-            // If you only stored a single T:
-            pointer.deinitialize(count: 1)
-            pointer.deallocate()
-        }
-    }
-    
-//    public var dbPtr: SharedDBPointer!
-//    var db: OpaquePointer? {
-//        dbPtr.db
-//    }
-    
-    //    var observers: [AnyObject: () -> Void] = [:]
-    private var ptr: SharedPointer<Lattice>?
     private static let synchronizersLock = OSAllocatedUnfairLock<Void>()
-//    nonisolated(unsafe) static var synchronizers: [URL: Synchronizer] = [:]
     
     public struct SyncConfiguration {
         
@@ -502,7 +462,7 @@ public struct Lattice {
             self.scheduler = Scheduler()
         }
         
-        fileprivate func cxxConfiguration(isolation: isolated (any Actor)? = #isolation) -> lattice.configuration {
+        fileprivate func cxxConfiguration(isolation: isolated (any Actor)? = #isolation) -> lattice.swift_configuration {
             if isStoredInMemoryOnly {
                 .init(std.string(":memory:"),
                       self.wssEndpoint.map {
@@ -564,7 +524,8 @@ public struct Lattice {
     internal init(isolation: isolated (any Actor)? = #isolation,
                   for schema: [any Model.Type],
                   configuration: Configuration = defaultConfiguration,
-                  isSynchronizing: Bool) throws {
+                  isSynchronizing: Bool,
+                  migration: [Int: Migration]? = nil) throws {
         // Register Swift network factory on first use
         Self.registerNetworkFactoryIfNeeded()
 
@@ -597,20 +558,113 @@ public struct Lattice {
             cxxSchemas.push_back(entry)
         }
 
-        self.cxxLatticeRef = lattice.swift_lattice_ref.create(configuration.cxxConfiguration(), cxxSchemas)
+        if let migration {
+            // Find the target version from migration dict (highest key)
+            let targetVersion = migration.keys.max() ?? 1
+
+            // Create swift_configuration with row migration callback
+            var swiftConfig =  configuration.cxxConfiguration()//lattice.swift_configuration(configuration.cxxConfiguration())
+            swiftConfig.target_schema_version = Int32(targetVersion)
+
+            swiftConfig.setGetOldAndNewSchemaForVersionBlock { tableName, versionNumber in
+                if let currentMigration = migration[versionNumber] {
+                    if let (from, to) = currentMigration.schemas[String(tableName)] {
+                        return lattice.to_optional(lattice.swift_configuration.SchemaPair(from: from, to: to))
+                    }
+                }
+                return .init()
+            }
+            
+            // Set up the row migration callback
+            swiftConfig.setRowMigrationBlock({ tableName, oldRefPtr, newRefPtr in
+                guard let oldRefPtr = oldRefPtr, let newRefPtr = newRefPtr else { return }
+                let entityName = String(tableName)
+
+                // C++ owns these refs - don't retain/release (C++ creates and deletes them)
+
+                // Find the migration for this version and call _sendRow
+                if let currentMigration = migration[targetVersion] {
+                    currentMigration._sendRow(entityName: entityName, oldRefPtr, newRefPtr)
+                }
+            })
+
+            self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: swiftConfig, schemas: cxxSchemas)
+        } else {
+            self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(), schemas: cxxSchemas)
+        }
         let ref = self.cxxLatticeRef
         let latticeInstance = self
         Self.cacheLock.withLockUnchecked { Self.cache[ref] = latticeInstance }
     }
 
+    // MARK: Public Inits
     public init(isolation: isolated (any Actor)? = #isolation,
-                for schema: [any Model.Type], configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: schema, configuration: configuration, isSynchronizing: false)
+                for schema: [any Model.Type],
+                configuration: Configuration = defaultConfiguration,
+                migration: [Int: Migration]? = nil) throws {
+        try self.init(for: schema, configuration: configuration, isSynchronizing: false, migration: migration)
     }
-    
-    public init(isolation: isolated (any Actor)? = #isolation,
-                            _ modelTypes: any Model.Type..., configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: modelTypes, configuration: configuration)
+
+    internal var schema: _Schema?
+
+//    /// Initialize Lattice with model types.
+//    ///
+//    /// - Parameters:
+//    ///   - modelTypes: The model types to register
+//    ///   - configuration: Database configuration
+//    public init<each M: Model>(isolation: isolated (any Actor)? = #isolation,
+//                               _ modelTypes: repeat (each M).Type,
+//                               configuration: Configuration = defaultConfiguration,
+//                               migration: [Int: Migration]? = nil) throws {
+//        var types = [any Model.Type]()
+//        for type in repeat each modelTypes {
+//            types.append(type)
+//        }
+//        try self.init(for: types, configuration: configuration, migration: migration)
+//        self.schema = Schema(repeat each modelTypes)
+//    }
+
+    /// Initialize Lattice with model types and a migration block.
+    ///
+    /// The migration block is called when schema changes are detected, allowing you
+    /// to transform data during migration.
+    ///
+    /// Example:
+    /// ```swift
+    /// // Migrate separate lat/lon fields to CLLocationCoordinate2D
+    /// let lattice = try Lattice(Place.self, configuration: config) { migration in
+    ///     if migration.hasChanges(for: "Place") {
+    ///         migration.enumerateObjects(table: "Place") { rowId, oldRow in
+    ///             if let lat = oldRow["latitude"]?.doubleValue,
+    ///                let lon = oldRow["longitude"]?.doubleValue {
+    ///                 migration.setValue(table: "Place", rowId: rowId,
+    ///                                   column: "location_minLat", value: lat)
+    ///                 migration.setValue(table: "Place", rowId: rowId,
+    ///                                   column: "location_maxLat", value: lat)
+    ///                 migration.setValue(table: "Place", rowId: rowId,
+    ///                                   column: "location_minLon", value: lon)
+    ///                 migration.setValue(table: "Place", rowId: rowId,
+    ///                                   column: "location_maxLon", value: lon)
+    ///             }
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - modelTypes: The model types to register
+    ///   - configuration: Database configuration
+    ///   - migration: Block called when schema changes are detected
+    public init<each M: Model>(isolation: isolated (any Actor)? = #isolation,
+                               _ modelTypes: repeat (each M).Type,
+                               configuration: Configuration = defaultConfiguration,
+                               migration: [Int: Migration]? = nil) throws {
+        var types = [any Model.Type]()
+        for type in repeat each modelTypes {
+            types.append(type)
+        }
+        try self.init(for: types, configuration: configuration, migration: migration)
+        self.schema = Schema(repeat each modelTypes)
     }
 
     enum Error: Swift.Error {
@@ -755,8 +809,8 @@ public struct Lattice {
         return nil
     }
     
-    public func objects<T>(_ type: T.Type = T.self) -> Results<T> where T: Model {
-        Results(self)
+    public func objects<T>(_ type: T.Type = T.self) -> some Results<T> where T: Model {
+        TableResults(self)
     }
     
     // MARK: Delete
@@ -884,7 +938,7 @@ public struct Lattice {
     }
 
     func observe<T: Model>(_ modelType: T.Type, where: Query<Bool>? = nil,
-                           block: @escaping (Results<T>.CollectionChange) -> ()) -> AnyCancellable {
+                           block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
         let tableName = std.string(T.entityName)
 
         let context = TableObserverContext { [self] operation, rowId, globalRowId in
@@ -892,7 +946,7 @@ public struct Lattice {
             case "INSERT":
                 if let `where` {
                     let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                    let auditResults = Results<AuditLog>(self).where({
+                    let auditResults = TableResults<AuditLog>(self).where({
                         $0.rowId == rowId && convertedQuery && $0.operation == .insert
                     })
                     if let _ = auditResults.first {
@@ -906,7 +960,7 @@ public struct Lattice {
             case "DELETE":
                 if let `where` {
                     let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                    let auditResults = Results<AuditLog>(self).where({
+                    let auditResults = TableResults<AuditLog>(self).where({
                         $0.rowId == rowId && convertedQuery && $0.operation == .delete
                     })
                     if let _ = auditResults.first {
@@ -945,7 +999,7 @@ public struct Lattice {
     }
     
     public func observe<T: Model>(_ modelType: T.Type, where: LatticePredicate<T>? = nil,
-                                  block: @escaping (Results<T>.CollectionChange) -> ()) -> AnyCancellable {
+                                  block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
         observe(modelType, where: `where`?(Query()), block: block)
     }
     
@@ -968,9 +1022,72 @@ public struct Lattice {
     
     public mutating func attach(lattice: Lattice) {
         cxxLattice.attach(lattice.cxxLattice)
+        schema = schema?.merge(typeErased: lattice.schema!)
     }
 }
 
+protocol _Schema {
+    func merge(typeErased: _Schema) -> _Schema
+    func merge<each V: Model>(other: Schema<repeat each V>) -> _Schema
+    func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> VirtualResults<T>
+}
+
+package struct Schema<each M: Model>: _Schema {
+    let modelTypes: (repeat (each M).Type)
+    package init(_ modelTypes: repeat (each M).Type) {
+        self.modelTypes = (repeat each modelTypes)
+    }
+    
+    func addType<T: Model>(_ type: T.Type) -> _Schema {
+        Schema<repeat each M, T>(repeat each self.modelTypes, type)
+    }
+    
+    func merge(typeErased: any _Schema) -> any _Schema {
+        typeErased.merge(other: self)
+    }
+    
+    func merge<each V: Model>(other: Schema<repeat each V>) -> _Schema {
+        Schema<repeat (each M), repeat each V>.init(repeat each self.modelTypes, repeat each other.modelTypes)
+    }
+    
+    package func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> any VirtualResults<T> {
+//        build(lattice: lattice, proto: type)
+//        virtualSchemaBuilder(for: type, on: lattice) {
+            var virtualResults: (any VirtualResults<T>)!
+            for modelType in repeat each modelTypes {
+                if virtualResults == nil {
+                    if modelType.init(isolation: #isolation) is T {
+                        virtualResults = _VirtualResults.init(types: modelType, proto: type, lattice: lattice)
+                    }
+                } else {
+                    if modelType.init(isolation: #isolation) is T {
+                        virtualResults = virtualResults.addType(modelType)
+                    }
+                }
+            }
+        return virtualResults!
+//        }
+//        _VirtualResults<(), T>.self
+//        var virtualResults: (any VirtualResults).Type!
+//        for modelType in repeat each modelTypes {
+//            if virtualResults == nil {
+//                virtualResults = add(modelType, with: type)
+//            } else {
+//                add(modelType, to: virtualResults, with: type)
+//            }
+//        }
+    }
+}
+
+//public func Lattice(isolation: isolated (any Actor)? = #isolation,
+//                    for schema: [any Model.Type], configuration: Lattice.Configuration = defaultConfiguration) throws {
+//    try Lattice.init(for: schema, configuration: configuration, isSynchronizing: false)
+//}
+//
+//public func Lattice(isolation: isolated (any Actor)? = #isolation,
+//                    _ modelTypes: any Model.Type..., configuration: Lattice.Configuration = defaultConfiguration) throws {
+//    try Lattice.init(for: modelTypes, configuration: configuration)
+//}
 //@dynamicCallable public struct BlockIsolated {
 //    private let block: @isolated(any) () -> Void
 //    public init(isolation: isolated (any Actor)? = #isolation,

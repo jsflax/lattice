@@ -29,8 +29,8 @@ extension Array: LinkProperty where Element: Model {
 
     public typealias ModelType = Element
 
-    public func `where`(_ query: @escaping LatticePredicate<Element>) -> Results<Element> {
-        return Results(first!.lattice!, whereStatement: query(Query()))
+    public func `where`(_ query: @escaping LatticePredicate<Element>) -> some Results<Element> {
+        return TableResults(first!.lattice!, whereStatement: query(Query()))
     }
 }
 

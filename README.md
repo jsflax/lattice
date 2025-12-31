@@ -13,6 +13,9 @@ A modern, type-safe Swift ORM framework built on SQLite with real-time synchroni
 - 🔍 **Change Tracking** - Automatic audit logging for all database changes
 - ⚡ **Performance** - SQLite with WAL mode, connection pooling, and optimized queries
 - 🧩 **Macros** - Swift macros for automatic model code generation
+- 🔀 **Polymorphic Queries** - Query across multiple model types via shared protocols (VirtualModel)
+- 🔗 **Database Attachment** - Attach and query across multiple SQLite databases
+- 🧮 **Vector Search** - Built-in ANN similarity search with sqlite-vec integration
 
 ## Installation
 
@@ -215,6 +218,108 @@ Task.detached {
     let threadSafePerson = reference.resolve(on: lattice)
     threadSafePerson?.name = "Updated Name"
 }
+```
+
+### Polymorphic Queries (VirtualModel)
+
+Query across multiple model types that share a common protocol:
+
+```swift
+// Define a protocol for shared properties
+protocol POI: VirtualModel {
+    var name: String { get }
+    var country: String { get }
+    var embedding: FloatVector { get }
+}
+
+// Models conform to the protocol
+@Model class Restaurant: POI {
+    var name: String
+    var country: String
+    var embedding: FloatVector
+    var cuisineType: String
+}
+
+@Model class Museum: POI {
+    var name: String
+    var country: String
+    var embedding: FloatVector
+    var exhibitCount: Int
+}
+
+// Query across all POI types
+let allPOIs = lattice.objects(POI.self)
+
+// Filter works across all conforming types
+let frenchPOIs = lattice.objects(POI.self).where {
+    $0.country == "France"
+}
+
+// Results can be cast back to concrete types
+for poi in frenchPOIs {
+    if let museum = poi as? Museum {
+        print("Museum: \(museum.name)")
+    } else if let restaurant = poi as? Restaurant {
+        print("Restaurant: \(restaurant.name)")
+    }
+}
+```
+
+### Database Attachment
+
+Attach separate databases and query across them:
+
+```swift
+// Create two separate databases
+var mainLattice = try Lattice(Restaurant.self, Person.self)
+let museumsLattice = try Lattice(Museum.self)
+
+// Add data to each
+mainLattice.add(Restaurant(name: "Le Bernardin", country: "United States"))
+museumsLattice.add(Museum(name: "The Louvre", country: "France"))
+
+// Attach the second database to the first
+mainLattice.attach(lattice: museumsLattice)
+
+// Now query across both databases
+let allPOIs = mainLattice.objects(POI.self)  // Returns restaurants AND museums
+print(allPOIs.count)  // 2
+
+// Filtering works across attached databases
+let frenchPOIs = mainLattice.objects(POI.self).where {
+    $0.country == "France"
+}
+```
+
+### Vector Search
+
+Perform similarity search on vector embeddings:
+
+```swift
+@Model class Document {
+    var title: String
+    var content: String
+    var embedding: FloatVector  // 512-dimensional embedding
+}
+
+// Find similar documents
+let queryEmbedding: FloatVector = generateEmbedding("search query")
+
+let similar = lattice.objects(Document.self)
+    .nearest(to: queryEmbedding, on: \.embedding, limit: 10)
+
+for match in similar {
+    print("\(match.object.title) - distance: \(match.distance)")
+}
+
+// Combine with filtering
+let filtered = lattice.objects(Document.self)
+    .where { $0.category == "science" }
+    .nearest(to: queryEmbedding, on: \.embedding, limit: 10)
+
+// Vector search across polymorphic types
+let similarPOIs = lattice.objects(POI.self)
+    .nearest(to: locationEmbedding, on: \.embedding, limit: 10)
 ```
 
 ### Bulk Operations

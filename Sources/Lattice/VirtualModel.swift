@@ -40,77 +40,96 @@ class Museum: POI {
 }
 
 
-extension Lattice {
-    func objects<each M: Model, V>(_ models: repeat (each M).Type,
-                                   as virtualModel: V.Type) -> VirtualResults<repeat each M, V> {
-        for type in repeat (each M).self {
-            guard type.init(isolation: #isolation) is V else {
-                preconditionFailure("Type mismatch: \(type) is not \(V.self)")
-            }
-        }
-        return VirtualResults(self)
-    }
+
+internal protocol _QueryProtocol {
     
-//    func objects<V>(_ virtualModel: V.Type) -> VirtualResults<repeat each M, V> {
-//        self.modelTypes.filter({ $0.init(isolation: #isolation) is V })
-//    }
 }
 
-public struct VirtualResults<each M: Model, Element> {
-    private let _lattice: Lattice
-    internal let whereStatement: Query<Bool>?
-    internal let sortStatement: SortDescriptor<Element>?
-    
-    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil) {
-        self._lattice = lattice
-        self.whereStatement = whereStatement
-        self.sortStatement = sortStatement
-    }
+@dynamicMemberLookup
+public protocol _Query<T> {
+    init()
+    associatedtype T
+//    subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> { get }
+//    subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> where Self.T: Model { get }
+}
 
-    init(_ lattice: Lattice, whereStatement: Predicate<Element>, sortStatement: SortDescriptor<Element>? = nil) {
-        self._lattice = lattice
-        self.whereStatement = whereStatement(Query())
-        self.sortStatement = sortStatement
-    }
-    
-    private func constructVirtualQuery<T>(_ t: T.Type) -> _VirtualQuery<T, Element> {
-        _VirtualQuery<T, Element>()
-    }
-    
-    public func `where`(_ query: @escaping (any VirtualQuery<Element>) -> Query<Bool>) -> Self {
-        let types = (repeat (each M).self)
-        for t in repeat each types {
-            return Self(_lattice, whereStatement: query(constructVirtualQuery(t)))
+extension _Query {
+    public subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> where T: Model {
+        // not the best hack to get around witness tables
+        if let self = self as? Query<T> {
+            return self[dynamicMember: member]
+        } else if let self = self as? any VirtualQuery<T> {
+            return self[dynamicMember: member]
         }
-        fatalError()
+        else {
+            fatalError()
+        }
+    }
+    
+    public subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> {
+        // not the best hack to get around witness tables
+        if let self = self as? Query<T> {
+            return self[dynamicMember: member]
+        } else if let self = self as? any VirtualQuery<T> {
+            return self[dynamicMember: member]
+        }
+        else {
+            fatalError()
+        }
+    }
+}
+
+extension Query: _Query {
+    public init() {
+        self.init(isPrimitive: false)
     }
 }
 
 @dynamicMemberLookup
-public protocol VirtualQuery<VT> {
+public protocol VirtualQuery<VT>: _Query {
     associatedtype VT
     subscript<V>(dynamicMember member: KeyPath<VT, V>) -> Query<V> { get }
 }
 
 @dynamicMemberLookup
-public struct _VirtualQuery<T: Model, VT> : VirtualQuery {
-    init() {}
+public struct _VirtualQuery<each M: Model, VT> : VirtualQuery {
+    public typealias T = VT
+    public init() {}
+    
+    private func query<T>(_ type: T.Type) -> Query<T>{
+        Query<T>()
+    }
+    private func query<V>(member: KeyPath<VT, V>) -> Query<V> {
+        for t in repeat (each M).self {
+            let query = query(t)
+            let inst = t.init(isolation: #isolation)
+            guard let virtualInst = inst as? VT else {
+                preconditionFailure()
+            }
+            _ = virtualInst[keyPath: member]
+            let keyPath = inst._lastKeyPathUsed ?? "id"
+            return query.virtualMember(keyPath, withType: V.self)
+        }
+        fatalError()
+    }
     
     public subscript<V>(dynamicMember member: KeyPath<VT, V>) -> Query<V> {
-        let query = Query<T>()
-        let inst = T(isolation: #isolation)
-        guard let virtualInst = inst as? VT else {
-            preconditionFailure()
-        }
-        _ = virtualInst[keyPath: member]
-        let keyPath = inst._lastKeyPathUsed ?? "id"
-        return query.virtualMember(keyPath, withType: V.self)
+        query(member: member)
     }
 }
 
-package func testUnion() throws {
-    let lattice = try Lattice(Restaurant.self, Museum.self)
-    let results = lattice.objects(Restaurant.self, Museum.self, as: POI.self).where {
-        $0.name.isEmpty
+protocol _Results<Element> {
+    associatedtype Element
+//    associatedtype Q: _Query
+    
+    func `where`(_ query: (any _Query<Element>) -> some _Query<Bool>)
+}
+struct TResults<Element>: _Results {
+    func `where`(_ query: (any _Query<Element>) -> some _Query<Bool>) {
+        query(Query())
     }
 }
+
+@attached(extension, names: arbitrary)
+public macro VirtualModel() = #externalMacro(module: "LatticeMacros",
+                                             type: "VirtualModelMacro")

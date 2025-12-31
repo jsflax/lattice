@@ -841,11 +841,41 @@ class EmbeddedModelMacro: MemberMacro {
     }
 }
 
+class VirtualModelMacro: ExtensionMacro {
+    static func expansion(of node: AttributeSyntax, attachedTo declaration: some DeclGroupSyntax, providingExtensionsOf type: some TypeSyntaxProtocol, conformingTo protocols: [TypeSyntax], in context: some MacroExpansionContext) throws -> [ExtensionDeclSyntax] {
+        guard let protocolDecl = declaration.as(ProtocolDeclSyntax.self) else {
+            throw MacroError.message("Expected a protocol declaration")
+        }
+        return [
+            ExtensionDeclSyntax(
+                extendedType: TypeSyntax(stringLiteral: "_Query"),
+                memberBlock: """
+                {
+                    typealias M = Self.T
+                    public subscript<V>(dynamicMember member: KeyPath<Self.T, V>) -> Query<V> where Self.T == any \(protocolDecl.name) {
+                        // not the best hack to get around witness tables
+                        if let self = self as? Query<T> {
+                            return self[dynamicMember: member]
+                        } else if let self = self as? any VirtualQuery<T> {
+                            return self[dynamicMember: member]
+                        }
+                        else {
+                            fatalError()
+                        }
+                    }
+                }
+                """
+            )
+        ]
+    }
+}
+
 @main
 struct LatticeMacrosPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         ModelMacro.self, TransientMacro.self, PropertyMacro.self,
 //        LatticeMemberMacro.self,
-        UniqueMacro.self, CodableMacro.self, EnumMacro.self, EmbeddedModelMacro.self
+        UniqueMacro.self, CodableMacro.self, EnumMacro.self, EmbeddedModelMacro.self,
+        VirtualModelMacro.self
     ]
 }

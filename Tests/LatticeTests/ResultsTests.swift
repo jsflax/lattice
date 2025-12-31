@@ -42,7 +42,7 @@ class ResultsTests: BaseTest {
         print("Slice iteration (1000 items): \(duration)")
 
         // Test 2: Cursor iteration (batched - queries of 100)
-        let cursor = Results<SequenceSyncObject>.Cursor(results)
+        let cursor = Cursor<SequenceSyncObject>(results)
         duration = Test.Clock().measure {
             var idx = 0
             while idx < 1000, let result = cursor.next()  {

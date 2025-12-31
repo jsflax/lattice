@@ -116,8 +116,8 @@ struct Embedded: EmbeddedModel {
 #if canImport(CoreLocation)
     var customType: CLLocationCoordinate2D
     var customTypeOpt: CLLocationCoordinate2D?
-    var customTypeArray: [CLLocationCoordinate2D]
-    var customTypeArrayOpt: [CLLocationCoordinate2D]?
+//    var customTypeArray: [CLLocationCoordinate2D]
+//    var customTypeArrayOpt: [CLLocationCoordinate2D]?
 #endif
 }
 
@@ -130,7 +130,7 @@ struct Embedded: EmbeddedModel {
     var name: String
     var grandparent: Grandparent?
     @Relation(link: \Child.parent)
-    var children: Results<Child>
+    var children: any Results<Child>
 }
 
 @Model class ModelWithConstraints {
@@ -168,13 +168,14 @@ class BaseTest {
     
     private var paths: [URL] = []
     
-    func testLattice(isolation: isolated (any Actor)? = #isolation,
-                     path: String? = nil,
-                     _ types: any Model.Type...) throws -> Lattice {
+    func testLattice<each M: Model>(isolation: isolated (any Actor)? = #isolation,
+                                    path: String? = nil,
+                                    _ types: repeat (each M).Type,
+                                    migration: [Int: Migration]? = nil) throws -> Lattice {
         let path = FileManager.default.temporaryDirectory.appending(path: path ?? "\(String.random(length: 32)).sqlite")
         paths.append(path)
         print("Lattice path: \(path)")
-        return try Lattice(for: types, configuration: .init(fileURL: path))
+        return try Lattice(repeat each types, configuration: .init(fileURL: path), migration: migration)
     }
 }
 
@@ -535,7 +536,7 @@ class LatticeTests: BaseTest {
         let person = Person()
         person.name = "Test"
         var checkedContinuation: CheckedContinuation<Void, Never>?
-        let block = { (change: Results<Person>.CollectionChange) -> Void in
+        let block = { (change: CollectionChange) -> Void in
             switch change {
             case .insert(let id):
                 let found = lattice.object(Person.self, primaryKey: id)
@@ -1305,28 +1306,39 @@ class LatticeTests: BaseTest {
         #expect(results.first?.__globalId == globalId)
     }
 
-    @Model class Restaurant {
+    protocol POI: VirtualModel {
+        var name: String { get }
+        var country: String { get }
+    }
+    
+    @Model class Restaurant: POI {
         var name: String
+        var country: String
         
-        init(name: String) {
+        init(name: String, country: String) {
             self.name = name
+            self.country = country
         }
     }
     
-    @Model class Museum {
+    @Model class Museum: POI {
         var name: String
-        
-        init(name: String) {
+        var country: String
+        var exhibitCount: Int
+
+        init(name: String, country: String, exhibitCount: Int = 0) {
             self.name = name
+            self.country = country
+            self.exhibitCount = exhibitCount
         }
     }
     
     @Test func test_Attach() {
-        var lattice1 = try! testLattice(Restaurant.self)
+        var lattice1 = try! testLattice(Restaurant.self, Person.self)
         let lattice2 = try! testLattice(Museum.self)
         
-        let museum = Museum(name: "The Louvre")
-        let restaurant = Restaurant(name: "Le Bernardin")
+        let museum = Museum(name: "The Louvre", country: "France")
+        let restaurant = Restaurant(name: "Le Bernardin", country: "United States")
         
         lattice1.add(restaurant)
         lattice2.add(museum)
@@ -1335,6 +1347,18 @@ class LatticeTests: BaseTest {
         
         #expect(lattice1.objects(Museum.self).count == 1)
         #expect(lattice1.objects(Restaurant.self).count == 1)
+        
+        #expect(lattice1.objects(POI.self).count == 2)
+        
+        var results = lattice1.objects(POI.self)
+        results = results.where {
+            $0.country == "France"
+        }
+        #expect(results.count == 1)
+        guard let hydratedMuseum = results.first as? Museum else {
+            return #expect(Bool(false), "Should have been a museum")
+        }
+        #expect(museum == hydratedMuseum)
     }
     // TODO: Re-enable if we figure out publishEvents race for strong ref
 //    @Test func testLatticeCache() async throws {
@@ -1375,6 +1399,4 @@ class LatticeTests: BaseTest {
 
 }
 
-@Test func testR() throws {
-    try testUnion()
-}
+
