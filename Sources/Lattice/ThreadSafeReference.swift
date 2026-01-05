@@ -106,6 +106,58 @@ extension _VirtualResults {
     }
 }
 
+private struct NearestResultsThreadSafeReference<T: Model>: AnyResultsThreadSafeReference {
+    typealias Res = NearestResults<T>
+
+    private let whereStatement: Query<Bool>?
+    private let sortStatement: RawNearestSortDescriptor?
+    private let boundsConstraint: BoundsConstraint?
+    private let proximity: ProximityType
+
+    public init(_ results: TableNearestResults<T>) {
+        self.whereStatement = results.whereStatement
+        self.sortStatement = results.sortStatement
+        self.boundsConstraint = results.boundsConstraint
+        self.proximity = results.proximity
+    }
+
+    public func resolve(on lattice: Lattice) -> some Results<_NearestMatch<T>> {
+        TableNearestResults(lattice: lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, proximity: proximity)
+    }
+}
+
+extension TableNearestResults {
+    public var sendableReference: ResultsThreadSafeReference<TableNearestResults<T>> {
+        .init(NearestResultsThreadSafeReference(self) as! (any AnyResultsThreadSafeReference<TableNearestResults<T>>))
+    }
+}
+
+extension _VirtualNearestResults {
+    public var sendableReference: ResultsThreadSafeReference<_VirtualNearestResults<repeat each M, T>> {
+        .init(VirtualNearestResultsThreadSafeReference(self) as! (any AnyResultsThreadSafeReference<_VirtualNearestResults<repeat each M, T>>))
+    }
+}
+
+private struct VirtualNearestResultsThreadSafeReference<each M: Model, T>: AnyResultsThreadSafeReference {
+    typealias Res = _VirtualNearestResults<repeat each M, T>
+
+    private let whereStatement: Query<Bool>?
+    private let sortStatement: RawNearestSortDescriptor?
+    private let boundsConstraint: BoundsConstraint?
+    private let proximity: ProximityType
+
+    public init(_ results: _VirtualNearestResults<repeat each M, T>) {
+        self.whereStatement = results.whereStatement
+        self.sortStatement = results.sortStatement
+        self.boundsConstraint = results.boundsConstraint
+        self.proximity = results.proximity
+    }
+
+    public func resolve(on lattice: Lattice) -> some Results<_NearestMatch<T>> {
+        _VirtualNearestResults<repeat each M, T>(lattice: lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, proximity: proximity)
+    }
+}
+
 public struct LatticeThreadSafeReference: Sendable {
     private let modelTypes: [Model.Type]
     private let configuration: Lattice.Configuration

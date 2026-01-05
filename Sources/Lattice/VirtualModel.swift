@@ -54,6 +54,19 @@ public protocol _Query<T> {
 }
 
 extension _Query {
+    // Specialized subscript for optional Model links - must come before generic subscripts
+    public subscript<V: Model>(dynamicMember member: KeyPath<T, V?>) -> Query<V> where T: Model {
+        if let self = self as? Query<T> {
+            return self[dynamicMember: member]
+        } else if let self = self as? any VirtualQuery<T> {
+            // VirtualQuery doesn't support link queries yet
+            fatalError("VirtualQuery link queries not implemented")
+        }
+        else {
+            fatalError()
+        }
+    }
+
     public subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> where T: Model {
         // not the best hack to get around witness tables
         if let self = self as? Query<T> {
@@ -66,6 +79,18 @@ extension _Query {
         }
     }
     
+    public subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> where T: GeoboundsProperty {
+        // not the best hack to get around witness tables
+        if let self = self as? Query<T> {
+            return self[dynamicMember: member]
+        } else if let self = self as? any VirtualQuery<T> {
+            return self[dynamicMember: member]
+        }
+        else {
+            fatalError()
+        }
+    }
+
     public subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> {
         // not the best hack to get around witness tables
         if let self = self as? Query<T> {

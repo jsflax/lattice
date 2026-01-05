@@ -9,12 +9,14 @@ import MapKit
 public protocol Results<Element>: Sequence, RandomAccessCollection where SubSequence == Slice<Element> {
     associatedtype Element
     associatedtype QueryType: _Query<Element>
-    
+    associatedtype UnderlyingElement
+
     func `where`(_ query: (QueryType) -> Query<Bool>) -> Self
     func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self
+    func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self
     func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable
     func snapshot(limit: Int64?, offset: Int64?) -> [Element]
-    
+
     var sendableReference: ResultsThreadSafeReference<Self> { get }
 
     /// Find the k nearest neighbors to a query vector.
@@ -36,66 +38,81 @@ public protocol Results<Element>: Sequence, RandomAccessCollection where SubSequ
     /// ```
     func nearest<V: VectorElement>(
         to queryVector: Vector<V>,
-        on keyPath: KeyPath<Element, Vector<V>>,
+        on keyPath: KeyPath<UnderlyingElement, Vector<V>>,
         limit k: Int,
         distance metric: DistanceMetric
-    ) -> [NearestMatch<Element>]
+    ) -> any NearestResults<UnderlyingElement>
 
     /// Filter results to objects within a geographic bounding box.
     /// Uses R*Tree spatial index for efficient queries.
-    ///
-    /// Example:
-    /// ```swift
-    /// // Find places near San Francisco
-    /// let sfPlaces = lattice.objects(Place.self)
-    ///     .withinBounds(\.location, minLat: 37.7, maxLat: 37.8, minLon: -122.5, maxLon: -122.4)
-    ///
-    /// // Combined with other filters
-    /// let sfCafes = lattice.objects(Place.self)
-    ///     .where { $0.category == "cafe" }
-    ///     .withinBounds(\.location, minLat: 37.7, maxLat: 37.8, minLon: -122.5, maxLon: -122.4)
-    /// ```
+    /// Returns Self for chaining.
     func withinBounds<G: GeoboundsProperty>(
         _ keyPath: KeyPath<Element, G>,
         minLat: Double, maxLat: Double,
         minLon: Double, maxLon: Double
-    ) -> [Element]
+    ) -> Self
 
     /// Find objects nearest to a geographic point within a radius.
     /// Uses R*Tree spatial index for efficient queries.
-    ///
-    /// Example:
-    /// ```swift
-    /// // Find 10 nearest places within 1 mile
-    /// let nearby = lattice.objects(Place.self)
-    ///     .nearest(to: (latitude: 37.7749, longitude: -122.4194),
-    ///              on: \.location, maxDistance: 1, unit: .miles, limit: 10)
-    ///
-    /// // Combined with other filters
-    /// let nearbyCafes = lattice.objects(Place.self)
-    ///     .where { $0.category == "cafe" }
-    ///     .nearest(to: (latitude: 37.7749, longitude: -122.4194),
-    ///              on: \.location, maxDistance: 1, unit: .kilometers)
-    /// ```
+    /// Returns a chainable Results type where Element is NearestMatch.
     func nearest<G: GeoboundsProperty>(
         to location: (latitude: Double, longitude: Double),
-        on keyPath: KeyPath<Element, G>,
+        on keyPath: KeyPath<UnderlyingElement, G>,
         maxDistance: Double,
         unit: DistanceUnit,
         limit: Int,
         sortedByDistance: Bool
-    ) -> [NearestMatch<Element>]
+    ) -> any NearestResults<UnderlyingElement>
 }
 
+@dynamicMemberLookup
+public protocol NearestMatch<Element> {
+    associatedtype Element
+    
+    var object: Element { get }
+    
+    var distance: Double { get }
+    
+    func distance(for propertyName: String) -> Double?
+    
+    subscript<V>(dynamicMember keyPath: KeyPath<Element, V>) -> V { get }
+}
 
 /// Result from a nearest neighbor query
-public struct NearestMatch<Element> {
+@dynamicMemberLookup
+public struct _NearestMatch<Element> : NearestMatch {
     public let object: Element
-    public let distance: Double
+    /// All distances keyed by property name (e.g., "location", "embedding")
+    public let distances: [String: Double]
+
+    /// Primary distance - first available distance value
+    public var distance: Double {
+        distances.values.first ?? 0
+    }
+
+    /// Get distance for a specific property
+    public func distance(for propertyName: String) -> Double? {
+        distances[propertyName]
+    }
+
+    public init(object: Element, distance: Double) {
+        self.object = object
+        self.distances = ["_default": distance]
+    }
+
+    public init(object: Element, distances: [String: Double]) {
+        self.object = object
+        self.distances = distances
+    }
+
+    /// Access properties on the underlying object directly
+    public subscript<V>(dynamicMember keyPath: KeyPath<Element, V>) -> V {
+        object[keyPath: keyPath]
+    }
 }
 
 /// Distance metric for vector search
-public enum DistanceMetric: Int32 {
+public enum DistanceMetric: Int32, Sendable {
     case l2 = 0      // Euclidean distance (default)
     case cosine = 1  // Cosine distance
     case l1 = 2      // Manhattan distance
@@ -209,29 +226,40 @@ extension Results {
     }
     
     #if canImport(MapKit)
-    func withinBounds<G: GeoboundsProperty>(
+    public func withinBounds<G: GeoboundsProperty>(
         of region: MKCoordinateRegion,
         on keyPath: KeyPath<Element, G>
-    ) -> [Element] {
+    ) -> Self {
         let bbox = region.boundingBox
         return self.withinBounds(keyPath, minLat: bbox.minLat, maxLat: bbox.maxLat,
                                  minLon: bbox.minLon, maxLon: bbox.maxLon)
     }
-    #endif
     
+    /// Find objects nearest to a geographic point (sorted by distance, limit 100)
+    public func nearest<G: GeoboundsProperty>(
+        to location: CLLocationCoordinate2D,
+        on keyPath: KeyPath<UnderlyingElement, G>,
+        maxDistance: Double,
+        unit: DistanceUnit = .meters
+    ) -> any NearestResults<UnderlyingElement> {
+        nearest(to: (location.latitude, location.longitude),
+                on: keyPath, maxDistance: maxDistance, unit: unit, limit: 100, sortedByDistance: true)
+    }
+    #endif
+
     public func nearest<V: VectorElement>(
         to queryVector: Vector<V>,
-        on keyPath: KeyPath<Element, Vector<V>>,
+        on keyPath: KeyPath<UnderlyingElement, Vector<V>>,
         distance metric: DistanceMetric = .l2
-    ) -> [NearestMatch<Element>] {
+    ) -> any NearestResults<UnderlyingElement> {
         nearest(to: queryVector, on: keyPath, limit: 10, distance: metric)
     }
-    
+
     public func nearest<V: VectorElement>(
         to queryVector: Vector<V>,
-        on keyPath: KeyPath<Element, Vector<V>>,
-        limit k: Int = 10,
-    ) -> [NearestMatch<Element>] {
+        on keyPath: KeyPath<UnderlyingElement, Vector<V>>,
+        limit k: Int = 10
+    ) -> any NearestResults<UnderlyingElement> {
         nearest(to: queryVector, on: keyPath, limit: k, distance: .l2)
     }
 
@@ -240,21 +268,21 @@ extension Results {
     /// Find objects nearest to a geographic point (sorted by distance, limit 100)
     public func nearest<G: GeoboundsProperty>(
         to location: (latitude: Double, longitude: Double),
-        on keyPath: KeyPath<Element, G>,
+        on keyPath: KeyPath<UnderlyingElement, G>,
         maxDistance: Double,
         unit: DistanceUnit = .meters
-    ) -> [NearestMatch<Element>] {
+    ) -> any NearestResults<UnderlyingElement> {
         nearest(to: location, on: keyPath, maxDistance: maxDistance, unit: unit, limit: 100, sortedByDistance: true)
     }
 
     /// Find objects nearest to a geographic point with custom limit
     public func nearest<G: GeoboundsProperty>(
         to location: (latitude: Double, longitude: Double),
-        on keyPath: KeyPath<Element, G>,
+        on keyPath: KeyPath<UnderlyingElement, G>,
         maxDistance: Double,
         unit: DistanceUnit = .meters,
         limit: Int
-    ) -> [NearestMatch<Element>] {
+    ) -> any NearestResults<UnderlyingElement> {
         nearest(to: location, on: keyPath, maxDistance: maxDistance, unit: unit, limit: limit, sortedByDistance: true)
     }
 }
@@ -269,9 +297,9 @@ public enum CollectionChange: Sendable {
     
     public static subscript(
         _enclosingInstance instance: EnclosingType,
-        wrapped wrappedKeyPath: ReferenceWritableKeyPath<EnclosingType, Value>,
+        wrapped wrappedKeyPath: ReferenceWritableKeyPath<EnclosingType, any Value>,
         storage storageKeyPath: ReferenceWritableKeyPath<EnclosingType, Self>
-    ) -> Value {
+    ) -> any Value {
         get {
             guard let lattice = instance.lattice, let primaryKey = instance.primaryKey else {
                 fatalError("Cannot use @Relation on an instance that is not yet inserted into the database")

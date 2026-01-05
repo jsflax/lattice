@@ -7,29 +7,74 @@ public protocol PersistableUnkeyedCollection {
     associatedtype Element: SchemaProperty
 }
 
-typealias LinkListRef = lattice.link_list_ref
+public protocol element_proxy {
+    associatedtype RefType
+    
+    mutating func assign(_ type: RefType!)
+    var objectRef: RefType? { get }
+}
 
-public struct List<T>: MutableCollection, BidirectionalCollection, SchemaProperty, ListProperty,
-                       PersistableUnkeyedCollection, LinkProperty, RandomAccessCollection, CxxManaged where T: Model {
-    private var linkListRef: LinkListRef!
+public protocol CxxLinkListRef {
+    associatedtype RefType
+    associatedtype ElementProxy: element_proxy where RefType == ElementProxy.RefType
+    
+    static func new() -> Self
+    subscript(position: Int) -> ElementProxy { get }
+    func size() -> Int
+    mutating func pushBack(_ refType: RefType!)
+    func erase(_ position: Int)
+    func findIndex(_ refType: RefType) -> lattice.optional_size_t
+    func findWhere(_ query: std.string) -> lattice.vec_size_t
+}
+
+public protocol LinkListable: SchemaProperty {
+    associatedtype Ref: CxxLinkListRef
+    
+    static func getLinkListField(from object: inout CxxDynamicObjectRef, named name: String) -> Ref
+    var asRefType: Ref.RefType { get }
+    
+    init(_ refType: Ref.RefType)
+}
+
+extension lattice.link_list.element_proxy: element_proxy {
+}
+extension lattice.geo_bounds_list.element_proxy: element_proxy {
+}
+
+extension lattice.geo_bounds_list_ref: CxxLinkListRef {
+    public static func new() -> Self {
+        create()
+    }
+}
+
+extension lattice.link_list_ref : CxxLinkListRef {
+    public static func new() -> Self {
+        create()
+    }
+}
+
+public struct List<Element>: MutableCollection, BidirectionalCollection, SchemaProperty, ListProperty,
+                             PersistableUnkeyedCollection, RandomAccessCollection, CxxManaged where Element: LinkListable {
+    
+    private var linkListRef: Element.Ref!
     
     public typealias CxxManagedSpecialization = lattice.ManagedLinkList
 
-    public static func fromCxxValue(_ value: CxxManagedSpecialization.SwiftType) -> List<T> {
+    public static func fromCxxValue(_ value: CxxManagedSpecialization.SwiftType) -> List<Element> {
         // TODO: Implement proper conversion from C++ managed link list
-        return List<T>()
+        return List<Element>()
     }
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
     public func toCxxValue() -> CxxManagedSpecialization.SwiftType {
         // TODO: Implement proper conversion to C++ managed link list
         return CxxManagedSpecialization.SwiftType.init()
     }
-    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> List<T> {
-        let listRef = object.getLinkList(named: std.string(name))
-        return List(linkListRef: listRef!)
+    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> List<Element> {
+        let listRef = Element.getLinkListField(from: &object, named: name)
+        return List(linkListRef: listRef)
     }
     
-    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: List<T>) {
+    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: List<Element>) {
 //        fatalError()
     }
  
@@ -42,34 +87,23 @@ public struct List<T>: MutableCollection, BidirectionalCollection, SchemaPropert
     public static func getManaged(from object: lattice.ManagedModel, name: std.string) -> CxxManagedSpecialization {
         object.get_managed_field(name)
     }
-    public typealias ModelType = T
+    
     public static var anyPropertyKind: AnyProperty.Kind {
         .string
     }
-    public static var modelType: any Model.Type {
-        T.self
-    }
     
-    public typealias DefaultValue = Array<T>
+    public typealias DefaultValue = Array<Element>
     
-    public static var defaultValue: List<T> {
+    public static var defaultValue: List<Element> {
         List()
     }
     
     public init() {
-        self.linkListRef = LinkListRef.create()
+//        self.linkListRef = Element.Ref.create().pointee
     }
 
-    init(linkListRef: LinkListRef) {
+    init(linkListRef: Element.Ref) {
         self.linkListRef = linkListRef
-    }
-    
-    public static func _get(name: String, parent: some Model, lattice: Lattice, primaryKey: Int64) -> List<T> {
-        fatalError()
-    }
-    
-    public static func _set(name: String, parent: some Model, lattice: Lattice, primaryKey: Int64, newValue: List<T>) {
-        
     }
     
     public var startIndex: Int = 0
@@ -91,13 +125,13 @@ public struct List<T>: MutableCollection, BidirectionalCollection, SchemaPropert
         linkListRef.size()
     }
     
-    public subscript(position: Int) -> T {
+    public subscript(position: Int) -> Element {
         get {
             let proxy = linkListRef[position]
-            return T(dynamicObject: CxxDynamicObjectRef.wrap(proxy.object))
+            return Element(proxy.objectRef!)
         } set {
             var proxy = linkListRef[position]
-            proxy.assign(newValue._dynamicObject)
+            proxy.assign(newValue.asRefType)
         }
     }
 //    
@@ -117,26 +151,26 @@ public struct List<T>: MutableCollection, BidirectionalCollection, SchemaPropert
 //        }
 //    }
     
-    public mutating func append(_ newElement: T) {
-        linkListRef.push_back(newElement._dynamicObject)
+    public mutating func append(_ newElement: Element) {
+        linkListRef.pushBack(newElement.asRefType)
     }
 
-    public mutating func append<S: Sequence>(contentsOf newElements: S) where S.Element == T {
+    public mutating func append<S: Sequence>(contentsOf newElements: S) where S.Element == Element {
         newElements.forEach { newElement in
-            linkListRef.push_back(newElement._dynamicObject)
+            linkListRef.pushBack(newElement.asRefType)
         }
     }
     
     public func remove(_ element: Element) {
-        let indexOpt = linkListRef.find_index(element._dynamicObject)
+        let indexOpt = linkListRef.findIndex(element.asRefType)
         guard indexOpt.hasValue else { return }
         linkListRef.erase(Int(indexOpt.pointee))
     }
     
-    public mutating func remove(at position: Int) -> T {
+    public mutating func remove(at position: Int) -> Element {
         var element = linkListRef[position]
         linkListRef.erase(position)
-        return T(dynamicObject: CxxDynamicObjectRef.wrap(element.object))
+        return Element(element.objectRef!)
     }
     
     public func removeAll() {
@@ -144,12 +178,12 @@ public struct List<T>: MutableCollection, BidirectionalCollection, SchemaPropert
     
     public func first(where predicate: Predicate<Element>) -> Element? {
         var proxy = linkListRef[0]
-        return T(dynamicObject: CxxDynamicObjectRef.wrap(proxy.object))
+        return Element(proxy.objectRef!)
     }
 
     public func remove(where predicate: Predicate<Element>) {
-        let query = predicate(Query<List<T>.Element>()).predicate
-        let indices = linkListRef.findWhere(predicate: std.string(query))
+        let query = predicate(Query<Element>()).predicate
+        let indices = linkListRef.findWhere(std.string(query))
         print(indices.count)
         for i in 0..<indices.count {
             let idx = indices[i]
@@ -161,9 +195,25 @@ public struct List<T>: MutableCollection, BidirectionalCollection, SchemaPropert
         fatalError()
     }
     
-    public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Results<Element> {
+    public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> any Results<Element> {
         fatalError()
     }
+}
+
+extension List: LinkProperty where Element: Model {
+    public typealias ModelType = Element
+    
+    public static var modelType: any Model.Type {
+        Element.self
+    }
+}
+
+extension List: GeoboundsProperty where Element: GeoboundsProperty {
+    public static func _trace<V>(keyPath: KeyPath<List<Element>, V>) -> String {
+        fatalError()
+    }
+    
+    
 }
 
 extension List {

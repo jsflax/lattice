@@ -116,8 +116,7 @@ struct Embedded: EmbeddedModel {
 #if canImport(CoreLocation)
     var customType: CLLocationCoordinate2D
     var customTypeOpt: CLLocationCoordinate2D?
-//    var customTypeArray: [CLLocationCoordinate2D]
-//    var customTypeArrayOpt: [CLLocationCoordinate2D]?
+    var customTypeArray: List<CLLocationCoordinate2D>
 #endif
 }
 
@@ -1336,20 +1335,20 @@ class LatticeTests: BaseTest {
     @Test func test_Attach() {
         var lattice1 = try! testLattice(Restaurant.self, Person.self)
         let lattice2 = try! testLattice(Museum.self)
-        
+
         let museum = Museum(name: "The Louvre", country: "France")
         let restaurant = Restaurant(name: "Le Bernardin", country: "United States")
-        
+
         lattice1.add(restaurant)
         lattice2.add(museum)
-        
+
         lattice1.attach(lattice: lattice2)
-        
+
         #expect(lattice1.objects(Museum.self).count == 1)
         #expect(lattice1.objects(Restaurant.self).count == 1)
-        
+
         #expect(lattice1.objects(POI.self).count == 2)
-        
+
         var results = lattice1.objects(POI.self)
         results = results.where {
             $0.country == "France"
@@ -1359,6 +1358,164 @@ class LatticeTests: BaseTest {
             return #expect(Bool(false), "Should have been a museum")
         }
         #expect(museum == hydratedMuseum)
+    }
+
+    // MARK: - Group By Tests
+
+    @Model final class Listing {
+        var title: String
+        var destination: String
+        var price: Int
+
+        convenience init(title: String, destination: String, price: Int) {
+            self.init()
+            self.title = title
+            self.destination = destination
+            self.price = price
+        }
+    }
+
+    @Test func test_GroupBy_Basic() async throws {
+        let lattice = try testLattice(Listing.self)
+
+        // Add listings with duplicate destinations
+        lattice.add(Listing(title: "Beach House", destination: "Hawaii", price: 200))
+        lattice.add(Listing(title: "Mountain Cabin", destination: "Colorado", price: 150))
+        lattice.add(Listing(title: "Surf Shack", destination: "Hawaii", price: 100))
+        lattice.add(Listing(title: "Ski Lodge", destination: "Colorado", price: 300))
+        lattice.add(Listing(title: "City Loft", destination: "New York", price: 250))
+
+        // Without group by - should get all 5
+        let allListings = lattice.objects(Listing.self).snapshot()
+        #expect(allListings.count == 5)
+
+        // With group by destination - should get 3 unique destinations
+        let grouped = lattice.objects(Listing.self).group(by: \.destination).snapshot()
+        #expect(grouped.count == 3)
+
+        // Verify we got one from each destination
+        let destinations = Set(grouped.map { $0.destination })
+        #expect(destinations == Set(["Hawaii", "Colorado", "New York"]))
+    }
+
+    @Test func test_GroupBy_Count() async throws {
+        let lattice = try testLattice(Listing.self)
+
+        lattice.add(Listing(title: "A", destination: "Hawaii", price: 100))
+        lattice.add(Listing(title: "B", destination: "Hawaii", price: 200))
+        lattice.add(Listing(title: "C", destination: "Colorado", price: 150))
+        lattice.add(Listing(title: "D", destination: "Colorado", price: 250))
+        lattice.add(Listing(title: "E", destination: "Colorado", price: 350))
+
+        // Count without group by
+        #expect(lattice.objects(Listing.self).count == 5)
+
+        // Count with group by - should be COUNT(DISTINCT destination) = 2
+        #expect(lattice.objects(Listing.self).group(by: \.destination).count == 2)
+    }
+
+    @Test func test_GroupBy_WithWhere() async throws {
+        let lattice = try testLattice(Listing.self)
+
+        lattice.add(Listing(title: "Cheap Hawaii", destination: "Hawaii", price: 50))
+        lattice.add(Listing(title: "Expensive Hawaii", destination: "Hawaii", price: 500))
+        lattice.add(Listing(title: "Cheap Colorado", destination: "Colorado", price: 75))
+        lattice.add(Listing(title: "Expensive Colorado", destination: "Colorado", price: 400))
+        lattice.add(Listing(title: "Mid New York", destination: "New York", price: 200))
+
+        // Filter to expensive listings (price > 100), then group by destination
+        let expensiveGrouped = lattice.objects(Listing.self)
+            .where { $0.price > 100 }
+            .group(by: \.destination)
+            .snapshot()
+
+        // Should get 3 destinations (Hawaii, Colorado, New York all have listings > 100)
+        #expect(expensiveGrouped.count == 3)
+
+        // Filter to cheap listings (price < 100), then group by destination
+        let cheapGrouped = lattice.objects(Listing.self)
+            .where { $0.price < 100 }
+            .group(by: \.destination)
+            .snapshot()
+
+        // Only Hawaii and Colorado have cheap listings
+        #expect(cheapGrouped.count == 2)
+    }
+
+    @Test func test_GroupBy_WithSort() async throws {
+        let lattice = try testLattice(Listing.self)
+
+        lattice.add(Listing(title: "Z Hawaii", destination: "Hawaii", price: 100))
+        lattice.add(Listing(title: "A Colorado", destination: "Colorado", price: 200))
+        lattice.add(Listing(title: "M New York", destination: "New York", price: 150))
+
+        // Group by destination, sorted by title ascending
+        let sorted = lattice.objects(Listing.self)
+            .group(by: \.destination)
+            .sortedBy(.init(\.title, order: .forward))
+            .snapshot()
+
+        #expect(sorted.count == 3)
+        // Should be sorted: A Colorado, M New York, Z Hawaii
+        #expect(sorted[0].title == "A Colorado")
+        #expect(sorted[1].title == "M New York")
+        #expect(sorted[2].title == "Z Hawaii")
+    }
+
+    @Test func test_GroupBy_EmptyResults() async throws {
+        let lattice = try testLattice(Listing.self)
+
+        // No data - group by should return empty
+        let grouped = lattice.objects(Listing.self).group(by: \.destination).snapshot()
+        #expect(grouped.isEmpty)
+        #expect(lattice.objects(Listing.self).group(by: \.destination).count == 0)
+    }
+
+    @Test func test_GroupBy_AllSameValue() async throws {
+        let lattice = try testLattice(Listing.self)
+
+        // All listings have the same destination
+        lattice.add(Listing(title: "A", destination: "Hawaii", price: 100))
+        lattice.add(Listing(title: "B", destination: "Hawaii", price: 200))
+        lattice.add(Listing(title: "C", destination: "Hawaii", price: 300))
+
+        let grouped = lattice.objects(Listing.self).group(by: \.destination).snapshot()
+        #expect(grouped.count == 1)
+        #expect(grouped.first?.destination == "Hawaii")
+    }
+
+    @Test func test_GroupBy_AllUniqueValues() async throws {
+        let lattice = try testLattice(Listing.self)
+
+        // All listings have unique destinations
+        lattice.add(Listing(title: "A", destination: "Hawaii", price: 100))
+        lattice.add(Listing(title: "B", destination: "Colorado", price: 200))
+        lattice.add(Listing(title: "C", destination: "New York", price: 300))
+
+        let grouped = lattice.objects(Listing.self).group(by: \.destination).snapshot()
+        #expect(grouped.count == 3) // Same as ungrouped
+    }
+
+    @Test func test_GroupBy_Chaining() async throws {
+        let lattice = try testLattice(Listing.self)
+
+        lattice.add(Listing(title: "A", destination: "Hawaii", price: 50))
+        lattice.add(Listing(title: "B", destination: "Hawaii", price: 150))
+        lattice.add(Listing(title: "C", destination: "Colorado", price: 200))
+        lattice.add(Listing(title: "D", destination: "Colorado", price: 250))
+        lattice.add(Listing(title: "E", destination: "New York", price: 300))
+
+        // Chain: where -> group -> sort
+        let result = lattice.objects(Listing.self)
+            .where { $0.price > 100 }
+            .group(by: \.destination)
+            .sortedBy(.init(\.destination, order: .forward))
+            .snapshot()
+
+        #expect(result.count == 3)
+        #expect(result[0].destination == "Colorado")
+        #expect(result[1].destination == "Hawaii")
+        #expect(result[2].destination == "New York")
     }
     // TODO: Re-enable if we figure out publishEvents race for strong ref
 //    @Test func testLatticeCache() async throws {

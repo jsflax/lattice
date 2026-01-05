@@ -2,12 +2,21 @@ import Foundation
 import LatticeSwiftCppBridge
 
 public final class TableResults<Element>: Results where Element: Model {
+    public typealias UnderlyingElement = Element
+
     private let _lattice: Lattice
     internal let whereStatement: Query<Bool>?
     internal let sortStatement: SortDescriptor<Element>?
+    internal let boundsConstraint: BoundsConstraint?
+    internal let groupByColumn: String?
 
     // Helper to build query parameters - always fetches fresh from DB (live results)
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
+        // If we have a bounds constraint, use the spatial query path
+        if let bounds = boundsConstraint {
+            return snapshotWithBounds(bounds, limit: limit, offset: offset)
+        }
+
         let tableName = std.string(Element.entityName)
         let whereClause: lattice.OptionalString = if let whereStatement {
             lattice.string_to_optional(std.string(whereStatement.predicate))
@@ -21,8 +30,13 @@ public final class TableResults<Element>: Results where Element: Model {
         }
         let limitOpt: lattice.OptionalInt64 = if let limit { lattice.int64_to_optional(limit) } else { .init() }
         let offsetOpt: lattice.OptionalInt64 = if let offset { lattice.int64_to_optional(offset) } else { .init() }
+        let groupByOpt: lattice.OptionalString = if let groupByColumn {
+            lattice.string_to_optional(std.string(groupByColumn))
+        } else {
+            .init()
+        }
 
-        let cxxResults = _lattice.cxxLattice.objects(tableName, whereClause, orderBy, limitOpt, offsetOpt)
+        let cxxResults = _lattice.cxxLattice.objects(tableName, whereClause, orderBy, limitOpt, offsetOpt, groupByOpt)
 
         var objects: [Element] = []
         objects.reserveCapacity(cxxResults.size())
@@ -36,26 +50,87 @@ public final class TableResults<Element>: Results where Element: Model {
         return objects
     }
 
+    private func snapshotWithBounds(_ bounds: BoundsConstraint, limit: Int64?, offset: Int64?) -> [Element] {
+        let whereClause: lattice.OptionalString = if let whereStatement {
+            lattice.string_to_optional(std.string(whereStatement.predicate))
+        } else {
+            .init()
+        }
+
+        let orderBy: lattice.OptionalString = if let sortStatement, let kp = sortStatement.keyPath {
+            lattice.string_to_optional(std.string("\(_name(for: kp)) \(sortStatement.order == .forward ? "ASC" : "DESC")"))
+        } else {
+            .init()
+        }
+
+        let limitOpt: lattice.OptionalInt64 = if let limit { lattice.int64_to_optional(limit) } else { .init() }
+        let offsetOpt: lattice.OptionalInt64 = if let offset { lattice.int64_to_optional(offset) } else { .init() }
+        let groupByOpt: lattice.OptionalString = if let groupByColumn {
+            lattice.string_to_optional(std.string(groupByColumn))
+        } else {
+            .init()
+        }
+
+        let cxxResults = _lattice.cxxLattice.objectsWithinBBox(
+            table: std.string(Element.entityName),
+            geoColumn: std.string(bounds.propertyName),
+            minLat: bounds.minLat,
+            maxLat: bounds.maxLat,
+            minLon: bounds.minLon,
+            maxLon: bounds.maxLon,
+            where: whereClause,
+            orderBy: orderBy,
+            limit: limitOpt,
+            offset: offsetOpt,
+            groupBy: groupByOpt
+        )
+
+        var results: [Element] = []
+        results.reserveCapacity(cxxResults.size())
+
+        for i in 0..<cxxResults.size() {
+            let cxxObject = cxxResults[i]
+            let object = Element(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(cxxObject).make_shared()))
+            results.append(object)
+        }
+
+        return results
+    }
+
     private var token: AnyCancellable?
 
-    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil) {
+    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement
         self.sortStatement = sortStatement
+        self.boundsConstraint = boundsConstraint
+        self.groupByColumn = groupByColumn
     }
 
     init(_ lattice: Lattice, whereStatement: Predicate<Element>, sortStatement: SortDescriptor<Element>? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement(Query())
         self.sortStatement = sortStatement
+        self.boundsConstraint = nil
+        self.groupByColumn = nil
     }
 
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> TableResults<Element> {
-        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor)
+        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn)
     }
 
     public func `where`(_ query: ((Query<Element>) -> Query<Bool>)) -> TableResults<Element> {
-        return TableResults(_lattice, whereStatement: query(Query()))
+        let newWhere = query(Query())
+        let combined: Query<Bool>? = if let existing = whereStatement {
+            existing && newWhere
+        } else {
+            newWhere
+        }
+        return TableResults(_lattice, whereStatement: combined, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn)
+    }
+
+    public func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> TableResults<Element> {
+        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: _name(for: keyPath))
     }
 
     public var startIndex: Int { 0 }
@@ -65,14 +140,33 @@ public final class TableResults<Element>: Results where Element: Model {
     }
 
     public var endIndex: Int {
-        // Live count from C++
         let tableName = std.string(Element.entityName)
         let whereClause: lattice.OptionalString = if let whereStatement {
             lattice.string_to_optional(std.string(whereStatement.predicate))
         } else {
             .init()
         }
-        return Int(_lattice.cxxLattice.count(tableName, whereClause))
+        let groupByOpt: lattice.OptionalString = if let groupByColumn {
+            lattice.string_to_optional(std.string(groupByColumn))
+        } else {
+            .init()
+        }
+
+        // If we have a bounds constraint, use the spatial count method
+        if let bounds = boundsConstraint {
+            return Int(_lattice.cxxLattice.countWithinBBox(
+                table: tableName,
+                geoColumn: std.string(bounds.propertyName),
+                minLat: bounds.minLat,
+                maxLat: bounds.maxLat,
+                minLon: bounds.minLon,
+                maxLon: bounds.maxLon,
+                where: whereClause
+            ))
+        }
+
+        // Live count from C++
+        return Int(_lattice.cxxLattice.count(tableName, whereClause, groupByOpt))
     }
 
     public func index(after i: Int) -> Int {
@@ -112,47 +206,20 @@ public final class TableResults<Element>: Results where Element: Model {
     public func nearest<V: VectorElement>(
         to queryVector: Vector<V>,
         on keyPath: KeyPath<Element, Vector<V>>,
-        limit k: Int = 10,
-        distance metric: DistanceMetric = .l2
-    ) -> [NearestMatch<Element>] {
-        let propertyName = _name(for: keyPath)
-        let queryData = queryVector.toData()
-
-        var byteVec = lattice.ByteVector()
-        for byte in queryData {
-            byteVec.push_back(byte)
-        }
-
-        // Build the where clause if we have a filter
-        // The predicate uses column names from the model table (aliased as 'm' in the JOIN)
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-
-        let cxxResults = _lattice.cxxLattice.nearest_neighbors(
-            std.string(Element.entityName),
-            std.string(propertyName),
-            byteVec,
-            Int32(k),
-            metric.rawValue,
-            whereClause
+        limit k: Int,
+        distance metric: DistanceMetric
+    ) -> any NearestResults<Element> {
+        let constraint = VectorConstraint(keyPath: keyPath, queryVector: queryVector, k: k, metric: metric)
+        return TableNearestResults(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement.map {
+                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            },
+            boundsConstraint: boundsConstraint,
+            proximity: .vector(constraint),
+            groupByColumn: groupByColumn
         )
-
-        var results: [NearestMatch<Element>] = []
-        results.reserveCapacity(cxxResults.size())
-
-        for i in 0..<cxxResults.size() {
-            let pair = cxxResults[i]
-            var managedObj = pair.first
-            let distance = pair.second
-
-            var swiftObj = Element(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(managedObj).make_shared()))
-            results.append(NearestMatch(object: swiftObj, distance: distance))
-        }
-
-        return results
     }
 
     // MARK: - Spatial Query (geo_bounds)
@@ -175,45 +242,9 @@ public final class TableResults<Element>: Results where Element: Model {
         _ keyPath: KeyPath<Element, G>,
         minLat: Double, maxLat: Double,
         minLon: Double, maxLon: Double
-    ) -> [Element] {
-        let propertyName = _name(for: keyPath)
-
-        // Build the where clause if we have a filter
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-
-        let orderBy: lattice.OptionalString = if let sortStatement, let kp = sortStatement.keyPath {
-            lattice.string_to_optional(std.string("\(_name(for: kp)) \(sortStatement.order == .forward ? "ASC" : "DESC")"))
-        } else {
-            .init()
-        }
-
-        let cxxResults = _lattice.cxxLattice.objectsWithinBBox(
-            table: std.string(Element.entityName),
-            geoColumn: std.string(propertyName),
-            minLat: minLat,
-            maxLat: maxLat,
-            minLon: minLon,
-            maxLon: maxLon,
-            where: whereClause,
-            orderBy: orderBy,
-            limit: .init(),
-            offset: .init()
-        )
-
-        var results: [Element] = []
-        results.reserveCapacity(cxxResults.size())
-
-        for i in 0..<cxxResults.size() {
-            let cxxObject = cxxResults[i]
-            let object = Element(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(cxxObject).make_shared()))
-            results.append(object)
-        }
-
-        return results
+    ) -> TableResults<Element> {
+        let constraint = BoundsConstraint(keyPath: keyPath, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon)
+        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, groupByColumn: groupByColumn)
     }
 
     // MARK: - Geo Nearest (proximity search)
@@ -227,40 +258,24 @@ public final class TableResults<Element>: Results where Element: Model {
         unit: DistanceUnit,
         limit: Int,
         sortedByDistance: Bool
-    ) -> [NearestMatch<Element>] {
-        let propertyName = _name(for: keyPath)
-        let radiusMeters = maxDistance * unit.toMeters
-
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-
-        let cxxResults = _lattice.cxxLattice.geoNearest(
-            table: std.string(Element.entityName),
-            geoColumn: std.string(propertyName),
-            lat: location.latitude,
-            lon: location.longitude,
-            radius: radiusMeters,
-            limit: Int32(limit),
-            sortByDistance: sortedByDistance,
-            where: whereClause
+    ) -> any NearestResults<Element> {
+        let constraint = GeoNearestConstraint(
+            keyPath: keyPath,
+            center: (lat: location.latitude, lon: location.longitude),
+            maxDistance: maxDistance,
+            unit: unit,
+            limit: limit,
+            sortByDistance: sortedByDistance
         )
-
-        var results: [NearestMatch<Element>] = []
-        results.reserveCapacity(cxxResults.size())
-
-        for i in 0..<cxxResults.size() {
-            let pair = cxxResults[i]
-            var managedObj = pair.first
-            let distanceMeters = pair.second
-
-            let swiftObj = Element(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(managedObj).make_shared()))
-            let distanceInUnit = unit.fromMeters(distanceMeters)
-            results.append(NearestMatch(object: swiftObj, distance: distanceInUnit))
-        }
-
-        return results
+        return TableNearestResults(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement.map {
+                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            },
+            boundsConstraint: boundsConstraint,
+            proximity: .geo(constraint),
+            groupByColumn: groupByColumn
+        )
     }
 }

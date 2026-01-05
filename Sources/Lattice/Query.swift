@@ -129,6 +129,23 @@ public struct Query<T>: Sendable {
         self.rootEntityName = rootEntityName
     }
 
+    private func appendGeoKeyPath(_ keyPath: String, options: KeyPathOptions) -> QueryNode {
+        if case let .keyPath(kp, ops) = node {
+            var kp = kp
+            kp[kp.endIndex - 1] = kp[kp.endIndex - 1] + "_" + keyPath
+            return .keyPath(kp, options: ops.union(options))
+        } else if case let .linkKeyPath(source, link, target, continuation) = node {
+            // Recursively append to the continuation
+            let updatedContinuation = Query(continuation, isAuditing: isAuditing, rootEntityName: rootEntityName)
+                .appendKeyPath(keyPath, options: options)
+            return .linkKeyPath(sourceEntity: source, linkField: link, targetEntity: target,
+                               continuation: updatedContinuation)
+        } else if case .mapSubscript = node {
+            fatalError("Cannot apply key path to Map subscripts.")
+        }
+        fatalError("Cannot apply a keypath to \(buildPredicate(node))")
+    }
+    
     private func appendKeyPath(_ keyPath: String, options: KeyPathOptions) -> QueryNode {
         if case let .keyPath(kp, ops) = node {
             return .keyPath(kp + [keyPath], options: ops.union(options))
@@ -244,8 +261,20 @@ public struct Query<T>: Sendable {
     public func `in`<U: Sequence>(_ collection: U) -> Query<Bool> where U.Element == T {
         .init(.comparison(operator: .in, node, .constant(collection), options: []))
     }
+    public func `in`<U: Collection>(_ collection: U) -> Query<Bool> where U.Element == T {
+        return .init(.comparison(operator: .in, node, .constant(Array(collection)), options: []))
+    }
     public func `in`<U: Sequence>(_ collection: U) -> Query<Bool> where U.Element == UUID, T == UUID {
         .init(.comparison(operator: .in, node, .constant(collection.map(\.uuidString.localizedLowercase)), options: []))
+    }
+    
+    public func notIn<M: Model, V>(_ keyPath: KeyPath<M, V>) -> Query<Bool> {
+        .init(.comparison(operator: .notIn, node, .select(_name(for: keyPath), from: M.entityName),
+                          options: []))
+    }
+    
+    public func `in`<K, V>(_ collection: [K]) -> Query<Bool> where T == Dictionary<K, V> {
+        .init(.comparison(operator: .in, node, .constant(collection), options: []))
     }
 //
 //    /// Checks if the value is present in the collection.
@@ -278,6 +307,12 @@ public struct Query<T>: Sendable {
         .init(appendEmbeddedKeyPath(_name(for: member), isAnyProperty: false, options: []), isAuditing: isAuditing)
     }
 
+    public subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> where T: GeoboundsProperty {
+        
+        return .init(appendGeoKeyPath(T._trace(keyPath: member), options: []),
+              isAuditing: isAuditing)
+    }
+    
     public subscript<V: Model>(dynamicMember member: KeyPath<T, V?>) -> Query<V> where T: Model {
         let linkField = _name(for: member)
         let sourceEntity = T.entityName
@@ -1143,6 +1178,7 @@ private indirect enum QueryNode: @unchecked Sendable {
         case greaterThan = ">"
         case greaterThanEqual = ">="
         case `in` = "IN"
+        case notIn = "NOT IN"
         case contains = "CONTAINS"
         case beginsWith = "BEGINSWITH"
         case endsWith = "ENDSWITH"
@@ -1164,6 +1200,7 @@ private indirect enum QueryNode: @unchecked Sendable {
     case mapAnySubscripts(_ keyPath: QueryNode, keys: [CollectionSubscript])
     case geoWithin(_ keyPath: QueryNode, _ value: QueryNode)
     case jsonArrayLength(_ keyPath: QueryNode)
+    case select(_ keyPath: String, from: String)
 }
 
 private enum CollectionSubscript {
@@ -1342,6 +1379,10 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
                     arguments.add(value ?? NSNull())
                 }
             }
+        case .select(let keyPath, let tableName):
+            formatStr.append("(SELECT %@ FROM %@)")
+            arguments.add(keyPath)
+            arguments.add(tableName)
         case .embeddedKeyPath(var kp, var isAnyProperty, options: let options):
             if isNewNode {
                 buildBool(node)
@@ -1403,6 +1444,20 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
                         buildExpression(lhs, "LIKE", .constant("%\(rhsValue ?? NSNull())%"), prefix: prefix)
                     default:
                         buildExpression(lhs, "LIKE", rhs, prefix: prefix)
+                    }
+                case .in:
+                    switch rhs {
+                    case .constant(let rhsValue):
+                        guard let rhsValue = rhsValue as? any Collection else {
+                            preconditionFailure()
+                        }
+                        if rhsValue.isEmpty {
+                            buildExpression(lhs, "\(op.rawValue)\(strOptions(options))", .constant([NSNull()]), prefix: prefix)
+                        } else {
+                            buildExpression(lhs, "\(op.rawValue)\(strOptions(options))", rhs, prefix: prefix)
+                        }
+                    default:
+                        buildExpression(lhs, "\(op.rawValue)\(strOptions(options))", rhs, prefix: prefix)
                     }
                 default:
                     buildExpression(lhs, "\(op.rawValue)\(strOptions(options))", rhs, prefix: prefix)
@@ -1509,6 +1564,8 @@ private struct SubqueryRewriter {
                                continuation: rewrite(continuation))
         case .jsonArrayLength(let keyPath):
             return .jsonArrayLength(rewrite(keyPath))
+        case .select(let keyPaths, let subquery):
+            fatalError()
         }
     }
 

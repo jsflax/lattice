@@ -5,6 +5,261 @@ Lattice is a Swift-based Object-Relational Mapping (ORM) library built on SQLite
 
 **Current Architecture**: Swift frontend with C++ backend (LatticeCpp) for core database operations.
 
+---
+
+## ⚠️ CRITICAL: Coding Rules for AI Agents
+
+### The Core Principle: SQL First, Swift Last
+
+**Priority order for implementing features:**
+1. **SQL** - Do it in a query if possible
+2. **C++ (LatticeCpp)** - If SQL alone can't do it, add C++ code
+3. **Swift** - Only for type-safe API, macros, and UI integration
+
+**Why:**
+- SQLite is extremely optimized - let it do the work
+- C++ runs once per query; Swift per-object is N times slower
+- Fetching 1000 objects to filter 10 in Swift is wrong; filter in SQL
+
+**Example - Filtering:**
+```swift
+// WRONG: Filter in Swift (fetches ALL objects, filters in memory)
+let results = lattice.objects(Trip.self)
+let expensive = results.filter { $0.cost > 1000 }  // O(n) Swift iterations
+
+// RIGHT: Filter in SQL (database does the work)
+let cheap = results.where { $0.cost > 1000 }  // WHERE clause, O(1) Swift
+```
+
+**Example - Counting:**
+```swift
+// WRONG: Count in Swift
+let count = Array(lattice.objects(Trip.self)).count  // Fetches all objects
+
+// RIGHT: Count in SQL
+let count = lattice.objects(Trip.self).count  // SELECT COUNT(*) via C++
+```
+
+**Example - Sorting:**
+```swift
+// WRONG: Sort in Swift
+let sorted = lattice.objects(Trip.self).snapshot().sorted { $0.name < $1.name }
+
+// RIGHT: Sort in SQL
+let sorted = lattice.objects(Trip.self).sortedBy(.init(\.name, order: .forward))
+```
+
+**Example - Pagination:**
+```swift
+// WRONG: Fetch all then slice
+let all = lattice.objects(Trip.self).snapshot()
+let page = Array(all[10..<20])
+
+// RIGHT: Let SQL paginate (LIMIT/OFFSET)
+let page = lattice.objects(Trip.self).snapshot(limit: 10, offset: 10)
+```
+
+### When to Add C++ Code
+
+Add to LatticeCpp when you need:
+- New SQL query patterns (JOINs, subqueries, aggregates)
+- New SQLite extensions (FTS, R*Tree, vec0)
+- Complex multi-step operations that should be atomic
+- Performance-critical paths
+
+**Example - Combined Proximity Query:**
+Instead of fetching all objects and computing distances in Swift, we added `combinedNearestQuery()` to C++ which:
+- Joins main table with vec0 virtual table
+- Filters by R*Tree bounds
+- Computes distances in SQL
+- Returns only the K nearest results
+
+### When to Add Swift Code
+
+Keep in Swift:
+- Type-safe API wrappers around C++ calls
+- Macro-generated code for @Model
+- Observer delivery to correct isolation context
+- Hydrating C++ results into Swift model instances
+
+---
+
+## Deep Architecture Understanding
+
+### Rule 1: Lattice is a Struct with Shared C++ State
+
+```swift
+// Lattice wraps a C++ reference - NOT an actor
+public struct Lattice {
+    let cxxLatticeRef: lattice.swift_lattice_ref  // Shared C++ connection
+    var cxxLattice: lattice.swift_lattice { cxxLatticeRef.get() }
+}
+```
+
+**Implications:**
+- Database operations are **synchronous** (no await needed)
+- Multiple Swift `Lattice` instances can share the same C++ connection (cached by path)
+- `isolation` is captured for **observer callbacks only**, not execution context
+- Copies of Lattice all point to same underlying database
+
+### Rule 2: Results are LIVE Queries
+
+Every access to `Results<T>` fetches fresh from database:
+
+```swift
+let results = lattice.objects(Trip.self)
+print(results.count)   // Calls C++ count() - hits database
+print(results.count)   // Calls C++ count() AGAIN - another database hit
+
+for trip in results {  // Fetches in batches of 100 (Cursor pattern)
+    print(trip.name)
+}
+```
+
+**Implications:**
+- Don't iterate the same Results multiple times without caching
+- Use `snapshot()` if you need a stable array: `let trips = results.snapshot()`
+- Batch iteration is already optimized (100-item batches via Cursor)
+- `endIndex` is expensive (calls count)
+
+### Rule 3: The KeyPath Tracking Trick
+
+Query DSL works by tracking last accessed property:
+
+```swift
+// How it works internally:
+let query = Query<Trip>()
+let predicate: Query<Bool> = query.name == "Costa Rica"
+// Accessing query.name sets trip._lastKeyPathUsed = "name"
+// Then == builds predicate string: "name = 'Costa Rica'"
+```
+
+**Implications:**
+- Every @Model has `_lastKeyPathUsed: String?` (macro-generated)
+- Query closures access properties to capture their names
+- This is why `$0.name == "X"` works - it's not a real keypath
+
+### Rule 4: Schema Discovery is Recursive
+
+Only pass root types - linked types discovered automatically:
+
+```swift
+// Trip has: var destinations: List<Destination>
+// Destination has: var activities: List<Activity>
+
+let lattice = try Lattice(Trip.self)
+// Automatically discovers: [Trip, Destination, Activity]
+```
+
+### Rule 5: C++ Type Mapping
+
+| Swift Type | C++ Managed Type | SQL Storage |
+|------------|------------------|-------------|
+| `String` | `ManagedString` | TEXT |
+| `Int`, `Int64` | `ManagedInt` | INTEGER |
+| `Bool` | `ManagedBool` | INTEGER (0/1) |
+| `Float` | `ManagedFloat` | REAL |
+| `Double` | `ManagedDouble` | REAL |
+| `Date` | `ManagedDate` | REAL (timeInterval) |
+| `UUID` | `ManagedString` | TEXT |
+| `Data` | `ManagedData` | BLOB |
+| `Vector<Float>` | `ManagedData` | BLOB + vec0 table |
+| `[String]` | `ManagedStringList` | TEXT (JSON) |
+| `[String: String]` | `ManagedStringMap` | TEXT (JSON) |
+| `Optional<Model>` | Link column | INTEGER (FK) |
+| `List<Model>` | Junction table | Separate table |
+| `Geobounds` | 4 columns | REAL × 4 + R*Tree |
+
+### Rule 6: Results Hierarchy
+
+```
+Results<Element> (protocol)
+├── TableResults<T: Model>           - Single table queries
+├── _VirtualResults<each M, Element> - Polymorphic UNION queries
+├── TableNearestResults<T: Model>    - Proximity search
+└── _VirtualNearestResults<each M, T> - Polymorphic proximity
+```
+
+**Execution path:**
+1. Swift builds WHERE/ORDER BY as strings
+2. Swift encodes constraints (vectors, bounds) as structured data
+3. Swift calls C++ function with table name + constraints
+4. **C++ generates and executes SQL** ← work happens here
+5. C++ returns `vector<dynamic_object>` or distance results
+6. Swift wraps results in Model types
+
+### Rule 7: VirtualModel / Polymorphic Queries
+
+```swift
+protocol POI: VirtualModel {
+    var name: String { get }
+}
+
+@Model class Restaurant: POI { ... }
+@Model class Museum: POI { ... }
+
+// C++ executes UNION ALL with optimized pagination
+let allPOIs = lattice.objects(POI.self)
+```
+
+**SQL generated by C++:**
+```sql
+SELECT * FROM (
+    SELECT * FROM (SELECT 'Restaurant' AS _type, * FROM Restaurant
+                   WHERE ... ORDER BY name LIMIT 30)
+    UNION ALL
+    SELECT * FROM (SELECT 'Museum' AS _type, * FROM Museum
+                   WHERE ... ORDER BY name LIMIT 30)
+)
+ORDER BY name LIMIT 10 OFFSET 20
+```
+
+### Rule 8: Testing Patterns
+
+**Always use testLattice helper:**
+```swift
+@Test func test_Something() throws {
+    let lattice = try testLattice(path: "\(String.random(length: 32)).sqlite",
+                                  MyModel.self)
+}
+```
+
+**For fast in-memory tests:**
+```swift
+let lattice = try Lattice(MyModel.self,
+                          configuration: .init(isStoredInMemoryOnly: true))
+```
+
+---
+
+## File-Specific Guidelines
+
+### Lattice.swift (~1100 lines)
+- Entry point, Configuration, WebSocket, observers
+- **Don't add query logic here** - delegate to C++ or Results
+
+### Model.swift
+- Protocol definition, macro declarations
+- `cxxPropertyDescriptor()` builds schema for C++
+- **Extend for new property types**
+
+### Results/*.swift
+- TableResults: Single-table → C++ `objects()`
+- VirtualResults: UNION → C++ `union_objects()`
+- NearestResults: Proximity → C++ `combinedNearestQuery()`
+- **Add new query methods here**
+
+### Accessor.swift (~700 lines)
+- CxxManaged conformances for type bridging
+- **Add new type support here**
+
+### LatticeCpp (external)
+- **Add new SQL patterns here**
+- Optimize queries with proper indexing
+- Keep Swift layer thin
+
+---
+
 ## Project Structure
 
 ```
@@ -91,21 +346,26 @@ Lattice/
 - ✅ Query DSL with type-safe predicates
 - ✅ Relationships (links, link lists)
 - ✅ Embedded models
-- ✅ Observable results
-- ✅ Automatic schema discovery
+- ✅ Observable results (table-level and AuditLog)
+- ✅ Automatic schema discovery from root types
 - ✅ Schema passing to C++ at init
 - ✅ Table creation in C++ layer
-- ✅ Vector search with sqlite-vec
-- ✅ VirtualModel / Polymorphic queries
-- ✅ Database attachment (ATTACH DATABASE)
+- ✅ Vector search with sqlite-vec (L2, Cosine, L1 distances)
+- ✅ VirtualModel / Polymorphic queries with variadic generics
+- ✅ Database attachment (ATTACH DATABASE with TEMP VIEWs)
 - ✅ UNION queries with optimized pagination
 - ✅ Federated vector search across VirtualModel types
-- ✅ `test_Basic` passing
-- ✅ `test_Attach` passing
+- ✅ Geobounds with R*Tree spatial indexing
+- ✅ Chainable NearestResults API (vector + geo + bounds)
+- ✅ Combined proximity queries (multiple constraints)
+- ✅ Schema migration system with row callbacks
+- ✅ Unique constraints with upsert support
+- ✅ WebSocket sync client with scheduler injection
+- ✅ ThreadSafeReference for cross-isolation passing
 
 ### Pending Work
 - ⏳ AuditLog compaction (reduce sync payload size)
-- ⏳ Accessor init for non-optional EmbeddedModel/LatticeEnum
+- ⏳ Full sync server implementation
 
 ## Swift-C++ Interop
 

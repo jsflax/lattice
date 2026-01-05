@@ -94,6 +94,71 @@ class VectorMigrationV2 {
     }
 }
 
+// MARK: - GeoBounds List Migration Test Models
+
+// Scenario 1: Adding a geo_bounds list to existing model
+class GeoBoundsListAddV1 {
+    @Model class Route {
+        var name: String
+        var startLocation: CLLocationCoordinate2D
+    }
+}
+
+class GeoBoundsListAddV2 {
+    @Model class Route {
+        var name: String
+        var startLocation: CLLocationCoordinate2D
+        var waypoints: Lattice.List<CLLocationCoordinate2D>  // NEW: geo_bounds list added
+    }
+}
+
+// Scenario 2: Removing a geo_bounds list from model (destructive)
+class GeoBoundsListRemoveV1 {
+    @Model class Journey {
+        var name: String
+        var stops: Lattice.List<CLLocationCoordinate2D>  // Will be removed
+    }
+}
+
+class GeoBoundsListRemoveV2 {
+    @Model class Journey {
+        var name: String
+        // stops list removed - destructive migration
+    }
+}
+
+// Scenario 3: Preserving geo_bounds list data through migration with other changes
+class GeoBoundsListPreserveV1 {
+    @Model class Trip {
+        var title: String  // Will be renamed to 'name'
+        var waypoints: Lattice.List<CLLocationCoordinate2D>
+    }
+}
+
+class GeoBoundsListPreserveV2 {
+    @Model class Trip {
+        var name: String  // Renamed from 'title'
+        var waypoints: Lattice.List<CLLocationCoordinate2D>  // Should be preserved
+        var totalDistance: Double  // NEW field
+    }
+}
+
+// Scenario 4: Multiple geo_bounds lists
+class MultiGeoBoundsListV1 {
+    @Model class Expedition {
+        var name: String
+        var plannedRoute: Lattice.List<MKCoordinateRegion>
+    }
+}
+
+class MultiGeoBoundsListV2 {
+    @Model class Expedition {
+        var name: String
+        var plannedRoute: Lattice.List<MKCoordinateRegion>  // Existing
+        var actualRoute: Lattice.List<CLLocationCoordinate2D>  // NEW second list
+    }
+}
+
 @Suite("Migration Tests")
 class MigrationTests: BaseTest {
     @Test
@@ -176,10 +241,17 @@ class MigrationTests: BaseTest {
             #expect(restaurants.count == 1)
 
             let restaurant = restaurants.first!
-            
+
             #expect(restaurant.name == "McDonald's")
             #expect(restaurant.coordinate.latitude == 37.7749)
             #expect(restaurant.coordinate.longitude == -122.4194)
+
+            // Verify the rtree was populated - spatial query should find the migrated restaurant
+            let nearbyRestaurants = lattice.objects(M2Restaurant.self)
+                .nearest(to: (latitude: 37.78, longitude: -122.42),
+                        on: \.coordinate, maxDistance: 10, unit: .kilometers, limit: 10)
+            #expect(nearbyRestaurants.count == 1)
+            #expect(nearbyRestaurants.first?.object.name == "McDonald's")
         }
     }
 
@@ -363,6 +435,229 @@ class MigrationTests: BaseTest {
             for (i, value) in doc.embedding.enumerated() {
                 #expect(abs(value - originalEmbedding[i]) < 0.0001)
             }
+        }
+    }
+
+    // MARK: - GeoBounds List Migration Tests
+
+    @Test
+    func test_GeoBoundsListMigration_AddList() throws {
+        // Scenario 1: Adding a geo_bounds list to existing model
+        typealias V1Route = GeoBoundsListAddV1.Route
+        typealias V2Route = GeoBoundsListAddV2.Route
+
+        let dbPath = "migration_geobounds_list_add_\(String.random(length: 16)).sqlite"
+        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+
+        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+        try? Lattice.delete(for: .init(fileURL: dbURL))
+
+        // Phase 1: Create data with V1 schema (no list)
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V1Route.self)
+            let route = V1Route()
+            route.name = "Bay Area Tour"
+            route.startLocation = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
+            lattice.add(route)
+
+            #expect(lattice.objects(V1Route.self).count == 1)
+        }
+
+        // Phase 2: Migrate to V2 with new list property
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V2Route.self, migration: [
+                2: Migration((from: V1Route.self, to: V2Route.self), blocks: { old, new in
+                    // No special migration needed - list starts empty
+                })
+            ])
+
+            let routes = lattice.objects(V2Route.self)
+            #expect(routes.count == 1)
+
+            let route = routes.first!
+            #expect(route.name == "Bay Area Tour")
+            #expect(Swift.abs(route.startLocation.latitude - 37.7749) < 0.0001)
+
+            // New list should be empty
+            #expect(route.waypoints.count == 0)
+
+            // Should be able to add to the new list
+            route.waypoints.append(CLLocationCoordinate2D(latitude: 37.8044, longitude: -122.2712))
+            route.waypoints.append(CLLocationCoordinate2D(latitude: 37.8716, longitude: -122.2727))
+
+            #expect(route.waypoints.count == 2)
+        }
+    }
+
+    @Test
+    func test_GeoBoundsListMigration_RemoveList() throws {
+        // Scenario 2: Removing a geo_bounds list (destructive)
+        typealias V1Journey = GeoBoundsListRemoveV1.Journey
+        typealias V2Journey = GeoBoundsListRemoveV2.Journey
+
+        let dbPath = "migration_geobounds_list_remove_\(String.random(length: 16)).sqlite"
+        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+
+        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+        try? Lattice.delete(for: .init(fileURL: dbURL))
+
+        // Phase 1: Create data with V1 schema (with list)
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V1Journey.self)
+            let journey = V1Journey()
+            journey.name = "Cross Country"
+            lattice.add(journey)
+
+            // Add stops to the list
+            journey.stops.append(CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060))  // NYC
+            journey.stops.append(CLLocationCoordinate2D(latitude: 41.8781, longitude: -87.6298))  // Chicago
+            journey.stops.append(CLLocationCoordinate2D(latitude: 34.0522, longitude: -118.2437)) // LA
+
+            #expect(journey.stops.count == 3)
+        }
+
+        // Phase 2: Migrate to V2 with list removed
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V2Journey.self, migration: [
+                2: Migration((from: V1Journey.self, to: V2Journey.self), blocks: { old, new in
+                    // List is removed - no migration needed
+                })
+            ])
+
+            let journeys = lattice.objects(V2Journey.self)
+            #expect(journeys.count == 1)
+
+            let journey = journeys.first!
+            #expect(journey.name == "Cross Country")
+            // The stops list no longer exists in V2
+        }
+    }
+
+    @Test
+    func test_GeoBoundsListMigration_PreserveListData() throws {
+        // Scenario 3: Preserving list data while other fields change
+        typealias V1Trip = GeoBoundsListPreserveV1.Trip
+        typealias V2Trip = GeoBoundsListPreserveV2.Trip
+
+        let dbPath = "migration_geobounds_list_preserve_\(String.random(length: 16)).sqlite"
+        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+
+        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+        try? Lattice.delete(for: .init(fileURL: dbURL))
+
+        // Phase 1: Create data with V1 schema
+        let originalWaypoints = [
+            CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),  // SF
+            CLLocationCoordinate2D(latitude: 36.1699, longitude: -115.1398),  // Vegas
+            CLLocationCoordinate2D(latitude: 36.1070, longitude: -112.1130),  // Grand Canyon
+        ]
+
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V1Trip.self)
+            let trip = V1Trip()
+            trip.title = "Southwest Adventure"
+            lattice.add(trip)
+
+            for waypoint in originalWaypoints {
+                trip.waypoints.append(waypoint)
+            }
+
+            #expect(trip.waypoints.count == 3)
+        }
+
+        // Phase 2: Migrate to V2 with renamed field and new field
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V2Trip.self, migration: [
+                2: Migration((from: V1Trip.self, to: V2Trip.self), blocks: { old, new in
+                    new.name = old.title  // Rename title -> name
+                    new.totalDistance = 750.5  // Set new field
+                })
+            ])
+
+            let trips = lattice.objects(V2Trip.self)
+            #expect(trips.count == 1)
+
+            let trip = trips.first!
+            #expect(trip.name == "Southwest Adventure")
+            #expect(trip.totalDistance == 750.5)
+
+            // Verify list data is preserved
+            #expect(trip.waypoints.count == 3)
+            for (i, original) in originalWaypoints.enumerated() {
+                #expect(Swift.abs(trip.waypoints[i].latitude - original.latitude) < 0.0001)
+                #expect(Swift.abs(trip.waypoints[i].longitude - original.longitude) < 0.0001)
+            }
+        }
+    }
+
+    @Test
+    func test_GeoBoundsListMigration_AddSecondList() throws {
+        // Scenario 4: Adding a second geo_bounds list to model that already has one
+        typealias V1Expedition = MultiGeoBoundsListV1.Expedition
+        typealias V2Expedition = MultiGeoBoundsListV2.Expedition
+
+        let dbPath = "migration_geobounds_multi_list_\(String.random(length: 16)).sqlite"
+        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+
+        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+        try? Lattice.delete(for: .init(fileURL: dbURL))
+
+        // Phase 1: Create data with V1 schema (one list)
+        let originalRegions = [
+            MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+                span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)
+            ),
+            MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 34.0522, longitude: -118.2437),
+                span: MKCoordinateSpan(latitudeDelta: 0.3, longitudeDelta: 0.3)
+            ),
+        ]
+
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V1Expedition.self)
+            let expedition = V1Expedition()
+            expedition.name = "California Expedition"
+            lattice.add(expedition)
+
+            for region in originalRegions {
+                expedition.plannedRoute.append(region)
+            }
+
+            #expect(expedition.plannedRoute.count == 2)
+        }
+
+        // Phase 2: Migrate to V2 with second list added
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V2Expedition.self, migration: [
+                2: Migration((from: V1Expedition.self, to: V2Expedition.self), blocks: { old, new in
+                    // No special migration - new list starts empty
+                })
+            ])
+
+            let expeditions = lattice.objects(V2Expedition.self)
+            #expect(expeditions.count == 1)
+
+            let expedition = expeditions.first!
+            #expect(expedition.name == "California Expedition")
+
+            // Verify original list is preserved
+            #expect(expedition.plannedRoute.count == 2)
+            #expect(Swift.abs(expedition.plannedRoute[0].center.latitude - 37.7749) < 0.0001)
+            #expect(Swift.abs(expedition.plannedRoute[1].center.latitude - 34.0522) < 0.0001)
+
+            // New list should be empty
+            #expect(expedition.actualRoute.count == 0)
+
+            // Should be able to add to both lists
+            expedition.actualRoute.append(CLLocationCoordinate2D(latitude: 37.5, longitude: -122.0))
+            #expect(expedition.actualRoute.count == 1)
+
+            expedition.plannedRoute.append(MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 32.7157, longitude: -117.1611),
+                span: MKCoordinateSpan(latitudeDelta: 0.2, longitudeDelta: 0.2)
+            ))
+            #expect(expedition.plannedRoute.count == 3)
         }
     }
 }

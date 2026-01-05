@@ -809,7 +809,7 @@ public struct Lattice {
         return nil
     }
     
-    public func objects<T>(_ type: T.Type = T.self) -> some Results<T> where T: Model {
+    public func objects<T>(_ type: T.Type = T.self) -> TableResults<T> where T: Model {
         TableResults(self)
     }
     
@@ -1024,7 +1024,18 @@ public struct Lattice {
         cxxLattice.attach(lattice.cxxLattice)
         schema = schema?.merge(typeErased: lattice.schema!)
     }
+    
+    public func attaching(lattice: Lattice) -> Lattice {
+        let newCxxLattice = LatticeCxx.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(),
+                                                                schemas: modelTypes.cxxSchema)!
+        newCxxLattice.get().attach(lattice.cxxLattice)
+        var newLattice = Lattice.init(ref: newCxxLattice)
+        newLattice.schema = schema?.merge(typeErased: lattice.schema!)
+        return newLattice
+    }
 }
+
+typealias LatticeCxx = lattice
 
 protocol _Schema {
     func merge(typeErased: _Schema) -> _Schema
@@ -1061,7 +1072,7 @@ package struct Schema<each M: Model>: _Schema {
                     }
                 } else {
                     if modelType.init(isolation: #isolation) is T {
-                        virtualResults = virtualResults.addType(modelType)
+                        virtualResults = virtualResults._addType(modelType)
                     }
                 }
             }
@@ -1079,6 +1090,32 @@ package struct Schema<each M: Model>: _Schema {
     }
 }
 
+extension Array where Element == any Model.Type {
+    var cxxSchema: lattice.SchemaVector {
+        // Build SchemaVector for C++
+        var cxxSchemas = lattice.SchemaVector()
+        for modelType in self {
+            // Convert Swift constraints to C++ constraints
+            var cxxConstraints = lattice.ConstraintVector()
+            for constraint in modelType.constraints {
+                var cols = lattice.StringVector()
+                for col in constraint.columns {
+                    cols.push_back(std.string(col))
+                }
+                let cxxConstraint = lattice.swift_constraint(cols, constraint.allowsUpsert)
+                cxxConstraints.push_back(cxxConstraint)
+            }
+
+            let entry = lattice.swift_schema_entry(
+                std.string(modelType.entityName),
+                modelType.cxxPropertyDescriptor(),
+                cxxConstraints
+            )
+            cxxSchemas.push_back(entry)
+        }
+        return cxxSchemas
+    }
+}
 //public func Lattice(isolation: isolated (any Actor)? = #isolation,
 //                    for schema: [any Model.Type], configuration: Lattice.Configuration = defaultConfiguration) throws {
 //    try Lattice.init(for: schema, configuration: configuration, isSynchronizing: false)

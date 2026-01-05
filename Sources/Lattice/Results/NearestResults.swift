@@ -5,15 +5,31 @@ import Combine
 // MARK: - Constraint Types
 
 /// Bounding box constraint for spatial filtering (R*Tree)
-public struct BoundsConstraint: Sendable {
+package struct BoundsConstraint: Sendable {
     let propertyName: String
     let minLat: Double
     let maxLat: Double
     let minLon: Double
     let maxLon: Double
 
-    init<G: GeoboundsProperty>(keyPath: AnyKeyPath, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) {
+    init<T: Model, G: GeoboundsProperty>(keyPath: KeyPath<T, G>, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) {
         self.propertyName = _name(for: keyPath)
+        self.minLat = minLat
+        self.maxLat = maxLat
+        self.minLon = minLon
+        self.maxLon = maxLon
+    }
+
+    init(keyPath: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) {
+        self.propertyName = keyPath
+        self.minLat = minLat
+        self.maxLat = maxLat
+        self.minLon = minLon
+        self.maxLon = maxLon
+    }
+
+    init(propertyName: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) {
+        self.propertyName = propertyName
         self.minLat = minLat
         self.maxLat = maxLat
         self.minLon = minLon
@@ -22,14 +38,22 @@ public struct BoundsConstraint: Sendable {
 }
 
 /// Vector similarity constraint (vec0)
-public struct VectorConstraint: Sendable {
+package struct VectorConstraint: Sendable {
     let propertyName: String
     let queryVector: Data
     let k: Int
     let metric: DistanceMetric
 
-    init<V: VectorElement>(keyPath: AnyKeyPath, queryVector: Vector<V>, k: Int, metric: DistanceMetric) {
+    init<T: Model, V: VectorElement>(keyPath: KeyPath<T, Vector<V>>,
+                                     queryVector: Vector<V>, k: Int, metric: DistanceMetric) {
         self.propertyName = _name(for: keyPath)
+        self.queryVector = queryVector.toData()
+        self.k = k
+        self.metric = metric
+    }
+    init<V: VectorElement>(keyPath: String,
+                           queryVector: Vector<V>, k: Int, metric: DistanceMetric) {
+        self.propertyName = keyPath
         self.queryVector = queryVector.toData()
         self.k = k
         self.metric = metric
@@ -37,7 +61,7 @@ public struct VectorConstraint: Sendable {
 }
 
 /// Geographic proximity constraint (R*Tree + Haversine)
-public struct GeoNearestConstraint: Sendable {
+package struct GeoNearestConstraint: Sendable {
     let propertyName: String
     let centerLat: Double
     let centerLon: Double
@@ -46,9 +70,22 @@ public struct GeoNearestConstraint: Sendable {
     let sortByDistance: Bool
     let unit: DistanceUnit
 
-    init<G: GeoboundsProperty>(keyPath: AnyKeyPath, center: (lat: Double, lon: Double),
-                                maxDistance: Double, unit: DistanceUnit, limit: Int, sortByDistance: Bool) {
+    init<T: Model, G: GeoboundsProperty>(keyPath: KeyPath<T, G>,
+                                         center: (lat: Double, lon: Double),
+                                         maxDistance: Double, unit: DistanceUnit, limit: Int, sortByDistance: Bool) {
         self.propertyName = _name(for: keyPath)
+        self.centerLat = center.lat
+        self.centerLon = center.lon
+        self.radiusMeters = maxDistance * unit.toMeters
+        self.limit = limit
+        self.sortByDistance = sortByDistance
+        self.unit = unit
+    }
+    
+    init(keyPath: String,
+         center: (lat: Double, lon: Double),
+         maxDistance: Double, unit: DistanceUnit, limit: Int, sortByDistance: Bool) {
+        self.propertyName = keyPath
         self.centerLat = center.lat
         self.centerLon = center.lon
         self.radiusMeters = maxDistance * unit.toMeters
@@ -59,31 +96,44 @@ public struct GeoNearestConstraint: Sendable {
 }
 
 /// Represents the type of proximity search being performed
-public enum ProximityType: Sendable {
+package indirect enum ProximityType: Sendable {
     case vector(VectorConstraint)
     case geo(GeoNearestConstraint)
+    case conjunction(ProximityType, ProximityType)
 }
 
-// MARK: - NearestMatch with Dynamic Member Lookup
+public enum NearestSortDescriptor<T> {
+    case geoDistance(SortOrder)
+    case vectorDistance(SortOrder)
+}
 
-/// Result from a nearest neighbor query, containing the object and its distance
-@dynamicMemberLookup
-public struct NearestMatch<Element>: Sendable where Element: Sendable {
-    public let object: Element
-    public let distance: Double
-
-    public init(object: Element, distance: Double) {
-        self.object = object
-        self.distance = distance
+struct RawNearestSortDescriptor {
+    enum Descriptor {
+        case keyPath(String)
+        case geoDistance
+        case vectorDistance
     }
-
-    /// Access properties on the underlying object directly
-    public subscript<V>(dynamicMember keyPath: KeyPath<Element, V>) -> V {
-        object[keyPath: keyPath]
+    let descriptor: Descriptor
+    let order: SortOrder
+    
+    init(descriptor: Descriptor, order: SortOrder) {
+        self.descriptor = descriptor
+        self.order = order
+    }
+    
+    init<T: Model>(_ keyPath: PartialKeyPath<T>, order: SortOrder) {
+        self.descriptor = .keyPath(_name(for: keyPath))
+        self.order = order
     }
 }
 
 // MARK: - NearestResults
+public protocol NearestResults<T>: Results where UnderlyingElement == T, Element == _NearestMatch<T> {
+    associatedtype T
+
+    func sortedBy(_ sortDescriptor: NearestSortDescriptor<Element>) -> Self
+}
+
 
 /// Results type for proximity queries (vector or geographic).
 /// Element type is `NearestMatch<T>` which includes both the object and its distance.
@@ -95,38 +145,31 @@ public struct NearestMatch<Element>: Sendable where Element: Sendable {
 ///     .where { $0.distance < 0.5 }
 ///     .nearest(to: embedding, on: \.embedding, limit: 10)
 /// ```
-public final class NearestResults<T: Model>: Sequence {
+public struct TableNearestResults<T: Model>: NearestResults {
+    public typealias Element = _NearestMatch<T>
+    public typealias QueryType = Query<_NearestMatch<T>>
+    public typealias NearestMatchType = _NearestMatch<Element>
+    public typealias UnderlyingElement = T
 
-    // Base constraints inherited from TableResults
     private let _lattice: Lattice
     internal let whereStatement: Query<Bool>?
-    internal let sortStatement: SortDescriptor<T>?
+    internal let sortStatement: RawNearestSortDescriptor?
     internal let boundsConstraint: BoundsConstraint?
-
-    // The proximity constraint that produces distances
     internal let proximity: ProximityType
-
-    // Previous stage results (for chained nearest calls)
-    // When set, we filter from these IDs rather than the full table
-    internal let previousStageGlobalIds: [String]?
-
-    // Post-proximity where clause (filters on NearestMatch, including distance)
-    internal let postProximityWhere: ((Query<NearestMatch<T>>) -> Query<Bool>)?
+    internal let groupByColumn: String?
 
     init(lattice: Lattice,
          whereStatement: Query<Bool>? = nil,
-         sortStatement: SortDescriptor<T>? = nil,
+         sortStatement: RawNearestSortDescriptor? = nil,
          boundsConstraint: BoundsConstraint? = nil,
          proximity: ProximityType,
-         previousStageGlobalIds: [String]? = nil,
-         postProximityWhere: ((Query<NearestMatch<T>>) -> Query<Bool>)? = nil) {
+         groupByColumn: String? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement
         self.sortStatement = sortStatement
         self.boundsConstraint = boundsConstraint
         self.proximity = proximity
-        self.previousStageGlobalIds = previousStageGlobalIds
-        self.postProximityWhere = postProximityWhere
+        self.groupByColumn = groupByColumn
     }
 
     // MARK: - Chainable Methods
@@ -138,86 +181,295 @@ public final class NearestResults<T: Model>: Sequence {
     /// .where { $0.distance < 0.5 }  // filter by distance
     /// .where { $0.rating > 4.0 }    // filter by object property (via dynamic member)
     /// ```
-    public func `where`(_ predicate: @escaping (Query<NearestMatch<T>>) -> Query<Bool>) -> NearestResults<T> {
-        // Combine with existing post-proximity where if present
-        let combined: ((Query<NearestMatch<T>>) -> Query<Bool>)? = if let existing = postProximityWhere {
-            { query in existing(query) && predicate(query) }
+    public func `where`(_ predicate: (Query<Element>) -> Query<Bool>) -> Self {
+        let newWhere = predicate(Query())
+        let combined: Query<Bool>? = if let existing = whereStatement {
+            existing && newWhere
         } else {
-            predicate
+            newWhere
         }
+        return Self(
+            lattice: _lattice,
+            whereStatement: combined,
+            sortStatement: sortStatement,
+            boundsConstraint: boundsConstraint,
+            proximity: proximity,
+            groupByColumn: groupByColumn
+        )
+    }
 
-        return NearestResults(
+    public func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self {
+        let object = T.init(isolation: #isolation)
+        let match = _NearestMatch(object: object, distance: 0)
+        _ = match[keyPath: keyPath]
+        guard let columnName = object._lastKeyPathUsed else {
+            preconditionFailure("Could not resolve keyPath to column name")
+        }
+        return Self(
             lattice: _lattice,
             whereStatement: whereStatement,
             sortStatement: sortStatement,
             boundsConstraint: boundsConstraint,
             proximity: proximity,
-            previousStageGlobalIds: previousStageGlobalIds,
-            postProximityWhere: combined
+            groupByColumn: columnName
         )
     }
 
-    /// Add a bounding box spatial filter.
+    // MARK: - Results Protocol Conformance
+
+    public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self {
+        // NearestResults are sorted by distance from the proximity query
+        // Additional sorting would require storing and applying a sort descriptor
+        // For now, return self (proximity results are pre-sorted by distance)
+        let t = T.init(isolation: #isolation)
+        _ = _NearestMatch.init(object: t, distance: 0)[keyPath: sortDescriptor.keyPath!]
+        return .init(lattice: self._lattice,
+                     whereStatement: whereStatement,
+                     sortStatement: .init(descriptor: .keyPath(t._lastKeyPathUsed!),
+                                          order: sortDescriptor.order),
+                     boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+    }
+
+    public func sortedBy(_ sortDescriptor: NearestSortDescriptor<Element>) -> Self {
+        // NearestResults are sorted by distance from the proximity query
+        // Additional sorting would require storing and applying a sort descriptor
+        // For now, return self (proximity results are pre-sorted by distance)
+        switch sortDescriptor {
+        case .geoDistance(let sortOrder):
+            return .init(lattice: self._lattice,
+                         whereStatement: whereStatement,
+                         sortStatement: .init(descriptor: .geoDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+        case .vectorDistance(let sortOrder):
+            return .init(lattice: self._lattice,
+                         whereStatement: whereStatement,
+                         sortStatement: .init(descriptor: .vectorDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+        }
+    }
+    
+    public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
+        _lattice.observe(T.self, where: self.whereStatement) { change in
+            observer(change)
+        }
+    }
+
+    public var startIndex: Int { 0 }
+
+    public var endIndex: Int {
+        // For proximity queries, we need to execute the query to get actual count
+        // This is necessary because WHERE clauses can filter results below the limit
+        let (vectors, geos) = flattenProximity(proximity)
+        let vectorLimit = vectors.map(\.k).min() ?? Int.max
+        let geoLimit = geos.map(\.limit).min() ?? Int.max
+        let maxLimit = Swift.min(vectorLimit, geoLimit)
+
+        // Execute snapshot to get actual count (capped at maxLimit)
+        return Swift.min(snapshot(limit: Int64(maxLimit), offset: nil).count, maxLimit)
+    }
+
+    public func index(after i: Int) -> Int {
+        i + 1
+    }
+
+    // MARK: - Execution
+
+    /// Flatten the proximity tree into arrays for C++ API
+    private func flattenProximity(_ p: ProximityType) -> (vectors: [VectorConstraint], geos: [GeoNearestConstraint]) {
+        switch p {
+        case .vector(let v):
+            return ([v], [])
+        case .geo(let g):
+            return ([], [g])
+        case .conjunction(let left, let right):
+            let (lv, lg) = flattenProximity(left)
+            let (rv, rg) = flattenProximity(right)
+            return (lv + rv, lg + rg)
+        }
+    }
+    
+    /// Execute the query and return results with distances.
+    public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [_NearestMatch<T>] {
+        let tableName = std.string(T.entityName)
+        let (vectors, geos) = flattenProximity(proximity)
+
+        // Build C++ constraint vectors
+        var cxxBounds = lattice.BoundsConstraintVector()
+        if let bounds = boundsConstraint {
+            var bc = lattice.bounds_constraint()
+            bc.column = std.string(bounds.propertyName)
+            bc.min_lat = bounds.minLat
+            bc.max_lat = bounds.maxLat
+            bc.min_lon = bounds.minLon
+            bc.max_lon = bounds.maxLon
+            cxxBounds.push_back(bc)
+        }
+
+        var cxxVectors = lattice.VectorConstraintVector()
+        for vc in vectors {
+            var cxxVc = lattice.vector_constraint()
+            cxxVc.column = std.string(vc.propertyName)
+            var byteVec = lattice.ByteVector()
+            for byte in vc.queryVector {
+                byteVec.push_back(byte)
+            }
+            cxxVc.query_vector = byteVec
+            cxxVc.k = Int32(vc.k)
+            cxxVc.metric = vc.metric.rawValue
+            cxxVectors.push_back(cxxVc)
+        }
+
+        var cxxGeos = lattice.GeoConstraintVector()
+        for gc in geos {
+            var cxxGc = lattice.geo_constraint()
+            cxxGc.column = std.string(gc.propertyName)
+            cxxGc.center_lat = gc.centerLat
+            cxxGc.center_lon = gc.centerLon
+            cxxGc.radius_meters = gc.radiusMeters
+            cxxGeos.push_back(cxxGc)
+        }
+
+        // Build where clause
+        let whereClause: lattice.OptionalString = if let whereStatement {
+            lattice.string_to_optional(std.string(whereStatement.predicate))
+        } else {
+            .init()
+        }
+
+        // Build sort descriptor
+        var cxxSort = lattice.sort_descriptor()
+        if let sort = sortStatement {
+            switch sort.descriptor {
+            case .keyPath(let propName):
+                cxxSort.type = .property
+                cxxSort.column = std.string(propName)
+            case .geoDistance:
+                cxxSort.type = .geo_distance
+                // Use the first geo constraint's column
+                cxxSort.column = std.string(geos.first?.propertyName ?? "")
+            case .vectorDistance:
+                cxxSort.type = .vector_distance
+                // Use the first vector constraint's column
+                cxxSort.column = std.string(vectors.first?.propertyName ?? "")
+            }
+            cxxSort.ascending = (sort.order == .forward)
+        }
+
+        // Calculate effective limit from constraints (not endIndex to avoid recursion)
+        let vectorLimit = vectors.map(\.k).min() ?? Int.max
+        let geoLimit = geos.map(\.limit).min() ?? Int.max
+        let constraintLimit = Swift.min(vectorLimit, geoLimit)
+
+        let effectiveOffset = offset.map { Int($0) } ?? 0
+        let effectiveLimit = limit.map { Int($0) } ?? constraintLimit
+        let fetchLimit = Int64(Swift.min(effectiveOffset + effectiveLimit, constraintLimit))
+
+        // Build group by
+        let groupByOpt: lattice.OptionalString = if let groupByColumn {
+            lattice.string_to_optional(std.string(groupByColumn))
+        } else {
+            .init()
+        }
+
+        // Call combined C++ query
+        let cxxResults = _lattice.cxxLattice.combinedNearestQuery(
+            table: tableName,
+            bounds: cxxBounds,
+            vectors: cxxVectors,
+            geos: cxxGeos,
+            where: whereClause,
+            sort: cxxSort,
+            limit: fetchLimit,
+            groupBy: groupByOpt
+        )
+
+        // Convert results
+        var results: [_NearestMatch<T>] = []
+        let startIdx = effectiveOffset
+        let endIdx = Swift.min(Int(cxxResults.size()), effectiveOffset + effectiveLimit)
+        results.reserveCapacity(Swift.max(0, endIdx - startIdx))
+
+        // Build lookup for geo units (handle multiple constraints on same column)
+        let geoUnits: [String: DistanceUnit] = Dictionary(
+            geos.map { ($0.propertyName, $0.unit) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        for i in startIdx..<endIdx {
+            let result = cxxResults[i]
+            let managedObj = result.object
+
+            // Extract distances from the vector
+            var distances: [String: Double] = [:]
+            for j in 0..<result.distances.size() {
+                let entry = result.distances[j]
+                let columnName = String(entry.column)
+                let distanceValue = entry.distance
+
+                // Convert geo distances from meters to requested unit
+                if let unit = geoUnits[columnName] {
+                    distances[columnName] = unit.fromMeters(distanceValue)
+                } else {
+                    distances[columnName] = distanceValue
+                }
+            }
+
+            let swiftObj = T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(managedObj).make_shared()))
+            results.append(_NearestMatch(object: swiftObj, distances: distances))
+        }
+
+        return results
+    }
+
+    // MARK: - Results Protocol: nearest/withinBounds (Element = NearestMatch<T>)
+    // These are required by protocol but not practically useful since NearestMatch doesn't have geo/vector properties.
+    // The useful versions that take KeyPath<T, ...> are defined above.
+
     public func withinBounds<G: GeoboundsProperty>(
-        _ keyPath: KeyPath<T, G>,
+        _ keyPath: KeyPath<_NearestMatch<T>, G>,
         minLat: Double, maxLat: Double,
         minLon: Double, maxLon: Double
-    ) -> NearestResults<T> {
-        let constraint = BoundsConstraint(
-            keyPath: keyPath,
-            minLat: minLat, maxLat: maxLat,
-            minLon: minLon, maxLon: maxLon
-        )
-        return NearestResults(
-            lattice: _lattice,
-            whereStatement: whereStatement,
-            sortStatement: sortStatement,
-            boundsConstraint: constraint,
-            proximity: proximity,
-            previousStageGlobalIds: previousStageGlobalIds,
-            postProximityWhere: postProximityWhere
-        )
+    ) -> Self {
+        // NearestMatch doesn't have GeoboundsProperty, so this is never called
+        let object = T.init(isolation: #isolation)
+        let match = _NearestMatch(object: object, distance: 0)
+        _ = match[keyPath: keyPath]
+        guard let keyPath = object._lastKeyPathUsed else {
+            preconditionFailure()
+        }
+        let constraint = BoundsConstraint(keyPath: keyPath, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon)
+        return Self(lattice: _lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, proximity: self.proximity, groupByColumn: groupByColumn)
     }
 
-    /// Chain another vector similarity search.
-    /// The current results are filtered/materialized, then vector search is performed on that subset.
     public func nearest<V: VectorElement>(
         to queryVector: Vector<V>,
-        on keyPath: KeyPath<T, Vector<V>>,
-        limit k: Int = 10,
-        distance metric: DistanceMetric = .l2
-    ) -> NearestResults<T> {
-        // Materialize current results to get the globalIds we'll search within
-        let currentResults = snapshot()
-        let globalIds = currentResults.compactMap { $0.object.globalId }
-
+        on keyPath: KeyPath<UnderlyingElement, Vector<V>>,
+        limit k: Int,
+        distance metric: DistanceMetric
+    ) -> any NearestResults<T> {
+        let object = T.init(isolation: #isolation)
+        let match = _NearestMatch(object: object, distance: 0)
+        _ = object[keyPath: keyPath]
+        guard let keyPath = object._lastKeyPathUsed else {
+            preconditionFailure()
+        }
         let constraint = VectorConstraint(keyPath: keyPath, queryVector: queryVector, k: k, metric: metric)
-
-        return NearestResults(
-            lattice: _lattice,
-            whereStatement: nil,  // Previous filters already applied
-            sortStatement: nil,
-            boundsConstraint: nil,
-            proximity: .vector(constraint),
-            previousStageGlobalIds: globalIds,
-            postProximityWhere: nil
-        )
+        return Self(lattice: _lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: self.boundsConstraint,
+                    proximity: .conjunction(self.proximity, .vector(constraint)), groupByColumn: groupByColumn)
     }
 
-    /// Chain another geographic proximity search.
-    /// The current results are filtered/materialized, then geo search is performed on that subset.
     public func nearest<G: GeoboundsProperty>(
         to location: (latitude: Double, longitude: Double),
-        on keyPath: KeyPath<T, G>,
+        on keyPath: KeyPath<UnderlyingElement, G>,
         maxDistance: Double,
-        unit: DistanceUnit = .meters,
-        limit: Int = 100,
-        sortedByDistance: Bool = true
-    ) -> NearestResults<T> {
-        // Materialize current results to get the globalIds we'll search within
-        let currentResults = snapshot()
-        let globalIds = currentResults.compactMap { $0.object.globalId }
-
+        unit: DistanceUnit,
+        limit: Int,
+        sortedByDistance: Bool
+    ) -> any NearestResults<T> {
+        let object = T.init(isolation: #isolation)
+        let match = _NearestMatch(object: object, distance: 0)
+        _ = object[keyPath: keyPath]
+        guard let keyPath = object._lastKeyPathUsed else {
+            preconditionFailure()
+        }
         let constraint = GeoNearestConstraint(
             keyPath: keyPath,
             center: (lat: location.latitude, lon: location.longitude),
@@ -226,207 +478,392 @@ public final class NearestResults<T: Model>: Sequence {
             limit: limit,
             sortByDistance: sortedByDistance
         )
-
-        return NearestResults(
+        let combined = ProximityType.conjunction(proximity, .geo(constraint))
+        return Self(
             lattice: _lattice,
-            whereStatement: nil,
-            sortStatement: nil,
-            boundsConstraint: nil,
-            proximity: .geo(constraint),
-            previousStageGlobalIds: globalIds,
-            postProximityWhere: nil
+            whereStatement: whereStatement,
+            sortStatement: sortStatement,
+            boundsConstraint: boundsConstraint,
+            proximity: combined,
+            groupByColumn: groupByColumn
         )
+    }
+}
+
+package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
+    public typealias Element = _NearestMatch<T>
+    public typealias QueryType = Query<_NearestMatch<T>>
+    public typealias NearestMatchType = _NearestMatch<T>
+    public typealias UnderlyingElement = T
+
+    private let _lattice: Lattice
+    internal let whereStatement: Query<Bool>?
+    internal let sortStatement: RawNearestSortDescriptor?
+    internal let boundsConstraint: BoundsConstraint?
+    internal let proximity: ProximityType
+    internal let groupByColumn: String?
+
+    init(lattice: Lattice,
+         whereStatement: Query<Bool>? = nil,
+         sortStatement: RawNearestSortDescriptor? = nil,
+         boundsConstraint: BoundsConstraint? = nil,
+         proximity: ProximityType,
+         groupByColumn: String? = nil) {
+        self._lattice = lattice
+        self.whereStatement = whereStatement
+        self.sortStatement = sortStatement
+        self.boundsConstraint = boundsConstraint
+        self.proximity = proximity
+        self.groupByColumn = groupByColumn
+    }
+    
+    private var firstType: any Model.Type {
+        for t in repeat (each M).self {
+            return t
+        }
+        fatalError()
+    }
+
+    // MARK: - Chainable Methods
+
+    /// Filter results by properties on the object or by distance.
+    ///
+    /// Example:
+    /// ```swift
+    /// .where { $0.distance < 0.5 }  // filter by distance
+    /// .where { $0.rating > 4.0 }    // filter by object property (via dynamic member)
+    /// ```
+    public func `where`(_ predicate: (Query<Element>) -> Query<Bool>) -> Self {
+        let newWhere = predicate(Query())
+        let combined: Query<Bool>? = if let existing = whereStatement {
+            existing && newWhere
+        } else {
+            newWhere
+        }
+        return Self(
+            lattice: _lattice,
+            whereStatement: combined,
+            sortStatement: sortStatement,
+            boundsConstraint: boundsConstraint,
+            proximity: proximity,
+            groupByColumn: groupByColumn
+        )
+    }
+
+    public func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self {
+        let object = firstType.init(isolation: #isolation)
+        let match = _NearestMatch(object: object as! T, distance: 0)
+        _ = match[keyPath: keyPath]
+        guard let columnName = object._lastKeyPathUsed else {
+            preconditionFailure("Could not resolve keyPath to column name")
+        }
+        return Self(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement,
+            boundsConstraint: boundsConstraint,
+            proximity: proximity,
+            groupByColumn: columnName
+        )
+    }
+
+    // MARK: - Results Protocol Conformance
+
+    public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self {
+        // NearestResults are sorted by distance from the proximity query
+        // Additional sorting would require storing and applying a sort descriptor
+        // For now, return self (proximity results are pre-sorted by distance)
+        let object = firstType.init(isolation: #isolation) as! T
+        let match = _NearestMatch(object: object as! T, distance: 0)
+        _ = match[keyPath: sortDescriptor.keyPath!]
+        guard let keyPath = (object as! any Model)._lastKeyPathUsed else {
+            preconditionFailure()
+        }
+        return .init(lattice: self._lattice,
+                     whereStatement: whereStatement,
+                     sortStatement: .init(descriptor: .keyPath(keyPath),
+                                          order: sortDescriptor.order),
+                     boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+    }
+
+    public func sortedBy(_ sortDescriptor: NearestSortDescriptor<Element>) -> Self {
+        // NearestResults are sorted by distance from the proximity query
+        // Additional sorting would require storing and applying a sort descriptor
+        // For now, return self (proximity results are pre-sorted by distance)
+        switch sortDescriptor {
+        case .geoDistance(let sortOrder):
+            return .init(lattice: self._lattice,
+                         whereStatement: whereStatement,
+                         sortStatement: .init(descriptor: .geoDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+        case .vectorDistance(let sortOrder):
+            return .init(lattice: self._lattice,
+                         whereStatement: whereStatement,
+                         sortStatement: .init(descriptor: .vectorDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+        }
+    }
+    
+    public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
+        var cancellables: [AnyCancellable] = []
+        for type in repeat (each M).self {
+            cancellables.append(_lattice.observe(type.self, where: self.whereStatement) { change in
+                observer(change)
+            })
+        }
+        return AnyCancellable {
+            cancellables.forEach { $0.cancel() }
+        }
+    }
+
+    public var startIndex: Int { 0 }
+
+    public var endIndex: Int {
+        // For proximity queries, we need to execute the query to get actual count
+        // This is necessary because WHERE clauses can filter results below the limit
+        let (vectors, geos) = flattenProximity(proximity)
+        let vectorLimit = vectors.map(\.k).min() ?? Int.max
+        let geoLimit = geos.map(\.limit).min() ?? Int.max
+        let maxLimit = Swift.min(vectorLimit, geoLimit)
+
+        // Execute snapshot to get actual count (capped at maxLimit)
+        return Swift.min(snapshot(limit: Int64(maxLimit), offset: nil).count, maxLimit)
+    }
+
+    public func index(after i: Int) -> Int {
+        i + 1
     }
 
     // MARK: - Execution
 
+    /// Flatten the proximity tree into arrays for C++ API
+    private func flattenProximity(_ p: ProximityType) -> (vectors: [VectorConstraint], geos: [GeoNearestConstraint]) {
+        switch p {
+        case .vector(let v):
+            return ([v], [])
+        case .geo(let g):
+            return ([], [g])
+        case .conjunction(let left, let right):
+            let (lv, lg) = flattenProximity(left)
+            let (rv, rg) = flattenProximity(right)
+            return (lv + rv, lg + rg)
+        }
+    }
+
     /// Execute the query and return results with distances.
-    public func snapshot() -> [NearestMatch<T>] {
-        var results: [NearestMatch<T>]
+    /// Queries each model type and merges results.
+    public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [_NearestMatch<T>] {
+        let (vectors, geos) = flattenProximity(proximity)
 
-        switch proximity {
-        case .vector(let constraint):
-            results = executeVectorQuery(constraint)
-        case .geo(let constraint):
-            results = executeGeoQuery(constraint)
+        // Build C++ constraint vectors (shared across all types)
+        var cxxBounds = lattice.BoundsConstraintVector()
+        if let bounds = boundsConstraint {
+            var bc = lattice.bounds_constraint()
+            bc.column = std.string(bounds.propertyName)
+            bc.min_lat = bounds.minLat
+            bc.max_lat = bounds.maxLat
+            bc.min_lon = bounds.minLon
+            bc.max_lon = bounds.maxLon
+            cxxBounds.push_back(bc)
         }
 
-        // Apply post-proximity where filter if present
-        if let filter = postProximityWhere {
-            results = results.filter { match in
-                // Build a query and evaluate it
-                // For now, we'll need to evaluate the predicate
-                // This requires extending Query to support NearestMatch evaluation
-                evaluateNearestMatchPredicate(filter, on: match)
+        var cxxVectors = lattice.VectorConstraintVector()
+        for vc in vectors {
+            var cxxVc = lattice.vector_constraint()
+            cxxVc.column = std.string(vc.propertyName)
+            var byteVec = lattice.ByteVector()
+            for byte in vc.queryVector {
+                byteVec.push_back(byte)
             }
+            cxxVc.query_vector = byteVec
+            cxxVc.k = Int32(vc.k)
+            cxxVc.metric = vc.metric.rawValue
+            cxxVectors.push_back(cxxVc)
         }
 
-        return results
-    }
-
-    private func executeVectorQuery(_ constraint: VectorConstraint) -> [NearestMatch<T>] {
-        let tableName = std.string(T.entityName)
-
-        var byteVec = lattice.ByteVector()
-        for byte in constraint.queryVector {
-            byteVec.push_back(byte)
+        var cxxGeos = lattice.GeoConstraintVector()
+        for gc in geos {
+            var cxxGc = lattice.geo_constraint()
+            cxxGc.column = std.string(gc.propertyName)
+            cxxGc.center_lat = gc.centerLat
+            cxxGc.center_lon = gc.centerLon
+            cxxGc.radius_meters = gc.radiusMeters
+            cxxGeos.push_back(cxxGc)
         }
 
-        // Build where clause combining base where + bounds + previousStageGlobalIds
-        let whereClause = buildCombinedWhereClause()
-
-        let cxxResults = _lattice.cxxLattice.nearest_neighbors(
-            tableName,
-            std.string(constraint.propertyName),
-            byteVec,
-            Int32(constraint.k),
-            constraint.metric.rawValue,
-            whereClause
-        )
-
-        var results: [NearestMatch<T>] = []
-        results.reserveCapacity(cxxResults.size())
-
-        for i in 0..<cxxResults.size() {
-            let pair = cxxResults[i]
-            var managedObj = pair.first
-            let distance = pair.second
-
-            let swiftObj = T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(managedObj).make_shared()))
-            results.append(NearestMatch(object: swiftObj, distance: distance))
-        }
-
-        return results
-    }
-
-    private func executeGeoQuery(_ constraint: GeoNearestConstraint) -> [NearestMatch<T>] {
-        let tableName = std.string(T.entityName)
-
-        let whereClause = buildCombinedWhereClause()
-
-        let cxxResults = _lattice.cxxLattice.geoNearest(
-            table: tableName,
-            geoColumn: std.string(constraint.propertyName),
-            lat: constraint.centerLat,
-            lon: constraint.centerLon,
-            radius: constraint.radiusMeters,
-            limit: Int32(constraint.limit),
-            sortByDistance: constraint.sortByDistance,
-            where: whereClause
-        )
-
-        var results: [NearestMatch<T>] = []
-        results.reserveCapacity(cxxResults.size())
-
-        for i in 0..<cxxResults.size() {
-            let pair = cxxResults[i]
-            var managedObj = pair.first
-            let distanceMeters = pair.second
-
-            let swiftObj = T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(managedObj).make_shared()))
-            let distanceInUnit = constraint.unit.fromMeters(distanceMeters)
-            results.append(NearestMatch(object: swiftObj, distance: distanceInUnit))
-        }
-
-        return results
-    }
-
-    private func buildCombinedWhereClause() -> lattice.OptionalString {
-        var clauses: [String] = []
-
-        // Base where clause
-        if let whereStatement {
-            clauses.append("(\(whereStatement.predicate))")
-        }
-
-        // Previous stage globalIds filter
-        if let globalIds = previousStageGlobalIds, !globalIds.isEmpty {
-            let quoted = globalIds.map { "'\($0)'" }.joined(separator: ", ")
-            clauses.append("globalId IN (\(quoted))")
-        }
-
-        // Note: boundsConstraint is handled differently - it's passed to the C++ layer
-        // which does the R*Tree join. For now we'll handle it in a future C++ update.
-        // TODO: Pass boundsConstraint to C++ combined query
-
-        if clauses.isEmpty {
-            return .init()
+        // Build where clause
+        let whereClause: lattice.OptionalString = if let whereStatement {
+            lattice.string_to_optional(std.string(whereStatement.predicate))
         } else {
-            return lattice.string_to_optional(std.string(clauses.joined(separator: " AND ")))
+            .init()
         }
-    }
 
-    private func evaluateNearestMatchPredicate(_ predicate: (Query<NearestMatch<T>>) -> Query<Bool>,
-                                                on match: NearestMatch<T>) -> Bool {
-        // Build the query to get the predicate string
-        let query = predicate(Query<NearestMatch<T>>())
-        let predicateString = query.predicate
+        // Build sort descriptor
+        var cxxSort = lattice.sort_descriptor()
+        if let sort = sortStatement {
+            switch sort.descriptor {
+            case .keyPath(let propName):
+                cxxSort.type = .property
+                cxxSort.column = std.string(propName)
+            case .geoDistance:
+                cxxSort.type = .geo_distance
+                // Use the first geo constraint's column
+                cxxSort.column = std.string(geos.first?.propertyName ?? "")
+            case .vectorDistance:
+                cxxSort.type = .vector_distance
+                // Use the first vector constraint's column
+                cxxSort.column = std.string(vectors.first?.propertyName ?? "")
+            }
+            cxxSort.ascending = (sort.order == .forward)
+        }
 
-        // For distance comparisons, we need to evaluate them directly
-        // This is a simplified evaluation - a full implementation would parse the predicate
-        // For now, we'll check for common patterns
+        // Calculate effective limit from constraints (not endIndex to avoid recursion)
+        let vectorLimit = vectors.map(\.k).min() ?? Int.max
+        let geoLimit = geos.map(\.limit).min() ?? Int.max
+        let constraintLimit = Swift.min(vectorLimit, geoLimit)
 
-        // Check if it's a simple distance comparison
-        if predicateString.contains("distance") {
-            // Parse simple comparisons like "distance < 0.5"
-            if let range = predicateString.range(of: #"distance\s*([<>=!]+)\s*([\d.]+)"#, options: .regularExpression) {
-                let matchStr = String(predicateString[range])
-                // Extract operator and value
-                let components = matchStr.components(separatedBy: CharacterSet(charactersIn: "<>=!"))
-                    .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let effectiveOffset = offset.map { Int($0) } ?? 0
+        let effectiveLimit = limit.map { Int($0) } ?? constraintLimit
+        let fetchLimit = Int64(Swift.min(effectiveOffset + effectiveLimit, constraintLimit))
 
-                if let valueStr = components.last?.trimmingCharacters(in: .whitespaces),
-                   let value = Double(valueStr) {
-                    if matchStr.contains("<=") {
-                        return match.distance <= value
-                    } else if matchStr.contains(">=") {
-                        return match.distance >= value
-                    } else if matchStr.contains("<") {
-                        return match.distance < value
-                    } else if matchStr.contains(">") {
-                        return match.distance > value
-                    } else if matchStr.contains("==") {
-                        return match.distance == value
-                    } else if matchStr.contains("!=") {
-                        return match.distance != value
+        // Build lookup for geo units (handle multiple constraints on same column)
+        let geoUnits: [String: DistanceUnit] = Dictionary(
+            geos.map { ($0.propertyName, $0.unit) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        // Build group by
+        let groupByOpt: lattice.OptionalString = if let groupByColumn {
+            lattice.string_to_optional(std.string(groupByColumn))
+        } else {
+            .init()
+        }
+
+        // Query each model type and collect results
+        var allResults: [_NearestMatch<T>] = []
+
+        for type in repeat (each M).self {
+            let tableName = std.string(type.entityName)
+
+            let cxxResults = _lattice.cxxLattice.combinedNearestQuery(
+                table: tableName,
+                bounds: cxxBounds,
+                vectors: cxxVectors,
+                geos: cxxGeos,
+                where: whereClause,
+                sort: cxxSort,
+                limit: fetchLimit,
+                groupBy: groupByOpt
+            )
+
+            for i in 0..<Int(cxxResults.size()) {
+                let result = cxxResults[i]
+                let managedObj = result.object
+
+                // Extract distances from the vector
+                var distances: [String: Double] = [:]
+                for j in 0..<result.distances.size() {
+                    let entry = result.distances[j]
+                    let columnName = String(entry.column)
+                    let distanceValue = entry.distance
+
+                    // Convert geo distances from meters to requested unit
+                    if let unit = geoUnits[columnName] {
+                        distances[columnName] = unit.fromMeters(distanceValue)
+                    } else {
+                        distances[columnName] = distanceValue
                     }
                 }
+
+                let swiftObj = type.init(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(managedObj).make_shared()))
+                allResults.append(_NearestMatch(object: swiftObj as! T, distances: distances))
             }
         }
 
-        // For non-distance predicates, we'd need to evaluate against the object
-        // This requires more sophisticated predicate parsing
-        // For now, return true (no filtering)
-        return true
+        // Sort merged results by primary distance
+        allResults.sort { $0.distance < $1.distance }
+
+        // Apply offset and limit after merging
+        let startIdx = effectiveOffset
+        let endIdx = Swift.min(allResults.count, effectiveOffset + effectiveLimit)
+        guard startIdx < allResults.count else { return [] }
+
+        return Array(allResults[startIdx..<endIdx])
     }
 
-    // MARK: - Sequence Conformance
+    // MARK: - Results Protocol: nearest/withinBounds (Element = NearestMatch<T>)
+    // These are required by protocol but not practically useful since NearestMatch doesn't have geo/vector properties.
+    // The useful versions that take KeyPath<T, ...> are defined above.
 
-    public struct Iterator: IteratorProtocol {
-        private var results: [NearestMatch<T>]
-        private var index: Int = 0
-
-        init(_ results: NearestResults<T>) {
-            self.results = results.snapshot()
+    public func withinBounds<G: GeoboundsProperty>(
+        _ keyPath: KeyPath<_NearestMatch<T>, G>,
+        minLat: Double, maxLat: Double,
+        minLon: Double, maxLon: Double
+    ) -> Self {
+        // NearestMatch doesn't have GeoboundsProperty, so this is never called
+        let object = firstType.init(isolation: #isolation)
+        let match = _NearestMatch(object: object as! T, distance: 0)
+        _ = match[keyPath: keyPath]
+        guard let keyPath = object._lastKeyPathUsed else {
+            preconditionFailure()
         }
-
-        public mutating func next() -> NearestMatch<T>? {
-            guard index < results.count else { return nil }
-            defer { index += 1 }
-            return results[index]
-        }
+        let constraint = BoundsConstraint(keyPath: keyPath, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon)
+        return Self(lattice: _lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, proximity: self.proximity, groupByColumn: groupByColumn)
     }
 
-    public func makeIterator() -> Iterator {
-        Iterator(self)
+    public func nearest<V: VectorElement>(
+        to queryVector: Vector<V>,
+        on keyPath: KeyPath<UnderlyingElement, Vector<V>>,
+        limit k: Int,
+        distance metric: DistanceMetric
+    ) -> any NearestResults<UnderlyingElement> {
+        let object = firstType.init(isolation: #isolation) as! T
+        let match = _NearestMatch<T>(object: object as! T, distance: 0)
+        _ = object[keyPath: keyPath]
+        guard let keyPath = (object as! any Model)._lastKeyPathUsed else {
+            preconditionFailure()
+        }
+        let constraint = VectorConstraint(keyPath: keyPath, queryVector: queryVector, k: k, metric: metric)
+        return Self(lattice: _lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: self.boundsConstraint,
+                    proximity: .conjunction(self.proximity, .vector(constraint)), groupByColumn: groupByColumn)
+    }
+
+    public func nearest<G: GeoboundsProperty>(
+        to location: (latitude: Double, longitude: Double),
+        on keyPath: KeyPath<UnderlyingElement, G>,
+        maxDistance: Double,
+        unit: DistanceUnit,
+        limit: Int,
+        sortedByDistance: Bool
+    ) -> any NearestResults<T> {
+        let object = firstType.init(isolation: #isolation) as! T
+        let match = _NearestMatch(object: object as! T, distance: 0)
+        _ = object[keyPath: keyPath]
+        guard let keyPath = (object as! any Model)._lastKeyPathUsed else {
+            preconditionFailure()
+        }
+        let constraint = GeoNearestConstraint(
+            keyPath: keyPath,
+            center: (lat: location.latitude, lon: location.longitude),
+            maxDistance: maxDistance,
+            unit: unit,
+            limit: limit,
+            sortByDistance: sortedByDistance
+        )
+        let combined = ProximityType.conjunction(proximity, .geo(constraint))
+        return Self(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement,
+            boundsConstraint: boundsConstraint,
+            proximity: combined,
+            groupByColumn: groupByColumn
+        )
     }
 }
-
 // MARK: - Query Extension for NearestMatch
-
-extension Query where T: Sendable {
-    /// Access the distance property on NearestMatch queries
-    public var distance: Query<Double> {
-        Query<Double>(.keyPath(["distance"], options: []), isAuditing: isAuditing)
-    }
-}
+//
+//extension Query where T: Sendable {
+//    /// Access the distance property on NearestMatch queries
+//    public var distance: Query<Double> {
+//        Query<Double>(.keyPath(["distance"], options: []), isAuditing: isAuditing)
+//    }
+//}

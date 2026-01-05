@@ -529,12 +529,6 @@ extension Array: CxxManaged where Element: CxxListManaged, Element: Codable {
         return self as! Element.CxxManagedListType.SwiftType
     }
 
-    public static func getManaged(from object: lattice.ManagedModel, name: std.string) -> CxxManagedSpecialization {
-        Element.getManagedList(from: object, name: name)
-    }
-    public static func getManagedOptional(from object: lattice.ManagedModel, name: std.string) -> Element.CxxManagedListType.OptionalType {
-        fatalError()
-    }
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
     
     public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> Array<Element> {

@@ -2,36 +2,40 @@ import Foundation
 import LatticeSwiftCppBridge
 
 extension Lattice {
-    public func objects<V>(_ virtualModel: V.Type) -> any Results<V> {
+    public func objects<V>(_ virtualModel: V.Type) -> any VirtualResults<V> {
         self.schema!._generateVirtualResults(virtualModel, on: self)
-        
     }
 }
 
-public protocol VirtualResults<Element> : Results {
+public protocol VirtualResults<Element> : Results where UnderlyingElement == Element {
     associatedtype Models
-    func addType<M: Model>(_ type: M.Type) -> any VirtualResults<Element>
+    func _addType<M: Model>(_ type: M.Type) -> any VirtualResults<Element>
 }
 
 public struct _VirtualResults<each M: Model, Element>: VirtualResults {
+    public typealias UnderlyingElement = Element
     public typealias Models = (repeat each M)
-    
+
     private var _lattice: Lattice
     internal let whereStatement: Query<Bool>?
     internal let sortStatement: SortDescriptor<Element>?
-    
-    public func addType<Q: Model>(_ type: Q.Type) -> any VirtualResults<Element> {
+    internal let boundsConstraint: BoundsConstraint?
+    internal let groupByColumn: String?
+
+    public func _addType<Q: Model>(_ type: Q.Type) -> any VirtualResults<Element> {
         _VirtualResults<repeat each M, Q, Element>.init(self._lattice)
     }
-    
+
     package func merge<each V: Model>(other virtualResults: _VirtualResults<repeat each V, Element>) -> _VirtualResults<repeat each M, repeat each V, Element> {
         return .init(self._lattice)
     }
-    
+
     package init(types: repeat (each M).Type, proto: Element.Type, lattice: Lattice) {
         self._lattice = lattice
         whereStatement = nil
         sortStatement = nil
+        boundsConstraint = nil
+        groupByColumn = nil
     }
     private var firstType: any Model.Type {
         for t in repeat (each M).self {
@@ -89,16 +93,20 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         return objects
     }
     
-    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil) {
+    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement
         self.sortStatement = sortStatement
+        self.boundsConstraint = boundsConstraint
+        self.groupByColumn = groupByColumn
     }
 
     init(_ lattice: Lattice, whereStatement: Predicate<Element>, sortStatement: SortDescriptor<Element>? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement(Query())
         self.sortStatement = sortStatement
+        self.boundsConstraint = nil
+        self.groupByColumn = nil
     }
     
     private func constructVirtualQuery<T>(_ t: T.Type) -> some _Query<Element> where T: Model {
@@ -106,18 +114,29 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
     }
     
     public func `where`(_ query: (_VirtualQuery<repeat each M, Element>) -> Query<Bool>) -> Self {
-        
         let types = (repeat (each M).self)
         for t in repeat each types {
             return Self(_lattice,
                         whereStatement: query(_VirtualQuery<repeat each M, Element>()),
-                        sortStatement: sortStatement)
+                        sortStatement: sortStatement,
+                        boundsConstraint: boundsConstraint,
+                        groupByColumn: groupByColumn)
         }
         fatalError()
     }
-    
+
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self {
-        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor)
+        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn)
+    }
+
+    public func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self {
+        let inst = firstType.init(isolation: #isolation)
+        guard let virtualInst = inst as? Element else {
+            preconditionFailure()
+        }
+        _ = virtualInst[keyPath: keyPath]
+        let columnName = inst._lastKeyPathUsed ?? "id"
+        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: columnName)
     }
     
     public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
@@ -177,70 +196,60 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         on keyPath: KeyPath<Element, Vector<V>>,
         limit k: Int = 10,
         distance metric: DistanceMetric = .l2
-    ) -> [NearestMatch<Element>] {
+    ) -> any NearestResults<Element> {
         let inst = firstType.init(isolation: #isolation)
         guard let virtualInst = inst as? Element else {
             preconditionFailure()
         }
         _ = virtualInst[keyPath: keyPath]
         let propertyName = inst._lastKeyPathUsed ?? "id"
-        let queryData = queryVector.toData()
 
-        var byteVec = lattice.ByteVector()
-        for byte in queryData {
-            byteVec.push_back(byte)
-        }
+        let constraint = VectorConstraint(keyPath: propertyName, queryVector: queryVector, k: k, metric: metric)
 
-        // Build the where clause if we have a filter
-        // The predicate uses column names from the model table (aliased as 'm' in the JOIN)
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-
-        var results: [NearestMatch<Element>] = []
-        
-        for type in repeat (each M).self {
-            let cxxResults = _lattice.cxxLattice.nearest_neighbors(
-                std.string(type.entityName),
-                std.string(propertyName),
-                byteVec,
-                Int32(k),
-                metric.rawValue,
-                whereClause
-            )
-
-            for i in 0..<cxxResults.size() {
-                let pair = cxxResults[i]
-                var managedObj = pair.first
-                let distance = pair.second
-
-                var swiftObj = type.init(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(managedObj).make_shared()))
-                results.append(NearestMatch(object: swiftObj as! Element, distance: distance))
-            }
-
-        }
-        
-//        results.reserveCapacity(cxxResults.size())
-
-        return results
+        return _VirtualNearestResults<repeat each M, Element>(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement.map {
+                RawNearestSortDescriptor(descriptor: .keyPath(nameForKeyPath($0.keyPath!)),
+                                         order: $0.order)
+            },
+            boundsConstraint: boundsConstraint,
+            proximity: .vector(constraint),
+            groupByColumn: groupByColumn
+        )
     }
 
+    func nameForKeyPath(_ keyPath: PartialKeyPath<Element>) -> String {
+        let inst = firstType.init(isolation: #isolation)
+        guard let virtualInst = inst as? Element else {
+            preconditionFailure()
+        }
+        _ = virtualInst[keyPath: keyPath]
+        return inst._lastKeyPathUsed ?? "id"
+    }
+    
     // MARK: - Spatial Query (geo_bounds)
 
     /// Filter results to objects within a geographic bounding box.
-    /// Note: VirtualResults doesn't support spatial queries across multiple types.
-    /// This is a placeholder implementation that returns an empty array.
+    /// Queries each type's R*Tree and merges results.
     public func withinBounds<G: GeoboundsProperty>(
         _ keyPath: KeyPath<Element, G>,
         minLat: Double, maxLat: Double,
         minLon: Double, maxLon: Double
-    ) -> [Element] {
-        // VirtualResults spans multiple types; geo_bounds query would need
-        // to query each type's R*Tree separately. For now, return empty.
-        // Users should use TableResults for spatial queries.
-        return []
+    ) -> Self {
+        let inst = firstType.init(isolation: #isolation)
+        guard let virtualInst = inst as? Element else {
+            preconditionFailure()
+        }
+        _ = virtualInst[keyPath: keyPath]
+        let propertyName = inst._lastKeyPathUsed ?? "id"
+
+        let constraint = BoundsConstraint(
+            propertyName: propertyName,
+            minLat: minLat, maxLat: maxLat,
+            minLon: minLon, maxLon: maxLon
+        )
+        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, groupByColumn: groupByColumn)
     }
 
     /// Find objects nearest to a geographic point.
@@ -252,56 +261,33 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         unit: DistanceUnit,
         limit: Int,
         sortedByDistance: Bool
-    ) -> [NearestMatch<Element>] {
+    ) -> any NearestResults<Element> {
         let inst = firstType.init(isolation: #isolation)
         guard let virtualInst = inst as? Element else {
             preconditionFailure()
         }
         _ = virtualInst[keyPath: keyPath]
         let propertyName = inst._lastKeyPathUsed ?? "id"
-        let radiusMeters = maxDistance * unit.toMeters
 
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
+        let constraint = GeoNearestConstraint(
+            keyPath: propertyName,
+            center: (lat: location.latitude, lon: location.longitude),
+            maxDistance: maxDistance,
+            unit: unit,
+            limit: limit,
+            sortByDistance: sortedByDistance
+        )
 
-        var results: [NearestMatch<Element>] = []
-
-        for type in repeat (each M).self {
-            let cxxResults = _lattice.cxxLattice.geoNearest(
-                table: std.string(type.entityName),
-                geoColumn: std.string(propertyName),
-                lat: location.latitude,
-                lon: location.longitude,
-                radius: radiusMeters,
-                limit: Int32(limit),
-                sortByDistance: sortedByDistance,
-                where: whereClause
-            )
-
-            for i in 0..<cxxResults.size() {
-                let pair = cxxResults[i]
-                var managedObj = pair.first
-                let distanceMeters = pair.second
-
-                let swiftObj = type.init(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(managedObj).make_shared()))
-                let distanceInUnit = unit.fromMeters(distanceMeters)
-                results.append(NearestMatch(object: swiftObj as! Element, distance: distanceInUnit))
-            }
-        }
-
-        // Sort merged results by distance if requested
-        if sortedByDistance {
-            results.sort { $0.distance < $1.distance }
-        }
-
-        // Apply limit after merging
-        if results.count > limit {
-            results = Array(results.prefix(limit))
-        }
-
-        return results
+        return _VirtualNearestResults<repeat each M, Element>(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement.map {
+                RawNearestSortDescriptor(descriptor: .keyPath(nameForKeyPath($0.keyPath!)),
+                                         order: $0.order)
+            },
+            boundsConstraint: boundsConstraint,
+            proximity: .geo(constraint),
+            groupByColumn: groupByColumn
+        )
     }
 }

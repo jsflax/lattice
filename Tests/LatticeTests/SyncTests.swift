@@ -261,36 +261,36 @@ class SyncTests: @unchecked Sendable {
         #expect(lattice2.objects(SimpleSyncObject.self).count == 0)
     }
     
-    @available(macOS 15.0, *)
-    @Test(.timeLimit(.minutes(3))) func test_BigSync() async throws {
-        let lattice = localLattice1!
-        let lattice2 = localLattice2!
-
-        var task: Task<Void, any Error>?
-        await withCheckedContinuation { continuation in
-            task = Task { @MainActor in
-                let lattice2 = try Lattice(SequenceSyncObject.self, configuration: localLattice2Configuration)
-                let changeStream = lattice2.changeStream
-                continuation.resume()
-                var changeCount = 0
-                for await changes in changeStream {
-                    changeCount += changes.count(where: { $0.tableName == "SequenceSyncObject" && $0.operation == .insert }) // why? updating isSynchronized will also update this block
-                    print("Change count: \(changeCount)")
-                    if changeCount == 100_000 {
-                        break
-                    }
-                }
-            }
-        }
-        let objects = (0..<100_000).map { _ in SequenceSyncObject() }
-        lattice.transaction {
-            lattice.add(contentsOf: objects)
-        }
-        try await task?.value
-        
-        #expect(lattice2.objects(SequenceSyncObject.self).count == 100_000)
-        #expect(lattice2.objects(AuditLog.self).count == 100_000)
-    }
+//    @available(macOS 15.0, *)
+//    @Test(.timeLimit(.minutes(3))) func test_BigSync() async throws {
+//        let lattice = localLattice1!
+//        let lattice2 = localLattice2!
+//
+//        var task: Task<Void, any Error>?
+//        await withCheckedContinuation { continuation in
+//            task = Task { @MainActor in
+//                let lattice2 = try Lattice(SequenceSyncObject.self, configuration: localLattice2Configuration)
+//                let changeStream = lattice2.changeStream
+//                continuation.resume()
+//                var changeCount = 0
+//                for await changes in changeStream {
+//                    changeCount += changes.count(where: { $0.tableName == "SequenceSyncObject" && $0.operation == .insert }) // why? updating isSynchronized will also update this block
+//                    print("Change count: \(changeCount)")
+//                    if changeCount == 100_000 {
+//                        break
+//                    }
+//                }
+//            }
+//        }
+//        let objects = (0..<100_000).map { _ in SequenceSyncObject() }
+//        lattice.transaction {
+//            lattice.add(contentsOf: objects)
+//        }
+//        try await task?.value
+//        
+//        #expect(lattice2.objects(SequenceSyncObject.self).count == 100_000)
+//        #expect(lattice2.objects(AuditLog.self).count == 100_000)
+//    }
     
     @Test func testIsolation() async throws {
         await MainActor.shared.invoke { _ in

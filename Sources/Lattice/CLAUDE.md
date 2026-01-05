@@ -154,10 +154,14 @@ Uploads to server
 let trip = Trip(name: "Costa Rica")
 lattice.add(trip)  // INSERT INTO Trip ...
 
-// Update
-lattice.write {
-    trip.name = "Costa Rica Adventure"  // UPDATE Trip SET name = ...
-}
+// Update (changes to managed objects are immediate)
+trip.name = "Costa Rica Adventure"  // Writes to DB automatically
+
+// Batch updates in transaction (for atomicity/performance)
+lattice.transaction {
+    trip.name = "New Name"
+    trip.days = 14
+}  // All changes committed together
 
 // Delete
 lattice.delete(trip)  // DELETE FROM Trip WHERE id = ...

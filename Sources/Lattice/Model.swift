@@ -19,7 +19,7 @@ public typealias CxxManagedInt = lattice.ManagedInt
 public typealias CxxDynamicObject = lattice.dynamic_object
 public typealias CxxDynamicObjectRef = lattice.dynamic_object_ref
 
-public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, SendableMetatype, CxxManaged, LatticeIsolated {
+public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, SendableMetatype, CxxManaged, LatticeIsolated, LinkListable {
     init(isolation: isolated (any Actor)?)
 //    var lattice: Lattice? { get set }
     static var entityName: String { get }
@@ -43,6 +43,15 @@ extension Model {
         self.init(isolation: isolation)
         self._dynamicObject = dynamicObject
     }
+    
+    public init(_ refType: CxxDynamicObjectRef) {
+        self.init(dynamicObject: refType)
+    }
+    public static func getLinkListField(from object: inout CxxDynamicObjectRef, named name: String) -> lattice.link_list_ref {
+        object.getLinkList(named: std.string(name))
+    }
+    
+    public var asRefType: CxxDynamicObjectRef { self._dynamicObject }
     
     public static var defaultValue: Self {
         .init(isolation: #isolation)
@@ -131,8 +140,11 @@ extension Model {
         }
         
         for (name, property) in geoProperties {
+            // Check if this is a geo_bounds list (List<CLLocationCoordinate2D>, etc.)
+            let isGeoBoundsList = property is (any ListProperty.Type)
             schema[std.string(name)] = .init(name: std.string(name), type: .integer,
-                                             kind: .primitive, target_table: .init(),
+                                             kind: isGeoBoundsList ? .list : .primitive,
+                                             target_table: .init(),
                                              link_table: .init(),
                                              nullable: property is (any OptionalProtocol.Type),
                                              is_vector: false, is_geo_bounds: true)
