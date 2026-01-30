@@ -5,6 +5,87 @@ import SQLite3
 #endif
 import LatticeSwiftCppBridge
 import LatticeSwiftModule
+import os.lock
+
+// MARK: - Cross-Instance Observation Registry
+
+/// Tracks all live Model instances by (tableName, primaryKey) to enable cross-instance observation.
+/// When one instance modifies a row, all other instances representing that row are notified.
+final class ModelInstanceRegistry: @unchecked Sendable {
+    static let shared = ModelInstanceRegistry()
+
+    private struct InstanceKey: Hashable {
+        let tableName: String
+        let primaryKey: Int64
+    }
+
+    private struct WeakModelRef: @unchecked Sendable {
+        weak var instance: (any Model)?
+        let objectIdentifier: ObjectIdentifier
+
+        init(_ model: any Model) {
+            self.instance = model
+            self.objectIdentifier = ObjectIdentifier(model)
+        }
+    }
+
+    private var instances: [InstanceKey: [WeakModelRef]] = [:]
+    private let lock = NSLock()
+
+    private init() {}
+
+    /// Register a model instance for cross-instance observation
+    func register(_ model: any Model, tableName: String) {
+        guard let primaryKey = model.primaryKey else { return }
+        let key = InstanceKey(tableName: tableName, primaryKey: primaryKey)
+        let ref = WeakModelRef(model)
+        let objectId = ObjectIdentifier(model)
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        var refs = instances[key, default: []]
+        if !refs.contains(where: { $0.objectIdentifier == objectId }) {
+            refs.append(ref)
+        }
+        refs.removeAll { $0.instance == nil }
+        instances[key] = refs
+    }
+
+    /// Deregister a model instance
+    func deregister(_ model: any Model, tableName: String) {
+        guard let primaryKey = model.primaryKey else { return }
+        let key = InstanceKey(tableName: tableName, primaryKey: primaryKey)
+        let objectId = ObjectIdentifier(model)
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        instances[key]?.removeAll { $0.objectIdentifier == objectId || $0.instance == nil }
+        if instances[key]?.isEmpty == true {
+            instances.removeValue(forKey: key)
+        }
+    }
+
+    /// Notify all instances of a row change, except the one that initiated it (if provided)
+    func notifyChange(tableName: String, primaryKey: Int64, propertyName: String, excludingInstanceId: ObjectIdentifier? = nil) {
+        let key = InstanceKey(tableName: tableName, primaryKey: primaryKey)
+
+        lock.lock()
+        let refs = instances[key] ?? []
+        lock.unlock()
+
+        for ref in refs {
+            guard let model = ref.instance else { continue }
+            if let excludeId = excludingInstanceId, ref.objectIdentifier == excludeId {
+                continue
+            }
+            // Trigger both Combine (ObservableObject) and Observation (@Observable) systems
+            model._objectWillChange_send()
+            model._triggerObservers_send(keyPath: propertyName)
+        }
+    }
+}
 
 public enum _ModelStorage {
     case unmanaged(lattice.swift_dynamic_object)
@@ -19,7 +100,7 @@ public typealias CxxManagedInt = lattice.ManagedInt
 public typealias CxxDynamicObject = lattice.dynamic_object
 public typealias CxxDynamicObjectRef = lattice.dynamic_object_ref
 
-public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, SendableMetatype, CxxManaged, LatticeIsolated, LinkListable {
+public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, CxxManaged, LatticeIsolated, LinkListable {
     init(isolation: isolated (any Actor)?)
 //    var lattice: Lattice? { get set }
     static var entityName: String { get }
@@ -42,6 +123,10 @@ extension Model {
                  dynamicObject: CxxDynamicObjectRef) {
         self.init(isolation: isolation)
         self._dynamicObject = dynamicObject
+        // Register for cross-instance observation if this object has a primaryKey
+        if self.primaryKey != nil {
+            ModelInstanceRegistry.shared.register(self, tableName: Self.entityName)
+        }
     }
     
     public init(_ refType: CxxDynamicObjectRef) {
@@ -63,6 +148,22 @@ extension Model {
         _dynamicObject.lattice.map { Lattice.init(ref: $0) }
     }
 
+    /// Called after a property mutation to notify other instances representing the same row
+    public func _notifyOtherInstances(propertyName: String) {
+        guard let primaryKey else { return }
+        ModelInstanceRegistry.shared.notifyChange(
+            tableName: Self.entityName,
+            primaryKey: primaryKey,
+            propertyName: propertyName,
+            excludingInstanceId: ObjectIdentifier(self)
+        )
+    }
+
+    /// Called from deinit to deregister from cross-instance observation
+    public func _deregisterFromInstanceRegistry() {
+        ModelInstanceRegistry.shared.deregister(self, tableName: Self.entityName)
+    }
+
     public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> Self {
         let model = Self(isolation: #isolation)
         model._dynamicObject = object.getObject(named: std.string(name))
@@ -75,22 +176,9 @@ extension Model {
 
     public typealias ObservableObjectPublisher = AnyPublisher<Void, Never>
     
-    // 3️⃣ override the protocol’s publisher
-    public var objectWillChange: Publishers.HandleEvents<Combine.ObservableObjectPublisher> {
-        // each new subscriber bumps the count…
+    // 3️⃣ override the protocol's publisher
+    public var objectWillChange: Combine.ObservableObjectPublisher {
         _objectWillChange
-            .handleEvents(
-                receiveSubscription: { [weak self] _ in
-                    self.map {
-                        $0.lattice?.beginObserving($0)
-                    }
-                },
-                receiveCancel: { [weak self] in
-                    self.map {
-                        $0.lattice?.finishObserving($0)
-                    }
-                }
-            )
     }
     
     public var id: some Hashable {

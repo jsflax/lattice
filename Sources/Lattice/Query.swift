@@ -276,11 +276,7 @@ public struct Query<T>: Sendable {
     public func `in`<K, V>(_ collection: [K]) -> Query<Bool> where T == Dictionary<K, V> {
         .init(.comparison(operator: .in, node, .constant(collection), options: []))
     }
-//
-//    /// Checks if the value is present in the collection.
-//    public func `in`<U: Collection>(_ collection: Query<U>) -> Query<Bool> where U.Element == T {
-//        .init(.comparison(operator: .in, node, .constant(collection), options: []))
-//    }
+
     // MARK: Subscript
 
     /// :nodoc:
@@ -348,15 +344,6 @@ public struct Query<T>: Sendable {
         let trimmed = components.dropFirst().joined(separator: ".")
         return .init(appendEmbeddedKeyPath(trimmed, isAnyProperty: false, options: []), isAuditing: isAuditing)
     }
-    
-    /// :nodoc:
-//    public subscript<V: RealmKeyedCollection>(dynamicMember member: KeyPath<T, V>) -> Query<V> where T: Model {
-//        .init(appendKeyPath(_name(for: member), options: [.isCollection, .requiresAny]))
-//    }
-//    /// :nodoc:
-//    public subscript<V: RealmCollectionBase>(dynamicMember member: KeyPath<T, V>) -> Query<V> where T: Model {
-//        .init(appendKeyPath(_name(for: member), options: [.isCollection, .requiresAny]))
-//    }
 
     // MARK: Query Construction
 
@@ -441,24 +428,6 @@ extension Query: ExpressibleByBooleanLiteral where T == Bool {
     }
 }
 
-// MARK: Mixed
-
-//extension Query where T == AnyRealmValue {
-//    /// :nodoc:
-//    public subscript(position: Int) -> Query<AnyRealmValue> {
-//        .init(anySubscript(appending: .index(position)))
-//
-//    }
-//    /// :nodoc:
-//    public subscript(key: String) -> Query<AnyRealmValue> {
-//        .init(anySubscript(appending: .key(key)))
-//    }
-//    /// Query all indexes or keys in a mixed nested collecttion.
-//    public var any: Query<AnyRealmValue> {
-//        .init(anySubscript(appending: .all))
-//    }
-//}
-
 // MARK: OptionalProtocol
 
 extension Query where T: OptionalProtocol {
@@ -504,208 +473,6 @@ extension Query where T: OptionalProtocol {
     }
 }
 
-// MARK: RealmCollection
-
-//extension Query where T: RealmCollection {
-//    /// :nodoc:
-//    public subscript<V>(dynamicMember member: KeyPath<T.Element, V>) -> Query<V> where T.Element: ObjectBase {
-//        .init(appendKeyPath(_name(for: member), options: []))
-//    }
-//
-//    /// Query the count of the objects in the collection.
-//    public var count: Query<Int> {
-//        .init(keyPathErasingAnyPrefix(appending: "@count"))
-//    }
-//}
-//
-//extension Query where T: RealmCollection {
-//    /// Checks if an element exists in this collection.
-//    public func contains(_ value: T.Element) -> Query<Bool> {
-//        .init(.comparison(operator: .in, .constant(value), keyPathErasingAnyPrefix(), options: []))
-//    }
-//
-//    /// Checks if any elements contained in the given array are present in the collection.
-//    public func containsAny<U: Sequence>(in collection: U) -> Query<Bool> where U.Element == T.Element {
-//        .init(.comparison(operator: .in, node, .constant(collection), options: []))
-//    }
-//}
-//
-//extension Query where T: RealmCollection, T.Element: Comparable {
-//    /// Checks for all elements in this collection that are within a given range.
-//    public func contains(_ range: Range<T.Element>) -> Query<Bool> {
-//        .init(.comparison(operator: .and,
-//                          .comparison(operator: .greaterThanEqual, keyPathErasingAnyPrefix(appending: "@min"), .constant(range.lowerBound), options: []),
-//                          .comparison(operator: .lessThan, keyPathErasingAnyPrefix(appending: "@max"), .constant(range.upperBound), options: []), options: []))
-//    }
-//
-//    /// Checks for all elements in this collection that are within a given range.
-//    public func contains(_ range: ClosedRange<T.Element>) -> Query<Bool> {
-//        .init(.comparison(operator: .and,
-//                          .comparison(operator: .greaterThanEqual, keyPathErasingAnyPrefix(appending: "@min"), .constant(range.lowerBound), options: []),
-//                          .comparison(operator: .lessThanEqual, keyPathErasingAnyPrefix(appending: "@max"), .constant(range.upperBound), options: []), options: []))
-//    }
-//}
-//
-//extension Query where T: RealmCollection, T.Element: OptionalProtocol, T.Element.Wrapped: Comparable {
-//    /// Checks for all elements in this collection that are within a given range.
-//    public func contains(_ range: Range<T.Element.Wrapped>) -> Query<Bool> {
-//        .init(.comparison(operator: .and,
-//                          .comparison(operator: .greaterThanEqual, keyPathErasingAnyPrefix(appending: "@min"), .constant(range.lowerBound), options: []),
-//                          .comparison(operator: .lessThan, keyPathErasingAnyPrefix(appending: "@max"), .constant(range.upperBound), options: []), options: []))
-//    }
-//
-//    /// Checks for all elements in this collection that are within a given range.
-//    public func contains(_ range: ClosedRange<T.Element.Wrapped>) -> Query<Bool> {
-//        .init(.comparison(operator: .and,
-//                          .comparison(operator: .greaterThanEqual, keyPathErasingAnyPrefix(appending: "@min"), .constant(range.lowerBound), options: []),
-//                          .comparison(operator: .lessThanEqual, keyPathErasingAnyPrefix(appending: "@max"), .constant(range.upperBound), options: []), options: []))
-//    }
-//}
-//
-//extension Query where T: RealmCollection {
-//    /// :nodoc:
-//    public static func == (_ lhs: Query<T>, _ rhs: T.Element) -> Query<Bool> {
-//        .init(.comparison(operator: .equal, lhs.node, .constant(rhs), options: []))
-//    }
-//
-//    /// :nodoc:
-//    public static func != (_ lhs: Query<T>, _ rhs: T.Element) -> Query<Bool> {
-//        .init(.comparison(operator: .notEqual, lhs.node, .constant(rhs), options: []))
-//    }
-//}
-//
-//extension Query where T: RealmCollection, T.Element.PersistedType: _QueryNumeric {
-//    /// :nodoc:
-//    public static func > (_ lhs: Query<T>, _ rhs: T.Element) -> Query<Bool> {
-//        .init(.comparison(operator: .greaterThan, lhs.node, .constant(rhs), options: []))
-//    }
-//
-//    /// :nodoc:
-//    public static func >= (_ lhs: Query<T>, _ rhs: T.Element) -> Query<Bool> {
-//        .init(.comparison(operator: .greaterThanEqual, lhs.node, .constant(rhs), options: []))
-//    }
-//
-//    /// :nodoc:
-//    public static func < (_ lhs: Query<T>, _ rhs: T.Element) -> Query<Bool> {
-//        .init(.comparison(operator: .lessThan, lhs.node, .constant(rhs), options: []))
-//    }
-//
-//    /// :nodoc:
-//    public static func <= (_ lhs: Query<T>, _ rhs: T.Element) -> Query<Bool> {
-//        .init(.comparison(operator: .lessThanEqual, lhs.node, .constant(rhs), options: []))
-//    }
-//
-//    /// Returns the minimum value in the collection.
-//    public var min: Query<T.Element> {
-//        .init(keyPathErasingAnyPrefix(appending: "@min"))
-//    }
-//
-//    /// Returns the maximum value in the collection.
-//    public var max: Query<T.Element> {
-//        .init(keyPathErasingAnyPrefix(appending: "@max"))
-//    }
-//
-//    /// Returns the average in the collection.
-//    public var avg: Query<T.Element> {
-//        .init(keyPathErasingAnyPrefix(appending: "@avg"))
-//    }
-//
-//    /// Returns the sum of all the values in the collection.
-//    public var sum: Query<T.Element> {
-//        .init(keyPathErasingAnyPrefix(appending: "@sum"))
-//    }
-//}
-//
-//// MARK: RealmKeyedCollection
-//
-//extension Query where T: RealmKeyedCollection {
-//    /// Checks if any elements contained in the given array are present in the map's values.
-//    public func containsAny<U: Sequence>(in collection: U) -> Query<Bool> where U.Element == T.Value {
-//        .init(.comparison(operator: .in, node, .constant(collection), options: []))
-//    }
-//
-//    /// Checks if an element exists in this collection.
-//    public func contains(_ value: T.Value) -> Query<Bool> {
-//        .init(.comparison(operator: .in, .constant(value), keyPathErasingAnyPrefix(), options: []))
-//    }
-//    /// Allows a query over all values in the Map.
-//    public var values: Query<T.Value> {
-//        .init(appendKeyPath("@allValues", options: []))
-//    }
-//    /// :nodoc:
-//    public subscript(member: T.Key) -> Query<T.Value> {
-//        .init(.mapSubscript(keyPathErasingAnyPrefix(), key: member))
-//    }
-//}
-//
-//extension Query where T: RealmKeyedCollection, T.Key == String {
-//    /// Allows a query over all keys in the `Map`.
-//    public var keys: Query<String> {
-//        .init(appendKeyPath("@allKeys", options: []))
-//    }
-//}
-//
-//extension Query where T: RealmKeyedCollection, T.Value: Comparable {
-//    /// Checks for all elements in this collection that are within a given range.
-//    public func contains(_ range: Range<T.Value>) -> Query<Bool> {
-//        .init(.comparison(operator: .and,
-//                          .comparison(operator: .greaterThanEqual, keyPathErasingAnyPrefix(appending: "@min"), .constant(range.lowerBound), options: []),
-//                          .comparison(operator: .lessThan, keyPathErasingAnyPrefix(appending: "@max"), .constant(range.upperBound), options: []), options: []))
-//    }
-//
-//    /// Checks for all elements in this collection that are within a given range.
-//    public func contains(_ range: ClosedRange<T.Value>) -> Query<Bool> {
-//        .init(.comparison(operator: .and,
-//                          .comparison(operator: .greaterThanEqual, keyPathErasingAnyPrefix(appending: "@min"), .constant(range.lowerBound), options: []),
-//                          .comparison(operator: .lessThanEqual, keyPathErasingAnyPrefix(appending: "@max"), .constant(range.upperBound), options: []), options: []))
-//    }
-//}
-//
-//extension Query where T: RealmKeyedCollection, T.Value: OptionalProtocol, T.Value.Wrapped: Comparable {
-//    /// Checks for all elements in this collection that are within a given range.
-//    public func contains(_ range: Range<T.Value.Wrapped>) -> Query<Bool> {
-//        .init(.comparison(operator: .and,
-//                          .comparison(operator: .greaterThanEqual, keyPathErasingAnyPrefix(appending: "@min"), .constant(range.lowerBound), options: []),
-//                          .comparison(operator: .lessThan, keyPathErasingAnyPrefix(appending: "@max"), .constant(range.upperBound), options: []), options: []))
-//    }
-//
-//    /// Checks for all elements in this collection that are within a given range.
-//    public func contains(_ range: ClosedRange<T.Value.Wrapped>) -> Query<Bool> {
-//        .init(.comparison(operator: .and,
-//                          .comparison(operator: .greaterThanEqual, keyPathErasingAnyPrefix(appending: "@min"), .constant(range.lowerBound), options: []),
-//                          .comparison(operator: .lessThanEqual, keyPathErasingAnyPrefix(appending: "@max"), .constant(range.upperBound), options: []), options: []))
-//    }
-//}
-//
-//extension Query where T: RealmKeyedCollection, T.Value.PersistedType: _QueryNumeric {
-//    /// Returns the minimum value in the keyed collection.
-//    public var min: Query<T.Value> {
-//        .init(keyPathErasingAnyPrefix(appending: "@min"))
-//    }
-//
-//    /// Returns the maximum value in the keyed collection.
-//    public var max: Query<T.Value> {
-//        .init(keyPathErasingAnyPrefix(appending: "@max"))
-//    }
-//
-//    /// Returns the average in the keyed collection.
-//    public var avg: Query<T.Value> {
-//        .init(keyPathErasingAnyPrefix(appending: "@avg"))
-//    }
-//
-//    /// Returns the sum of all the values in the keyed collection.
-//    public var sum: Query<T.Value> {
-//        .init(keyPathErasingAnyPrefix(appending: "@sum"))
-//    }
-//}
-//
-//extension Query where T: RealmKeyedCollection {
-//    /// Returns the count of all the values in the keyed collection.
-//    public var count: Query<Int> {
-//        .init(keyPathErasingAnyPrefix(appending: "@count"))
-//    }
-//}
-
 // MARK: - PersistableEnum
 
 extension Query where T: LatticeEnum, T.RawValue: SchemaProperty {
@@ -719,116 +486,6 @@ extension Query where T: LatticeEnum, T.RawValue: SchemaProperty {
         .init(node)
     }
 }
-//extension Query where T: OptionalProtocol, T.Wrapped: PersistableEnum, T.Wrapped.RawValue: _RealmSchemaDiscoverable {
-//    /// Query on the rawValue of the Enum rather than the Enum itself.
-//    ///
-//    /// This can be used to write queries which can be expressed on the
-//    /// RawValue but not the enum. For example, this lets you query for
-//    /// `.starts(with:)` on a string enum where the prefix is not a member of
-//    /// the enum.
-//    public var rawValue: Query<T.Wrapped.RawValue?> {
-//        .init(node)
-//    }
-//}
-//
-//// The actual collection type returned in these doesn't matter because it's
-//// only used to constrain the set of operations available, and the collections
-//// all have the same operations.
-//extension Query where T: RealmCollection, T.Element: PersistableEnum, T.Element.RawValue: RealmCollectionValue {
-//    /// Query on the rawValue of the Enums in the collection rather than the Enums themselves.
-//    ///
-//    /// This can be used to write queries which can be expressed on the
-//    /// RawValue but not the enum. For example, this lets you query for
-//    /// `.starts(with:)` on a string enum where the prefix is not a member of
-//    /// the enum.
-//    public var rawValue: Query<AnyRealmCollection<T.Element.RawValue>> {
-//        .init(node)
-//    }
-//}
-//extension Query where T: RealmKeyedCollection, T.Value: PersistableEnum, T.Value.RawValue: RealmCollectionValue {
-//    /// Query on the rawValue of the Enums in the collection rather than the Enums themselves.
-//    ///
-//    /// This can be used to write queries which can be expressed on the
-//    /// RawValue but not the enum. For example, this lets you query for
-//    /// `.starts(with:)` on a string enum where the prefix is not a member of
-//    /// the enum.
-//    public var rawValue: Query<Map<T.Key, T.Value.RawValue>> {
-//        .init(node)
-//    }
-//}
-//extension Query where T: RealmCollection, T.Element: OptionalProtocol, T.Element.Wrapped: PersistableEnum, T.Element.Wrapped.RawValue: _RealmCollectionValueInsideOptional {
-//    /// Query on the rawValue of the Enums in the collection rather than the Enums themselves.
-//    ///
-//    /// This can be used to write queries which can be expressed on the
-//    /// RawValue but not the enum. For example, this lets you query for
-//    /// `.starts(with:)` on a string enum where the prefix is not a member of
-//    /// the enum.
-//    public var rawValue: Query<AnyRealmCollection<T.Element.Wrapped.RawValue?>> {
-//        .init(node)
-//    }
-//}
-//extension Query where T: RealmKeyedCollection, T.Value: OptionalProtocol, T.Value.Wrapped: PersistableEnum, T.Value.Wrapped.RawValue: _RealmCollectionValueInsideOptional {
-//    /// Query on the rawValue of the Enums in the collection rather than the Enums themselves.
-//    ///
-//    /// This can be used to write queries which can be expressed on the
-//    /// RawValue but not the enum. For example, this lets you query for
-//    /// `.starts(with:)` on a string enum where the prefix is not a member of
-//    /// the enum.
-//    public var rawValue: Query<Map<T.Key, T.Value.Wrapped.RawValue?>> {
-//        .init(node)
-//    }
-//}
-
-// MARK: - CustomPersistable
-
-//extension Query where T: _HasPersistedType {
-//    /// Query on the persistableValue of the value rather than the value itself.
-//    ///
-//    /// This can be used to write queries which can be expressed on the
-//    /// persisted type but not on the type itself, such as range queries
-//    /// on the persistable value or to query for values which can't be
-//    /// converted to the mapped type.
-//    ///
-//    /// For types which don't conform to PersistableEnum, CustomPersistable or
-//    /// FailableCustomPersistable this doesn't do anything useful.
-//    public var persistableValue: Query<T.PersistedType> {
-//        .init(node)
-//    }
-//}
-//
-//// The actual collection type returned in these doesn't matter because it's
-//// only used to constrain the set of operations available, and the collections
-//// all have the same operations.
-//extension Query where T: RealmCollection {
-//    /// Query on the persistableValue of the values in the collection rather
-//    /// than the values themselves.
-//    ///
-//    /// This can be used to write queries which can be expressed on the
-//    /// persisted type but not on the type itself, such as range queries
-//    /// on the persistable value or to query for values which can't be
-//    /// converted to the mapped type.
-//    ///
-//    /// For types which don't conform to PersistableEnum, CustomPersistable or
-//    /// FailableCustomPersistable this doesn't do anything useful.
-//    public var persistableValue: Query<AnyRealmCollection<T.Element.PersistedType>> {
-//        .init(node)
-//    }
-//}
-//extension Query where T: RealmKeyedCollection {
-//    /// Query on the persistableValue of the values in the collection rather
-//    /// than the values themselves.
-//    ///
-//    /// This can be used to write queries which can be expressed on the
-//    /// persisted type but not on the type itself, such as range queries
-//    /// on the persistable value or to query for values which can't be
-//    /// converted to the mapped type.
-//    ///
-//    /// For types which don't conform to PersistableEnum, CustomPersistable or
-//    /// FailableCustomPersistable this doesn't do anything useful.
-//    public var persistableValue: Query<Map<T.Key, T.Value.PersistedType>> {
-//        .init(node)
-//    }
-//}
 
 // MARK: _QueryNumeric
 
@@ -1101,22 +758,6 @@ extension Query where T: _QueryNumeric {
     }
 }
 
-//public extension Query where T: OptionalProtocol, T.Wrapped: EmbeddedObject {
-//    /**
-//    Use `geoWithin` function to filter objects whose location points lie within a certain area,
-//    using a Geospatial shape (`GeoBox`, `GeoPolygon` or `GeoCircle`).
-//
-//     - note: There is no dedicated type to store Geospatial points, instead points should be stored as
-//     [GeoJson-shaped](https://www.mongodb.com/docs/manual/reference/geojson/)
-//     embedded object. Geospatial queries (`geoWithin`) can only be executed
-//     in such a type of objects and will throw otherwise.
-//     - see: `GeoPoint`
-//    */
-//    func geoWithin<U: RLMGeospatial>(_ value: U) -> Query<Bool> {
-//        .init(.geoWithin(node, .constant(value)))
-//    }
-//}
-
 /// Tag protocol for all numeric types.
 public protocol _QueryNumeric: SchemaProperty { }
 extension Int: _QueryNumeric { }
@@ -1126,9 +767,7 @@ extension Int32: _QueryNumeric { }
 extension Int64: _QueryNumeric { }
 extension Float: _QueryNumeric { }
 extension Double: _QueryNumeric { }
-//extension Decimal128: _QueryNumeric { }
 extension Date: _QueryNumeric { }
-//extension AnyRealmValue: _QueryNumeric { }
 extension Optional: _QueryNumeric where Wrapped: PrimitiveProperty, Wrapped: _QueryNumeric { }
 
 /// Tag protocol for all types that are compatible with `String`.
@@ -1579,14 +1218,6 @@ private struct SubqueryRewriter {
     }
 }
 
-//extension Query where T: Model {
-//    var asBuiltinQuery: (T) -> Bool {
-//        switch node {
-//        case .keyPath(let kp, let options):
-//            
-//        }
-//    }
-//}
 public typealias Predicate<T> = ((any _Query<T>) -> Query<Bool>)
 public typealias LatticePredicate<T> = ((Query<T>) -> Query<Bool>)
 

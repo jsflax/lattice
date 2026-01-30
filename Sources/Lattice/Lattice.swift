@@ -29,15 +29,6 @@ public struct _UncheckedSendable<T>: @unchecked Sendable {
         self.value = value
     }
 }
-//class LatticeSubscriber<T>: Subscription {
-//    func request(_ demand: Subscribers.Demand) {
-//
-//    }
-//
-//    func cancel() {
-//
-//    }
-//}
 extension Logger {
     static let db = Logger(subsystem: "lattice.io",
                            category: "db")
@@ -67,79 +58,6 @@ final class LatticeExecutor: SerialExecutor {
         job.runSynchronously(on: self.asUnownedSerialExecutor())
     }
 }
-
-//public actor LatticeObservationRegistrar {
-//    private var observationRegistrar: [
-//        String: [
-//            Int64: [IsolationWeakRef]
-//        ]
-//    ] = [:]
-//    
-//    public subscript (tableName: String) -> [Int64: [IsolationWeakRef]]? {
-//        get {
-//            observationRegistrar[tableName]
-//        } set {
-//            observationRegistrar[tableName] = newValue
-//        }
-//    }
-//    
-//    private func _triggerObservers(for tableName: String, primaryKey: Int64, with keyPath: String) {
-//        observationRegistrar[tableName]?[primaryKey]?.forEach { ref in
-//            Task {
-//                if let isolation = ref.isolation {
-//                    
-//                    await ref.isolation!.invoke { _ in
-//                        guard let model = ref.value else {
-//                            return
-//                        }
-//                        
-//                        model._objectWillChange_send()
-//                        model._triggerObservers_send(keyPath: keyPath)
-//                    }
-//                } else {
-//                    guard let model = ref.value else {
-//                        return
-//                    }
-//                    
-//                    model._objectWillChange_send()
-//                    model._triggerObservers_send(keyPath: keyPath)
-//                }
-//            }
-//        }
-//    }
-//    
-//    nonisolated func triggerObservers(for tableName: String, primaryKey: Int64, with keyPath: String) {
-//        Task {
-//            await _triggerObservers(for: tableName, primaryKey: primaryKey, with: keyPath)
-//        }
-//    }
-//    
-//    func observers(forTableName tableName: String, primaryKey: Int64) -> [IsolationWeakRef] {
-//        observationRegistrar[tableName, default: [:]][primaryKey, default: []]
-//    }
-//    
-//    private func _insertObserver(tableName: String, primaryKey: Int64,
-//                                 _ observation: IsolationWeakRef) {
-//        observationRegistrar[tableName, default: [:]][primaryKey, default: []].append(observation)
-//    }
-//    public nonisolated func insertObserver(tableName: String, primaryKey: Int64,
-//                                           _ observation: IsolationWeakRef) {
-//        Task {
-//            await _insertObserver(tableName: tableName, primaryKey: primaryKey, observation)
-//        }
-//    }
-//    private func _removeObserver(tableName: String, primaryKey: Int64) {
-//        observationRegistrar[tableName, default: [:]][primaryKey] = nil
-//    }
-//    public nonisolated func removeObserver(tableName: String, primaryKey: Int64) {
-//        Task {
-//            await _removeObserver(tableName: tableName, primaryKey: primaryKey)
-//        }
-//    }
-//    public var count: Int {
-//        observationRegistrar.count
-//    }
-//}
 
 extension UnsafeMutablePointer: @unchecked @retroactive Sendable {
 }
@@ -289,12 +207,10 @@ public struct Lattice {
         }
 
         private func startReceiving() {
-            print("[WS] startReceiving called, task=\(webSocketTask != nil ? "exists" : "nil")")
             webSocketTask?.receive { [weak self] result in
                 guard let self = self else {
                     return
                 }
-                print("[WS] receive result: \(result)")
                 switch result {
                 case .success(let message):
                     var cxxMessage = lattice.websocket_message()
@@ -361,7 +277,6 @@ public struct Lattice {
             // Note: Don't deallocate cxxClientPtr - C++ owns it via unique_ptr
             // The Swift WebsocketClient is kept alive by passRetained() and should be
             // released when C++ destroys the websocket_client (not implemented yet)
-            print("[WS]", "deinitializing")
         }
     }
 
@@ -490,23 +405,7 @@ public struct Lattice {
     
     private var isSyncDisabled = false
     internal var logger = Logger.db
-    
-//    deinit {
-//        defer { print("Lattice deinit") }
-////        ptr = nil
-//        Self.latticeIsolationRegistrar.removeAll(where: {
-//            $0.lattice == nil
-//        })
-//        Self.latticeIsolationRegistrar.filter {
-//            $0.lattice?.isolation === isolation
-//        }
-//    }
-//    
-//    internal init(_ db: SharedDBPointer) {
-//        self.dbPtr = db
-//        self.cxxLattice = lattice.swift_lattice()
-//    }
-    
+
     let cxxLatticeRef: lattice.swift_lattice_ref
     var cxxLattice: lattice.swift_lattice {
         cxxLatticeRef.get()
@@ -515,11 +414,48 @@ public struct Lattice {
 
     internal init(isolation: isolated (any Actor)? = #isolation,
                   ref: lattice.swift_lattice_ref) {
-        self = Self.cacheLock.withLockUnchecked { Self.cache[ref]! }
+        self = Self.cacheLock.withLockUnchecked {
+            let key = CacheKey(ref)
+            if let cached = Self.cache[key] {
+                return cached
+            }
+            // Fallback: look up by path if hash lookup fails
+            // This can happen when C++ creates a new impl for the same path
+            let refPath = String(ref.path())
+            if let cached = Self.cache.values.first(where: { $0.configuration.fileURL.path() == refPath }) {
+                return cached
+            }
+            // Debug: print cache state
+            print("[Lattice Cache Debug]")
+            print("  Looking for hash: \(key.implHash), path: \(refPath)")
+            print("  Cache has \(Self.cache.count) entries:")
+            for (k, v) in Self.cache {
+                print("    hash: \(k.implHash), path: \(v.configuration.fileURL.path())")
+            }
+            preconditionFailure("Lattice not found in cache for ref with hash \(key.implHash), path: \(refPath)")
+        }
     }
     
     private static let cacheLock = OSAllocatedUnfairLock<Void>()
-    private nonisolated(unsafe) static var cache: [lattice.swift_lattice_ref: Lattice] = [:]
+
+    /// Cache key that uses the underlying impl_ pointer hash for stable identity
+    private struct CacheKey: Hashable {
+        let implHash: Int64
+
+        init(_ ref: lattice.swift_lattice_ref) {
+            self.implHash = ref.hash_value()
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(implHash)
+        }
+
+        static func == (lhs: CacheKey, rhs: CacheKey) -> Bool {
+            lhs.implHash == rhs.implHash
+        }
+    }
+
+    private nonisolated(unsafe) static var cache: [CacheKey: Lattice] = [:]
     
     internal init(isolation: isolated (any Actor)? = #isolation,
                   for schema: [any Model.Type],
@@ -592,9 +528,9 @@ public struct Lattice {
         } else {
             self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(), schemas: cxxSchemas)
         }
-        let ref = self.cxxLatticeRef
+        let key = CacheKey(self.cxxLatticeRef)
         let latticeInstance = self
-        Self.cacheLock.withLockUnchecked { Self.cache[ref] = latticeInstance }
+        Self.cacheLock.withLockUnchecked { Self.cache[key] = latticeInstance }
     }
 
     // MARK: Public Inits
@@ -686,29 +622,6 @@ public struct Lattice {
         try FileManager.default.removeItem(at: latticeSHMURL)
         try FileManager.default.removeItem(at: latticeWALURL)
     }
-    
-    private func sqlLiteral(for value: some PrimitiveProperty) -> Any {
-        guard let value = value as? CVarArg else {
-            return "NULL"
-        }
-        return withVaList([value]) { ptr in
-            let raw = sqlite3_vmprintf("%Q", ptr)
-            defer { sqlite3_free(raw) }
-            let returnValue = String(cString: raw!)
-            return returnValue
-        }
-        
-        //        let sql = "SELECT QUOTE(?)"
-        //        var stmt: OpaquePointer?
-        //        defer { sqlite3_finalize(stmt) }
-        //        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return "NULL" }
-        //        value.encode(to: stmt, with: 0)
-        //        guard sqlite3_step(stmt) == SQLITE_ROW else {
-        //            return "NULL"
-        //        }
-        //        let retVal = type(of: value).init(from: stmt, with: 0)
-        //        return retVal
-    }
 
     /// Recursively discover all Model types linked from the given schema.
     private static func discoverAllTypes(from initialSchema: [any Model.Type]) -> [any Model.Type] {
@@ -765,29 +678,7 @@ public struct Lattice {
         
         cxxLattice.add_bulk(&cxxObjects)
     }
-    
-    internal func newObject<T: Model>(_ objectType: T.Type,
-                                      primaryKey id: Int64,
-                                      cxxObject: lattice.ManagedModel) -> T {
-        fatalError()
-//        if let isolation {
-//            let obj = isolation.assumeIsolated { [configuration] isolation in
-//                let object = T(isolation: isolation)
-//                object._dynamicObject = cxxObject
-//                object.primaryKey = id
-//                return _UncheckedSendable(object)
-//            }.value
-//            obj.lattice = self
-//            return obj
-//        } else {
-//            let object = T(isolation: #isolation)
-//            object._storage = .managed(cxxObject)
-//            object.primaryKey = id
-//            object.lattice = self
-//            return object
-//        }
-    }
-    
+
     func beginObserving<T: Model>(_ object: T) {
     }
     func finishObserving<T: Model>(_ object: T) {
@@ -905,14 +796,15 @@ public struct Lattice {
         }
     }
 
-    public var changeStream: AsyncStream<[AuditLog]> {
-        AsyncStream { [cxxLattice, modelTypes, configuration] stream in
+    public var changeStream: AsyncStream<[any SendableReference<AuditLog>]> {
+        AsyncStream<[any SendableReference<AuditLog>]> { [cxxLattice, modelTypes, configuration] stream in
             let tableName = std.string(AuditLog.entityName)
 
             let context = TableObserverContext { operation, rowId, globalRowId in
                 autoreleasepool {
                     let lattice = try! Lattice(for: modelTypes, configuration: configuration)
-                    if let auditLog = lattice.object(AuditLog.self, primaryKey: rowId) {
+                    if let auditLog = lattice.object(AuditLog.self, primaryKey: rowId)?.sendableReference as? any SendableReference<AuditLog> {
+//                        let refs: [any SendableReference<AuditLog>] = [auditLog]
                         stream.yield([auditLog])
                     }
                 }
@@ -1116,23 +1008,3 @@ extension Array where Element == any Model.Type {
         return cxxSchemas
     }
 }
-//public func Lattice(isolation: isolated (any Actor)? = #isolation,
-//                    for schema: [any Model.Type], configuration: Lattice.Configuration = defaultConfiguration) throws {
-//    try Lattice.init(for: schema, configuration: configuration, isSynchronizing: false)
-//}
-//
-//public func Lattice(isolation: isolated (any Actor)? = #isolation,
-//                    _ modelTypes: any Model.Type..., configuration: Lattice.Configuration = defaultConfiguration) throws {
-//    try Lattice.init(for: modelTypes, configuration: configuration)
-//}
-//@dynamicCallable public struct BlockIsolated {
-//    private let block: @isolated(any) () -> Void
-//    public init(isolation: isolated (any Actor)? = #isolation,
-//                _ block: @escaping @isolated(any) () -> Void) {
-//        self.block = block
-//    }
-//    
-//    public func dynamicallyCall(withArguments arguments: [Any]) {
-//        block()
-//    }
-//}

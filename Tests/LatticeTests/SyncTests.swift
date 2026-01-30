@@ -191,6 +191,7 @@ class SyncTests: @unchecked Sendable {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
                     if changes.contains(where: { $0.operation == .insert }) {
                         break
                     }
@@ -205,6 +206,7 @@ class SyncTests: @unchecked Sendable {
                 let changeStream = lattice1.changeStream
                 continuation.resume()
                 for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice1) })
                     if changes.allSatisfy({ $0.isSynchronized }) {
                         break
                     }
@@ -249,6 +251,7 @@ class SyncTests: @unchecked Sendable {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
                     if changes.contains(where: { $0.operation == .delete }) {
                         break
                     }
@@ -319,6 +322,7 @@ class SyncTests: @unchecked Sendable {
                 continuation.resume()
                 var insertCount = 0
                 for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
                     insertCount += changes.count(where: { $0.operation == .insert })
                     // We need at least 3 inserts: 1 parent + 2 children
                     // If links are synced, we'd also see link table changes (5 total)
@@ -335,6 +339,7 @@ class SyncTests: @unchecked Sendable {
                 let changeStream = lattice1.changeStream
                 continuation.resume()
                 for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice1) })
                     if changes.allSatisfy({ $0.isSynchronized }) {
                         break
                     }

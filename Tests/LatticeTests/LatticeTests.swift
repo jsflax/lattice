@@ -690,7 +690,42 @@ class LatticeTests: BaseTest {
         #expect(insertHitCount == 1)
         #expect(deleteHitCount == 0)
     }
-    
+
+    @Test func test_CrossInstanceObservation() async throws {
+        let lattice = try Lattice(Person.self, Dog.self, configuration: .init(isStoredInMemoryOnly: true))
+
+        // Create and add a person
+        let person1 = Person()
+        person1.name = "Alice"
+        person1.age = 30
+        lattice.add(person1)
+
+        // Get a second reference to the same row
+        let person2 = lattice.object(Person.self, primaryKey: person1.primaryKey!)!
+
+        // Verify they're different Swift instances but same data
+        #expect(person1 !== person2)
+        #expect(person1.name == person2.name)
+        #expect(person1.age == person2.age)
+
+        // Track if person2's objectWillChange fires
+        var didReceiveChange = false
+        let cancellable = person2._objectWillChange.sink {
+            didReceiveChange = true
+        }
+
+        // Modify person1
+        person1.age = 31
+
+        // person2 should have been notified
+        #expect(didReceiveChange, "Cross-instance observation should notify other instances")
+
+        // person2 should see the updated value (reads from shared C++ storage)
+        #expect(person2.age == 31, "Other instance should see updated value")
+
+        cancellable.cancel()
+    }
+
     @Test func test_Embedded() async throws {
         try autoreleasepool {
             let lattice = try testLattice(path: path, ModelWithEmbeddedModelObject.self)

@@ -333,6 +333,7 @@ class PropertyMacro: AccessorMacro, MemberMacro {
                 _$observationRegistrar.withMutation(of: self, keyPath: \\.\(id.identifier)) {
                     \(raw: property.type).setField(on: &_dynamicObject, named: "\(raw: property.mappedName ?? property.name)", newValue)
                 }
+                _notifyOtherInstances(propertyName: "\(raw: property.name)")
             }
             """
         ]
@@ -612,9 +613,13 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
               try _$observationRegistrar.withMutation(of: self, keyPath: keyPath, mutation)
             }
             
-            public func _objectWillChange_send() { _objectWillChange.send() } 
+            public func _objectWillChange_send() {
+                print("objectWillChange_send() called")
+                _objectWillChange.send() 
+            } 
             
             public func _triggerObservers_send(keyPath: String) {
+                print("_triggerObservers_send for keypath \\(keyPath) called")
                 switch keyPath {
                     \(raw: allowedMembers.map {
                         """
@@ -641,11 +646,9 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                 }
             }
             
-            // deinit {           
-            //    self.primaryKey.map { id in
-            //        lattice?.dbPtr.removeModelObserver(tableName: Self.entityName, primaryKey: id)
-            //    }
-            // }
+            deinit {
+                _deregisterFromInstanceRegistry()
+            }
             """
         ]
     }
