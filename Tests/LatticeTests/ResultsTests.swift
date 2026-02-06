@@ -66,26 +66,26 @@ class ResultsTests: BaseTest {
     
     @Test func test_WriteWhileIterating() async throws {
         let lattice = try testLattice(SequenceSyncObject.self)
+        let config = lattice.configuration
         let objects = (0..<1000).map { _ in SequenceSyncObject() }
         lattice.transaction {
             lattice.add(contentsOf: objects)
         }
-        
+
         func doWork(isolation: isolated (any Actor)? = #isolation) throws {
-            let lattice = try Lattice(for: [SequenceSyncObject.self])
+            let lattice = try Lattice(for: [SequenceSyncObject.self], configuration: config)
             let results = lattice.objects(SequenceSyncObject.self)
             lattice.transaction {
                 for object in results {
-                    
                     object.low = 5000
                 }
             }
         }
-        
-        Task { @TestActor in
+
+        let task1 = Task { @TestActor in
             try doWork()
         }
-        Task { @TestActor in
+        let task2 = Task { @TestActor in
             try doWork()
         }
         let results = lattice.objects(SequenceSyncObject.self)
@@ -94,6 +94,10 @@ class ResultsTests: BaseTest {
                 object.high = 5000
             }
         }
+
+        // Wait for concurrent tasks to complete
+        try await task1.value
+        try await task2.value
     }
     
     @Test

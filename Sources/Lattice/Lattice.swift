@@ -337,7 +337,18 @@ public struct Lattice {
                     return false
                 }
                 return otherScheduler?.withMemoryRebound(to: lattice.generic_scheduler.self, capacity: 1) { pointer in
-                    pointer.pointee.context_.assumingMemoryBound(to: (any Actor)?.self) == isolation
+                    // Compare the actual actor instances, not the pointer addresses.
+                    // Each Scheduler allocates its own isolationPtr, so we need to dereference
+                    // and compare the actors using identity (===).
+                    let otherIsolation = pointer.pointee.context_.assumingMemoryBound(to: (any Actor)?.self)
+                    let ourActor = isolation.pointee
+                    let otherActor = otherIsolation.pointee
+                    // Both nil means same (no isolation)
+                    if ourActor == nil && otherActor == nil { return true }
+                    // One nil, one non-nil means different
+                    guard let our = ourActor, let other = otherActor else { return false }
+                    // Compare actor identity
+                    return our === other
                 } ?? false
             }, { ptr in
                 return true
@@ -353,9 +364,18 @@ public struct Lattice {
         public var authorizationToken: String?
         public var wssEndpoint: URL?
         private var scheduler: Scheduler
-        
+
+        /// Read-only mode. When true:
+        /// - Database is opened with SQLITE_OPEN_READONLY
+        /// - No WAL mode (uses existing journal mode)
+        /// - No table creation or schema changes
+        /// - No sync, no change hooks
+        /// Use this for bundled template databases in app resources.
+        public var isReadOnly: Bool = false
+
         public init(isStoredInMemoryOnly: Bool = false, fileURL: URL? = nil,
-                    authorizationToken: String? = nil, wssEndpoint: URL? = nil) {
+                    authorizationToken: String? = nil, wssEndpoint: URL? = nil,
+                    isReadOnly: Bool = false) {
             self.isStoredInMemoryOnly = isStoredInMemoryOnly
             let fileURL = if isStoredInMemoryOnly {
                 URL(fileURLWithPath: ":memory:")
@@ -375,24 +395,31 @@ public struct Lattice {
             self.authorizationToken = authorizationToken
             self.wssEndpoint = wssEndpoint
             self.scheduler = Scheduler()
+            self.isReadOnly = isReadOnly
         }
-        
+
         fileprivate func cxxConfiguration(isolation: isolated (any Actor)? = #isolation) -> lattice.swift_configuration {
+            // Create a scheduler for the current isolation context.
+            // This ensures different isolation contexts get different cache keys in C++.
+            let currentScheduler = Scheduler(isolation: isolation)
+            var config: lattice.swift_configuration
             if isStoredInMemoryOnly {
-                .init(std.string(":memory:"),
+                config = .init(std.string(":memory:"),
                       self.wssEndpoint.map {
                     std.string($0.absoluteString)
                 } ?? std.string(),
                       authorizationToken.map { std.string($0) } ?? std.string(),
-                      scheduler.scheduler)
+                      currentScheduler.scheduler)
             } else {
-                .init(std.string(self.fileURL.path()),
+                config = .init(std.string(self.fileURL.path()),
                       self.wssEndpoint.map {
                     std.string($0.absoluteString)
                 } ?? std.string(),
                       authorizationToken.map { std.string($0) } ?? std.string(),
-                      scheduler.scheduler)
+                      currentScheduler.scheduler)
             }
+            config.read_only = isReadOnly
+            return config
         }
     }
     
@@ -673,9 +700,9 @@ public struct Lattice {
         // Bulk insert via C++
         var cxxObjects = lattice.DynamicObjectRefPtrVector()
         for element in newElements {
-            cxxObjects.push_back(element._dynamicObject)
+            lattice.push_dynamic_object_ref(&cxxObjects, element._dynamicObject)
         }
-        
+
         cxxLattice.add_bulk(&cxxObjects)
     }
 
