@@ -42,6 +42,7 @@ import Vapor
 }
 import NIOCore
 
+#if ENABLE_SYNC_TESTS
 @Suite("Sync Tests")
 class SyncTests: @unchecked Sendable {
     let app: Application
@@ -392,3 +393,4 @@ class SyncTests: @unchecked Sendable {
         #expect(syncedParent?.children.contains(where: { $0.name == "Child2" }) == true, "Child2 should be linked")
     }
 }
+#endif

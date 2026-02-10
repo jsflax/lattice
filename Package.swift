@@ -5,7 +5,7 @@ import CompilerPluginSupport
 
 let package = Package(
     name: "Lattice",
-    platforms: [.macOS(.v15), .iOS(.v17)],
+    platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
@@ -15,7 +15,7 @@ let package = Package(
         .executable(name: "LatticeMain", targets: ["LatticeMain"])
     ],
     dependencies: [
-        .package(path: "../LatticeCpp"),
+        .package(path: "../latticecore"),
         .package(url: "https://github.com/apple/swift-syntax.git", branch: "main"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -39,8 +39,8 @@ let package = Package(
         .target(
             name: "Lattice",
             dependencies: ["LatticeMacros",
-                .product(name: "LatticeSwiftCppBridge", package: "LatticeCpp"),
-                .product(name: "LatticeSwiftModule", package: "LatticeCpp"),
+                .product(name: "LatticeSwiftCppBridge", package: "latticecore"),
+                .product(name: "LatticeSwiftModule", package: "latticecore"),
                 .product(name: "Collections", package: "swift-collections")],
             swiftSettings: [.interoperabilityMode(.Cxx)]),
         .testTarget(

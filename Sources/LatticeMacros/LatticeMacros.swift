@@ -581,7 +581,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             public var _objectWillChange: ObservableObjectPublisher = .init()
             
             public var _dynamicObject: CxxDynamicObjectRef = {
-                var obj = CxxDynamicObjectRef.wrap(_defaultCxxLatticeObject(\(name.trimmed).self).make_shared())!
+                var obj = CxxDynamicObjectRef.wrap(_defaultCxxLatticeObject(\(name.trimmed).self))!
                 \(raw: allowedMembers.filter { $0.assignment != nil }.map { "\($0.type).setField(on: &obj, named: \"\($0.mappedName ?? $0.name)\", \($0.assignment ?? ".defaultValue"))" }.joined(separator: "\n\t\t"))
                 return obj
             }()
