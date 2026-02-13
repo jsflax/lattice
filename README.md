@@ -15,7 +15,8 @@ A modern, type-safe Swift ORM framework built on SQLite with real-time synchroni
 - 🧩 **Macros** - Swift macros for automatic model code generation
 - 🔀 **Polymorphic Queries** - Query across multiple model types via shared protocols (VirtualModel)
 - 🔗 **Database Attachment** - Attach and query across multiple SQLite databases
-- 🧮 **Vector Search** - Built-in ANN similarity search with sqlite-vec integration
+- 🧮 **Vector Search** - Built-in ANN similarity search with sqlite-vec (L2, Cosine, L1 distances)
+- 🌍 **Geospatial Queries** - R*Tree spatial indexing with bounding box and proximity search
 
 ## Installation
 
@@ -292,33 +293,69 @@ let frenchPOIs = mainLattice.objects(POI.self).where {
 
 ### Vector Search
 
-Perform similarity search on vector embeddings:
+Perform ANN (Approximate Nearest Neighbor) similarity search powered by [sqlite-vec](https://github.com/asg017/sqlite-vec). Each `Vector` property automatically gets a dedicated vec0 virtual table with triggers to keep it in sync.
 
 ```swift
 @Model class Document {
     var title: String
-    var content: String
-    var embedding: FloatVector  // 512-dimensional embedding
+    var category: String
+    var embedding: FloatVector  // Vector<Float>, stored as BLOB + vec0 index
 }
 
-// Find similar documents
-let queryEmbedding: FloatVector = generateEmbedding("search query")
+// Find the 10 most similar documents (cosine distance)
+let query: FloatVector = generateEmbedding("search query")
 
 let similar = lattice.objects(Document.self)
-    .nearest(to: queryEmbedding, on: \.embedding, limit: 10)
+    .nearest(to: query, on: \.embedding, limit: 10, distance: .cosine)
 
 for match in similar {
     print("\(match.object.title) - distance: \(match.distance)")
 }
 
-// Combine with filtering
+// Combine vector search with SQL filtering
 let filtered = lattice.objects(Document.self)
     .where { $0.category == "science" }
-    .nearest(to: queryEmbedding, on: \.embedding, limit: 10)
+    .nearest(to: query, on: \.embedding, limit: 10, distance: .l2)
 
-// Vector search across polymorphic types
+// Vector search across polymorphic types (federated across tables)
 let similarPOIs = lattice.objects(POI.self)
-    .nearest(to: locationEmbedding, on: \.embedding, limit: 10)
+    .nearest(to: locationEmbedding, on: \.embedding, limit: 10, distance: .cosine)
+```
+
+Supported distance metrics: `.l2` (Euclidean), `.cosine`, `.l1` (Manhattan).
+
+### Geospatial Queries
+
+Properties conforming to `GeoboundsProperty` (like `MKCoordinateRegion` and `CLLocationCoordinate2D`) are automatically indexed with an R\*Tree for efficient spatial queries.
+
+```swift
+import MapKit
+
+@Model class Place {
+    var name: String
+    var category: String
+    var location: CLLocationCoordinate2D
+    var region: MKCoordinateRegion
+}
+
+// Find places within a bounding box (uses R*Tree index)
+let sfPlaces = lattice.objects(Place.self)
+    .withinBounds(\.location, minLat: 37.7, maxLat: 37.8, minLon: -122.5, maxLon: -122.4)
+
+// Combine with filters
+let sfCafes = lattice.objects(Place.self)
+    .where { $0.category == "cafe" }
+    .withinBounds(\.location, minLat: 37.7, maxLat: 37.8, minLon: -122.5, maxLon: -122.4)
+
+// Proximity search — find nearest places within a radius, sorted by distance
+let nearby = lattice.objects(Place.self)
+    .nearest(to: (latitude: 37.7749, longitude: -122.4194),
+             on: \.location, maxDistance: 5, unit: .kilometers,
+             limit: 20, sortedByDistance: true)
+
+for match in nearby {
+    print("\(match.object.name) — \(match.distance) km away")
+}
 ```
 
 ### Bulk Operations
