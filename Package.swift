@@ -39,8 +39,8 @@ let package = Package(
         .target(
             name: "Lattice",
             dependencies: ["LatticeMacros",
-                .product(name: "LatticeSwiftCppBridge", package: "LatticeCpp"),
-                .product(name: "LatticeSwiftModule", package: "LatticeCpp"),
+                .product(name: "LatticeSwiftCppBridge", package: "LatticeCore"),
+                .product(name: "LatticeSwiftModule", package: "LatticeCore"),
                 .product(name: "Collections", package: "swift-collections")],
             swiftSettings: [.interoperabilityMode(.Cxx)]),
         .testTarget(
