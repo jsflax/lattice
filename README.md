@@ -6,7 +6,7 @@ A modern, type-safe Swift ORM framework built on SQLite with real-time synchroni
 
 - 🎯 **Type-Safe Queries** - Compile-time query validation using Swift's type system
 - 🔄 **Real-Time Sync** - WebSocket-based synchronization across devices
-- 📱 **SwiftUI Integration** - Native reactive data binding with `@Query` property wrapper
+- 📱 **SwiftUI Integration** - Native reactive data binding with `@LatticeQuery` property wrapper
 - 🎭 **Actor Isolation** - Built-in Swift concurrency support with actor-based isolation
 - 🔗 **Relationships** - One-to-one, one-to-many, and inverse relationships
 - 📦 **Embedded Models** - Store complex types as JSON within models
@@ -25,7 +25,7 @@ Add Lattice to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/yourusername/Lattice.git", from: "1.0.0")
+    .package(url: "https://github.com/jsflax/lattice.git", branch: "main")
 ]
 ```
 
@@ -147,9 +147,7 @@ struct Address: EmbeddedModel {
 ```swift
 @Model class Parent {
     var name: String
-
-    @Relation(link: \Child.parent)
-    var children: Results<Child>
+    var children: List<Child>
 }
 
 @Model class Child {
@@ -178,10 +176,11 @@ import SwiftUI
 import Lattice
 
 struct PersonListView: View {
-    @Query(
+    @LatticeQuery(
         predicate: { $0.age >= 18 },
-        sortBy: [.init(\.name, order: .forward)]
-    ) var adults: Results<Person>
+        sort: \.name,
+        order: .forward
+    ) var adults: TableResults<Person>
 
     var body: some View {
         List(adults) { person in
@@ -210,13 +209,13 @@ lattice.transaction {
 ### Thread Safety
 
 ```swift
-// Create thread-safe reference
-let reference = person.threadSafeReference()
+// Create a sendable reference
+let reference = person.sendableReference
 
 // Pass to another thread/actor
 Task.detached {
-    let threadSafePerson = reference.resolve(on: lattice)
-    threadSafePerson?.name = "Updated Name"
+    let resolved = reference.resolve(on: lattice)
+    resolved?.name = "Updated Name"
 }
 ```
 
@@ -366,7 +365,7 @@ Lattice supports a rich query syntax:
 ### Collection Operations
 ```swift
 .where { $0.tags.contains("swift") }
-.where { $0.age.in(20...30) }
+.where { $0.age.contains(20...30) }
 ```
 
 ### Embedded Properties
@@ -389,14 +388,14 @@ let config = Lattice.Configuration(
 1. **Use Transactions** - Wrap multiple operations in `transaction {}` for better performance
 2. **Batch Inserts** - Use `add(contentsOf:)` for bulk operations
 3. **Indexes** - Use `@Unique()` macro to create indexes for frequently queried fields
-4. **Limit Results** - Use `.limit()` when you don't need all results
+4. **Limit Results** - Use `.snapshot(limit:)` when you don't need all results
 5. **Sort in Database** - Use `.sortedBy()` instead of sorting in Swift
 
 ## Requirements
 
-- Swift 5.9+
+- Swift 6.2+
 - iOS 17.0+ / macOS 14.0+
-- Xcode 15.0+
+- Xcode 16.0+
 
 ## License
 
