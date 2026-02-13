@@ -3,6 +3,7 @@ import SQLite3
 #if canImport(Combine)
 @_exported import Combine
 #endif
+@_exported import LatticeSwiftCppBridge
 import LatticeSwiftCppBridge
 import LatticeSwiftModule
 import os.lock
@@ -100,6 +101,7 @@ public typealias CxxManagedInt = lattice.ManagedInt
 public typealias CxxDynamicObject = lattice.dynamic_object
 public typealias CxxDynamicObjectRef = lattice.dynamic_object_ref
 
+
 public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, CxxManaged, LatticeIsolated, LinkListable {
     init(isolation: isolated (any Actor)?)
 //    var lattice: Lattice? { get set }
@@ -115,14 +117,14 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     static func _nameForKeyPath(_ keyPath: AnyKeyPath) -> String
     static var constraints: [Constraint] { get }
     var _objectWillChange: Combine.ObservableObjectPublisher { get }
-    var _dynamicObject: CxxDynamicObjectRef { get set }
+    var _dynamicObject: ModelStorage { get set }
 }
 
 extension Model {
     package init(isolation: isolated (any Actor)? = #isolation,
                  dynamicObject: CxxDynamicObjectRef) {
         self.init(isolation: isolation)
-        self._dynamicObject = dynamicObject
+        self._dynamicObject._ref = dynamicObject
         // Register for cross-instance observation if this object has a primaryKey
         if self.primaryKey != nil {
             ModelInstanceRegistry.shared.register(self, tableName: Self.entityName)
@@ -132,11 +134,11 @@ extension Model {
     public init(_ refType: CxxDynamicObjectRef) {
         self.init(dynamicObject: refType)
     }
-    public static func getLinkListField(from object: inout CxxDynamicObjectRef, named name: String) -> lattice.link_list_ref {
-        object.getLinkList(named: std.string(name))
+    public static func _makeLinkList(from storage: inout ModelStorage, named name: String) -> ModelLinkListRef<Self> {
+        ModelLinkListRef(_ref: storage._ref.getLinkList(named: std.string(name)))
     }
     
-    public var asRefType: CxxDynamicObjectRef { self._dynamicObject }
+    public var asRefType: CxxDynamicObjectRef { self._dynamicObject._ref }
     
     public static var defaultValue: Self {
         .init(isolation: #isolation)
@@ -145,7 +147,7 @@ extension Model {
     public static var anyPropertyKind: AnyProperty.Kind { .int }
 
     public var lattice: Lattice? {
-        _dynamicObject.lattice.map { Lattice.init(ref: $0) }
+        _dynamicObject._ref.lattice.map { Lattice.init(ref: $0) }
     }
 
     /// Called after a property mutation to notify other instances representing the same row
@@ -164,14 +166,14 @@ extension Model {
         ModelInstanceRegistry.shared.deregister(self, tableName: Self.entityName)
     }
 
-    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> Self {
+    public static func getField(from storage: inout ModelStorage, named name: String) -> Self {
         let model = Self(isolation: #isolation)
-        model._dynamicObject = object.getObject(named: std.string(name))
+        model._dynamicObject._ref = storage._ref.getObject(named: std.string(name))
         return model
     }
-    
-    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: Self) {
-        object.setObject(named: std.string(name), value._dynamicObject)
+
+    public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
+        storage._ref.setObject(named: std.string(name), value._dynamicObject._ref)
     }
 
     public typealias ObservableObjectPublisher = AnyPublisher<Void, Never>
@@ -266,6 +268,21 @@ extension Model {
         return schema
     }
     
+    // Default CxxManaged stubs for Model types (so macros don't need to generate them)
+    public typealias CxxManagedSpecialization = CxxManagedModel
+
+    public static func fromCxxValue(_ value: CxxManagedModel.SwiftType) -> Self {
+        fatalError()
+    }
+
+    public static func getManaged(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedModel {
+        fatalError()
+    }
+
+    public static func getManagedOptional(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedModel.OptionalType {
+        object.get_managed_field(name)
+    }
+
     public static var defaultCxxLatticeObject: CxxDynamicObject {
         CxxDynamicObject(CxxLatticeObject(std.string(entityName), cxxPropertyDescriptor()))
     }
@@ -277,7 +294,7 @@ public func _defaultCxxLatticeObject<M>(_ model: M.Type) -> CxxDynamicObject whe
 
 extension Model {
     public var debugDescription: String {
-        String(_dynamicObject.debug_description())
+        String(_dynamicObject._ref.debug_description())
     }
 }
 

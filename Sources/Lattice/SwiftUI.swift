@@ -7,7 +7,7 @@ import Combine
 @propertyWrapper public struct LatticeQuery<T: Model>: @preconcurrency DynamicProperty {
 
     private class Wrapper: ObservableObject, @unchecked Sendable {
-        @MainActor var wrappedValue: any Results<T>
+        @MainActor var wrappedValue: TableResults<T>
         let predicate: Predicate<T>
         var lastFetched = Date.now
         var lattice: Lattice?
@@ -69,7 +69,7 @@ import Combine
     
     @Environment(\.lattice)
     var lattice: Lattice
-    @MainActor public var wrappedValue: Results<T> {
+    @MainActor public var wrappedValue: TableResults<T> {
         wrapper.wrappedValue
     }
     

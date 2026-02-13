@@ -535,11 +535,12 @@ class LatticeTests: BaseTest {
         let person = Person()
         person.name = "Test"
         var checkedContinuation: CheckedContinuation<Void, Never>?
+        let expectedName = Unsafe<String>()
         let block = { (change: CollectionChange) -> Void in
             switch change {
             case .insert(let id):
                 let found = lattice.object(Person.self, primaryKey: id)
-                #expect(found?.name == person.name)
+                #expect(found?.name == expectedName.value)
                 insertHitCount += 1
             case .delete(_):
                 deleteHitCount += 1
@@ -547,6 +548,7 @@ class LatticeTests: BaseTest {
             checkedContinuation?.resume()
         }
         var cancellable: AnyCancellable?
+        expectedName.value = person.name
         await withCheckedContinuation { continuation in
             checkedContinuation = continuation
             cancellable = lattice.objects(Person.self).observe(block)
@@ -567,25 +569,27 @@ class LatticeTests: BaseTest {
         cancellable?.cancel()
         #expect(insertHitCount == 1)
         #expect(deleteHitCount == 1)
-        person.age = 100
-        person.name = "Test_Name"
+        let person2 = Person()
+        person2.age = 100
+        person2.name = "Test_Name"
+        expectedName.value = person2.name
         var cancellable2: AnyCancellable?
         await withCheckedContinuation { continuation in
             checkedContinuation = continuation
             cancellable = lattice.objects(Person.self)
-                .where({ [name = person.name] in
+                .where({ [name = person2.name] in
                     $0.name == name
                 })
                 .observe(block)
             cancellable2 = lattice.objects(Person.self)
-                .where({ [name = person.name] in
+                .where({ [name = person2.name] in
                     $0.name != name
                 })
                 .observe { change in
                     insertHitCount += 1
                 }
             autoreleasepool {
-                lattice.add(person)
+                lattice.add(person2)
             }
         }
         cancellable?.cancel()
@@ -596,19 +600,19 @@ class LatticeTests: BaseTest {
         await withCheckedContinuation { continuation in
             checkedContinuation = continuation
             cancellable = lattice.objects(Person.self)
-                .where({ [name = person.name] in
+                .where({ [name = person2.name] in
                     $0.name == name
                 })
                 .observe(block)
             cancellable2 = lattice.objects(Person.self)
-                .where({ [name = person.name] in
+                .where({ [name = person2.name] in
                     $0.name != name
                 })
                 .observe { change in
                     deleteHitCount += 1
                 }
             _ = autoreleasepool {
-                lattice.delete(person)
+                lattice.delete(person2)
             }
         }
         cancellable?.cancel()
@@ -899,7 +903,63 @@ class LatticeTests: BaseTest {
         
         #expect(dog.puppies.count == 0)
     }
-    
+
+    @Test func test_LinkList_ReadFromDatabase() async throws {
+        let lattice = try testLattice(path: path, Person.self, Dog.self)
+        let dog = Dog()
+        dog.name = "rex"
+        let fido = Dog()
+        fido.name = "fido"
+        let spot = Dog()
+        spot.name = "spot"
+        let bella = Dog()
+        bella.name = "bella"
+        dog.puppies.append(fido)
+        dog.puppies.append(spot)
+        dog.puppies.append(bella)
+        lattice.add(dog)
+
+        let fetched = lattice.objects(Dog.self).where { $0.name == "rex" }.first!
+        #expect(fetched.puppies.count == 3)
+
+        var names: [String] = []
+        for puppy in fetched.puppies {
+            names.append(puppy.name)
+        }
+        #expect(names == ["fido", "spot", "bella"])
+    }
+
+
+    @Test func test_AppendToUnmanagedNestedList() throws {
+        let lattice = try testLattice(PersonWithDogs.self)
+
+        let person = PersonWithDogs()
+        person.name = "Owner"
+        lattice.add(person)
+
+        // Create unmanaged dog with nested list
+        let dog = Dog()
+        dog.name = "Rex"
+
+        // Populate nested list on unmanaged object in a loop
+        // (child goes out of scope each iteration — must not leave dangling pointers)
+        for i in 0..<3 {
+            let puppy = Dog()
+            puppy.name = "Puppy\(i)"
+            dog.puppies.append(puppy)
+        }
+
+        // Add to managed parent's list (triggers swift_lattice::add on dog,
+        // which iterates the unmanaged list — dangling pointers would crash here)
+        person.dogs.append(dog)
+
+        // Verify
+        let fetched = lattice.objects(PersonWithDogs.self).first!
+        #expect(fetched.dogs.count == 1)
+        #expect(fetched.dogs[0].name == "Rex")
+        #expect(fetched.dogs[0].puppies.count == 3)
+    }
+
     @Test func test_Relation() async throws {
         let lattice = try testLattice(path: path, Parent.self, Child.self)
         let parent = Parent()
@@ -1393,6 +1453,41 @@ class LatticeTests: BaseTest {
             return #expect(Bool(false), "Should have been a museum")
         }
         #expect(museum == hydratedMuseum)
+    }
+
+    @Test func test_AttachSameModel() throws {
+        var lattice1 = try testLattice(Person.self)
+        let lattice2 = try testLattice(Person.self)
+
+        let alice = Person()
+        alice.name = "Alice"
+        alice.age = 30
+        lattice1.add(alice)
+
+        let bob = Person()
+        bob.name = "Bob"
+        bob.age = 25
+        lattice2.add(bob)
+
+        // Before attach: verify each DB has the correct data
+        #expect(lattice1.objects(Person.self).count == 1)
+        #expect(lattice1.objects(Person.self).first?.name == "Alice")
+        #expect(lattice2.objects(Person.self).count == 1)
+        #expect(lattice2.objects(Person.self).first?.name == "Bob")
+
+        lattice1.attach(lattice: lattice2)
+
+        // After attach: lattice1 should see both Alice and Bob
+        let results = lattice1.objects(Person.self)
+        #expect(results.count == 2)
+
+        let names = results.snapshot().map(\.name).sorted()
+        #expect(names == ["Alice", "Bob"])
+
+        // Filtering should work across both
+        let filtered = results.where { $0.age > 27 }
+        #expect(filtered.count == 1)
+        #expect(filtered.first?.name == "Alice")
     }
 
     // MARK: - Group By Tests

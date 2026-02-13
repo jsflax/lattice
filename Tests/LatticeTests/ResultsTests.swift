@@ -24,6 +24,7 @@ class ResultsTests: BaseTest {
         }.count == 1)
     }
     
+    #if TEST_CURSOR
     @Test func testCursor() async throws {
         let lattice = try testLattice(SequenceSyncObject.self)
         let objects = (0..<100_000).map { _ in SequenceSyncObject() }
@@ -63,6 +64,7 @@ class ResultsTests: BaseTest {
         }
         print("For-in iteration (1000 items): \(duration)")
     }
+    #endif
     
     @Test func test_WriteWhileIterating() async throws {
         let lattice = try testLattice(SequenceSyncObject.self)

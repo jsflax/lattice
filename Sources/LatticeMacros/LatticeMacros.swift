@@ -123,8 +123,6 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
                 }
             } else if memberView.attributeKey == "Property" {
                 if let arguments = attribute.arguments?.as(LabeledExprListSyntax.self) {
-                    let constraint = Constraint(columns: [memberView.name], allowsUpsert: false)
-                    
                     arguments.forEach {
                         if $0.label?.text == "name" {
                             if let strLit = $0.expression.as(StringLiteralExprSyntax.self) {
@@ -132,7 +130,6 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
                             }
                         }
                     }
-                    memberView.constraint = constraint
                 }
             }
         }
@@ -433,6 +430,37 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                 }
             }
         }
+
+        // Check for SQL reserved keywords that fail in CREATE TABLE column definitions.
+        // SQLite is lenient with most keywords as column names, but these cause parse errors.
+        // Only checked when no explicit @Property(name:) mapping is provided.
+        let hasMappedProperty = variableDecl.attributes.contains(where: { attr in
+            guard let simpleAttr = attr.as(AttributeSyntax.self),
+                  simpleAttr.attributeName.description.trimmingCharacters(in: .whitespacesAndNewlines) == "Property",
+                  let args = simpleAttr.arguments?.as(LabeledExprListSyntax.self),
+                  args.contains(where: { $0.label?.text == "name" }) else { return false }
+            return true
+        })
+        if !hasMappedProperty, let propertyName {
+            // Keywords that SQLite rejects as unquoted column names in CREATE TABLE
+            let sqlReserved: Set<String> = [
+                "add", "alter", "and", "as", "between", "case", "check", "collate",
+                "column", "constraint", "create", "default", "delete", "distinct",
+                "drop", "else", "end", "escape", "except", "exists", "for", "foreign",
+                "from", "group", "having", "if", "in", "index", "indexed", "insert",
+                "intersect", "into", "is", "join", "limit", "not", "null", "on",
+                "or", "order", "primary", "references", "select", "set", "table",
+                "then", "to", "union", "unique", "update", "using", "values", "when",
+                "where", "with",
+            ]
+            if sqlReserved.contains(propertyName.lowercased()) {
+                context.diagnose(Diagnostic(
+                    node: variableDecl,
+                    message: MacroError.message("Property name '\(propertyName)' is a SQL reserved keyword and cannot be used as a column name. Add @Property(name: \"<columnName>\") to map it to a different column name.")
+                ))
+                return []
+            }
+        }
         guard let propertyName else {
             context.diagnose(Diagnostic(
                 node: variableDecl,
@@ -559,9 +587,9 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             .enumerated()
             .map { idx, member in
                 if let assignment = member.assignment {
-                    "_\(member.name)Accessor = .init(columnId: \(idx + 1), name: \"\(member.name)\", unmanagedValue: \(assignment))"
+                    "_\(member.name)Accessor = .init(columnId: \(idx + 1), name: \"\(member.mappedName ?? member.name)\", unmanagedValue: \(assignment))"
                 } else {
-                    "_\(member.name)Accessor = .init(columnId: \(idx + 1), name: \"\(member.name)\")"
+                    "_\(member.name)Accessor = .init(columnId: \(idx + 1), name: \"\(member.mappedName ?? member.name)\")"
                 }
             }
             .joined(separator: "\n")
@@ -580,8 +608,8 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             private var isolation: (any Actor)?
             public var _objectWillChange: ObservableObjectPublisher = .init()
             
-            public var _dynamicObject: CxxDynamicObjectRef = {
-                var obj = CxxDynamicObjectRef.wrap(_defaultCxxLatticeObject(\(name.trimmed).self))!
+            public var _dynamicObject: ModelStorage = {
+                var obj = ModelStorage._default(\(name.trimmed).self)
                 \(raw: allowedMembers.filter { $0.assignment != nil }.map { "\($0.type).setField(on: &obj, named: \"\($0.mappedName ?? $0.name)\", \($0.assignment ?? ".defaultValue"))" }.joined(separator: "\n\t\t"))
                 return obj
             }()
@@ -623,7 +651,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                 switch keyPath {
                     \(raw: allowedMembers.map {
                         """
-                        case "\($0.name)": _$observationRegistrar.willSet(self, keyPath: \\\(name).\($0.name))
+                        case "\($0.mappedName ?? $0.name)": _$observationRegistrar.willSet(self, keyPath: \\\(name).\($0.name))
                         """
                     }.joined(separator: "\n\t\t"))
                     default: print("❌ Could not send key path \\(keyPath) to observer"); break
@@ -633,7 +661,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                 switch keyPath {
                     \(raw: allowedMembers.map {
                         """
-                        case \\\(name).\($0.name): "\($0.name)"
+                        case \\\(name).\($0.name): "\($0.mappedName ?? $0.name)"
                         """
                     }.joined(separator: "\n\t\t"))
                     case \\\(name).primaryKey: "id"
@@ -734,7 +762,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             .filter { $0.name != "globalId" }
             .map { member in
                 let qualifiedType = qualifyTypeReferences(propertyType: member.type, fullTypePath: fullTypePath, simpleTypeName: typeName)
-                return "(\"\(member.name)\", \(qualifiedType).self)"
+                return "(\"\(member.mappedName ?? member.name)\", \(qualifiedType).self)"
             }
         let modelProperties = (["(\"globalId\", UUID.self)"] + userProperties).joined(separator: ", ")
         let accessors = members.filter { !$0.isComputed }
@@ -763,8 +791,6 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                     inheritanceClause: .init(inheritedTypes: .init(arrayLiteral: InheritedTypeSyntax(type: TypeSyntax("Lattice.Model")))),
                     memberBlock: """
                     {
-                        public typealias CxxManagedSpecialization = CxxManagedModel
-                    
                         public static var constraints: [Constraint] {
                             [\(raw: constraints.joined(separator: ","))]
                         }
@@ -774,18 +800,6 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
 
                         public static var properties: [(String, any LatticeSchemaProperty.Type)] {
                             [\(raw: modelProperties)]
-                        }
-
-                        public static func fromCxxValue(_ value: CxxManagedSpecialization.SwiftType) -> Self {
-                            fatalError()
-                        }
-                    
-                        public static func getManaged(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization {
-                            fatalError()
-                            // object.get_managed_field(name)
-                        }
-                        public static func getManagedOptional(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization.OptionalType {
-                            object.get_managed_field(name)
                         }
                     }
                     """
@@ -802,19 +816,6 @@ class EnumMacro: ExtensionMacro {
                 inheritanceClause: .init(inheritedTypes: .init(arrayLiteral: InheritedTypeSyntax(type: TypeSyntax("LatticeEnum")))),
                 memberBlock: """
                 {
-                    public typealias CxxManagedSpecialization = RawValue.CxxManagedSpecialization
-
-                    public static func fromCxxValue(_ value: CxxManagedSpecialization.SwiftType) -> Self {
-                        fatalError()
-                    }
-                
-                    public static func getManaged(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization {
-                        object.get_managed_field(name)
-                    }
-                
-                    public static func getManagedOptional(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization.OptionalType {
-                        object.get_managed_field(name)
-                    }
                 }
                 """
             )
@@ -824,23 +825,7 @@ class EnumMacro: ExtensionMacro {
 
 class EmbeddedModelMacro: MemberMacro {
     static func expansion(of node: AttributeSyntax, providingMembersOf declaration: some DeclGroupSyntax, in context: some MacroExpansionContext) throws -> [DeclSyntax] {
-        [
-            """
-            public typealias CxxManagedSpecialization = RawValue.CxxManagedSpecialization
-
-            public static func fromCxxValue(_ value: CxxManagedSpecialization.SwiftType) -> Self {
-                fatalError()
-            }
-            
-            public static func getManaged(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization {
-                object.get_managed_field(name)
-            }
-            
-            public static func getManagedOptional(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedSpecialization.OptionalType {
-                object.get_managed_field(name)
-            }
-            """
-        ]
+        []
     }
 }
 

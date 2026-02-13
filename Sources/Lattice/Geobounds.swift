@@ -5,11 +5,55 @@ public protocol GeoboundsProperty: LatticeSchemaProperty {
     static func _trace<V>(keyPath: KeyPath<Self, V>) -> String
 }
 
-extension GeoboundsProperty where Self: LinkListable {
-    public static func getLinkListField(from object: inout CxxDynamicObjectRef, named name: String) -> lattice.geo_bounds_list_ref {
-        object.getGeoBoundsList(named: std.string(name))
+// MARK: - GeoBoundsLinkListRef (wraps C++ geo_bounds_list_ref)
+
+public struct GeoBoundsLinkListRef<T>: @unchecked Sendable, LinkListRef {
+    var _ref: lattice.geo_bounds_list_ref
+    private let _fromRef: (lattice.geo_bounds_ref) -> T
+    private let _toRef: (T) -> lattice.geo_bounds_ref
+
+    init(_ref: lattice.geo_bounds_list_ref,
+         fromRef: @escaping (lattice.geo_bounds_ref) -> T,
+         toRef: @escaping (T) -> lattice.geo_bounds_ref) {
+        self._ref = _ref
+        self._fromRef = fromRef
+        self._toRef = toRef
+    }
+
+    public static func new() -> Self {
+        fatalError("Use _makeLinkList instead")
+    }
+
+    public func get(at position: Int) -> T {
+        _fromRef(_ref[position].objectRef!)
+    }
+
+    public mutating func set(at position: Int, _ element: T) {
+        var proxy = _ref[position]
+        proxy.assign(_toRef(element))
+    }
+
+    public func count() -> Int { _ref.size() }
+
+    public mutating func append(_ element: T) {
+        _ref.pushBack(_toRef(element))
+    }
+
+    public func remove(at position: Int) { _ref.erase(position) }
+
+    public func removeAll() { _ref.clear() }
+
+    public func indexOf(_ element: T) -> Int? {
+        let opt = _ref.findIndex(_toRef(element))
+        return opt.hasValue ? Int(opt.pointee) : nil
+    }
+
+    public func indicesWhere(_ query: String) -> [Int] {
+        let results = _ref.findWhere(std.string(query))
+        return (0..<results.count).map { Int(results[$0]) }
     }
 }
+
 /// Unit for geographic distance measurements
 public enum DistanceUnit: Sendable {
     case meters
@@ -59,31 +103,39 @@ extension MKCoordinateRegion: CxxManaged, GeoboundsProperty, LinkListable {
     public static var anyPropertyKind: AnyProperty.Kind {
         .int
     }
-    
+
     public static var defaultValue: Self {
         .init()
     }
-    
+
+    public static func _makeLinkList(from storage: inout ModelStorage, named name: String) -> GeoBoundsLinkListRef<MKCoordinateRegion> {
+        GeoBoundsLinkListRef(
+            _ref: storage._ref.getGeoBoundsList(named: std.string(name)),
+            fromRef: { MKCoordinateRegion($0) },
+            toRef: { $0.asRefType }
+        )
+    }
+
     public var asRefType: lattice.geo_bounds_ref {
         let bbox = boundingBox
         return .init(.init(bbox.minLat, bbox.maxLat, bbox.minLon, bbox.maxLon))
     }
-    
+
     public init(_ bounds: lattice.geo_bounds_ref) {
         let bounds = bounds.shared().pointee
         let center = CLLocationCoordinate2D(latitude: bounds.center_lat(), longitude: bounds.center_lon())
         let span = MKCoordinateSpan(latitudeDelta: bounds.lat_span(), longitudeDelta: bounds.lon_span())
         self.init(center: center, span: span)
     }
-    
-    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> MKCoordinateRegion {
-        let bounds = object.getGeoBounds(named: std.string(name))
+
+    public static func getField(from storage: inout ModelStorage, named name: String) -> MKCoordinateRegion {
+        let bounds = storage._ref.getGeoBounds(named: std.string(name))
         let center = CLLocationCoordinate2D(latitude: bounds.center_lat(), longitude: bounds.center_lon())
         let span = MKCoordinateSpan(latitudeDelta: bounds.lat_span(), longitudeDelta: bounds.lon_span())
         return .init(center: center, span: span)
     }
-    
-    public static func setField(on object: inout CxxDynamicObjectRef,
+
+    public static func setField(on storage: inout ModelStorage,
                                 named name: String,
                                 _ value: MKCoordinateRegion) {
         let bbox: (minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) =
@@ -91,7 +143,7 @@ extension MKCoordinateRegion: CxxManaged, GeoboundsProperty, LinkListable {
          maxLat: value.center.latitude + value.span.latitudeDelta / 2,
          minLon: value.center.longitude - value.span.longitudeDelta / 2,
          maxLon: value.center.longitude + value.span.longitudeDelta / 2)
-        object.setGeoBounds(named: std.string(name), minLat: bbox.minLat, maxLat: bbox.maxLat, minLon: bbox.minLon, maxLon: bbox.maxLon)
+        storage._ref.setGeoBounds(named: std.string(name), minLat: bbox.minLat, maxLat: bbox.maxLat, minLon: bbox.minLon, maxLon: bbox.maxLon)
     }
     
     public var boundingBox: (minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) {
@@ -118,15 +170,23 @@ public struct CLLocationCoordinate2DCompat: EmbeddedModel {
 }
 
 extension CLLocationCoordinate2D: CxxManaged, GeoboundsProperty, LinkListable {
+    public static func _makeLinkList(from storage: inout ModelStorage, named name: String) -> GeoBoundsLinkListRef<CLLocationCoordinate2D> {
+        GeoBoundsLinkListRef(
+            _ref: storage._ref.getGeoBoundsList(named: std.string(name)),
+            fromRef: { CLLocationCoordinate2D($0) },
+            toRef: { $0.asRefType }
+        )
+    }
+
     public var asRefType: lattice.geo_bounds_ref {
         .init(.init(latitude, latitude, longitude, longitude))
     }
-    
+
     public init(_ refType: lattice.geo_bounds_ref) {
         let bounds = refType.shared().pointee
         self.init(latitude: bounds.center_lat(), longitude: bounds.center_lon())
     }
-    
+
     public static var anyPropertyKind: AnyProperty.Kind {
         .int
     }
@@ -143,14 +203,14 @@ extension CLLocationCoordinate2D: CxxManaged, GeoboundsProperty, LinkListable {
         }
     }
     
-    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> CLLocationCoordinate2D {
-        let bounds = object.getGeoBounds(named: std.string(name))
+    public static func getField(from storage: inout ModelStorage, named name: String) -> CLLocationCoordinate2D {
+        let bounds = storage._ref.getGeoBounds(named: std.string(name))
         return CLLocationCoordinate2D(latitude: bounds.center_lat(), longitude: bounds.center_lon())
     }
-    
-    public static func setField(on object: inout CxxDynamicObjectRef,
+
+    public static func setField(on storage: inout ModelStorage,
                                 named name: String, _ value: CLLocationCoordinate2D) {
-        object.setGeoBounds(named: std.string(name), minLat: value.latitude,
+        storage._ref.setGeoBounds(named: std.string(name), minLat: value.latitude,
                             maxLat: value.latitude, minLon: value.longitude,
                             maxLon: value.longitude)
     }

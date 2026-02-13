@@ -15,7 +15,7 @@ let package = Package(
         .executable(name: "LatticeMain", targets: ["LatticeMain"])
     ],
     dependencies: [
-        .package(path: "../latticecore"),
+        .package(path: "../latticecpp"),
         .package(url: "https://github.com/apple/swift-syntax.git", branch: "main"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -39,8 +39,8 @@ let package = Package(
         .target(
             name: "Lattice",
             dependencies: ["LatticeMacros",
-                .product(name: "LatticeSwiftCppBridge", package: "latticecore"),
-                .product(name: "LatticeSwiftModule", package: "latticecore"),
+                .product(name: "LatticeSwiftCppBridge", package: "LatticeCpp"),
+                .product(name: "LatticeSwiftModule", package: "LatticeCpp"),
                 .product(name: "Collections", package: "swift-collections")],
             swiftSettings: [.interoperabilityMode(.Cxx)]),
         .testTarget(

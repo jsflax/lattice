@@ -157,11 +157,11 @@ extension Vector: CxxManaged where Element: VectorElement {
         return Vector(fromData: Data(blob))
     }
     
-    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> Vector<Element> {
-        Vector(fromData: Data(object.getData(named: std.string(name))))
+    public static func getField(from storage: inout ModelStorage, named name: String) -> Vector<Element> {
+        Vector(fromData: Data(storage._ref.getData(named: std.string(name))))
     }
-    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: Vector<Element>) {
-        object.setData(named: std.string(name), value.toData().reduce(into: lattice.ByteVector(),
+    public static func setField(on storage: inout ModelStorage, named name: String, _ value: Vector<Element>) {
+        storage._ref.setData(named: std.string(name), value.toData().reduce(into: lattice.ByteVector(),
                                                                       { $0.push_back($1) }))
     }
     

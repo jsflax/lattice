@@ -1,7 +1,8 @@
 import SQLite3
 import os
 import Foundation
-import LatticeSwiftCppBridge
+@_exported import LatticeSwiftCppBridge
+@_exported import LatticeSwiftModule
 
 extension OpaquePointer: @unchecked @retroactive Sendable {}
 
@@ -322,9 +323,10 @@ public struct Lattice {
                     return fn.pointee()
                 }
                 if let isolation = isolation.pointee {
-                    Task { [fn] in
-                        await isolation.invoke { [fn] actor in
-                            fn.pointee()
+                    let function = _UncheckedSendable(fn.pointee)
+                    Task {
+                        await isolation.invoke { actor in
+                            function.value()
                         }
                     }
                 } else {
@@ -411,7 +413,7 @@ public struct Lattice {
                       authorizationToken.map { std.string($0) } ?? std.string(),
                       currentScheduler.scheduler)
             } else {
-                config = .init(std.string(self.fileURL.path()),
+                config = .init(std.string(self.fileURL.path(percentEncoded: false)),
                       self.wssEndpoint.map {
                     std.string($0.absoluteString)
                 } ?? std.string(),
@@ -449,7 +451,7 @@ public struct Lattice {
             // Fallback: look up by path if hash lookup fails
             // This can happen when C++ creates a new impl for the same path
             let refPath = String(ref.path())
-            if let cached = Self.cache.values.first(where: { $0.configuration.fileURL.path() == refPath }) {
+            if let cached = Self.cache.values.first(where: { $0.configuration.fileURL.path(percentEncoded: false) == refPath }) {
                 return cached
             }
             // Debug: print cache state
@@ -457,7 +459,7 @@ public struct Lattice {
             print("  Looking for hash: \(key.implHash), path: \(refPath)")
             print("  Cache has \(Self.cache.count) entries:")
             for (k, v) in Self.cache {
-                print("    hash: \(k.implHash), path: \(v.configuration.fileURL.path())")
+                print("    hash: \(k.implHash), path: \(v.configuration.fileURL.path(percentEncoded: false))")
             }
             preconditionFailure("Lattice not found in cache for ref with hash \(key.implHash), path: \(refPath)")
         }
@@ -691,16 +693,16 @@ public struct Lattice {
         guard object.lattice == nil else {
             fatalError()
         }
-        var copy = object._dynamicObject // Break exclusive access
+        var copy = object._dynamicObject._ref // Break exclusive access
         cxxLattice.add(&copy.shared().pointee)
-        object._dynamicObject = copy
+        object._dynamicObject._ref = copy
     }
     
     public func add<S: Sequence>(contentsOf newElements: S) where S.Element: Model {
         // Bulk insert via C++
         var cxxObjects = lattice.DynamicObjectRefPtrVector()
         for element in newElements {
-            lattice.push_dynamic_object_ref(&cxxObjects, element._dynamicObject)
+            lattice.push_dynamic_object_ref(&cxxObjects, element._dynamicObject._ref)
         }
 
         cxxLattice.add_bulk(&cxxObjects)
@@ -735,7 +737,7 @@ public struct Lattice {
     @discardableResult public func delete<T: Model>(_ object: consuming T) -> Bool {
 //        defer { object._dynamicObject = T.defaultCxxLatticeObject }
 //        var dynamicObject = consume object._dynamicObject
-        return cxxLattice.remove(object._dynamicObject)
+        return cxxLattice.remove(object._dynamicObject._ref)
         
     }
     

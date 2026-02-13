@@ -23,22 +23,22 @@ public protocol LatticeEnum: RawRepresentable, PrimitiveProperty, CxxListManaged
 
 extension LatticeEnum {
     public typealias CxxManagedListType = RawValue.CxxManagedListType
-    
+
     public static func getManagedList(from object: lattice.ManagedModel, name: std.string) -> Self.CxxManagedListType {
         fatalError()
     }
     public static var anyPropertyKind: AnyProperty.Kind { RawValue.anyPropertyKind }
 
-    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> Self {
-        let rawValue = RawValue.getField(from: &object, named: name)
+    public static func getField(from storage: inout ModelStorage, named name: String) -> Self {
+        let rawValue = RawValue.getField(from: &storage, named: name)
         guard let result = Self(rawValue: rawValue) else {
             fatalError("Invalid raw value for \(Self.self): \(rawValue)")
         }
         return result
     }
-    
-    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: Self) {
-        Self.RawValue.setField(on: &object, named: name, value.rawValue)
+
+    public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
+        Self.RawValue.setField(on: &storage, named: name, value.rawValue)
     }
 }
 
@@ -47,18 +47,18 @@ public protocol CustomPersistableProperty<BaseProperty>: CxxManaged where BasePr
 
     init(_ base: BaseProperty)
     var base: BaseProperty { get }
-    
-    static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> Self
-    static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: Self)
+
+    static func getField(from storage: inout ModelStorage, named name: String) -> Self
+    static func setField(on storage: inout ModelStorage, named name: String, _ value: Self)
 }
 
 extension CustomPersistableProperty {
-    
-    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> Self {
-        Self.init(BaseProperty.getField(from: &object, named: name))
+
+    public static func getField(from storage: inout ModelStorage, named name: String) -> Self {
+        Self.init(BaseProperty.getField(from: &storage, named: name))
     }
-    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: Self) {
-        BaseProperty.setField(on: &object, named: name, value.base)
+    public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
+        BaseProperty.setField(on: &storage, named: name, value.base)
     }
 }
 

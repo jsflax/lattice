@@ -196,17 +196,20 @@ public final class MigrationContext: @unchecked Sendable {
 @dynamicMemberLookup
 public final class DynamicObject {
     private var dynamicObject: CxxDynamicObjectRef
-    
+
     internal init(_ dynamicObject: CxxDynamicObjectRef) {
         self.dynamicObject = dynamicObject
     }
-    
+
     public subscript<T>(dynamicMember keyPath: String) -> T where T: CxxManaged {
         get {
-            T.getField(from: &dynamicObject, named: keyPath)
+            var storage = ModelStorage(_ref: dynamicObject)
+            return T.getField(from: &storage, named: keyPath)
         }
         set {
-            T.setField(on: &dynamicObject, named: keyPath, newValue)
+            var storage = ModelStorage(_ref: dynamicObject)
+            T.setField(on: &storage, named: keyPath, newValue)
+            dynamicObject = storage._ref
         }
     }
 }

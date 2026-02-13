@@ -22,9 +22,9 @@ extension ClosedRange: EmbeddedModel, Codable, DefaultInitializable, CxxListMana
         try container.encode(self.lowerBound, forKey: .lowerBound)
     }
     
-    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: Self) {
+    public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
         let jsonStr = String(data: try! JSONEncoder().encode(value), encoding: .utf8)!
-        object.setString(named: std.string(name), std.string(jsonStr))
+        storage._ref.setString(named: std.string(name), std.string(jsonStr))
     }
     
     public static var defaultValue: Self {

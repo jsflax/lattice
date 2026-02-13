@@ -339,4 +339,16 @@ class VectorSearchTests: BaseTest {
         // (has highest X component)
         #expect(filteredNearest[0].object.title == "B3", "B3 should be closest to [1,0,0] in category B")
     }
+
+    @Test func test_NearestOnEmptyTable() async throws {
+        let lattice = try testLattice(Document.self)
+
+        // Query nearest on a table with no data — vec0 table doesn't exist yet.
+        // Should return empty results, not crash.
+        let query = FloatVector([1.0, 0.0, 0.0])
+        let nearest = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 5, distance: .cosine)
+
+        #expect(nearest.isEmpty)
+    }
 }

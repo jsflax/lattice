@@ -18,17 +18,17 @@ extension EmbeddedModel {
         fatalError()
     }
     
-    public static func getField(from object: inout CxxDynamicObjectRef, named name: String) -> Self {
-        let jsonStr = String(object.getString(named: std.string(name)))
+    public static func getField(from storage: inout ModelStorage, named name: String) -> Self {
+        let jsonStr = String(storage._ref.getString(named: std.string(name)))
         if jsonStr.isEmpty {
             fatalError()
         }
         return try! JSONDecoder().decode(Self.self, from: jsonStr.data(using: .utf8)!)
     }
-    
-    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: Self) {
+
+    public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
         let jsonStr = String(data: try! JSONEncoder().encode(value), encoding: .utf8)!
-        object.setString(named: std.string(name), std.string(jsonStr))
+        storage._ref.setString(named: std.string(name), std.string(jsonStr))
     }
 
     public static var defaultValue: Self {
