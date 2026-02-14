@@ -278,4 +278,58 @@ public final class TableResults<Element>: Results where Element: Model {
             groupByColumn: groupByColumn
         )
     }
+
+    // MARK: - Full-Text Search (FTS5)
+
+    /// Search for objects matching a full-text query string.
+    /// Terms are implicitly ANDed (FTS5 default).
+    ///
+    /// For explicit control over query semantics, use the `TextQuery` overload:
+    /// ```swift
+    /// .matching(.anyOf("machine", "learning"), on: \.content)   // OR
+    /// .matching(.phrase("machine learning"), on: \.content)      // exact phrase
+    /// ```
+    public func matching(
+        _ searchText: String,
+        on keyPath: KeyPath<Element, String>,
+        limit: Int = 100
+    ) -> any NearestResults<Element> {
+        let constraint = TextConstraint(keyPath: keyPath, searchText: searchText, limit: limit)
+        return TableNearestResults(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement.map {
+                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            },
+            boundsConstraint: boundsConstraint,
+            proximity: .text(constraint),
+            groupByColumn: groupByColumn
+        )
+    }
+
+    /// Search for objects matching a type-safe full-text query.
+    ///
+    /// ```swift
+    /// .matching(.allOf("machine", "learning"), on: \.content)   // AND
+    /// .matching(.anyOf("machine", "learning"), on: \.content)   // OR
+    /// .matching(.phrase("machine learning"), on: \.content)      // exact phrase
+    /// .matching(.prefix("mach"), on: \.content)                  // prefix
+    /// ```
+    public func matching(
+        _ query: TextQuery,
+        on keyPath: KeyPath<Element, String>,
+        limit: Int = 100
+    ) -> any NearestResults<Element> {
+        let constraint = TextConstraint(keyPath: keyPath, query: query, limit: limit)
+        return TableNearestResults(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement.map {
+                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            },
+            boundsConstraint: boundsConstraint,
+            proximity: .text(constraint),
+            groupByColumn: groupByColumn
+        )
+    }
 }

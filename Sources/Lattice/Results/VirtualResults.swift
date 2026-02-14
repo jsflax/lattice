@@ -290,4 +290,50 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
             groupByColumn: groupByColumn
         )
     }
+
+    // MARK: - Full-Text Search (FTS5)
+
+    /// Search for objects matching a full-text query string.
+    /// Terms are implicitly ANDed (FTS5 default).
+    public func matching(
+        _ searchText: String,
+        on keyPath: KeyPath<Element, String>,
+        limit: Int = 100
+    ) -> any NearestResults<Element> {
+        matching(.raw(searchText), on: keyPath, limit: limit)
+    }
+
+    /// Search for objects matching a type-safe full-text query.
+    ///
+    /// ```swift
+    /// .matching(.allOf("machine", "learning"), on: \.content)   // AND
+    /// .matching(.anyOf("machine", "learning"), on: \.content)   // OR
+    /// .matching(.phrase("machine learning"), on: \.content)      // exact phrase
+    /// ```
+    public func matching(
+        _ query: TextQuery,
+        on keyPath: KeyPath<Element, String>,
+        limit: Int = 100
+    ) -> any NearestResults<Element> {
+        let inst = firstType.init(isolation: #isolation)
+        guard let virtualInst = inst as? Element else {
+            preconditionFailure()
+        }
+        _ = virtualInst[keyPath: keyPath]
+        let propertyName = inst._lastKeyPathUsed ?? "id"
+
+        let constraint = TextConstraint(propertyName: propertyName, query: query, limit: limit)
+
+        return _VirtualNearestResults<repeat each M, Element>(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement.map {
+                RawNearestSortDescriptor(descriptor: .keyPath(nameForKeyPath($0.keyPath!)),
+                                         order: $0.order)
+            },
+            boundsConstraint: boundsConstraint,
+            proximity: .text(constraint),
+            groupByColumn: groupByColumn
+        )
+    }
 }

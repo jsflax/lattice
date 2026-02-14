@@ -116,6 +116,7 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     var _lastKeyPathUsed: String? { get set }
     static func _nameForKeyPath(_ keyPath: AnyKeyPath) -> String
     static var constraints: [Constraint] { get }
+    static var fullTextProperties: Set<String> { get }
     var _objectWillChange: Combine.ObservableObjectPublisher { get }
     var _dynamicObject: ModelStorage { get set }
 }
@@ -145,6 +146,7 @@ extension Model {
     }
     public static var sqlType: String { "BIGINT" }
     public static var anyPropertyKind: AnyProperty.Kind { .int }
+    public static var fullTextProperties: Set<String> { [] }
 
     public var lattice: Lattice? {
         _dynamicObject._ref.lattice.map { Lattice.init(ref: $0) }
@@ -237,9 +239,10 @@ extension Model {
                                              target_table: .init(),
                                              link_table: .init(),
                                              nullable: property is (any OptionalProtocol.Type),
-                                             is_vector: false, is_geo_bounds: true)
+                                             is_vector: false, is_geo_bounds: true,
+                                             is_full_text: false)
         }
-        
+
         for (name, property) in primitiveProperties {
             // Map Swift property kind to C++ column_type
             let columnType: lattice.column_type = switch property.anyPropertyKind {
@@ -250,10 +253,12 @@ extension Model {
             }
             // Check if this is a Vector type for automatic vec0 indexing
             let isVector = property is Vector<Float>.Type || property is Vector<Double>.Type
+            let isFullText = fullTextProperties.contains(name)
             schema[std.string(name)] = .init(name: std.string(name), type: columnType, kind: .primitive,
                                              target_table: .init(), link_table: .init(),
                                              nullable: property is (any OptionalProtocol.Type),
-                                             is_vector: isVector, is_geo_bounds: false)
+                                             is_vector: isVector, is_geo_bounds: false,
+                                             is_full_text: isFullText)
         }
 
         for (name, property) in linkProperties {
@@ -262,7 +267,8 @@ extension Model {
                                              kind: isVector ? .list : .link,
                                              target_table: std.string(property.modelType.entityName),
                                              link_table: .init(Self.entityName),
-                                             nullable: true, is_vector: isVector, is_geo_bounds: false)
+                                             nullable: true, is_vector: isVector, is_geo_bounds: false,
+                                             is_full_text: false)
         }
 
         return schema
@@ -326,6 +332,10 @@ public macro Codable() = #externalMacro(module: "LatticeMacros",
 @attached(peer)
 public macro Transient() = #externalMacro(module: "LatticeMacros",
                                       type: "TransientMacro")
+
+@attached(peer)
+public macro FullText() = #externalMacro(module: "LatticeMacros",
+                                         type: "FullTextMacro")
 
 
 @attached(accessor, names: arbitrary)

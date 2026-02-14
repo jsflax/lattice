@@ -95,16 +95,109 @@ package struct GeoNearestConstraint: Sendable {
     }
 }
 
+/// Type-safe builder for FTS5 full-text search queries.
+///
+/// Use this instead of raw strings to make query semantics explicit:
+/// ```swift
+/// // All terms must match (AND)
+/// .matching(.allOf("machine", "learning"), on: \.content)
+///
+/// // Any term can match (OR)
+/// .matching(.anyOf("machine", "learning"), on: \.content)
+///
+/// // Exact phrase
+/// .matching(.phrase("machine learning"), on: \.content)
+///
+/// // Prefix search
+/// .matching(.prefix("mach"), on: \.content)
+///
+/// // Proximity: terms within N tokens of each other
+/// .matching(.near("machine", "learning", distance: 2), on: \.content)
+///
+/// // Raw FTS5 syntax for advanced queries
+/// .matching(.raw("(machine OR deep) AND learning"), on: \.content)
+/// ```
+public enum TextQuery: Sendable {
+    /// All terms must match (implicit AND). This is FTS5's default behavior.
+    case _allOf([String])
+    /// Any term can match (OR).
+    case _anyOf([String])
+    /// Exact contiguous phrase match.
+    case phrase(String)
+    /// Prefix match — matches words starting with the given text.
+    case prefix(String)
+    /// Terms must appear within `distance` tokens of each other (default 10).
+    case near(String, String, distance: Int = 10)
+    /// Raw FTS5 query string for advanced usage (NEAR, column filters, grouping, etc.).
+    case raw(String)
+
+    /// All terms must match (AND).
+    public static func allOf(_ terms: String...) -> TextQuery { ._allOf(terms) }
+    /// Any term can match (OR).
+    public static func anyOf(_ terms: String...) -> TextQuery { ._anyOf(terms) }
+
+    /// Renders to FTS5 MATCH syntax.
+    package var fts5Query: String {
+        switch self {
+        case ._allOf(let terms):
+            return terms.joined(separator: " ")
+        case ._anyOf(let terms):
+            return terms.joined(separator: " OR ")
+        case .phrase(let text):
+            return "\"\(text)\""
+        case .prefix(let text):
+            return "\(text)*"
+        case .near(let a, let b, let distance):
+            return "NEAR(\(a) \(b), \(distance))"
+        case .raw(let query):
+            return query
+        }
+    }
+}
+
+/// Full-text search constraint (FTS5)
+package struct TextConstraint: Sendable {
+    let propertyName: String
+    let searchText: String
+    let limit: Int
+
+    init<T: Model>(keyPath: KeyPath<T, String>, searchText: String, limit: Int) {
+        self.propertyName = _name(for: keyPath)
+        self.searchText = searchText
+        self.limit = limit
+    }
+
+    init<T: Model>(keyPath: KeyPath<T, String>, query: TextQuery, limit: Int) {
+        self.propertyName = _name(for: keyPath)
+        self.searchText = query.fts5Query
+        self.limit = limit
+    }
+
+    init(propertyName: String, searchText: String, limit: Int) {
+        self.propertyName = propertyName
+        self.searchText = searchText
+        self.limit = limit
+    }
+
+    init(propertyName: String, query: TextQuery, limit: Int) {
+        self.propertyName = propertyName
+        self.searchText = query.fts5Query
+        self.limit = limit
+    }
+}
+
 /// Represents the type of proximity search being performed
 package indirect enum ProximityType: Sendable {
     case vector(VectorConstraint)
     case geo(GeoNearestConstraint)
+    case text(TextConstraint)
     case conjunction(ProximityType, ProximityType)
 }
 
 public enum NearestSortDescriptor<T> {
     case geoDistance(SortOrder)
     case vectorDistance(SortOrder)
+    case textRank(SortOrder)
 }
 
 struct RawNearestSortDescriptor {
@@ -112,6 +205,7 @@ struct RawNearestSortDescriptor {
         case keyPath(String)
         case geoDistance
         case vectorDistance
+        case textRank
     }
     let descriptor: Descriptor
     let order: SortOrder
@@ -231,9 +325,6 @@ public struct TableNearestResults<T: Model>: NearestResults {
     }
 
     public func sortedBy(_ sortDescriptor: NearestSortDescriptor<Element>) -> Self {
-        // NearestResults are sorted by distance from the proximity query
-        // Additional sorting would require storing and applying a sort descriptor
-        // For now, return self (proximity results are pre-sorted by distance)
         switch sortDescriptor {
         case .geoDistance(let sortOrder):
             return .init(lattice: self._lattice,
@@ -243,9 +334,13 @@ public struct TableNearestResults<T: Model>: NearestResults {
             return .init(lattice: self._lattice,
                          whereStatement: whereStatement,
                          sortStatement: .init(descriptor: .vectorDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+        case .textRank(let sortOrder):
+            return .init(lattice: self._lattice,
+                         whereStatement: whereStatement,
+                         sortStatement: .init(descriptor: .textRank, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
         }
     }
-    
+
     public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
         _lattice.observe(T.self, where: self.whereStatement) { change in
             observer(change)
@@ -257,10 +352,11 @@ public struct TableNearestResults<T: Model>: NearestResults {
     public var endIndex: Int {
         // For proximity queries, we need to execute the query to get actual count
         // This is necessary because WHERE clauses can filter results below the limit
-        let (vectors, geos) = flattenProximity(proximity)
+        let (vectors, geos, texts) = flattenProximity(proximity)
         let vectorLimit = vectors.map(\.k).min() ?? Int.max
         let geoLimit = geos.map(\.limit).min() ?? Int.max
-        let maxLimit = Swift.min(vectorLimit, geoLimit)
+        let textLimit = texts.map(\.limit).min() ?? Int.max
+        let maxLimit = Swift.min(vectorLimit, Swift.min(geoLimit, textLimit))
 
         // Execute snapshot to get actual count (capped at maxLimit)
         return Swift.min(snapshot(limit: Int64(maxLimit), offset: nil).count, maxLimit)
@@ -273,23 +369,25 @@ public struct TableNearestResults<T: Model>: NearestResults {
     // MARK: - Execution
 
     /// Flatten the proximity tree into arrays for C++ API
-    private func flattenProximity(_ p: ProximityType) -> (vectors: [VectorConstraint], geos: [GeoNearestConstraint]) {
+    private func flattenProximity(_ p: ProximityType) -> (vectors: [VectorConstraint], geos: [GeoNearestConstraint], texts: [TextConstraint]) {
         switch p {
         case .vector(let v):
-            return ([v], [])
+            return ([v], [], [])
         case .geo(let g):
-            return ([], [g])
+            return ([], [g], [])
+        case .text(let t):
+            return ([], [], [t])
         case .conjunction(let left, let right):
-            let (lv, lg) = flattenProximity(left)
-            let (rv, rg) = flattenProximity(right)
-            return (lv + rv, lg + rg)
+            let (lv, lg, lt) = flattenProximity(left)
+            let (rv, rg, rt) = flattenProximity(right)
+            return (lv + rv, lg + rg, lt + rt)
         }
     }
-    
+
     /// Execute the query and return results with distances.
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [_NearestMatch<T>] {
         let tableName = std.string(T.entityName)
-        let (vectors, geos) = flattenProximity(proximity)
+        let (vectors, geos, texts) = flattenProximity(proximity)
 
         // Build C++ constraint vectors
         var cxxBounds = lattice.BoundsConstraintVector()
@@ -327,6 +425,15 @@ public struct TableNearestResults<T: Model>: NearestResults {
             cxxGeos.push_back(cxxGc)
         }
 
+        var cxxTexts = lattice.TextConstraintVector()
+        for tc in texts {
+            var cxxTc = lattice.text_constraint()
+            cxxTc.column = std.string(tc.propertyName)
+            cxxTc.search_text = std.string(tc.searchText)
+            cxxTc.limit = Int32(tc.limit)
+            cxxTexts.push_back(cxxTc)
+        }
+
         // Build where clause
         let whereClause: lattice.OptionalString = if let whereStatement {
             lattice.string_to_optional(std.string(whereStatement.predicate))
@@ -343,12 +450,13 @@ public struct TableNearestResults<T: Model>: NearestResults {
                 cxxSort.column = std.string(propName)
             case .geoDistance:
                 cxxSort.type = .geo_distance
-                // Use the first geo constraint's column
                 cxxSort.column = std.string(geos.first?.propertyName ?? "")
             case .vectorDistance:
                 cxxSort.type = .vector_distance
-                // Use the first vector constraint's column
                 cxxSort.column = std.string(vectors.first?.propertyName ?? "")
+            case .textRank:
+                cxxSort.type = .text_rank
+                cxxSort.column = std.string(texts.first?.propertyName ?? "")
             }
             cxxSort.ascending = (sort.order == .forward)
         }
@@ -356,7 +464,8 @@ public struct TableNearestResults<T: Model>: NearestResults {
         // Calculate effective limit from constraints (not endIndex to avoid recursion)
         let vectorLimit = vectors.map(\.k).min() ?? Int.max
         let geoLimit = geos.map(\.limit).min() ?? Int.max
-        let constraintLimit = Swift.min(vectorLimit, geoLimit)
+        let textLimit = texts.map(\.limit).min() ?? Int.max
+        let constraintLimit = Swift.min(vectorLimit, Swift.min(geoLimit, textLimit))
 
         let effectiveOffset = offset.map { Int($0) } ?? 0
         let effectiveLimit = limit.map { Int($0) } ?? constraintLimit
@@ -375,6 +484,7 @@ public struct TableNearestResults<T: Model>: NearestResults {
             bounds: cxxBounds,
             vectors: cxxVectors,
             geos: cxxGeos,
+            texts: cxxTexts,
             where: whereClause,
             sort: cxxSort,
             limit: fetchLimit,
@@ -488,6 +598,32 @@ public struct TableNearestResults<T: Model>: NearestResults {
             groupByColumn: groupByColumn
         )
     }
+
+    /// Chain a full-text search onto existing proximity constraints (hybrid search).
+    public func matching(
+        _ searchText: String,
+        on keyPath: KeyPath<UnderlyingElement, String>,
+        limit: Int = 100
+    ) -> any NearestResults<T> {
+        matching(.raw(searchText), on: keyPath, limit: limit)
+    }
+
+    /// Chain a type-safe full-text search onto existing proximity constraints (hybrid search).
+    public func matching(
+        _ query: TextQuery,
+        on keyPath: KeyPath<UnderlyingElement, String>,
+        limit: Int = 100
+    ) -> any NearestResults<T> {
+        let constraint = TextConstraint(keyPath: keyPath, query: query, limit: limit)
+        return Self(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement,
+            boundsConstraint: boundsConstraint,
+            proximity: .conjunction(self.proximity, .text(constraint)),
+            groupByColumn: groupByColumn
+        )
+    }
 }
 
 package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
@@ -587,9 +723,6 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
     }
 
     public func sortedBy(_ sortDescriptor: NearestSortDescriptor<Element>) -> Self {
-        // NearestResults are sorted by distance from the proximity query
-        // Additional sorting would require storing and applying a sort descriptor
-        // For now, return self (proximity results are pre-sorted by distance)
         switch sortDescriptor {
         case .geoDistance(let sortOrder):
             return .init(lattice: self._lattice,
@@ -599,9 +732,13 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
             return .init(lattice: self._lattice,
                          whereStatement: whereStatement,
                          sortStatement: .init(descriptor: .vectorDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+        case .textRank(let sortOrder):
+            return .init(lattice: self._lattice,
+                         whereStatement: whereStatement,
+                         sortStatement: .init(descriptor: .textRank, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
         }
     }
-    
+
     public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
         var cancellables: [AnyCancellable] = []
         for type in repeat (each M).self {
@@ -619,10 +756,11 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
     public var endIndex: Int {
         // For proximity queries, we need to execute the query to get actual count
         // This is necessary because WHERE clauses can filter results below the limit
-        let (vectors, geos) = flattenProximity(proximity)
+        let (vectors, geos, texts) = flattenProximity(proximity)
         let vectorLimit = vectors.map(\.k).min() ?? Int.max
         let geoLimit = geos.map(\.limit).min() ?? Int.max
-        let maxLimit = Swift.min(vectorLimit, geoLimit)
+        let textLimit = texts.map(\.limit).min() ?? Int.max
+        let maxLimit = Swift.min(vectorLimit, Swift.min(geoLimit, textLimit))
 
         // Execute snapshot to get actual count (capped at maxLimit)
         return Swift.min(snapshot(limit: Int64(maxLimit), offset: nil).count, maxLimit)
@@ -635,23 +773,25 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
     // MARK: - Execution
 
     /// Flatten the proximity tree into arrays for C++ API
-    private func flattenProximity(_ p: ProximityType) -> (vectors: [VectorConstraint], geos: [GeoNearestConstraint]) {
+    private func flattenProximity(_ p: ProximityType) -> (vectors: [VectorConstraint], geos: [GeoNearestConstraint], texts: [TextConstraint]) {
         switch p {
         case .vector(let v):
-            return ([v], [])
+            return ([v], [], [])
         case .geo(let g):
-            return ([], [g])
+            return ([], [g], [])
+        case .text(let t):
+            return ([], [], [t])
         case .conjunction(let left, let right):
-            let (lv, lg) = flattenProximity(left)
-            let (rv, rg) = flattenProximity(right)
-            return (lv + rv, lg + rg)
+            let (lv, lg, lt) = flattenProximity(left)
+            let (rv, rg, rt) = flattenProximity(right)
+            return (lv + rv, lg + rg, lt + rt)
         }
     }
 
     /// Execute the query and return results with distances.
     /// Queries each model type and merges results.
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [_NearestMatch<T>] {
-        let (vectors, geos) = flattenProximity(proximity)
+        let (vectors, geos, texts) = flattenProximity(proximity)
 
         // Build C++ constraint vectors (shared across all types)
         var cxxBounds = lattice.BoundsConstraintVector()
@@ -689,6 +829,15 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
             cxxGeos.push_back(cxxGc)
         }
 
+        var cxxTexts = lattice.TextConstraintVector()
+        for tc in texts {
+            var cxxTc = lattice.text_constraint()
+            cxxTc.column = std.string(tc.propertyName)
+            cxxTc.search_text = std.string(tc.searchText)
+            cxxTc.limit = Int32(tc.limit)
+            cxxTexts.push_back(cxxTc)
+        }
+
         // Build where clause
         let whereClause: lattice.OptionalString = if let whereStatement {
             lattice.string_to_optional(std.string(whereStatement.predicate))
@@ -705,12 +854,13 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
                 cxxSort.column = std.string(propName)
             case .geoDistance:
                 cxxSort.type = .geo_distance
-                // Use the first geo constraint's column
                 cxxSort.column = std.string(geos.first?.propertyName ?? "")
             case .vectorDistance:
                 cxxSort.type = .vector_distance
-                // Use the first vector constraint's column
                 cxxSort.column = std.string(vectors.first?.propertyName ?? "")
+            case .textRank:
+                cxxSort.type = .text_rank
+                cxxSort.column = std.string(texts.first?.propertyName ?? "")
             }
             cxxSort.ascending = (sort.order == .forward)
         }
@@ -718,7 +868,8 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
         // Calculate effective limit from constraints (not endIndex to avoid recursion)
         let vectorLimit = vectors.map(\.k).min() ?? Int.max
         let geoLimit = geos.map(\.limit).min() ?? Int.max
-        let constraintLimit = Swift.min(vectorLimit, geoLimit)
+        let textLimit = texts.map(\.limit).min() ?? Int.max
+        let constraintLimit = Swift.min(vectorLimit, Swift.min(geoLimit, textLimit))
 
         let effectiveOffset = offset.map { Int($0) } ?? 0
         let effectiveLimit = limit.map { Int($0) } ?? constraintLimit
@@ -748,6 +899,7 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
                 bounds: cxxBounds,
                 vectors: cxxVectors,
                 geos: cxxGeos,
+                texts: cxxTexts,
                 where: whereClause,
                 sort: cxxSort,
                 limit: fetchLimit,
@@ -855,6 +1007,40 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
             sortStatement: sortStatement,
             boundsConstraint: boundsConstraint,
             proximity: combined,
+            groupByColumn: groupByColumn
+        )
+    }
+
+    /// Chain a full-text search onto existing proximity constraints (hybrid search).
+    public func matching(
+        _ searchText: String,
+        on keyPath: KeyPath<UnderlyingElement, String>,
+        limit: Int = 100
+    ) -> any NearestResults<T> {
+        matching(.raw(searchText), on: keyPath, limit: limit)
+    }
+
+    /// Chain a type-safe full-text search onto existing proximity constraints (hybrid search).
+    public func matching(
+        _ query: TextQuery,
+        on keyPath: KeyPath<UnderlyingElement, String>,
+        limit: Int = 100
+    ) -> any NearestResults<T> {
+        let object = firstType.init(isolation: #isolation)
+        guard let virtualObj = object as? T else {
+            preconditionFailure()
+        }
+        _ = virtualObj[keyPath: keyPath]
+        guard let propertyName = object._lastKeyPathUsed else {
+            preconditionFailure()
+        }
+        let constraint = TextConstraint(propertyName: propertyName, query: query, limit: limit)
+        return Self(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement,
+            boundsConstraint: boundsConstraint,
+            proximity: .conjunction(self.proximity, .text(constraint)),
             groupByColumn: groupByColumn
         )
     }

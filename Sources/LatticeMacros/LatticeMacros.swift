@@ -53,6 +53,9 @@ private struct MemberView {
     var isRelation: Bool {
         attributeKey == "Relation"
     }
+    var isFullText: Bool {
+        attributeKey == "FullText"
+    }
     var constraint: Constraint?
     var assignment: String?
     var isComputed: Bool = false       // Flag for computed properties
@@ -188,6 +191,12 @@ enum MacroError: Error, DiagnosticMessage {
 }
 
 class TransientMacro: PeerMacro {
+    static func expansion(of node: SwiftSyntax.AttributeSyntax, providingPeersOf declaration: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.DeclSyntax] {
+        []
+    }
+}
+
+class FullTextMacro: PeerMacro {
     static func expansion(of node: SwiftSyntax.AttributeSyntax, providingPeersOf declaration: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.DeclSyntax] {
         []
     }
@@ -784,6 +793,9 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         }).count > 1 {
             throw MacroError.message("Only allow one constraint with allowsUpsert set to true.")
         }
+        let fullTextNames = members.filter { $0.isFullText && !$0.isComputed }
+            .map { "\"\($0.mappedName ?? $0.name)\"" }
+        let fullTextSet = fullTextNames.joined(separator: ", ")
         dtoInheritedTypes.append(InheritedTypeSyntax(type: TypeSyntax("Sendable")))
             return [
                 ExtensionDeclSyntax(
@@ -800,6 +812,10 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
 
                         public static var properties: [(String, any LatticeSchemaProperty.Type)] {
                             [\(raw: modelProperties)]
+                        }
+
+                        public static var fullTextProperties: Set<String> {
+                            [\(raw: fullTextSet)]
                         }
                     }
                     """
@@ -864,6 +880,6 @@ struct LatticeMacrosPlugin: CompilerPlugin {
         ModelMacro.self, TransientMacro.self, PropertyMacro.self,
 //        LatticeMemberMacro.self,
         UniqueMacro.self, CodableMacro.self, EnumMacro.self, EmbeddedModelMacro.self,
-        VirtualModelMacro.self
+        VirtualModelMacro.self, FullTextMacro.self
     ]
 }

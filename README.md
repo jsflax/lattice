@@ -17,6 +17,7 @@ A modern, type-safe Swift ORM framework built on SQLite with real-time synchroni
 - 🔗 **Database Attachment** - Attach and query across multiple SQLite databases
 - 🧮 **Vector Search** - Built-in ANN similarity search with sqlite-vec (L2, Cosine, L1 distances)
 - 🌍 **Geospatial Queries** - R*Tree spatial indexing with bounding box and proximity search
+- 📝 **Full-Text Search** - FTS5 indexing with porter tokenizer, type-safe query builder, and hybrid search
 
 ## Installation
 
@@ -357,6 +358,68 @@ for match in nearby {
     print("\(match.object.name) — \(match.distance) km away")
 }
 ```
+
+### Full-Text Search
+
+Mark `String` properties with `@FullText` to enable FTS5 full-text search with automatic indexing via porter tokenizer. Uses external content tables (no data duplication) with trigger-based sync.
+
+```swift
+@Model class Article {
+    var title: String
+    @FullText var content: String        // FTS5-indexed
+    var embedding: FloatVector
+}
+
+// Basic search (terms implicitly ANDed)
+let results = lattice.objects(Article.self)
+    .matching("machine learning", on: \.content)
+
+for match in results {
+    print("\(match.object.title) — rank: \(match.distances["content"]!)")
+}
+```
+
+Use the `TextQuery` type for explicit control over query semantics:
+
+```swift
+// All terms must match (AND)
+.matching(.allOf("machine", "learning"), on: \.content)
+
+// Any term can match (OR)
+.matching(.anyOf("machine", "learning"), on: \.content)
+
+// Exact phrase
+.matching(.phrase("machine learning"), on: \.content)
+
+// Prefix search
+.matching(.prefix("mach"), on: \.content)
+
+// Proximity — terms within N tokens of each other
+.matching(.near("machine", "learning", distance: 2), on: \.content)
+
+// Raw FTS5 syntax for advanced queries
+.matching(.raw("(machine OR deep) AND learning"), on: \.content)
+```
+
+Full-text search composes with all other query types:
+
+```swift
+// FTS5 + WHERE filter
+let filtered = lattice.objects(Article.self)
+    .where { $0.title == "ML Advanced" }
+    .matching("machine learning", on: \.content)
+
+// Hybrid: FTS5 + vector similarity
+let hybrid = lattice.objects(Article.self)
+    .matching("learning", on: \.content)
+    .nearest(to: queryVec, on: \.embedding, limit: 10, distance: .cosine)
+
+// FTS5 across polymorphic types
+let allDocs = lattice.objects(Searchable.self)
+    .matching(.anyOf("swift", "rust"), on: \.content)
+```
+
+FTS5 rank scores are negative (lower = better match) and accessible via `match.distances["columnName"]`.
 
 ### Bulk Operations
 
