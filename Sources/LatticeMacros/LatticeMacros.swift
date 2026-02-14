@@ -651,19 +651,17 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             }
             
             public func _objectWillChange_send() {
-                print("objectWillChange_send() called")
-                _objectWillChange.send() 
+                _objectWillChange.send()
             } 
             
             public func _triggerObservers_send(keyPath: String) {
-                print("_triggerObservers_send for keypath \\(keyPath) called")
                 switch keyPath {
                     \(raw: allowedMembers.map {
                         """
                         case "\($0.mappedName ?? $0.name)": _$observationRegistrar.willSet(self, keyPath: \\\(name).\($0.name))
                         """
                     }.joined(separator: "\n\t\t"))
-                    default: print("❌ Could not send key path \\(keyPath) to observer"); break
+                    default: break
                 }
             }
             public static func _nameForKeyPath(_ keyPath: AnyKeyPath) -> String {
