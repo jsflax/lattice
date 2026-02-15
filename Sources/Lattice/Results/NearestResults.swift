@@ -140,15 +140,15 @@ public enum TextQuery: Sendable {
     package var fts5Query: String {
         switch self {
         case ._allOf(let terms):
-            return terms.joined(separator: " ")
+            return terms.map { "\"\($0)\"" }.joined(separator: " ")
         case ._anyOf(let terms):
-            return terms.joined(separator: " OR ")
+            return terms.map { "\"\($0)\"" }.joined(separator: " OR ")
         case .phrase(let text):
             return "\"\(text)\""
         case .prefix(let text):
             return "\(text)*"
         case .near(let a, let b, let distance):
-            return "NEAR(\(a) \(b), \(distance))"
+            return "NEAR(\"\(a)\" \"\(b)\", \(distance))"
         case .raw(let query):
             return query
         }
