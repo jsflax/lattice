@@ -750,6 +750,34 @@ public struct Lattice {
     public func deleteHistory() {
         delete(AuditLog.self)
     }
+
+    // MARK: Maintenance
+
+    /// Compacts the audit log by replacing all history with INSERT snapshots
+    /// of the current state. Reduces sync payload size while preserving the
+    /// ability to sync current data.
+    /// - Returns: Number of snapshot entries created.
+    @discardableResult
+    public func compactHistory() -> Int64 {
+        cxxLattice.compact_audit_log()
+    }
+
+    /// Flushes WAL contents to the main database file and truncates the WAL.
+    /// Called automatically on deinitialization but can be invoked explicitly
+    /// to ensure durability or reduce WAL file size.
+    public func checkpoint() {
+        cxxLattice.checkpoint()
+    }
+
+    /// Rebuilds the database file, reclaiming disk space from deleted rows
+    /// and eliminating fragmentation. Temporarily closes the read connection
+    /// to obtain exclusive access.
+    ///
+    /// - Important: Requires exclusive database access. Will throw if another
+    ///   process has the database open. Do not call during active queries.
+    public func vacuum() {
+        cxxLattice.vacuum()
+    }
     
     public func count<T>(_ modelType: T.Type, where: ((Query<T>) -> Query<Bool>)? = nil) -> Int where T: Model {
         let whereClause: lattice.OptionalString = `where`.map { lattice.string_to_optional( std.string($0(Query<T>()).predicate)) } ?? lattice.OptionalString()

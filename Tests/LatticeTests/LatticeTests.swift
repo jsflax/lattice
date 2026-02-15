@@ -1683,6 +1683,70 @@ class LatticeTests: BaseTest {
 //        }.value
 //    }
 
+    // MARK: Maintenance
+
+    @Test func test_CompactHistory() async throws {
+        let lattice = try testLattice(path: path, Person.self)
+
+        let p1 = Person(); p1.name = "Alice"; p1.age = 30
+        let p2 = Person(); p2.name = "Bob"; p2.age = 25
+        lattice.add(p1)
+        lattice.add(p2)
+
+        // Update to create more audit entries
+        p1.name = "Alice Updated"
+
+        let auditCountBefore = lattice.count(AuditLog.self)
+        #expect(auditCountBefore > 0)
+
+        // Compact should replace history with INSERT snapshots
+        let snapshotCount = lattice.compactHistory()
+        #expect(snapshotCount > 0)
+
+        // All remaining entries should be INSERT operations
+        let auditLogs = lattice.objects(AuditLog.self).snapshot()
+        for log in auditLogs {
+            #expect(log.operation == .insert)
+        }
+
+        // Data should still be intact
+        #expect(lattice.count(Person.self) == 2)
+    }
+
+    @Test func test_Checkpoint() async throws {
+        let lattice = try testLattice(path: path, Person.self)
+
+        let p = Person(); p.name = "Test"; p.age = 1
+        lattice.add(p)
+
+        // Should not crash
+        lattice.checkpoint()
+
+        // Data still accessible after checkpoint
+        #expect(lattice.count(Person.self) == 1)
+    }
+
+    @Test func test_Vacuum() async throws {
+        let vacuumPath = "\(String.random(length: 32)).sqlite"
+        let lattice = try testLattice(path: vacuumPath, Person.self)
+
+        // Add objects then delete to create reclaimable space
+        for i in 0..<100 {
+            let p = Person(); p.name = "Person \(i)"; p.age = i
+            lattice.add(p)
+        }
+        lattice.delete(Person.self)
+        lattice.delete(AuditLog.self)
+
+        // Vacuum to rebuild the database
+        lattice.vacuum()
+
+        // DB should still be functional after vacuum
+        let p = Person(); p.name = "After Vacuum"; p.age = 99
+        lattice.add(p)
+        #expect(lattice.count(Person.self) == 1)
+        #expect(lattice.object(Person.self, primaryKey: p.primaryKey!)?.name == "After Vacuum")
+    }
 
 }
 

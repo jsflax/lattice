@@ -15,7 +15,7 @@ let package = Package(
         .executable(name: "LatticeMain", targets: ["LatticeMain"])
     ],
     dependencies: [
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "0.1.0"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "0.2.0"),
         .package(url: "https://github.com/apple/swift-syntax.git", from: "602.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",

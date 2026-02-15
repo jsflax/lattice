@@ -254,6 +254,40 @@ public struct Migration : MigrationProtocol {
     }
 }
 
+// MARK: - Migration Lookup
+
+extension Migration {
+    /// Look up an existing object by primary key during a migration callback.
+    /// Only valid inside a migration block. Returns nil if not found.
+    ///
+    /// Use this to resolve foreign key values to link objects when migrating
+    /// from a raw FK column to an `Optional<Model>` link property:
+    /// ```swift
+    /// Migration((from: V1Child.self, to: V2Child.self), blocks: { old, new in
+    ///     if let parent = Migration.lookup(V2Parent.self, id: old.parentId) {
+    ///         new.parent = parent
+    ///     }
+    /// })
+    /// ```
+    public static func lookup<T: Model>(_ type: T.Type, id: Int64) -> T? {
+        guard lattice.migrationLookup(table: std.string(T.entityName), primaryKey: id),
+              let ref = lattice.migrationTakeLookupResult() else {
+            return nil
+        }
+        return T(dynamicObject: ref)
+    }
+
+    /// Look up an existing object by globalId during a migration callback.
+    /// Only valid inside a migration block. Returns nil if not found.
+    public static func lookup<T: Model>(_ type: T.Type, globalId: String) -> T? {
+        guard lattice.migrationLookupByGlobalId(table: std.string(T.entityName), globalId: std.string(globalId)),
+              let ref = lattice.migrationTakeLookupResult() else {
+            return nil
+        }
+        return T(dynamicObject: ref)
+    }
+}
+
 /// A block that handles schema migration.
 public typealias MigrationBlock = @Sendable (/* old, managed value */ DynamicObject,
                                              /* new, unmanaged value */ any Model) -> Void
