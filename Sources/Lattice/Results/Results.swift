@@ -289,6 +289,7 @@ extension Results {
 
 public enum CollectionChange: Sendable {
     case insert(Int64)
+    case update(Int64)
     case delete(Int64)
 }
 

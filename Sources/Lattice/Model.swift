@@ -10,12 +10,14 @@ import os.lock
 
 // MARK: - Cross-Instance Observation Registry
 
-/// Tracks all live Model instances by (tableName, primaryKey) to enable cross-instance observation.
-/// When one instance modifies a row, all other instances representing that row are notified.
+/// Tracks all live Model instances by (tableName, primaryKey) to enable cross-instance
+/// and cross-process observation. Registers C++ object observers so that changes from
+/// other processes trigger `_objectWillChange_send()` on hydrated Swift model instances.
 final class ModelInstanceRegistry: @unchecked Sendable {
     static let shared = ModelInstanceRegistry()
 
     private struct InstanceKey: Hashable {
+        let databasePath: String
         let tableName: String
         let primaryKey: Int64
     }
@@ -23,6 +25,8 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     private struct WeakModelRef: @unchecked Sendable {
         weak var instance: (any Model)?
         let objectIdentifier: ObjectIdentifier
+        var cxxObserverId: UInt64?
+        var cxxLatticeRef: lattice.swift_lattice_ref?
 
         init(_ model: any Model) {
             self.instance = model
@@ -31,20 +35,56 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     }
 
     private var instances: [InstanceKey: [WeakModelRef]] = [:]
+    /// Maps ObjectIdentifier → InstanceKey so deregister can look up the key
+    /// without accessing the model's C++ lattice ref (which may be dangling in deinit).
+    private var registeredKeys: [ObjectIdentifier: InstanceKey] = [:]
     private let lock = NSLock()
 
     private init() {}
 
-    /// Register a model instance for cross-instance observation
+    /// Register a model instance for cross-instance and cross-process observation
     func register(_ model: any Model, tableName: String) {
         guard let primaryKey = model.primaryKey else { return }
-        let key = InstanceKey(tableName: tableName, primaryKey: primaryKey)
-        let ref = WeakModelRef(model)
+        guard let latticeRef = model._dynamicObject._ref.lattice else { return }
+        let dbPath = String(latticeRef.path())
+        let key = InstanceKey(databasePath: dbPath, tableName: tableName, primaryKey: primaryKey)
+        var ref = WeakModelRef(model)
         let objectId = ObjectIdentifier(model)
+
+        // Register C++ object observer for cross-process changes.
+        let observerId = latticeRef.get().add_object_observer(
+            std.string(tableName),
+            primaryKey,
+            { changedFieldsNames in
+                // changedFieldsNames is a JSON array like '["age",null,"name"]'
+                // null entries are unchanged columns from the trigger's CASE expressions
+                let fieldNames = String(changedFieldsNames)
+                var names: [String] = []
+                if let data = fieldNames.data(using: .utf8),
+                   let array = try? JSONSerialization.jsonObject(with: data) as? [Any] {
+                    names = array.compactMap { $0 as? String }
+                }
+                // Empty names means same-process change (flush_changes default) —
+                // Swift's _notifyOtherInstances already handles cross-instance notification.
+                // Cross-process changes always have field names from AuditLog triggers.
+                guard !names.isEmpty else { return }
+                for name in names {
+                    ModelInstanceRegistry.shared.notifyChange(
+                        databasePath: dbPath,
+                        tableName: tableName,
+                        primaryKey: primaryKey,
+                        propertyName: name
+                    )
+                }
+            }
+        )
+        ref.cxxObserverId = observerId
+        ref.cxxLatticeRef = latticeRef
 
         lock.lock()
         defer { lock.unlock() }
 
+        registeredKeys[objectId] = key
         var refs = instances[key, default: []]
         if !refs.contains(where: { $0.objectIdentifier == objectId }) {
             refs.append(ref)
@@ -53,24 +93,51 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         instances[key] = refs
     }
 
-    /// Deregister a model instance
+    /// Deregister a model instance and remove its C++ object observer.
+    /// Uses the pre-stored InstanceKey to avoid accessing the model's C++ lattice ref,
+    /// which may be a dangling pointer during deinit teardown.
     func deregister(_ model: any Model, tableName: String) {
-        guard let primaryKey = model.primaryKey else { return }
-        let key = InstanceKey(tableName: tableName, primaryKey: primaryKey)
         let objectId = ObjectIdentifier(model)
 
         lock.lock()
-        defer { lock.unlock() }
+        guard let key = registeredKeys.removeValue(forKey: objectId) else {
+            lock.unlock()
+            return
+        }
 
-        instances[key]?.removeAll { $0.objectIdentifier == objectId || $0.instance == nil }
+        var removedRefs: [WeakModelRef] = []
+        instances[key]?.removeAll { ref in
+            if ref.objectIdentifier == objectId {
+                removedRefs.append(ref)
+                return true
+            }
+            return ref.instance == nil
+        }
         if instances[key]?.isEmpty == true {
             instances.removeValue(forKey: key)
         }
+        lock.unlock()
+
+        for ref in removedRefs {
+            if let observerId = ref.cxxObserverId,
+               let latticeRef = ref.cxxLatticeRef {
+                latticeRef.get().remove_object_observer(std.string(tableName), key.primaryKey, observerId)
+            }
+        }
+    }
+
+    /// Look up the cached database path for a registered model instance.
+    /// Returns nil if the model was never registered (e.g. unmanaged objects).
+    func databasePath(for model: any Model) -> String? {
+        let objectId = ObjectIdentifier(model)
+        lock.lock()
+        defer { lock.unlock() }
+        return registeredKeys[objectId]?.databasePath
     }
 
     /// Notify all instances of a row change, except the one that initiated it (if provided)
-    func notifyChange(tableName: String, primaryKey: Int64, propertyName: String, excludingInstanceId: ObjectIdentifier? = nil) {
-        let key = InstanceKey(tableName: tableName, primaryKey: primaryKey)
+    func notifyChange(databasePath: String, tableName: String, primaryKey: Int64, propertyName: String, excludingInstanceId: ObjectIdentifier? = nil) {
+        let key = InstanceKey(databasePath: databasePath, tableName: tableName, primaryKey: primaryKey)
 
         lock.lock()
         let refs = instances[key] ?? []
@@ -152,15 +219,28 @@ extension Model {
         _dynamicObject._ref.lattice.map { Lattice.init(ref: $0) }
     }
 
-    /// Called after a property mutation to notify other instances representing the same row
+    /// Called after a property mutation to notify other instances representing the same row.
+    /// Uses the registry's cached database path to avoid accessing the C++ lattice ref,
+    /// which may be a dangling raw pointer during teardown.
     public func _notifyOtherInstances(propertyName: String) {
         guard let primaryKey else { return }
+        guard let dbPath = ModelInstanceRegistry.shared.databasePath(for: self) else { return }
         ModelInstanceRegistry.shared.notifyChange(
+            databasePath: dbPath,
             tableName: Self.entityName,
             primaryKey: primaryKey,
             propertyName: propertyName,
             excludingInstanceId: ObjectIdentifier(self)
         )
+    }
+
+    /// Register this model if it has a primaryKey and isn't already registered.
+    /// Called after `lattice.add()` so that manually-created models get registered.
+    public func _registerIfNeeded() {
+        guard primaryKey != nil else { return }
+        if ModelInstanceRegistry.shared.databasePath(for: self) == nil {
+            ModelInstanceRegistry.shared.register(self, tableName: Self.entityName)
+        }
     }
 
     /// Called from deinit to deregister from cross-instance observation

@@ -542,6 +542,8 @@ class LatticeTests: BaseTest {
                 let found = lattice.object(Person.self, primaryKey: id)
                 #expect(found?.name == expectedName.value)
                 insertHitCount += 1
+            case .update(_):
+                break
             case .delete(_):
                 deleteHitCount += 1
             }
@@ -728,6 +730,41 @@ class LatticeTests: BaseTest {
         #expect(person2.age == 31, "Other instance should see updated value")
 
         cancellable.cancel()
+    }
+
+    @Test func test_CrossInstanceObservation_NoDoubleNotification() async throws {
+        let dbName = "xinstance_\(UUID().uuidString).sqlite"
+        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let lattice = try Lattice(
+            for: [Person.self, Dog.self],
+            configuration: .init(fileURL: fileURL)
+        )
+        defer { try? Lattice.delete(for: .init(fileURL: fileURL)) }
+
+        let person1 = Person()
+        person1.name = "Alice"
+        person1.age = 30
+        lattice.add(person1)
+
+        let person2 = lattice.object(Person.self, primaryKey: person1.primaryKey!)!
+        #expect(person1 !== person2)
+
+        // Count notifications on the OTHER instance
+        var otherNotificationCount = 0
+        let otherCancellable = person2._objectWillChange.sink {
+            otherNotificationCount += 1
+        }
+
+        person1.age = 31
+
+        // Allow any queued GCD callbacks to fire
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(otherNotificationCount == 1,
+                "Expected exactly 1 objectWillChange on other instance, got \(otherNotificationCount)")
+        #expect(person2.age == 31)
+
+        otherCancellable.cancel()
     }
 
     @Test func test_Embedded() async throws {

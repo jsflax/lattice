@@ -495,7 +495,8 @@ public struct TableNearestResults<T: Model>: NearestResults {
         var results: [_NearestMatch<T>] = []
         let startIdx = effectiveOffset
         let endIdx = Swift.min(Int(cxxResults.size()), effectiveOffset + effectiveLimit)
-        results.reserveCapacity(Swift.max(0, endIdx - startIdx))
+        guard startIdx < endIdx else { return results }
+        results.reserveCapacity(endIdx - startIdx)
 
         // Build lookup for geo units (handle multiple constraints on same column)
         let geoUnits: [String: DistanceUnit] = Dictionary(

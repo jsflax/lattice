@@ -696,6 +696,8 @@ public struct Lattice {
         var copy = object._dynamicObject._ref // Break exclusive access
         cxxLattice.add(&copy.shared().pointee)
         object._dynamicObject._ref = copy
+        // Register for cross-instance observation now that the object has a primaryKey
+        object._registerIfNeeded()
     }
     
     public func add<S: Sequence>(contentsOf newElements: S) where S.Element: Model {
@@ -919,9 +921,19 @@ public struct Lattice {
                     block(.delete(rowId))
                 }
             case "UPDATE":
-                // CollectionChange doesn't have an update case currently
-                // Updates are tracked via individual object observation
-                break
+                if let `where` {
+                    let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
+                    let auditResults = TableResults<AuditLog>(self).where({
+                        $0.rowId == rowId && convertedQuery && $0.operation == .update
+                    })
+                    if let _ = auditResults.first {
+                        block(.update(rowId))
+                    }
+                } else {
+                    if self.object(modelType, primaryKey: rowId) != nil {
+                        block(.update(rowId))
+                    }
+                }
             default:
                 break
             }

@@ -144,6 +144,7 @@ public struct List<Element>: MutableCollection, BidirectionalCollection, SchemaP
     
     public enum CollectionChange {
         case insert(Int64)
+        case update(Int64)
         case delete(Int64)
     }
     
