@@ -956,6 +956,44 @@ class LatticeTests: BaseTest {
         }
     }
     
+    @Test func test_MigrationPreservesObservers() async throws {
+        // Phase 1: Create DB with V1 schema (has `otherPerson` FK column)
+        try autoreleasepool {
+            let lattice = try testLattice(path: path, MigrationV1.Person.self)
+            let p = MigrationV1.Person()
+            p.name = "Alice"
+            lattice.add(p)
+        }
+
+        // Phase 2: Reopen with V2 schema — drops `otherPerson`, adds `age`+`city`.
+        // This triggers rebuild_table (column removal), which previously dropped
+        // all triggers silently. Verify table-level observation still fires.
+        let lattice = try testLattice(path: path, MigrationV2.Person.self)
+
+        nonisolated(unsafe) var receivedChange: CollectionChange?
+        nonisolated(unsafe) var checkedContinuation: CheckedContinuation<Void, Never>?
+        let cancellable = lattice.objects(MigrationV2.Person.self)
+            .observe { change in
+                receivedChange = change
+                checkedContinuation?.resume()
+            }
+
+        // Insert a new row — observer should fire
+        let person = MigrationV2.Person()
+        person.name = "Bob"
+        person.age = 25
+        await withCheckedContinuation { continuation in
+            checkedContinuation = continuation
+            lattice.add(person)
+        }
+
+        cancellable.cancel()
+        guard case .insert = receivedChange else {
+            Issue.record("Expected .insert, got \(String(describing: receivedChange))")
+            return
+        }
+    }
+
     @Test func test_Link() async throws {
         let lattice = try testLattice(path: path, Person.self, Dog.self)
         // add person with no link
