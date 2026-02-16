@@ -767,6 +767,95 @@ class LatticeTests: BaseTest {
         otherCancellable.cancel()
     }
 
+    @Test func test_ObserveSelfMutation() async throws {
+        let lattice = try testLattice(path: path, Person.self)
+        let person = Person()
+        person.name = "Alice"
+        person.age = 30
+        lattice.add(person)
+
+        var receivedProperties: [String] = []
+        let token = person.observe { propertyName in
+            receivedProperties.append(propertyName)
+        }
+
+        person.age = 31
+        person.name = "Bob"
+
+        #expect(receivedProperties.contains("age"))
+        #expect(receivedProperties.contains("name"))
+        token.cancel()
+    }
+
+    @Test func test_ObserveKeyPath() async throws {
+        let lattice = try testLattice(path: path, Person.self)
+        let person = Person()
+        person.name = "Alice"
+        person.age = 30
+        lattice.add(person)
+
+        var receivedAges: [Int] = []
+        let token = person.observe(\.age) { newAge in
+            receivedAges.append(newAge)
+        }
+
+        person.age = 31
+        person.name = "Bob"  // should not fire the age observer
+        person.age = 32
+
+        #expect(receivedAges == [31, 32])
+        token.cancel()
+    }
+
+    @Test func test_ObserveCrossInstance() async throws {
+        let dbName = "observe_xinstance_\(UUID().uuidString).sqlite"
+        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let lattice = try Lattice(
+            for: [Person.self, Dog.self],
+            configuration: .init(fileURL: fileURL)
+        )
+        defer { try? Lattice.delete(for: .init(fileURL: fileURL)) }
+
+        let person1 = Person()
+        person1.name = "Alice"
+        person1.age = 30
+        lattice.add(person1)
+
+        let person2 = lattice.object(Person.self, primaryKey: person1.primaryKey!)!
+
+        var receivedProperties: [String] = []
+        let token = person2.observe { propertyName in
+            receivedProperties.append(propertyName)
+        }
+
+        person1.age = 31
+
+        #expect(receivedProperties.contains("age"))
+        #expect(person2.age == 31)
+        token.cancel()
+    }
+
+    @Test func test_ObserveCancelStopsNotification() async throws {
+        let lattice = try testLattice(path: path, Person.self)
+        let person = Person()
+        person.name = "Alice"
+        person.age = 30
+        lattice.add(person)
+
+        var count = 0
+        let token = person.observe { _ in
+            count += 1
+        }
+
+        person.age = 31
+        #expect(count == 1)
+
+        token.cancel()
+
+        person.age = 32
+        #expect(count == 1)
+    }
+
     @Test func test_Embedded() async throws {
         try autoreleasepool {
             let lattice = try testLattice(path: path, ModelWithEmbeddedModelObject.self)

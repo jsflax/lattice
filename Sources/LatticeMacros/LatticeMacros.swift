@@ -634,6 +634,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             @Property(name: "globalId")
             public var __globalId: UUID?
             
+            public var _instanceObservers: [_ModelObserver] = []
             public let _$observationRegistrar = Observation.ObservationRegistrar()
             public var _lastKeyPathUsed: String?
             
@@ -663,6 +664,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                     }.joined(separator: "\n\t\t"))
                     default: break
                 }
+                _fireObservers(propertyName: keyPath)
             }
             public static func _nameForKeyPath(_ keyPath: AnyKeyPath) -> String {
                 switch keyPath {

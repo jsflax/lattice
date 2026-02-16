@@ -169,6 +169,19 @@ public typealias CxxDynamicObject = lattice.dynamic_object
 public typealias CxxDynamicObjectRef = lattice.dynamic_object_ref
 
 
+/// A closure-based observer registered on a single Model instance.
+public struct _ModelObserver {
+    public let id: UUID
+    public let propertyName: String?
+    public let callback: (String) -> Void
+
+    public init(id: UUID = UUID(), propertyName: String? = nil, callback: @escaping (String) -> Void) {
+        self.id = id
+        self.propertyName = propertyName
+        self.callback = callback
+    }
+}
+
 public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, CxxManaged, LatticeIsolated, LinkListable {
     init(isolation: isolated (any Actor)?)
 //    var lattice: Lattice? { get set }
@@ -176,7 +189,7 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     static var properties: [(String, any SchemaProperty.Type)] { get }
     var primaryKey: Int64? { get set }
     var __globalId: UUID? { get }  // Unique identifier for sync across clients
-    
+
     var _$observationRegistrar: Observation.ObservationRegistrar { get }
     func _objectWillChange_send()
     func _triggerObservers_send(keyPath: String)
@@ -186,6 +199,7 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     static var fullTextProperties: Set<String> { get }
     var _objectWillChange: Combine.ObservableObjectPublisher { get }
     var _dynamicObject: ModelStorage { get set }
+    var _instanceObservers: [_ModelObserver] { get set }
 }
 
 extension Model {
@@ -219,10 +233,47 @@ extension Model {
         _dynamicObject._ref.lattice.map { Lattice.init(ref: $0) }
     }
 
+    /// Fire all instance-level observers whose property filter matches (or have no filter).
+    public func _fireObservers(propertyName: String) {
+        for observer in _instanceObservers {
+            if let filter = observer.propertyName {
+                guard filter == propertyName else { continue }
+            }
+            observer.callback(propertyName)
+        }
+    }
+
+    /// Observe any property change on this instance. The callback receives the property name.
+    /// Returns an `AnyCancellable` that removes the observer when cancelled.
+    public func observe(_ block: @escaping (String) -> Void) -> AnyCancellable {
+        let observer = _ModelObserver(callback: block)
+        let id = observer.id
+        _instanceObservers.append(observer)
+        return AnyCancellable { [weak self] in
+            self?._instanceObservers.removeAll { $0.id == id }
+        }
+    }
+
+    /// Observe a specific property on this instance. The callback receives the new value.
+    /// Returns an `AnyCancellable` that removes the observer when cancelled.
+    public func observe<T>(_ keyPath: KeyPath<Self, T>, _ block: @escaping (T) -> Void) -> AnyCancellable {
+        let name = _name(for: keyPath)
+        let observer = _ModelObserver(propertyName: name) { [weak self] _ in
+            guard let self else { return }
+            block(self[keyPath: keyPath])
+        }
+        let id = observer.id
+        _instanceObservers.append(observer)
+        return AnyCancellable { [weak self] in
+            self?._instanceObservers.removeAll { $0.id == id }
+        }
+    }
+
     /// Called after a property mutation to notify other instances representing the same row.
     /// Uses the registry's cached database path to avoid accessing the C++ lattice ref,
     /// which may be a dangling raw pointer during teardown.
     public func _notifyOtherInstances(propertyName: String) {
+        _fireObservers(propertyName: propertyName)
         guard let primaryKey else { return }
         guard let dbPath = ModelInstanceRegistry.shared.databasePath(for: self) else { return }
         ModelInstanceRegistry.shared.notifyChange(
