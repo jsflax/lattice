@@ -106,7 +106,7 @@ import Combine
 }
 
 public struct LatticeEnvironmentKey: EnvironmentKey {
-    nonisolated(unsafe) public static var defaultValue: Lattice = try! Lattice()
+    nonisolated(unsafe) public static var defaultValue: Lattice = try! Lattice(configuration: .init(isStoredInMemoryOnly: true))
 }
 public struct LatticeSchemaEnvironmentKey: EnvironmentKey {
     nonisolated(unsafe) public static var defaultValue: [any Model.Type] = []
