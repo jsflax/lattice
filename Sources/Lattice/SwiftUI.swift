@@ -32,7 +32,7 @@ import Combine
             self.predicate = predicate
             self.fetchLimit = fetchLimit
             self.sortBy = sortBy
-            self.wrappedValue = try! TableResults(Lattice())
+            self.wrappedValue = try! TableResults(LatticeEnvironmentKey.defaultValue)
         }
         
         @MainActor func fetch() {

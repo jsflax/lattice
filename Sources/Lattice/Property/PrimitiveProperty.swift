@@ -1,5 +1,4 @@
 import Foundation
-import SQLite3
 
 public protocol PrimitiveProperty: PersistableProperty {
 }
@@ -79,13 +78,6 @@ extension Int32: PrimitiveProperty {
     public static var sqlType: String { "INTEGER" }
     public static var anyPropertyKind: AnyProperty.Kind {
         .int
-    }
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        self = Int32(sqlite3_column_int(statement, columnId))
-    }
-    
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        sqlite3_bind_int(statement, columnId, Int32(self))
     }
 }
 

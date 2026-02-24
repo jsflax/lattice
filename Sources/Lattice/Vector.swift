@@ -1,5 +1,4 @@
 import Foundation
-import SQLite3
 import LatticeSwiftCppBridge
 
 /// A fixed-size vector of floating-point values optimized for vector search with sqlite-vec.
@@ -115,23 +114,6 @@ extension Vector: PersistableProperty where Element: VectorElement {}
 extension Vector: PrimitiveProperty where Element: VectorElement {
     // Store as BLOB for sqlite-vec compatibility
     public static var sqlType: String { "BLOB" }
-
-    public init(from statement: OpaquePointer?, with columnId: Int32) {
-        guard let blob = sqlite3_column_blob(statement, columnId) else {
-            self.elements = []
-            return
-        }
-        let bytes = sqlite3_column_bytes(statement, columnId)
-        let data = Data(bytes: blob, count: Int(bytes))
-        self = Vector(fromData: data)
-    }
-
-    public func encode(to statement: OpaquePointer?, with columnId: Int32) {
-        let data = toData()
-        _ = data.withUnsafeBytes { buffer in
-            sqlite3_bind_blob(statement, columnId, buffer.baseAddress, Int32(buffer.count), nil)
-        }
-    }
 }
 
 // MARK: - CxxManaged Conformance

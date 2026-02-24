@@ -1,12 +1,14 @@
 import Foundation
-import SQLite3
+@_exported import Observation
 #if canImport(Combine)
 @_exported import Combine
 #endif
 @_exported import LatticeSwiftCppBridge
 import LatticeSwiftCppBridge
 import LatticeSwiftModule
+#if canImport(os)
 import os.lock
+#endif
 
 // MARK: - Cross-Instance Observation Registry
 
@@ -22,12 +24,21 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         let primaryKey: Int64
     }
 
+    /// Context for the C function pointer object observer callback.
+    fileprivate final class _ObjectObserverCtx: @unchecked Sendable {
+        let dbPath: String
+        let tableName: String
+        let primaryKey: Int64
+        init(dbPath: String, tableName: String, primaryKey: Int64) {
+            self.dbPath = dbPath; self.tableName = tableName; self.primaryKey = primaryKey
+        }
+    }
+
     private struct WeakModelRef: @unchecked Sendable {
         weak var instance: (any Model)?
         let objectIdentifier: ObjectIdentifier
         var cxxObserverId: UInt64?
         var cxxLatticeRef: lattice.swift_lattice_ref?
-
         init(_ model: any Model) {
             self.instance = model
             self.objectIdentifier = ObjectIdentifier(model)
@@ -52,13 +63,20 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         let objectId = ObjectIdentifier(model)
 
         // Register C++ object observer for cross-process changes.
+        // Pack captured state into a context for the C function pointer callback.
+        let observerCtx = _ObjectObserverCtx(dbPath: dbPath, tableName: tableName, primaryKey: primaryKey)
+        let observerCtxPtr = Unmanaged.passRetained(observerCtx).toOpaque()
+
         let observerId = latticeRef.get().add_object_observer(
             std.string(tableName),
             primaryKey,
-            { changedFieldsNames in
+            observerCtxPtr,
+            { (changedFieldNamesCStr, ctxPtr) in
+                guard let ctxPtr, let changedFieldNamesCStr else { return }
+                let ctx = Unmanaged<_ObjectObserverCtx>.fromOpaque(ctxPtr).takeUnretainedValue()
                 // changedFieldsNames is a JSON array like '["age",null,"name"]'
                 // null entries are unchanged columns from the trigger's CASE expressions
-                let fieldNames = String(changedFieldsNames)
+                let fieldNames = String(cString: changedFieldNamesCStr)
                 var names: [String] = []
                 if let data = fieldNames.data(using: .utf8),
                    let array = try? JSONSerialization.jsonObject(with: data) as? [Any] {
@@ -70,17 +88,20 @@ final class ModelInstanceRegistry: @unchecked Sendable {
                 guard !names.isEmpty else { return }
                 for name in names {
                     ModelInstanceRegistry.shared.notifyChange(
-                        databasePath: dbPath,
-                        tableName: tableName,
-                        primaryKey: primaryKey,
+                        databasePath: ctx.dbPath,
+                        tableName: ctx.tableName,
+                        primaryKey: ctx.primaryKey,
                         propertyName: name
                     )
                 }
+            },
+            { ptr in
+                guard let ptr else { return }
+                Unmanaged<_ObjectObserverCtx>.fromOpaque(ptr).release()
             }
         )
         ref.cxxObserverId = observerId
         ref.cxxLatticeRef = latticeRef
-
         lock.lock()
         defer { lock.unlock() }
 
@@ -123,6 +144,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
                let latticeRef = ref.cxxLatticeRef {
                 latticeRef.get().remove_object_observer(std.string(tableName), key.primaryKey, observerId)
             }
+            // Context release handled by C++ shared_ptr destroy callback
         }
     }
 
@@ -197,7 +219,11 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     static func _nameForKeyPath(_ keyPath: AnyKeyPath) -> String
     static var constraints: [Constraint] { get }
     static var fullTextProperties: Set<String> { get }
+    #if canImport(Combine)
     var _objectWillChange: Combine.ObservableObjectPublisher { get }
+    #else
+    var _objectWillChange: ObservableObjectPublisher { get }
+    #endif
     var _dynamicObject: ModelStorage { get set }
     var _instanceObservers: [_ModelObserver] { get set }
 }
@@ -269,6 +295,7 @@ extension Model {
         }
     }
 
+
     /// Called after a property mutation to notify other instances representing the same row.
     /// Uses the registry's cached database path to avoid accessing the C++ lattice ref,
     /// which may be a dangling raw pointer during teardown.
@@ -309,12 +336,18 @@ extension Model {
         storage._ref.setObject(named: std.string(name), value._dynamicObject._ref)
     }
 
+    #if canImport(Combine)
     public typealias ObservableObjectPublisher = AnyPublisher<Void, Never>
-    
+
     // 3️⃣ override the protocol's publisher
     public var objectWillChange: Combine.ObservableObjectPublisher {
         _objectWillChange
     }
+    #else
+    public var objectWillChange: ObservableObjectPublisher {
+        _objectWillChange
+    }
+    #endif
     
     public var id: some Hashable {
         if let primaryKey {

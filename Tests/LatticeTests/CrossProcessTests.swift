@@ -1,4 +1,3 @@
-#if os(macOS)
 import Testing
 import Foundation
 import Lattice
@@ -38,11 +37,12 @@ class CrossProcessChildRunner: XCTestCase {
 }
 
 /// Returns (executableURL, arguments) for spawning the child test process.
-/// Handles both SPM (`swiftpm-testing-helper`) and Xcode (`xctest`) runners.
+/// Handles SPM on macOS (`swiftpm-testing-helper`), SPM on Linux (direct `.xctest` binary),
+/// and Xcode (`xctest`) runners.
 private func childProcessConfig(filter: String = "crossProcessObservation") -> (URL, [String])? {
     let args = ProcessInfo.processInfo.arguments
 
-    // SPM: argv[0] is swiftpm-testing-helper, args include --test-bundle-path
+    // SPM (macOS): argv[0] is swiftpm-testing-helper, args include --test-bundle-path
     if args[0].hasSuffix("swiftpm-testing-helper"),
        let idx = args.firstIndex(of: "--test-bundle-path"), idx + 1 < args.count {
         let bundleBinary = args[idx + 1]
@@ -57,6 +57,16 @@ private func childProcessConfig(filter: String = "crossProcessObservation") -> (
         )
     }
 
+    // SPM (Linux): argv[0] is the .xctest binary itself, directly executable
+    if args[0].hasSuffix(".xctest"),
+       args.contains("--testing-library") {
+        return (
+            URL(fileURLWithPath: args[0]),
+            ["--filter", filter, "--testing-library", "swift-testing"]
+        )
+    }
+
+    #if canImport(ObjectiveC)
     // Xcode: use xctest to run the .xctest bundle
     let bundle = Bundle(for: CrossProcessChildRunner.self)
     guard let bundlePath = bundle.bundlePath as String?,
@@ -80,6 +90,9 @@ private func childProcessConfig(filter: String = "crossProcessObservation") -> (
         URL(fileURLWithPath: xctestPath),
         ["-XCTest", "CrossProcessChildRunner/testChildPath", bundlePath]
     )
+    #endif
+
+    return nil
 }
 
 @Suite("Cross-Process Observation Tests")
@@ -501,5 +514,3 @@ struct CrossProcessTests {
         }
     }
 }
-
-#endif

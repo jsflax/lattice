@@ -1,6 +1,7 @@
 import Foundation
-import SQLite3
+#if canImport(Combine)
 import Combine
+#endif
 import LatticeSwiftCppBridge
 
 public protocol PersistableUnkeyedCollection {

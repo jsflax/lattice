@@ -1,7 +1,9 @@
 import Foundation
 import Testing
 import Lattice
+#if canImport(MapKit)
 import MapKit
+#endif
 
 class MigrationV1 { // for namespacing
     @Model class Person {

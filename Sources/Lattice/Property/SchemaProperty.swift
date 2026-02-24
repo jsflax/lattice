@@ -1,5 +1,4 @@
 import Foundation
-import SQLite3
 import LatticeSwiftCppBridge
 import LatticeSwiftModule
 

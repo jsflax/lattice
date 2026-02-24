@@ -1,7 +1,10 @@
 import Foundation
+#if canImport(Combine)
 @preconcurrency import Combine
-import SQLite3
+#endif
+#if canImport(os)
 import os.lock
+#endif
 
 private final class IsolationKeyBox {
     let key: IsolationKey

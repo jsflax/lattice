@@ -1,6 +1,8 @@
 import Foundation
 import LatticeSwiftCppBridge
+#if canImport(Combine)
 import Combine
+#endif
 
 // MARK: - Constraint Types
 

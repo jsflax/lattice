@@ -1,7 +1,9 @@
 import Foundation
 import Lattice
 import Testing
+#if canImport(NaturalLanguage)
 import NaturalLanguage
+#endif
 
 // MARK: - Vector Search Tests
 
@@ -207,6 +209,7 @@ class VectorSearchTests: BaseTest {
         #expect(nearest[1].distance < 0.1)
     }
     
+    #if canImport(NaturalLanguage)
     @Test
     func test_NearestNeighborWithCosineDistance_NaturalLanguage() async throws {
         let nlEmbedding = NLEmbedding.wordEmbedding(for: .english)!
@@ -281,6 +284,7 @@ class VectorSearchTests: BaseTest {
         print("Animal words in top 4: \(animalsInTop)")
         #expect(animalsInTop.count >= 2, "Expected at least 2 animal words in top 4 results")
     }
+    #endif // canImport(NaturalLanguage)
 
     @Test
     func test_FilteredVectorSearch() async throws {

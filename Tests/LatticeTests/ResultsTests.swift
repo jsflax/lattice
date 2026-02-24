@@ -1,6 +1,8 @@
 import Foundation
 import Testing
+#if canImport(SwiftUI)
 import SwiftUI
+#endif
 import Lattice
 import Observation
 
@@ -121,7 +123,7 @@ class ResultsTests: BaseTest {
         let configuration = lattice.configuration
         try await Task { [ref] in
             let results = try ref.resolve(on: Lattice(Person.self, Dog.self, configuration: configuration))
-            #expect(results.count == 1)
+            #expect(results?.count == 1)
         }.value
         
         #expect(lattice.objects(Person.self).count == 2)

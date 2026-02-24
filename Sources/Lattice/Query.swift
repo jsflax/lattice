@@ -264,7 +264,7 @@ public struct Query<T>: Sendable {
     public func `in`<U: Collection>(_ collection: U) -> Query<Bool> where U.Element == T {
         return .init(.comparison(operator: .in, node, .constant(Array(collection)), options: []))
     }
-    public func `in`<U: Sequence>(_ collection: U) -> Query<Bool> where U.Element == UUID, T == UUID {
+    public func `in`<U: Collection>(_ collection: U) -> Query<Bool> where U.Element == UUID, T == UUID {
         .init(.comparison(operator: .in, node, .constant(collection.map(\.uuidString.localizedLowercase)), options: []))
     }
     
@@ -362,14 +362,12 @@ public struct Query<T>: Sendable {
     /// Creates an NSPredicate compatible string.
     /// - Returns: A tuple containing the predicate string and an array of arguments.
 
-    /// Creates an NSPredicate from the query expression.
+    /// Creates the final SQL WHERE clause from the query expression.
     package var predicate: String {
-        let predicate = _constructPredicate()
-        return String(format: predicate.0, arguments: predicate.1 as! [CVarArg])
+        _constructPredicate().0
     }
 }
 
-import SQLite3
 // MARK: Numerics
 extension Query where T: _QueryNumeric {
     /// :nodoc:
@@ -849,8 +847,7 @@ private enum CollectionSubscript {
 }
 
 private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPredicate: Bool = false) -> (String, [Any]) {
-    let formatStr = NSMutableString()
-    let arguments = NSMutableArray()
+    let formatStr = NSMutableString(string: "")
     var subqueryCounter = subqueryCount
 
     func buildExpression(_ lhs: QueryNode,
@@ -966,11 +963,10 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
     }
 
     func buildBetween(_ lowerBound: QueryNode, _ upperBound: QueryNode) {
-        formatStr.append(" BETWEEN {")
+        formatStr.append(" BETWEEN ")
         build(lowerBound)
-        formatStr.append(", ")
+        formatStr.append(" AND ")
         build(upperBound)
-        formatStr.append("}")
     }
 
     func buildBool(_ node: QueryNode, isNot: Bool = false) {
@@ -993,35 +989,49 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
             str.replacingOccurrences(of: "'", with: "''")
         }
 
+        func formatValue(_ v: Any?) {
+            guard let v = v else {
+                formatStr.append("NULL")
+                return
+            }
+            let mirror = Mirror(reflecting: v)
+            if mirror.displayStyle == .optional {
+                if let child = mirror.children.first {
+                    formatValue(child.value)
+                } else {
+                    formatStr.append("NULL")
+                }
+                return
+            }
+            if mirror.displayStyle == .collection {
+                formatStr.append("(")
+                var first = true
+                for child in mirror.children {
+                    if !first { formatStr.append(",") }
+                    first = false
+                    formatValue(child.value)
+                }
+                formatStr.append(")")
+                return
+            }
+            if v is NSNull {
+                formatStr.append("NULL")
+            } else if let date = v as? Date {
+                formatStr.append("\(date.timeIntervalSince1970)")
+            } else if let str = v as? String {
+                formatStr.append("'\(escapeSQLString(str))'")
+            } else if let uuid = v as? UUID {
+                formatStr.append("'\(uuid.uuidString.lowercased())'")
+            } else {
+                formatStr.append("\(v)")
+            }
+        }
+
         switch node {
         case .constant(let value):
-            if let array = value as? [String] {
-                array.map(escapeSQLString).forEach(arguments.add)
-                formatStr.append("(")
-                formatStr.append(array.map { _ in
-                    "'%@'"
-                }.joined(separator: ","))
-                formatStr.append(")")
-            } else {
-                if value is String {
-                    formatStr.append("'")
-                }
-                formatStr.append("%@")
-                if value is String {
-                    formatStr.append("'")
-                }
-                if let value = value as? Date {
-                    arguments.add(value.timeIntervalSince1970)
-                } else if let strValue = value as? String {
-                    arguments.add(escapeSQLString(strValue))
-                } else {
-                    arguments.add(value ?? NSNull())
-                }
-            }
+            formatValue(value)
         case .select(let keyPath, let tableName):
-            formatStr.append("(SELECT %@ FROM %@)")
-            arguments.add(keyPath)
-            arguments.add(tableName)
+            formatStr.append("(SELECT \(keyPath) FROM \(tableName))")
         case .embeddedKeyPath(var kp, var isAnyProperty, options: let options):
             if isNewNode {
                 buildBool(node)
@@ -1115,21 +1125,17 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
             formatStr.append(").@count")
         case .mapSubscript(let keyPath, let key):
             build(keyPath)
-            formatStr.append("[%@]")
-            arguments.add(key)
+            formatStr.append("[\(key)]")
         case .mapAnySubscripts(let keyPath, let keys):
             build(keyPath)
             for key in keys {
                 switch key {
                 case .index(let index):
-                    formatStr.append("[%@]")
-                    arguments.add(index)
+                    formatStr.append("[\(index)]")
                 case .key(let key):
-                    formatStr.append("[%@]")
-                    arguments.add(key)
+                    formatStr.append("[\(key)]")
                 case .all:
-                    formatStr.append("[%K]")
-                    arguments.add("#any")
+                    formatStr.append("[#any]")
                 }
             }
         case .linkKeyPath(_, _, _, _):
@@ -1145,7 +1151,7 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
         }
     }
     build(root, isNewNode: true)
-    return (formatStr as String, (arguments as! [Any]))
+    return (formatStr as String, [])
 }
 
 private struct KeyPathOptions: OptionSet {

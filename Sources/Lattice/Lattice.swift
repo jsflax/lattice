@@ -1,6 +1,10 @@
-import SQLite3
+#if canImport(os)
 import os
+#endif
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 @_exported import LatticeSwiftCppBridge
 @_exported import LatticeSwiftModule
 
@@ -21,7 +25,9 @@ extension Actor {
     }
 }
 
+#if canImport(Combine)
 @preconcurrency import Combine
+#endif
 
 public struct _UncheckedSendable<T>: @unchecked Sendable {
     public let value: T
@@ -31,10 +37,8 @@ public struct _UncheckedSendable<T>: @unchecked Sendable {
     }
 }
 extension Logger {
-    static let db = Logger(subsystem: "lattice.io",
-                           category: "db")
-    static let sync = Logger(subsystem: "lattice.io",
-                             category: "sync")
+    static let db = Logger(subsystem: "lattice.io", category: "db")
+    static let sync = Logger(subsystem: "lattice.io", category: "sync")
 }
 
 
@@ -77,14 +81,18 @@ extension lattice.swift_lattice_ref: Hashable, Equatable, @unchecked @retroactiv
 }
 
 public struct Lattice {
+    #if canImport(os)
     private static let synchronizersLock = OSAllocatedUnfairLock<Void>()
+    #else
+    private static let synchronizersLock = UnfairLock(initialState: ())
+    #endif
     
     public struct SyncConfiguration {
         
     }
     
     /// URLSession-backed websocket client that bridges to C++ generic_websocket_client
-    internal final class WebsocketClient {
+    internal final class WebsocketClient: @unchecked Sendable {
         private var webSocketTask: URLSessionWebSocketTask?
         private var currentState: lattice.websocket_state = .closed
         private let session: URLSession
@@ -93,7 +101,7 @@ public struct Lattice {
         // Pointers to trigger C++ callbacks - set after generic_websocket_client is created
         private var cxxClientPtr: UnsafeMutableRawPointer?
 
-        final class WebSocketDelegateHandler: NSObject, URLSessionWebSocketDelegate {
+        final class WebSocketDelegateHandler: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
             weak var client: WebsocketClient?
 
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
@@ -318,19 +326,19 @@ public struct Lattice {
             self.isolation = isolation
             isolationPtr = UnsafeMutablePointer.allocate(capacity: 1)
             isolationPtr.initialize(to: self.isolation)
-            self.scheduler = lattice.generic_scheduler(isolationPtr, { fn, ptr in
+            self.scheduler = lattice.generic_scheduler(isolationPtr, { work, ptr in
                 guard let isolation = ptr?.assumingMemoryBound(to: (any Actor)?.self) else {
-                    return fn.pointee()
+                    lattice.generic_scheduler.execute_work(work)
+                    return
                 }
                 if let isolation = isolation.pointee {
-                    let function = _UncheckedSendable(fn.pointee)
                     Task {
                         await isolation.invoke { actor in
-                            function.value()
+                            lattice.generic_scheduler.execute_work(work)
                         }
                     }
                 } else {
-                    fn.pointee()
+                    lattice.generic_scheduler.execute_work(work)
                 }
             }, { ptr in
                 true
@@ -465,7 +473,11 @@ public struct Lattice {
         }
     }
     
+    #if canImport(os)
     private static let cacheLock = OSAllocatedUnfairLock<Void>()
+    #else
+    private static let cacheLock = UnfairLock(initialState: ())
+    #endif
 
     /// Cache key that uses the underlying impl_ pointer hash for stable identity
     private struct CacheKey: Hashable {
@@ -485,7 +497,14 @@ public struct Lattice {
     }
 
     private nonisolated(unsafe) static var cache: [CacheKey: Lattice] = [:]
-    
+
+    /// Context passed through void* for the row migration C function pointer callback.
+    private final class _MigrationCtx: @unchecked Sendable {
+        let migration: [Int: Migration]
+        let targetVersion: Int
+        init(_ m: [Int: Migration], _ v: Int) { migration = m; targetVersion = v }
+    }
+
     internal init(isolation: isolated (any Actor)? = #isolation,
                   for schema: [any Model.Type],
                   configuration: Configuration = defaultConfiguration,
@@ -531,26 +550,33 @@ public struct Lattice {
             var swiftConfig =  configuration.cxxConfiguration()//lattice.swift_configuration(configuration.cxxConfiguration())
             swiftConfig.target_schema_version = Int32(targetVersion)
 
-            swiftConfig.setGetOldAndNewSchemaForVersionBlock { tableName, versionNumber in
-                if let currentMigration = migration[versionNumber] {
-                    if let (from, to) = currentMigration.schemas[String(tableName)] {
-                        return lattice.to_optional(lattice.swift_configuration.SchemaPair(from: from, to: to))
-                    }
+            // Pre-populate migration schema pairs (no callback needed)
+            for (version, migrationDef) in migration {
+                for (tableName, schemas) in migrationDef.schemas {
+                    swiftConfig.addMigrationSchema(version, std.string(tableName), schemas.from, schemas.to)
                 }
-                return .init()
             }
-            
-            // Set up the row migration callback
-            swiftConfig.setRowMigrationBlock({ tableName, oldRefPtr, newRefPtr in
-                guard let oldRefPtr = oldRefPtr, let newRefPtr = newRefPtr else { return }
-                let entityName = String(tableName)
 
-                // C++ owns these refs - don't retain/release (C++ creates and deletes them)
+            // Set up the row migration callback using C function pointers
+            // (same pattern as generic_scheduler — avoids block lifetime issues on Linux)
+            let ctx = _MigrationCtx(migration, Int(targetVersion))
+            let ctxRaw = Unmanaged.passRetained(ctx).toOpaque()
 
-                // Find the migration for this version and call _sendRow
-                if let currentMigration = migration[targetVersion] {
-                    currentMigration._sendRow(entityName: entityName, oldRefPtr, newRefPtr)
+            swiftConfig.setRowMigrationCallback(ctxRaw, { tableName, rawCtx in
+                guard let rawCtx, let tableName else { return }
+                let migCtx = Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).takeUnretainedValue()
+                let entityName = String(cString: tableName)
+
+                // Read old/new refs from thread-local storage (set by C++ before this callback)
+                guard let oldRef = lattice.migrationGetOldRow(),
+                      let newRef = lattice.migrationGetNewRow() else { return }
+
+                if let currentMigration = migCtx.migration[migCtx.targetVersion] {
+                    currentMigration._sendRow(entityName: entityName, oldRef, newRef)
                 }
+            }, { rawCtx in
+                guard let rawCtx else { return }
+                Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).release()
             })
 
             self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: swiftConfig, schemas: cxxSchemas)
@@ -639,12 +665,26 @@ public struct Lattice {
     public static func delete(for configuration: Configuration = defaultConfiguration) throws {
         let latticeSHMURL: URL
         let latticeWALURL: URL
-        
+
         let fileURL = if configuration.isStoredInMemoryOnly {
             throw Error.databaseError("Cannot delete in-memory database")
         } else {
             configuration.fileURL
         }
+
+        // Explicitly close all SQLite connections for this path before unlinking
+        // files. The C++ close() shuts down the read/write connections, cross-
+        // process notifier, and synchronizer. Without this, SQLite warns
+        // "vnode unlinked while in use" because the connection still has the
+        // file mmap'd.
+        let filePath = fileURL.path(percentEncoded: false)
+        cacheLock.withLockUnchecked {
+            for (key, value) in cache where value.configuration.fileURL.path(percentEncoded: false) == filePath {
+                value.cxxLattice.close()
+                cache.removeValue(forKey: key)
+            }
+        }
+
         latticeSHMURL = fileURL.deletingPathExtension().appendingPathExtension("sqlite-shm")
         latticeWALURL = fileURL.deletingPathExtension().appendingPathExtension("sqlite-wal")
         try FileManager.default.removeItem(at: fileURL)
@@ -693,9 +733,9 @@ public struct Lattice {
         guard object.lattice == nil else {
             fatalError()
         }
-        var copy = object._dynamicObject._ref // Break exclusive access
-        cxxLattice.add(&copy.shared().pointee)
-        object._dynamicObject._ref = copy
+        let ref = object._dynamicObject._ref
+        cxxLattice.add(ref)
+        object._dynamicObject._ref = ref
         // Register for cross-instance observation now that the object has a primaryKey
         object._registerIfNeeded()
     }
@@ -834,24 +874,27 @@ public struct Lattice {
         // Prevent context from being deallocated
         let contextPtr = Unmanaged.passRetained(context).toOpaque()
 
-        // Register observer with C++ using C function pointer
+        // Register observer with C++ using C function pointer.
+        // shared_ptr<void> in C++ ensures context lives through in-flight callbacks.
         let observerId = cxxLattice.add_table_observer(
             tableName,
             contextPtr,
             { (contextPtr, operation, rowId, globalRowId) in
                 guard let contextPtr else { return }
                 let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
-                context.callback(String(operation), rowId, String(globalRowId))
+                context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
+            },
+            { ptr in
+                guard let ptr else { return }
+                Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
             }
         )
 
-        // Create cancellable token
+        // Create cancellable token — context release handled by C++ shared_ptr destroy
         let token = TableObservationToken(cxxLattice: cxxLattice, tableName: tableName, observerId: observerId)
 
         return AnyCancellable {
             token.cancel()
-            // Release the retained context
-            Unmanaged<TableObserverContext>.fromOpaque(contextPtr).release()
         }
     }
 
@@ -860,13 +903,19 @@ public struct Lattice {
             let tableName = std.string(AuditLog.entityName)
 
             let context = TableObserverContext { operation, rowId, globalRowId in
+                #if canImport(ObjectiveC)
                 autoreleasepool {
                     let lattice = try! Lattice(for: modelTypes, configuration: configuration)
-                    if let auditLog = lattice.object(AuditLog.self, primaryKey: rowId)?.sendableReference as? any SendableReference<AuditLog> {
-//                        let refs: [any SendableReference<AuditLog>] = [auditLog]
-                        stream.yield([auditLog])
+                    if let auditLog = lattice.object(AuditLog.self, primaryKey: rowId) {
+                        stream.yield([auditLog.sendableReference])
                     }
                 }
+                #else
+                let lattice = try! Lattice(for: modelTypes, configuration: configuration)
+                if let auditLog = lattice.object(AuditLog.self, primaryKey: rowId) {
+                    stream.yield([auditLog.sendableReference])
+                }
+                #endif
             }
 
             let contextPtr = Unmanaged.passRetained(context).toOpaque()
@@ -877,13 +926,16 @@ public struct Lattice {
                 { (contextPtr, operation, rowId, globalRowId) in
                     guard let contextPtr else { return }
                     let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
-                    context.callback(String(operation), rowId, String(globalRowId))
+                    context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
+                },
+                { ptr in
+                    guard let ptr else { return }
+                    Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
                 }
             )
 
             stream.onTermination = { _ in
                 cxxLattice.remove_table_observer(tableName, observerId)
-                Unmanaged<TableObserverContext>.fromOpaque(contextPtr).release()
             }
         }
     }
@@ -947,7 +999,11 @@ public struct Lattice {
             { (contextPtr, operation, rowId, globalRowId) in
                 guard let contextPtr else { return }
                 let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
-                context.callback(String(operation), rowId, String(globalRowId))
+                context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
+            },
+            { ptr in
+                guard let ptr else { return }
+                Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
             }
         )
 
@@ -955,7 +1011,6 @@ public struct Lattice {
 
         return AnyCancellable {
             token.cancel()
-            Unmanaged<TableObserverContext>.fromOpaque(contextPtr).release()
         }
     }
     
@@ -1023,32 +1078,35 @@ package struct Schema<each M: Model>: _Schema {
     }
     
     package func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> any VirtualResults<T> {
-//        build(lattice: lattice, proto: type)
-//        virtualSchemaBuilder(for: type, on: lattice) {
-            var virtualResults: (any VirtualResults<T>)!
-            for modelType in repeat each modelTypes {
-                if virtualResults == nil {
-                    if modelType.init(isolation: #isolation) is T {
-                        virtualResults = _VirtualResults.init(types: modelType, proto: type, lattice: lattice)
-                    }
-                } else {
-                    if modelType.init(isolation: #isolation) is T {
-                        virtualResults = virtualResults._addType(modelType)
-                    }
-                }
+        // Collect matching types in the variadic loop (no existential box needed)
+        var matchingTypes: [any Model.Type] = []
+        for modelType in repeat each modelTypes {
+            if modelType.init(isolation: #isolation) is T {
+                matchingTypes.append(modelType)
             }
-        return virtualResults!
-//        }
-//        _VirtualResults<(), T>.self
-//        var virtualResults: (any VirtualResults).Type!
-//        for modelType in repeat each modelTypes {
-//            if virtualResults == nil {
-//                virtualResults = add(modelType, with: type)
-//            } else {
-//                add(modelType, to: virtualResults, with: type)
-//            }
-//        }
+        }
+        // Build VirtualResults outside variadic context using existential opening
+        return _buildVirtualResults(from: matchingTypes, proto: type, lattice: lattice)
     }
+}
+
+// Build VirtualResults outside of variadic generic context to avoid IRGen crash on Linux.
+// Uses existential opening on `any Model.Type` instead of pack element archetypes.
+private func _makeInitialVirtualResults<M: Model, T>(
+    _ modelType: M.Type, proto: T.Type, lattice: Lattice
+) -> any VirtualResults<T> {
+    _VirtualResults<M, T>(types: modelType, proto: proto, lattice: lattice)
+}
+
+private func _buildVirtualResults<T>(
+    from types: [any Model.Type], proto: T.Type, lattice: Lattice
+) -> any VirtualResults<T> {
+    guard let first = types.first else { fatalError("No types conform to \(T.self)") }
+    var result = _makeInitialVirtualResults(first, proto: proto, lattice: lattice)
+    for remaining in types.dropFirst() {
+        result = result._addType(remaining)
+    }
+    return result
 }
 
 extension Array where Element == any Model.Type {

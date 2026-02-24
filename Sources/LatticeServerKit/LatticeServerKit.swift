@@ -74,7 +74,8 @@ actor SocketManager {
 extension Lattice {
     public static func configure(_ app: Application,
                                  for schema: [any Lattice.Model.Type],
-                                 storagePath: String) throws {
+                                 storagePath: String,
+                                 additionalMiddlewares: [any AsyncMiddleware] = []) throws {
         var env = try Environment.detect()
         try LoggingSystem.bootstrap(from: &env)
         
@@ -102,7 +103,10 @@ extension Lattice {
         // protected profile
         let sockets = SocketManager()
         
-        let protected = app.grouped(DebugTokenAuth(), Token.authenticator(), User.guardMiddleware())
+        let baseProtected = app.grouped(DebugTokenAuth(), Token.authenticator(), User.guardMiddleware())
+        let protected: any RoutesBuilder = additionalMiddlewares.isEmpty
+            ? baseProtected
+            : baseProtected.grouped(additionalMiddlewares)
         protected.get("profile") { req in
             print(req)
             let user = try req.auth.require(User.self)

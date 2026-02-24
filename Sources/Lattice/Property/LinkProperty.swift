@@ -1,5 +1,4 @@
 import Foundation
-import SQLite3
 
 public protocol LinkProperty {
     associatedtype ModelType: Model

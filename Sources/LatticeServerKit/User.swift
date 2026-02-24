@@ -1,29 +1,29 @@
 import Vapor
 import Fluent
 
-final class User: Model, Content, Authenticatable, @unchecked Sendable {
-    static let schema = "users"
-    
+public final class User: Model, Content, Authenticatable, @unchecked Sendable {
+    public static let schema = "users"
+
     @ID(key: .id)
-    var id: UUID?
+    public var id: UUID?
     @OptionalField(key: "email")
-    var email: String?
+    public var email: String?
     @OptionalField(key: "password_hash")
-    var passwordHash: String?
+    public var passwordHash: String?
     @OptionalField(key: "full_name")
-    var fullName: String?
+    public var fullName: String?
     @Timestamp(key: "created_at", on: .create)
-    var createdAt: Date?
+    public var createdAt: Date?
     @Timestamp(key: "updated_at", on: .update)
-    var updatedAt: Date?
-    
+    public var updatedAt: Date?
+
     @Children(for: \.$user)
-    var oauthAccounts: [OAuthAccount]
+    public var oauthAccounts: [OAuthAccount]
     @Children(for: \.$user)
-    var tokens: [Token]
-    
-    init() {}
-    init(id: UUID? = nil,
+    public var tokens: [Token]
+
+    public init() {}
+    public init(id: UUID? = nil,
          email: String?,
          passwordHash: String?,
          fullName: String?) {
@@ -32,15 +32,15 @@ final class User: Model, Content, Authenticatable, @unchecked Sendable {
         self.passwordHash = passwordHash
         self.fullName = fullName
     }
-    
-    struct Public: Content {
-        let id: UUID
-        let email: String?
-        let fullName: String?
-        let providers: [String]
+
+    public struct Public: Content {
+        public let id: UUID
+        public let email: String?
+        public let fullName: String?
+        public let providers: [String]
     }
-    
-    func asPublic() throws -> Public {
+
+    public func asPublic() throws -> Public {
         let provs = oauthAccounts.map { $0.provider } +
         (passwordHash != nil ? ["email"] : [])
         return Public(id: try requireID(),
@@ -50,7 +50,6 @@ final class User: Model, Content, Authenticatable, @unchecked Sendable {
     }
 }
 
-// Sources/App/Migrations/CreateUser.swift
 import Fluent
 
 struct CreateUser: AsyncMigration {
@@ -65,10 +64,10 @@ struct CreateUser: AsyncMigration {
             .unique(on: "email")
             .create()
     }
-    
+
     func revert(on db: Database) async throws {
         try await db.schema(User.schema).delete()
     }
 }
 
-typealias LatticeUser = User
+public typealias LatticeUser = User

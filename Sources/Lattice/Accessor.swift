@@ -1,5 +1,4 @@
 import Foundation
-import SQLite3
 import LatticeSwiftCppBridge
 import LatticeSwiftModule
 import CxxStdlib
@@ -492,13 +491,6 @@ extension lattice.ManagedOptionalBool: OptionalProtocol {
     public init(_ wrapped: consuming Bool) {
         self.init()
         self.pointee = wrapped
-    }
-    public func value() -> Bool {
-        self.pointee
-    }
-    
-    public func hasValue() -> Bool {
-        self.__convertToBool()
     }
 }
 

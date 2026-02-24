@@ -1,21 +1,20 @@
-// Sources/App/Models/OAuthAccount.swift
 import Vapor
 import Fluent
 
-final class OAuthAccount: Model, Content, @unchecked Sendable {
-    static let schema = "oauth_accounts"
+public final class OAuthAccount: Model, Content, @unchecked Sendable {
+    public static let schema = "oauth_accounts"
 
-    @ID(key: .id)            var id: UUID?
-    @Field(key: "provider")  var provider: String      // "apple", "google", …
-    @Field(key: "provider_user_id") var providerUserID: String
-    @OptionalField(key: "access_token")  var accessToken: String?
-    @OptionalField(key: "refresh_token") var refreshToken: String?
-    @Parent(key: "user_id")    var user: User
-    @Timestamp(key: "created_at", on: .create) var createdAt: Date?
-    @Timestamp(key: "updated_at", on: .update) var updatedAt: Date?
+    @ID(key: .id)            public var id: UUID?
+    @Field(key: "provider")  public var provider: String      // "apple", "google", …
+    @Field(key: "provider_user_id") public var providerUserID: String
+    @OptionalField(key: "access_token")  public var accessToken: String?
+    @OptionalField(key: "refresh_token") public var refreshToken: String?
+    @Parent(key: "user_id")    public var user: User
+    @Timestamp(key: "created_at", on: .create) public var createdAt: Date?
+    @Timestamp(key: "updated_at", on: .update) public var updatedAt: Date?
 
-    init() {}
-    init(provider: String,
+    public init() {}
+    public init(provider: String,
          providerUserID: String,
          userID: UUID)
     {
@@ -25,7 +24,6 @@ final class OAuthAccount: Model, Content, @unchecked Sendable {
     }
 }
 
-// Sources/App/Migrations/CreateOAuthAccount.swift
 import Fluent
 
 struct CreateOAuthAccount: AsyncMigration {
@@ -42,7 +40,7 @@ struct CreateOAuthAccount: AsyncMigration {
           .unique(on: "provider", "provider_user_id")
           .create()
     }
-    
+
     func revert(on db: Database) async throws {
         try await db.schema(OAuthAccount.schema).delete()
     }

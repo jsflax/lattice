@@ -12,7 +12,7 @@ public struct GeoBoundsLinkListRef<T>: @unchecked Sendable, LinkListRef {
     private let _fromRef: (lattice.geo_bounds_ref) -> T
     private let _toRef: (T) -> lattice.geo_bounds_ref
 
-    init(_ref: lattice.geo_bounds_list_ref,
+    package init(_ref: lattice.geo_bounds_list_ref,
          fromRef: @escaping (lattice.geo_bounds_ref) -> T,
          toRef: @escaping (T) -> lattice.geo_bounds_ref) {
         self._ref = _ref

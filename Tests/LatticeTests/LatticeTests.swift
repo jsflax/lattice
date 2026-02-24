@@ -161,6 +161,10 @@ func testLattice(isolation: isolated (any Actor)? = #isolation,
 }
 
 class BaseTest {
+    init() {
+        lattice_set_log_level(lattice.log_level.debug)
+    }
+    
     deinit {
         paths.forEach { try? Lattice.delete(for: .init(fileURL: $0)) }
     }
@@ -181,10 +185,6 @@ class BaseTest {
 @Suite("Lattice Tests")
 class LatticeTests: BaseTest {
     private let path: String = "\(String.random(length: 32)).sqlite"
-    
-//    init() throws {
-//        print("Lattice path: \(FileManager.default.temporaryDirectory.appending(path: path))")
-//    }
     
     private func removeDB() {
         
@@ -548,6 +548,7 @@ class LatticeTests: BaseTest {
                 deleteHitCount += 1
             }
             checkedContinuation?.resume()
+            checkedContinuation = nil
         }
         var cancellable: AnyCancellable?
         expectedName.value = person.name
@@ -1535,6 +1536,282 @@ class LatticeTests: BaseTest {
         #expect(countGreaterThanZero.count == 1)
         #expect(countGreaterThanZero.first?.string == "filled")
     }
+    private func makeAllTypesObject(
+        string: String = "",
+        stringOpt: String? = nil,
+        bool: Bool = false,
+        boolOpt: Bool? = nil,
+        int64: Int64 = 0,
+        float: Float = 0,
+        double: Double = 0,
+        date: Date = Date(),
+        data: Data = Data()
+    ) -> AllTypesObject {
+        let obj = AllTypesObject()
+        obj.string = string
+        obj.stringOpt = stringOpt
+        obj.bool = bool
+        obj.boolOpt = boolOpt
+        obj.int64 = int64
+        obj.float = float
+        obj.double = double
+        obj.date = date
+        obj.data = data
+        obj.uuid = UUID()
+        obj.url = URL(string: "https://test.com")!
+        obj.dict = [:]
+        obj.embedded = Embedded(bar: "")
+        return obj
+    }
+
+    @Test func test_StringContainsQuery() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        let obj1 = makeAllTypesObject(string: "hello world")
+        let obj2 = makeAllTypesObject(string: "goodbye world")
+        let obj3 = makeAllTypesObject(string: "hello there")
+        lattice.add(obj1)
+        lattice.add(obj2)
+        lattice.add(obj3)
+
+        let results = lattice.objects(AllTypesObject.self).where {
+            $0.string.contains("world")
+        }
+        #expect(results.count == 2)
+    }
+
+    @Test func test_StringStartsWithQuery() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        let obj1 = makeAllTypesObject(string: "hello world")
+        let obj2 = makeAllTypesObject(string: "goodbye world")
+        let obj3 = makeAllTypesObject(string: "hello there")
+        lattice.add(obj1)
+        lattice.add(obj2)
+        lattice.add(obj3)
+
+        let results = lattice.objects(AllTypesObject.self).where {
+            $0.string.starts(with: "hello")
+        }
+        #expect(results.count == 2)
+    }
+
+    @Test func test_StringEndsWithQuery() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        let obj1 = makeAllTypesObject(string: "hello world")
+        let obj2 = makeAllTypesObject(string: "goodbye world")
+        let obj3 = makeAllTypesObject(string: "hello there")
+        lattice.add(obj1)
+        lattice.add(obj2)
+        lattice.add(obj3)
+
+        let results = lattice.objects(AllTypesObject.self).where {
+            $0.string.ends(with: "world")
+        }
+        #expect(results.count == 2)
+    }
+
+    @Test func test_StringLikeQuery() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        let obj1 = makeAllTypesObject(string: "hello world")
+        let obj2 = makeAllTypesObject(string: "hello there")
+        let obj3 = makeAllTypesObject(string: "goodbye world")
+        lattice.add(obj1)
+        lattice.add(obj2)
+        lattice.add(obj3)
+
+        let results = lattice.objects(AllTypesObject.self).where {
+            $0.string.like("hello%")
+        }
+        #expect(results.count == 2)
+    }
+
+    @Test func test_StringEscapingQuery() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        let obj1 = makeAllTypesObject(string: "it's a test")
+        let obj2 = makeAllTypesObject(string: "no apostrophe")
+        lattice.add(obj1)
+        lattice.add(obj2)
+
+        let results = lattice.objects(AllTypesObject.self).where {
+            $0.string == "it's a test"
+        }
+        #expect(results.count == 1)
+        #expect(results.first?.string == "it's a test")
+    }
+
+    @Test func test_BoolQuery() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        let obj1 = makeAllTypesObject(string: "active", bool: true)
+        let obj2 = makeAllTypesObject(string: "inactive", bool: false)
+        lattice.add(obj1)
+        lattice.add(obj2)
+
+        let trueResults = lattice.objects(AllTypesObject.self).where {
+            $0.bool == true
+        }
+        #expect(trueResults.count == 1)
+        #expect(trueResults.first?.string == "active")
+
+        let falseResults = lattice.objects(AllTypesObject.self).where {
+            $0.bool == false
+        }
+        #expect(falseResults.count == 1)
+        #expect(falseResults.first?.string == "inactive")
+    }
+
+    @Test func test_DateQuery() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        let now = Date()
+        let yesterday = now.addingTimeInterval(-86400)
+        let tomorrow = now.addingTimeInterval(86400)
+
+        let obj1 = makeAllTypesObject(string: "yesterday", date: yesterday)
+        let obj2 = makeAllTypesObject(string: "now", date: now)
+        let obj3 = makeAllTypesObject(string: "tomorrow", date: tomorrow)
+        lattice.add(obj1)
+        lattice.add(obj2)
+        lattice.add(obj3)
+
+        let results = lattice.objects(AllTypesObject.self).where {
+            $0.date > now.addingTimeInterval(-1)
+        }
+        #expect(results.count == 2)
+
+        let rangeResults = lattice.objects(AllTypesObject.self).where {
+            $0.date < now.addingTimeInterval(1)
+        }
+        #expect(rangeResults.count == 2)
+    }
+
+    @Test func test_DoubleQuery() async throws {
+        let lattice = try testLattice(AllTypesObject.self)
+
+        let obj1 = makeAllTypesObject(string: "pi", double: 3.14159)
+        let obj2 = makeAllTypesObject(string: "e", double: 2.71828)
+        let obj3 = makeAllTypesObject(string: "ten", double: 10.0)
+        lattice.add(obj1)
+        lattice.add(obj2)
+        lattice.add(obj3)
+
+        let results = lattice.objects(AllTypesObject.self).where {
+            $0.double > 3.0
+        }
+        #expect(results.count == 2)
+
+        let exactResults = lattice.objects(AllTypesObject.self).where {
+            $0.double == 2.71828
+        }
+        #expect(exactResults.count == 1)
+        #expect(exactResults.first?.string == "e")
+    }
+
+    @Test func test_ComparisonOperators() async throws {
+        let lattice = try testLattice(Person.self)
+
+        let p1 = Person()
+        p1.name = "Alice"
+        p1.age = 10
+        let p2 = Person()
+        p2.name = "Bob"
+        p2.age = 20
+        let p3 = Person()
+        p3.name = "Charlie"
+        p3.age = 30
+        lattice.add(p1)
+        lattice.add(p2)
+        lattice.add(p3)
+
+        #expect(lattice.objects(Person.self).where { $0.age >= 20 }.count == 2)
+        #expect(lattice.objects(Person.self).where { $0.age <= 20 }.count == 2)
+        #expect(lattice.objects(Person.self).where { $0.age > 20 }.count == 1)
+        #expect(lattice.objects(Person.self).where { $0.age < 20 }.count == 1)
+        #expect(lattice.objects(Person.self).where { $0.age != 20 }.count == 2)
+    }
+
+    @Test func test_CompoundQuery() async throws {
+        let lattice = try testLattice(Person.self)
+
+        let p1 = Person()
+        p1.name = "Alice"
+        p1.age = 25
+        let p2 = Person()
+        p2.name = "Bob"
+        p2.age = 30
+        let p3 = Person()
+        p3.name = "Alice"
+        p3.age = 35
+        lattice.add(p1)
+        lattice.add(p2)
+        lattice.add(p3)
+
+        let andResults = lattice.objects(Person.self).where {
+            $0.name == "Alice" && $0.age > 30
+        }
+        #expect(andResults.count == 1)
+
+        let orResults = lattice.objects(Person.self).where {
+            $0.name == "Bob" || $0.age == 25
+        }
+        #expect(orResults.count == 2)
+
+        let notResults = lattice.objects(Person.self).where {
+            !($0.name == "Alice")
+        }
+        #expect(notResults.count == 1)
+        #expect(notResults.first?.name == "Bob")
+    }
+
+    @Test func test_ClosedRangeQuery() async throws {
+        let lattice = try testLattice(Person.self)
+
+        let p1 = Person()
+        p1.name = "Alice"
+        p1.age = 10
+        let p2 = Person()
+        p2.name = "Bob"
+        p2.age = 20
+        let p3 = Person()
+        p3.name = "Charlie"
+        p3.age = 30
+        lattice.add(p1)
+        lattice.add(p2)
+        lattice.add(p3)
+
+        let results = lattice.objects(Person.self).where {
+            $0.age.contains(15...25)
+        }
+        #expect(results.count == 1)
+        #expect(results.first?.name == "Bob")
+    }
+
+    @Test func test_OpenRangeQuery() async throws {
+        let lattice = try testLattice(Person.self)
+
+        let p1 = Person()
+        p1.name = "Alice"
+        p1.age = 10
+        let p2 = Person()
+        p2.name = "Bob"
+        p2.age = 20
+        let p3 = Person()
+        p3.name = "Charlie"
+        p3.age = 30
+        lattice.add(p1)
+        lattice.add(p2)
+        lattice.add(p3)
+
+        let results = lattice.objects(Person.self).where {
+            $0.age.contains(10..<30)
+        }
+        #expect(results.count == 2)
+    }
+
     @Test func test_QueryByGlobalId() async throws {
         let lattice = try testLattice(Person.self)
 

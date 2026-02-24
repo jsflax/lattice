@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(Combine)
 import Combine
+#endif
 import Testing
 //import SwiftUI
 import Lattice
@@ -42,9 +44,27 @@ import Vapor
 }
 import NIOCore
 
-#if ENABLE_SYNC_TESTS
-@Suite("Sync Tests")
-class SyncTests: @unchecked Sendable {
+/// Thread-safe WebSocket store for test server.
+private final class SocketStore: @unchecked Sendable {
+    private var _sockets: [WebSocket] = []
+    private let lock = NSLock()
+
+    func append(_ ws: WebSocket) {
+        lock.lock()
+        _sockets.append(ws)
+        lock.unlock()
+    }
+
+    func others(excluding ws: WebSocket) -> [WebSocket] {
+        lock.lock()
+        let result = _sockets.filter { $0 !== ws }
+        lock.unlock()
+        return result
+    }
+}
+
+@Suite("Sync Tests", .serialized)
+actor SyncTests {
     let app: Application
     let syncLatticeURL = FileManager.default.temporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
@@ -52,20 +72,13 @@ class SyncTests: @unchecked Sendable {
         .appending(path: "\(String.random(length: 30)).sqlite")
     let lattice2URL = FileManager.default.temporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    var port = isPortOpen(port: 1337) ? 1337 : 1338
-    let sem = DispatchSemaphore(value: 0)
+    var port: Int = 0
     var localLattice1: Lattice!
     var localLattice2: Lattice!
     var syncedLattice: Lattice!
-    lazy var syncedLatticeConfiguration = Lattice.Configuration(fileURL: syncLatticeURL)
-    lazy var localLattice1Configuration = Lattice.Configuration.init(
-        fileURL: lattice1URL,
-        authorizationToken: "hi",
-        wssEndpoint: URL(string: "http://localhost:\(port)/test"))
-    lazy var localLattice2Configuration = Lattice.Configuration.init(
-        fileURL: lattice2URL,
-        authorizationToken: "hi2",
-        wssEndpoint: URL(string: "http://localhost:\(port)/test"))
+    var syncedLatticeConfiguration: Lattice.Configuration
+    var localLattice1Configuration: Lattice.Configuration
+    var localLattice2Configuration: Lattice.Configuration
     
     deinit {
         app.shutdown()
@@ -73,124 +86,108 @@ class SyncTests: @unchecked Sendable {
         try? Lattice.delete(for: localLattice2Configuration)
         try? Lattice.delete(for: syncedLatticeConfiguration)
     }
-    var sockets: [WebSocket] = []
+    private let sockets = SocketStore()
     private func launchServer() async throws {
+        let syncedLatticeConfiguration = self.syncedLatticeConfiguration
         app.webSocket("test", maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 500 * 1024 * 1024)) { req, ws in
             self.sockets.append(ws)
             ws.onBinary { ws, bb in
                 print("🧦", "Server Received Binary Event")
-                
-                try? await LatticeActor(self.syncedLattice)
-                .withModelContext({ lattice in
-                    do {
-                        let globalIds = try lattice.receive(Data(buffer: bb))
-                        ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
-                        self.sem.signal()
-                    } catch {
-                        print("Error:", error)
+
+                let lattice = try! Lattice(configuration: syncedLatticeConfiguration)
+                do {
+                    let globalIds = try lattice.receive(Data(buffer: bb))
+                    ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
+                } catch {
+                    print("Error:", error)
+                }
+
+                // Only forward audit_log data to other clients, NOT ACK messages.
+                // ACKs are a sender↔server protocol; forwarding them causes
+                // mark_as_synced to fire on receivers, producing duplicate
+                // AuditLog observer notifications.
+                let data = Data(buffer: bb)
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let kind = json["kind"] as? String,
+                   kind == "auditLog" {
+                    for socket in self.sockets.others(excluding: ws) {
+                        socket.send(bb)
                     }
-                })
-                
-                for socket in self.sockets where socket !== ws {
-                    socket.send(bb)
                 }
             }
 
-            await Task {
-                let lattice = self.syncedLattice!
-                
-                // bring the user up to date
-                let encoded: Data? = try! await LatticeActor(lattice).withModelContext { lattice in
-                    let events = try lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-                    return events.isEmpty ? nil : try JSONEncoder().encode(ServerSentEvent.auditLog(events))
-                }
-                encoded.map { encoded in ws.send(ByteBuffer(data: encoded)) }
-            }.value
+            let lattice = try! Lattice(configuration: syncedLatticeConfiguration)
+            let events = try! lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
+            let encoded = events.isEmpty ? nil : try! JSONEncoder().encode(ServerSentEvent.auditLog(events))
+            encoded.map { encoded in ws.send(ByteBuffer(data: encoded)) }
         }
     }
     
-    private static func isPortOpen(port: UInt16) -> Bool {
-        let socketFileDescriptor = socket(AF_INET, SOCK_STREAM, 0)
-        if socketFileDescriptor == -1 {
-            return false
-        }
-
-        var addr = sockaddr_in()
-        let sizeOfSockAddr = MemoryLayout<sockaddr_in>.size
-        addr.sin_len = UInt8(sizeOfSockAddr)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian // Convert to network byte order
-        addr.sin_addr = in_addr(s_addr: INADDR_ANY.bigEndian) // Bind to all available interfaces
-        addr.sin_zero = (0, 0, 0, 0, 0, 0, 0, 0)
-
-        var bindAddr = sockaddr()
-        memcpy(&bindAddr, &addr, Int(sizeOfSockAddr))
-
-        let bindResult = Darwin.bind(socketFileDescriptor, &bindAddr, socklen_t(sizeOfSockAddr))
-        if bindResult == -1 {
-            close(socketFileDescriptor) // Close the socket if bind fails
-            return false // Port is likely in use
-        }
-
-        // Attempt to listen on the port (optional, but good practice for server-like checks)
-        let listenResult = listen(socketFileDescriptor, SOMAXCONN)
-        if listenResult == -1 {
-            close(socketFileDescriptor)
-            return false // Port might be available but not suitable for listening
-        }
-
-        close(socketFileDescriptor) // Close the socket after successful bind/listen
-        return true // Port appears to be available
+    enum SyncTestError: Error {
+        case noPort
     }
-    
-    
+
     init() async throws {
+        lattice_set_log_level(lattice.log_level.debug)
+        print("[init] START")
         var env = try Environment.detect()
         env.arguments = ["vapor"]
+        print("[init] creating app")
         self.app = try await Application.make(env)
-        try? Lattice.delete(for: localLattice1Configuration)
-        try? Lattice.delete(for: localLattice2Configuration)
-        try? Lattice.delete(for: syncedLatticeConfiguration)
-        
-        localLattice1 = try! Lattice(SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self,
-                                     configuration: localLattice1Configuration)
-        localLattice2 = try! Lattice(SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self,
-                                     configuration: localLattice2Configuration)
-        syncedLattice = try Lattice(for: [SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self], configuration: .init(fileURL: syncLatticeURL))
-        app.http.server.configuration.port = port
-        
-        print("Lattice1:", localLattice1Configuration.fileURL)
-        print("Lattice2:", localLattice2Configuration.fileURL)
+        print("[init] app created")
+        self.localLattice1Configuration = .init(fileURL: lattice1URL)
+        self.localLattice2Configuration = .init(fileURL: lattice2URL)
+        self.syncedLatticeConfiguration = .init(fileURL: syncLatticeURL)
+
+        // Use port 0 to let the OS assign a free port
+        app.http.server.configuration.port = 0
+
+        // Start the server-side lattice (no sync endpoint)
+        print("[init] creating synced lattice")
+        syncedLattice = try Lattice(for: [SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self],
+                                    configuration: syncedLatticeConfiguration)
+
+        print("[init] launching server")
         try await launchServer()
-        var retries = 0
-        while retries < 5 {
-            do {
-                try await app.startup()
-                break  // Successfully started, exit loop
-            } catch let error as IOError {
-                if error.errnoCode == 48 {
-                    app.http.server.configuration.port += 1
-                    port = app.http.server.configuration.port
-                }
-                retries += 1
-                if retries == 5 {
-                    throw error
-                }
-            }
+        print("[init] starting app")
+        try await app.startup()
+        print("[init] app started")
+
+        // Read back the OS-assigned port
+        guard let localAddress = app.http.server.shared.localAddress,
+              let assignedPort = localAddress.port else {
+            throw SyncTestError.noPort
         }
+        self.port = assignedPort
+
+        // Now create configs with the correct port
+        localLattice1Configuration = Lattice.Configuration(
+            fileURL: lattice1URL,
+            authorizationToken: "hi",
+            wssEndpoint: URL(string: "http://localhost:\(port)/test"))
+        localLattice2Configuration = Lattice.Configuration(
+            fileURL: lattice2URL,
+            authorizationToken: "hi2",
+            wssEndpoint: URL(string: "http://localhost:\(port)/test"))
+
+        // Create Lattice instances AFTER server is running so sync connects to the right port
+        localLattice1 = try Lattice(SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self,
+                                    configuration: localLattice1Configuration)
+        localLattice2 = try Lattice(SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self,
+                                    configuration: localLattice2Configuration)
     }
     
-    @available(macOS 15.0, *)
     @Test(.timeLimit(.minutes(1))) func test_BasicSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
         
         var task: Task<Void, any Error>?
         await withCheckedContinuation { continuation in
-            task = Task { @MainActor in
-                let lattice2 = try Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
+            task = Task.detached {
+                let lattice2 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice2Configuration)
                 let changeStream = lattice2.changeStream
                 continuation.resume()
+                print("Awaiting changes lattice 2")
                 for await changes in changeStream {
                     let changes = changes.compactMap({ $0.resolve(on: lattice2) })
                     if changes.contains(where: { $0.operation == .insert }) {
@@ -202,10 +199,11 @@ class SyncTests: @unchecked Sendable {
         let object = SimpleSyncObject(value: 42, floatValue: 42.42)
         var taskForSynchronization: Task<Void, any Error>?
         await withCheckedContinuation { continuation in
-            taskForSynchronization = Task { @MainActor in
-                let lattice1 = try Lattice(SimpleSyncObject.self, configuration: localLattice1Configuration)
+            taskForSynchronization = Task.detached {
+                let lattice1 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice1Configuration)
                 let changeStream = lattice1.changeStream
                 continuation.resume()
+                print("Awaiting changes lattice 1")
                 for await changes in changeStream {
                     let changes = changes.compactMap({ $0.resolve(on: lattice1) })
                     if changes.allSatisfy({ $0.isSynchronized }) {
@@ -215,7 +213,6 @@ class SyncTests: @unchecked Sendable {
             }
         }
         lattice.add(object)
-        
         
         try await taskForSynchronization?.value
         try await task?.value
@@ -227,7 +224,7 @@ class SyncTests: @unchecked Sendable {
 
         await withCheckedContinuation { continuation in
             task = Task { @MainActor in
-                let lattice2 = try Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
+                let lattice2 = try await Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 var changeCount = 0
@@ -248,7 +245,7 @@ class SyncTests: @unchecked Sendable {
 
         await withCheckedContinuation { continuation in
             task = Task { @MainActor in
-                let lattice2 = try Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
+                let lattice2 = try await Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
@@ -307,7 +304,6 @@ class SyncTests: @unchecked Sendable {
     /// Test that List<T> relationships sync properly between clients.
     /// This test verifies that when a parent object with children is created on one client,
     /// the relationship (not just the objects) syncs to the other client.
-    @available(macOS 15.0, *)
     @Test(.timeLimit(.minutes(1))) func test_ListRelationshipSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
@@ -317,26 +313,24 @@ class SyncTests: @unchecked Sendable {
         var taskForSynchronization: Task<Void, any Error>?
 
         await withCheckedContinuation { continuation in
-            task = Task { @MainActor in
-                let lattice2 = try Lattice(SyncParent.self, SyncChild.self, configuration: localLattice2Configuration)
+            task = Task.detached {
+                let lattice2 = try await Lattice(SyncParent.self, SyncChild.self, configuration: self.localLattice2Configuration)
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 var insertCount = 0
                 for await changes in changeStream {
                     let changes = changes.compactMap({ $0.resolve(on: lattice2) })
                     insertCount += changes.count(where: { $0.operation == .insert })
-                    // We need at least 3 inserts: 1 parent + 2 children
-                    // If links are synced, we'd also see link table changes (5 total)
-                    if insertCount >= 3 {
-                        break
-                    }
+                    // 3 model inserts: 1 parent + 2 children
+                    // (link table AuditLog entries don't generate changeStream notifications)
+                    if insertCount >= 3 { break }
                 }
             }
         }
 
         await withCheckedContinuation { continuation in
-            taskForSynchronization = Task { @MainActor in
-                let lattice1 = try Lattice(SyncParent.self, SyncChild.self, configuration: localLattice1Configuration)
+            taskForSynchronization = Task.detached {
+                let lattice1 = try await Lattice(SyncParent.self, SyncChild.self, configuration: self.localLattice1Configuration)
                 let changeStream = lattice1.changeStream
                 continuation.resume()
                 for await changes in changeStream {
@@ -353,9 +347,11 @@ class SyncTests: @unchecked Sendable {
         let child1 = SyncChild(name: "Child1")
         let child2 = SyncChild(name: "Child2")
 
-        lattice.add(parent)
-        parent.children.append(child1)
-        parent.children.append(child2)
+        lattice.transaction {
+            lattice.add(parent)
+            parent.children.append(child1)
+            parent.children.append(child2)
+        }
 
         // Verify local state
         #expect(parent.children.count == 2)
@@ -393,4 +389,3 @@ class SyncTests: @unchecked Sendable {
         #expect(syncedParent?.children.contains(where: { $0.name == "Child2" }) == true, "Child2 should be linked")
     }
 }
-#endif

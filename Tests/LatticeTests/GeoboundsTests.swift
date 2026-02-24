@@ -2,7 +2,9 @@ import Foundation
 import Testing
 import Lattice
 import Observation
+#if canImport(MapKit)
 import MapKit
+#endif
 
 @Model
 private class Restaurant {
