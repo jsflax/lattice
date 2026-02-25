@@ -15,7 +15,7 @@ let package = Package(
         .executable(name: "LatticeMain", targets: ["LatticeMain"])
     ],
     dependencies: [
-        .package(path: "../LatticeCore"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "0.4.0"),
         .package(url: "https://github.com/apple/swift-syntax.git", from: "602.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -24,6 +24,7 @@ let package = Package(
         .package(url: "https://github.com/vapor/vapor.git", from: "4.76.0"),
         .package(url: "https://github.com/vapor/fluent.git", from: "4.0.0"),
         .package(url: "https://github.com/vapor/jwt.git",    from: "4.0.0"),
+        .package(url: "https://github.com/vapor/websocket-kit.git", from: "2.15.0"),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -41,7 +42,9 @@ let package = Package(
             dependencies: ["LatticeMacros",
                 .product(name: "LatticeSwiftCppBridge", package: "LatticeCore"),
                 .product(name: "LatticeSwiftModule", package: "LatticeCore"),
-                .product(name: "Collections", package: "swift-collections")],
+                .product(name: "Collections", package: "swift-collections"),
+                .product(name: "WebSocketKit", package: "websocket-kit", condition: .when(platforms: [.linux])),
+            ],
             swiftSettings: [.interoperabilityMode(.Cxx)]),
         .testTarget(
             name: "LatticeTests",

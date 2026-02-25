@@ -132,11 +132,19 @@ public enum TextQuery: Sendable {
     case near(String, String, distance: Int = 10)
     /// Raw FTS5 query string for advanced usage (NEAR, column filters, grouping, etc.).
     case raw(String)
+    /// User-input search. Adds `*` prefix wildcards to bare terms while preserving
+    /// FTS5 operators (AND, OR, NOT, NEAR) and quoted phrases.
+    /// - `"canary iOS"` → `canary* OR iOS*`
+    /// - `"canary AND iOS"` → `canary* AND iOS*`
+    /// - `"\"exact\" AND iOS"` → `"exact" AND iOS*`
+    case search(String)
 
     /// All terms must match (AND).
     public static func allOf(_ terms: String...) -> TextQuery { ._allOf(terms) }
     /// Any term can match (OR).
     public static func anyOf(_ terms: String...) -> TextQuery { ._anyOf(terms) }
+
+    private static let fts5Operators: Set<String> = ["AND", "OR", "NOT", "NEAR"]
 
     /// Renders to FTS5 MATCH syntax.
     package var fts5Query: String {
@@ -153,7 +161,49 @@ public enum TextQuery: Sendable {
             return "NEAR(\"\(a)\" \"\(b)\", \(distance))"
         case .raw(let query):
             return query
+        case .search(let input):
+            var tokens = Self.tokenizePreservingQuotes(input)
+            guard !tokens.isEmpty else { return "\"\"" }
+            // Strip leading/trailing FTS5 operators that would produce invalid syntax
+            // e.g. "canary AND" → ["canary"], "AND canary" → ["canary"]
+            while let last = tokens.last, Self.fts5Operators.contains(last) { tokens.removeLast() }
+            while let first = tokens.first, Self.fts5Operators.contains(first) { tokens.removeFirst() }
+            guard !tokens.isEmpty else { return "\"\"" }
+            let hasOperators = tokens.contains { Self.fts5Operators.contains($0) }
+            if hasOperators {
+                // Preserve operators, wildcard bare terms, leave quoted phrases as-is
+                return tokens.map { token in
+                    if Self.fts5Operators.contains(token) { return token }
+                    if token.hasPrefix("\"") { return token }
+                    return "\(token)*"
+                }.joined(separator: " ")
+            } else {
+                return tokens.map { token in
+                    if token.hasPrefix("\"") { return token }
+                    return "\(token)*"
+                }.joined(separator: " OR ")
+            }
         }
+    }
+
+    /// Split input preserving quoted phrases as single tokens.
+    /// `hello "exact phrase" world` → `["hello", "\"exact phrase\"", "world"]`
+    private static func tokenizePreservingQuotes(_ input: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var inQuote = false
+        for ch in input {
+            if ch == "\"" {
+                inQuote.toggle()
+                current.append(ch)
+            } else if ch == " " && !inQuote {
+                if !current.isEmpty { tokens.append(current); current = "" }
+            } else {
+                current.append(ch)
+            }
+        }
+        if !current.isEmpty { tokens.append(current) }
+        return tokens
     }
 }
 

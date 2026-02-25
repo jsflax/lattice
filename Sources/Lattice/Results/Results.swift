@@ -319,7 +319,7 @@ public enum CollectionChange: Sendable {
     
     @available(*, unavailable,
                 message: "@Relation can only be applied to models")
-    public var wrappedValue: Value {
+    public var wrappedValue: any Value {
         get { fatalError() }
         set { fatalError() }
     }

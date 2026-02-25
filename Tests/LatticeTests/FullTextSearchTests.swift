@@ -208,4 +208,103 @@ class FullTextSearchTests: BaseTest {
         #expect(titles.contains("Match2"))
         #expect(!titles.contains("NoMatch"))
     }
+
+    // MARK: - TextQuery.search Tests
+
+    @Test func test_SearchQueryPlainTerms() async throws {
+        let lattice = try testLattice(Article.self)
+
+        lattice.add(Article(title: "ML", content: "Machine learning algorithms"))
+        lattice.add(Article(title: "Cook", content: "Cooking pasta recipes"))
+        lattice.add(Article(title: "Neither", content: "Database optimization tips"))
+
+        // "mach cook" → mach* OR cook* — prefix match, any term
+        let results = lattice.objects(Article.self)
+            .matching(.search("mach cook"), on: \.content)
+            .snapshot()
+
+        let titles = results.map(\.object.title)
+        #expect(titles.contains("ML"))
+        #expect(titles.contains("Cook"))
+        #expect(!titles.contains("Neither"))
+    }
+
+    @Test func test_SearchQueryWithAND() async throws {
+        let lattice = try testLattice(Article.self)
+
+        lattice.add(Article(title: "Both", content: "Machine learning algorithms"))
+        lattice.add(Article(title: "One", content: "Machine hardware specs"))
+        lattice.add(Article(title: "Neither", content: "Cooking pasta recipes"))
+
+        // "machine AND learn" → machine* AND learn* — both prefixes must match
+        let results = lattice.objects(Article.self)
+            .matching(.search("machine AND learn"), on: \.content)
+            .snapshot()
+
+        let titles = results.map(\.object.title)
+        #expect(titles.contains("Both"))
+        #expect(!titles.contains("One"))
+        #expect(!titles.contains("Neither"))
+    }
+
+    @Test func test_SearchQueryWithNOT() async throws {
+        let lattice = try testLattice(Article.self)
+
+        lattice.add(Article(title: "ML", content: "Machine learning algorithms"))
+        lattice.add(Article(title: "Hardware", content: "Machine hardware specs"))
+        lattice.add(Article(title: "Cook", content: "Cooking pasta recipes"))
+
+        // "machine NOT learn" → machine* NOT learn*
+        let results = lattice.objects(Article.self)
+            .matching(.search("machine NOT learn"), on: \.content)
+            .snapshot()
+
+        let titles = results.map(\.object.title)
+        #expect(titles.contains("Hardware"))
+        #expect(!titles.contains("ML"))
+        #expect(!titles.contains("Cook"))
+    }
+
+    @Test func test_SearchQueryWithQuotedPhrase() async throws {
+        let lattice = try testLattice(Article.self)
+
+        lattice.add(Article(title: "Phrase", content: "Introduction to machine learning"))
+        lattice.add(Article(title: "Separate", content: "The machine is not learning"))
+
+        // '"machine learning"' → exact phrase, no wildcard
+        let results = lattice.objects(Article.self)
+            .matching(.search("\"machine learning\""), on: \.content)
+            .snapshot()
+
+        #expect(results.count == 1)
+        #expect(results.first?.object.title == "Phrase")
+    }
+
+    @Test func test_SearchQueryQuotedWithOperator() async throws {
+        let lattice = try testLattice(Article.self)
+
+        lattice.add(Article(title: "Both", content: "Machine learning about cooking pasta"))
+        lattice.add(Article(title: "MLOnly", content: "Machine learning algorithms"))
+        lattice.add(Article(title: "CookOnly", content: "Cooking pasta recipes"))
+
+        // '"machine learning" AND cook' → exact phrase AND prefix
+        let results = lattice.objects(Article.self)
+            .matching(.search("\"machine learning\" AND cook"), on: \.content)
+            .snapshot()
+
+        #expect(results.count == 1)
+        #expect(results.first?.object.title == "Both")
+    }
+
+    @Test func test_SearchQueryFTS5Rendering() throws {
+        // Unit test: verify FTS5 query string generation without DB
+        #expect(TextQuery.search("canary iOS").fts5Query == "canary* OR iOS*")
+        #expect(TextQuery.search("canary AND iOS").fts5Query == "canary* AND iOS*")
+        #expect(TextQuery.search("canary NOT iOS").fts5Query == "canary* NOT iOS*")
+        #expect(TextQuery.search("canary OR iOS").fts5Query == "canary* OR iOS*")
+        #expect(TextQuery.search("\"exact\" AND iOS").fts5Query == "\"exact\" AND iOS*")
+        #expect(TextQuery.search("\"exact phrase\"").fts5Query == "\"exact phrase\"")
+        #expect(TextQuery.search("single").fts5Query == "single*")
+        #expect(TextQuery.search("").fts5Query == "\"\"")
+    }
 }

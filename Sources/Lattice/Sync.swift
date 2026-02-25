@@ -170,8 +170,8 @@ struct UncheckedSendable<T>: @unchecked Sendable {
 
 extension Lattice {
     public func receive(_ data: Data) throws -> [UUID] {
-        cxxLattice.receive_sync_data(data.toCxxValue()).map {
-            UUID(uuidString: String($0))!
+        cxxLattice.receive_sync_data(data.toCxxValue()).compactMap {
+            UUID(uuidString: String($0))
         }
     }
     

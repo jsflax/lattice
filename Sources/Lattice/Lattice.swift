@@ -137,28 +137,31 @@ public struct Lattice {
 
             let cxxClient = lattice.generic_websocket_client(
                 clientPtr,
-                // connect_block
-                { ptr, url, headers in
-                    guard let ptr = ptr else { return }
+                // connect_fn
+                { ptr, urlPtr, headersPtr in
+                    guard let ptr = ptr, let urlPtr = urlPtr, let headersPtr = headersPtr else { return }
                     let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
-                    client.performConnect(url: String(url), headers: headers)
+                    let url = String(urlPtr.assumingMemoryBound(to: std.string.self).pointee)
+                    let headers = headersPtr.assumingMemoryBound(to: lattice.HeadersMap.self).pointee
+                    client.performConnect(url: url, headers: headers)
                 },
-                // disconnect_block
+                // disconnect_fn
                 { ptr in
                     guard let ptr = ptr else { return }
                     let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
                     client.performDisconnect()
                 },
-                // state_block
+                // state_fn
                 { ptr in
                     guard let ptr = ptr else { return .closed }
                     let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
                     return client.currentState
                 },
-                // send_block
-                { ptr, message in
-                    guard let ptr = ptr else { return }
+                // send_fn
+                { ptr, messagePtr in
+                    guard let ptr = ptr, let messagePtr = messagePtr else { return }
                     let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
+                    let message = messagePtr.assumingMemoryBound(to: lattice.websocket_message.self).pointee
                     client.performSend(message)
                 }
             )
@@ -194,6 +197,10 @@ public struct Lattice {
 
         private func performDisconnect() {
             currentState = .closing
+            // Nil out cxxClientPtr BEFORE the async cancel so that any delegate
+            // callbacks (didCloseWith, didCompleteWithError) that fire after the
+            // C++ synchronizer is destroyed become no-ops instead of use-after-free.
+            cxxClientPtr = nil
             webSocketTask?.cancel(with: .normalClosure, reason: nil)
         }
 
@@ -290,6 +297,7 @@ public struct Lattice {
     }
 
     /// Registers the Swift network factory with C++ layer. Called once on first Lattice init.
+    /// On Apple platforms, uses URLSession WebSocket. On Linux, uses NIO-based WebSocketKit.
     private nonisolated(unsafe) static var networkFactoryRegistered = false
     private static func registerNetworkFactoryIfNeeded() {
         guard !networkFactoryRegistered else { return }
@@ -297,10 +305,14 @@ public struct Lattice {
 
         lattice.register_generic_network_factory(
             nil,  // no user_data needed
-            nil,  // http_block - not implemented yet
-            // websocket_block
+            nil,  // http_fn - not implemented yet
+            // websocket_fn
             { _ in
+                #if os(Linux)
+                let client = NIOWebsocketClient()
+                #else
                 let client = WebsocketClient()
+                #endif
                 return client.createCxxClient().assumingMemoryBound(to: lattice.websocket_client.self)
             },
             nil   // destroy_fn
@@ -820,7 +832,18 @@ public struct Lattice {
     public func vacuum() {
         cxxLattice.vacuum()
     }
-    
+
+    /// Whether the sync WebSocket connection is currently active.
+    public var isSyncConnected: Bool {
+        cxxLattice.is_sync_connected()
+    }
+
+    /// Explicitly close all database connections and tear down the synchronizer.
+    /// If a sibling instance exists for the same database, it will inherit sync responsibility.
+    public func close() {
+        cxxLattice.close()
+    }
+
     public func count<T>(_ modelType: T.Type, where: ((Query<T>) -> Query<Bool>)? = nil) -> Int where T: Model {
         let whereClause: lattice.OptionalString = `where`.map { lattice.string_to_optional( std.string($0(Query<T>()).predicate)) } ?? lattice.OptionalString()
         return Int(cxxLattice.count(std.string(T.entityName), whereClause))

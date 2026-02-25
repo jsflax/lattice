@@ -2,6 +2,9 @@ import Foundation
 #if canImport(Combine)
 import Combine
 #endif
+#if canImport(MapKit)
+import MapKit
+#endif
 import Testing
 //import SwiftUI
 import Lattice
@@ -32,6 +35,40 @@ import Vapor
 
     init(name: String) {
         self.name = name
+    }
+}
+
+@Model class SyncVectorObject {
+    var label: String
+    var embedding: FloatVector
+
+    init(label: String = "", embedding: [Float] = []) {
+        self.label = label
+        self.embedding = FloatVector(embedding)
+    }
+}
+
+@Model class SyncGeoObject {
+    var name: String
+    var location: CLLocationCoordinate2D
+
+    init(name: String = "", latitude: Double = 0, longitude: Double = 0) {
+        self.name = name
+        self.location = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
+struct SyncEmbedded: EmbeddedModel {
+    var detail: String = ""
+}
+
+@Model class SyncEmbeddedObject {
+    var name: String
+    var metadata: SyncEmbedded?
+
+    init(name: String = "", metadata: SyncEmbedded? = nil) {
+        self.name = name
+        self.metadata = metadata
     }
 }
 
@@ -92,27 +129,28 @@ actor SyncTests {
         app.webSocket("test", maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 500 * 1024 * 1024)) { req, ws in
             self.sockets.append(ws)
             ws.onBinary { ws, bb in
-                print("🧦", "Server Received Binary Event")
-
-                let lattice = try! Lattice(configuration: syncedLatticeConfiguration)
-                do {
-                    let globalIds = try lattice.receive(Data(buffer: bb))
-                    ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
-                } catch {
-                    print("Error:", error)
-                }
-
-                // Only forward audit_log data to other clients, NOT ACK messages.
-                // ACKs are a sender↔server protocol; forwarding them causes
-                // mark_as_synced to fire on receivers, producing duplicate
-                // AuditLog observer notifications.
                 let data = Data(buffer: bb)
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let kind = json["kind"] as? String,
-                   kind == "auditLog" {
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let kind = json["kind"] as? String else { return }
+
+                if kind == "auditLog" {
+                    // Extract globalIds and send ACK immediately (before DB persistence)
+                    if let auditLogs = json["auditLog"] as? [[String: Any]] {
+                        let globalIds = auditLogs.compactMap { $0["globalId"] as? String }
+                            .compactMap(UUID.init(uuidString:))
+                        ws.send(try! JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
+                    }
+                    // Forward to other clients immediately
                     for socket in self.sockets.others(excluding: ws) {
                         socket.send(bb)
                     }
+                }
+                // Persist to server DB in background (for eventsAfter catch-up support).
+                // Must not block the EventLoop — NIO only flushes queued ws.send()
+                // writes when the callback returns and the EventLoop processes I/O.
+                Task.detached {
+                    let lattice = try Lattice(configuration: syncedLatticeConfiguration)
+                    _ = try? lattice.receive(data)
                 }
             }
 
@@ -144,7 +182,7 @@ actor SyncTests {
 
         // Start the server-side lattice (no sync endpoint)
         print("[init] creating synced lattice")
-        syncedLattice = try Lattice(for: [SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self],
+        syncedLattice = try Lattice(for: [SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self, SyncVectorObject.self, SyncGeoObject.self, SyncEmbeddedObject.self],
                                     configuration: syncedLatticeConfiguration)
 
         print("[init] launching server")
@@ -171,66 +209,88 @@ actor SyncTests {
             wssEndpoint: URL(string: "http://localhost:\(port)/test"))
 
         // Create Lattice instances AFTER server is running so sync connects to the right port
-        localLattice1 = try Lattice(SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self,
+        print("[init] creating localLattice1 (sync enabled, port=\(port))")
+        localLattice1 = try Lattice(SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self, SyncVectorObject.self, SyncGeoObject.self, SyncEmbeddedObject.self,
                                     configuration: localLattice1Configuration)
-        localLattice2 = try Lattice(SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self,
+        print("[init] localLattice1 created, creating localLattice2")
+        localLattice2 = try Lattice(SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self, SyncVectorObject.self, SyncGeoObject.self, SyncEmbeddedObject.self,
                                     configuration: localLattice2Configuration)
+        print("[init] localLattice2 created, init complete")
     }
     
     @Test(.timeLimit(.minutes(1))) func test_BasicSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
-        
+
+        // --- Phase 1: INSERT sync (lattice1 → lattice2) ---
+        print("[test] Phase 1: INSERT sync")
+
         var task: Task<Void, any Error>?
         await withCheckedContinuation { continuation in
             task = Task.detached {
                 let lattice2 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice2Configuration)
                 let changeStream = lattice2.changeStream
                 continuation.resume()
-                print("Awaiting changes lattice 2")
+                print("[test][l2-recv] Awaiting INSERT on lattice2")
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
-                    if changes.contains(where: { $0.operation == .insert }) {
+                    let resolved = changes.compactMap({ $0.resolve(on: lattice2) })
+                    print("[test][l2-recv] Got \(resolved.count) changes: \(resolved.map { "\($0.tableName).\($0.operation)" })")
+                    if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
+                        print("[test][l2-recv] INSERT received, breaking")
                         break
                     }
                 }
             }
         }
-        let object = SimpleSyncObject(value: 42, floatValue: 42.42)
+
         var taskForSynchronization: Task<Void, any Error>?
         await withCheckedContinuation { continuation in
             taskForSynchronization = Task.detached {
                 let lattice1 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice1Configuration)
                 let changeStream = lattice1.changeStream
                 continuation.resume()
-                print("Awaiting changes lattice 1")
+                print("[test][l1-sync] Awaiting isSynchronized on lattice1")
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice1) })
-                    if changes.allSatisfy({ $0.isSynchronized }) {
+                    let resolved = changes.compactMap({ $0.resolve(on: lattice1) })
+                    print("[test][l1-sync] Got \(resolved.count) changes: \(resolved.map { "\($0.tableName).\($0.operation) synced=\($0.isSynchronized)" })")
+                    if resolved.contains(where: { $0.isSynchronized && $0.tableName == "SimpleSyncObject" }) {
+                        print("[test][l1-sync] Synchronized, breaking")
                         break
                     }
                 }
             }
         }
+
+        let object = SimpleSyncObject(value: 42, floatValue: 42.42)
+        print("[test] Adding object")
         lattice.add(object)
-        
+
         try await taskForSynchronization?.value
+        print("[test] Phase 1: sync confirmed")
         try await task?.value
+        print("[test] Phase 1: insert received on lattice2")
 
         #expect(lattice.objects(AuditLog.self).first?.isSynchronized == true)
-
         #expect(lattice2.objects(SimpleSyncObject.self).first?.value == 42)
         #expect(lattice2.objects(SimpleSyncObject.self).first?.floatValue == 42.42)
 
+        // --- Phase 2: UPDATE sync ---
+        print("[test] Phase 2: UPDATE sync")
+
         await withCheckedContinuation { continuation in
-            task = Task { @MainActor in
-                let lattice2 = try await Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
+            task = Task.detached {
+                let lattice2 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice2Configuration)
                 let changeStream = lattice2.changeStream
                 continuation.resume()
-                var changeCount = 0
-                for await _ in changeStream {
-                    changeCount += 1
-                    if changeCount == 2 {
+                print("[test][l2-update] Awaiting UPDATEs on lattice2")
+                var updateCount = 0
+                for await changes in changeStream {
+                    let resolved = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let updates = resolved.filter { $0.operation == .update && $0.tableName == "SimpleSyncObject" }
+                    updateCount += updates.count
+                    print("[test][l2-update] Got \(resolved.count) changes (\(updates.count) updates, total=\(updateCount)): \(resolved.map { "\($0.tableName).\($0.operation)" })")
+                    if updateCount >= 2 {
+                        print("[test][l2-update] 2 updates received, breaking")
                         break
                     }
                 }
@@ -239,18 +299,27 @@ actor SyncTests {
 
         object.value = 84
         object.floatValue = 84.84
+        print("[test] Updated object properties")
         try await task?.value
+        print("[test] Phase 2: updates received on lattice2")
         #expect(lattice2.objects(SimpleSyncObject.self).first?.value == 84)
         #expect(lattice2.objects(SimpleSyncObject.self).first?.floatValue == 84.84)
 
+        // --- Phase 3: DELETE sync ---
+        print("[test] Phase 3: DELETE sync")
+
+        let localLattice2Configuration = self.localLattice2Configuration
         await withCheckedContinuation { continuation in
-            task = Task { @MainActor in
-                let lattice2 = try await Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
+            task = Task.detached {
+                let lattice2 = try Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
                 let changeStream = lattice2.changeStream
                 continuation.resume()
+                print("[test][l2-delete] Awaiting DELETE on lattice2")
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
-                    if changes.contains(where: { $0.operation == .delete }) {
+                    let resolved = changes.compactMap({ $0.resolve(on: lattice2) })
+                    print("[test][l2-delete] Got \(resolved.count) changes: \(resolved.map { "\($0.tableName).\($0.operation)" })")
+                    if resolved.contains(where: { $0.operation == .delete && $0.tableName == "SimpleSyncObject" }) {
+                        print("[test][l2-delete] DELETE received, breaking")
                         break
                     }
                 }
@@ -258,7 +327,9 @@ actor SyncTests {
         }
 
         _ = lattice.delete(object)
+        print("[test] Deleted object")
         try await task?.value
+        print("[test] Phase 3: delete received on lattice2")
         #expect(lattice2.objects(SimpleSyncObject.self).count == 0)
     }
     
@@ -387,5 +458,448 @@ actor SyncTests {
         #expect(syncedParent?.children.count == 2, "Parent-child relationship should sync (List<T> links)")
         #expect(syncedParent?.children.contains(where: { $0.name == "Child1" }) == true, "Child1 should be linked")
         #expect(syncedParent?.children.contains(where: { $0.name == "Child2" }) == true, "Child2 should be linked")
+    }
+
+    /// Test that FloatVector fields sync properly between clients.
+    @Test(.timeLimit(.minutes(1))) func test_VectorSync() async throws {
+        let lattice = localLattice1!
+        let lattice2 = localLattice2!
+
+        let embedding: [Float] = [0.1, 0.2, 0.3, 0.4, 0.5]
+
+        // Wait for lattice2 to receive the insert
+        var task: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let lattice2 = try await Lattice(SyncVectorObject.self, configuration: self.localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    if changes.contains(where: { $0.operation == .insert && $0.tableName == "SyncVectorObject" }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        // Wait for lattice1 to confirm sync
+        var syncTask: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            syncTask = Task.detached {
+                let lattice1 = try await Lattice(SyncVectorObject.self, configuration: self.localLattice1Configuration)
+                let changeStream = lattice1.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice1) })
+                    if changes.allSatisfy({ $0.isSynchronized }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        let obj = SyncVectorObject(label: "test-vector", embedding: embedding)
+        lattice.add(obj)
+
+        try await syncTask?.value
+        try await task?.value
+
+        // Verify the object synced
+        let synced = lattice2.objects(SyncVectorObject.self)
+        #expect(synced.count == 1, "Vector object should sync")
+
+        let syncedObj = synced.first!
+        #expect(syncedObj.label == "test-vector")
+        #expect(syncedObj.embedding.dimensions == 5, "Vector dimensions should be preserved")
+
+        // Verify vector values are preserved
+        for (i, value) in syncedObj.embedding.enumerated() {
+            #expect(abs(value - embedding[i]) < 0.0001, "Vector element \(i) should match")
+        }
+
+        // Test updating the vector
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let lattice2 = try await Lattice(SyncVectorObject.self, configuration: self.localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    if changes.contains(where: { $0.operation == .update && $0.tableName == "SyncVectorObject" }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        obj.embedding = FloatVector([1.0, 2.0, 3.0, 4.0, 5.0])
+        try await task?.value
+
+        let updated = lattice2.objects(SyncVectorObject.self).first!
+        #expect(abs(updated.embedding[0] - 1.0) < 0.0001, "Updated vector should sync")
+        #expect(abs(updated.embedding[4] - 5.0) < 0.0001, "Updated vector should sync")
+    }
+
+    /// Test that CLLocationCoordinate2D (R*Tree virtual table) fields sync properly.
+    @Test(.timeLimit(.minutes(1))) func test_GeoboundsSync() async throws {
+        let lattice = localLattice1!
+        let lattice2 = localLattice2!
+
+        var task: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let lattice2 = try await Lattice(SyncGeoObject.self, configuration: self.localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    if changes.contains(where: { $0.operation == .insert && $0.tableName == "SyncGeoObject" }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        var syncTask: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            syncTask = Task.detached {
+                let lattice1 = try await Lattice(SyncGeoObject.self, configuration: self.localLattice1Configuration)
+                let changeStream = lattice1.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice1) })
+                    if changes.allSatisfy({ $0.isSynchronized }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        let obj = SyncGeoObject(name: "NYC", latitude: 40.7128, longitude: -74.0060)
+        lattice.add(obj)
+
+        try await syncTask?.value
+        try await task?.value
+
+        let synced = lattice2.objects(SyncGeoObject.self)
+        #expect(synced.count == 1, "Geo object should sync")
+
+        let syncedObj = synced.first!
+        #expect(syncedObj.name == "NYC")
+        #expect(Swift.abs(syncedObj.location.latitude - 40.7128) < 0.0001, "Latitude should be preserved")
+        #expect(Swift.abs(syncedObj.location.longitude - (-74.0060)) < 0.0001, "Longitude should be preserved")
+
+        // Test updating location
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let lattice2 = try await Lattice(SyncGeoObject.self, configuration: self.localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    if changes.contains(where: { $0.operation == .update && $0.tableName == "SyncGeoObject" }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        obj.location = CLLocationCoordinate2D(latitude: 34.0522, longitude: -118.2437)
+        try await task?.value
+
+        let updatedObj = lattice2.objects(SyncGeoObject.self).first!
+        #expect(Swift.abs(updatedObj.location.latitude - 34.0522) < 0.0001, "Updated latitude should sync")
+        #expect(Swift.abs(updatedObj.location.longitude - (-118.2437)) < 0.0001, "Updated longitude should sync")
+    }
+
+    /// Test that EmbeddedModel fields sync properly.
+    @Test(.timeLimit(.minutes(1))) func test_EmbeddedModelSync() async throws {
+        let lattice = localLattice1!
+        let lattice2 = localLattice2!
+
+        var task: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let lattice2 = try await Lattice(SyncEmbeddedObject.self, configuration: self.localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    if changes.contains(where: { $0.operation == .insert && $0.tableName == "SyncEmbeddedObject" }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        var syncTask: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            syncTask = Task.detached {
+                let lattice1 = try await Lattice(SyncEmbeddedObject.self, configuration: self.localLattice1Configuration)
+                let changeStream = lattice1.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice1) })
+                    if changes.allSatisfy({ $0.isSynchronized }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        let obj = SyncEmbeddedObject(name: "test", metadata: SyncEmbedded(detail: "hello"))
+        lattice.add(obj)
+
+        try await syncTask?.value
+        try await task?.value
+
+        let synced = lattice2.objects(SyncEmbeddedObject.self)
+        #expect(synced.count == 1, "Embedded object should sync")
+        #expect(synced.first?.name == "test")
+        #expect(synced.first?.metadata?.detail == "hello", "Embedded field should be preserved")
+
+        // Test updating the embedded field
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let lattice2 = try await Lattice(SyncEmbeddedObject.self, configuration: self.localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    if changes.contains(where: { $0.operation == .update && $0.tableName == "SyncEmbeddedObject" }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        obj.metadata = SyncEmbedded(detail: "updated")
+        try await task?.value
+
+        #expect(lattice2.objects(SyncEmbeddedObject.self).first?.metadata?.detail == "updated", "Updated embedded field should sync")
+    }
+
+    /// Test that sync works bidirectionally — both clients can write and receive.
+    /// test_BasicSync only tests lattice1→lattice2. This tests lattice2→lattice1 as well.
+    @Test(.timeLimit(.minutes(1))) func test_BidirectionalSync() async throws {
+        let lattice = localLattice1!
+        let lattice2 = localLattice2!
+
+        // Step 1: lattice1 writes, lattice2 receives
+        var task: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let l2 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice2Configuration)
+                let changeStream = l2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let resolved = changes.compactMap({ $0.resolve(on: l2) })
+                    if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        let obj1 = SimpleSyncObject(value: 111, floatValue: 1.1)
+        lattice.add(obj1)
+        try await task?.value
+        #expect(lattice2.objects(SimpleSyncObject.self).count >= 1, "Lattice2 should receive from lattice1")
+
+        // Step 2: lattice2 writes back, lattice1 receives (reverse direction)
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let l1 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice1Configuration)
+                let changeStream = l1.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let resolved = changes.compactMap({ $0.resolve(on: l1) })
+                    if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        let obj2 = SimpleSyncObject(value: 222, floatValue: 2.2)
+        lattice2.add(obj2)
+        try await task?.value
+
+        let l1Values = Set(lattice.objects(SimpleSyncObject.self).snapshot().map(\.value))
+        let l2Values = Set(lattice2.objects(SimpleSyncObject.self).snapshot().map(\.value))
+        #expect(l1Values.contains(111) && l1Values.contains(222), "Lattice1 should see values from both clients")
+        #expect(l2Values.contains(111) && l2Values.contains(222), "Lattice2 should see values from both clients")
+    }
+
+    /// Test that a fresh client receives historical events on connect via eventsAfter().
+    @Test(.timeLimit(.minutes(1))) func test_CatchUpSync() async throws {
+        let lattice = localLattice1!
+
+        // Write data and wait for it to sync to the server
+        var syncTask: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            syncTask = Task.detached {
+                let l1 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice1Configuration)
+                let changeStream = l1.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let resolved = changes.compactMap({ $0.resolve(on: l1) })
+                    if resolved.allSatisfy({ $0.isSynchronized }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        let obj = SimpleSyncObject(value: 999, floatValue: 9.9)
+        lattice.add(obj)
+        try await syncTask?.value
+
+        // Create a fresh client — it should receive the historical data on connect
+        let freshURL = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 30)).sqlite")
+        let freshConfig = Lattice.Configuration(
+            fileURL: freshURL,
+            authorizationToken: "hi3",
+            wssEndpoint: URL(string: "http://localhost:\(port)/test"))
+
+        // Historical events arrive during init (server sends eventsAfter on ws open).
+        // Poll since events may arrive before we can attach a changeStream listener.
+        let freshLattice = try Lattice(SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self, SyncVectorObject.self, SyncGeoObject.self, SyncEmbeddedObject.self, configuration: freshConfig)
+        var attempts = 0
+        while freshLattice.objects(SimpleSyncObject.self).count == 0 && attempts < 50 {
+            try await Task.sleep(for: .milliseconds(100))
+            attempts += 1
+        }
+
+        let objects = freshLattice.objects(SimpleSyncObject.self)
+        #expect(objects.count >= 1, "Fresh client should receive historical data on connect")
+        #expect(objects.first?.value == 999, "Historical value should be correct")
+
+        try? Lattice.delete(for: freshConfig)
+    }
+
+    /// Test that closing the lattice instance that owns the synchronizer
+    /// hands off sync responsibility to a surviving sibling instance.
+    @Test(.timeLimit(.minutes(1))) func test_SyncHandoff() async throws {
+        let lattice2 = localLattice2!
+
+        // Fresh path so we control which instance gets the synchronizer
+        let handoffURL = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 30)).sqlite")
+        let handoffConfig = Lattice.Configuration(
+            fileURL: handoffURL,
+            authorizationToken: "hi",
+            wssEndpoint: URL(string: "http://localhost:\(port)/test"))
+
+        // Instance A from actor context — gets the synchronizer
+        let instanceA = try Lattice(SimpleSyncObject.self, configuration: handoffConfig)
+
+        // Wait for A to connect
+        var attempts = 0
+        while !instanceA.isSyncConnected && attempts < 50 {
+            try await Task.sleep(for: .milliseconds(100))
+            attempts += 1
+        }
+        #expect(instanceA.isSyncConnected, "Instance A should be sync-connected")
+
+        // Set up lattice2 listener before the handoff
+        let localLattice2Configuration = self.localLattice2Configuration
+        var receiveTask: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            receiveTask = Task.detached {
+                let l2 = try Lattice(SimpleSyncObject.self, configuration: localLattice2Configuration)
+                let changeStream = l2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let resolved = changes.compactMap({ $0.resolve(on: l2) })
+                    if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        // Instance B lives entirely in a detached task (different isolation → different scheduler)
+        // Use streams to coordinate: B signals ready, we close A, then signal B to write
+        let bReady = AsyncStream.makeStream(of: Void.self)
+        let proceed = AsyncStream.makeStream(of: Void.self)
+
+        let writeTask = Task.detached {
+            let instanceB = try Lattice(SimpleSyncObject.self, configuration: handoffConfig)
+
+            // Signal that B is alive and registered in the instance_registry
+            bReady.continuation.yield()
+
+            // Wait for A to be closed (handoff happens during close)
+            for await _ in proceed.stream { break }
+
+            // B should now have inherited sync responsibility
+            var attempts = 0
+            while !instanceB.isSyncConnected && attempts < 50 {
+                try await Task.sleep(for: .milliseconds(100))
+                attempts += 1
+            }
+            guard instanceB.isSyncConnected else {
+                throw NSError(domain: "SyncHandoff", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "Instance B did not pick up sync after handoff"])
+            }
+
+            // Write through B — should sync to lattice2
+            instanceB.add(SimpleSyncObject(value: 777, floatValue: 7.7))
+        }
+
+        // Wait for B to exist
+        for await _ in bReady.stream { break }
+
+        // Close A — teardown_sync hands off to B
+        instanceA.close()
+
+        // Tell B to proceed
+        proceed.continuation.yield()
+        proceed.continuation.finish()
+
+        try await writeTask.value
+        try await receiveTask?.value
+
+        #expect(lattice2.objects(SimpleSyncObject.self).contains(where: { $0.value == 777 }),
+                "Data written through instance B (after handoff) should sync to lattice2")
+
+        try? Lattice.delete(for: handoffConfig)
+    }
+
+    /// Test that a bulk insert in a transaction syncs correctly.
+    @Test(.timeLimit(.minutes(1))) func test_BulkInsertSync() async throws {
+        let lattice = localLattice1!
+        let lattice2 = localLattice2!
+
+        let count = 100
+
+        var task: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let lattice2 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice2Configuration)
+                let changeStream = lattice2.changeStream
+                continuation.resume()
+                var insertCount = 0
+                for await changes in changeStream {
+                    let resolved = changes.compactMap({ $0.resolve(on: lattice2) })
+                    insertCount += resolved.count(where: { $0.tableName == "SimpleSyncObject" && $0.operation == .insert })
+                    if insertCount >= count {
+                        break
+                    }
+                }
+            }
+        }
+
+        let objects = (0..<count).map { SimpleSyncObject(value: $0, floatValue: Float($0)) }
+        lattice.transaction {
+            lattice.add(contentsOf: objects)
+        }
+
+        try await task?.value
+
+        #expect(lattice2.objects(SimpleSyncObject.self).count == count, "All \(count) objects should sync")
     }
 }
