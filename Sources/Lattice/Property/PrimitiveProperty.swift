@@ -206,6 +206,14 @@ public enum AnyProperty: PrimitiveProperty, Codable, Sendable {
     case data(Data)
     case null
     
+    package var intValue: Int? {
+        switch self {
+        case .int(let v): return v
+        case .int64(let v): return Int(v)
+        default: return nil
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case kind, value
     }

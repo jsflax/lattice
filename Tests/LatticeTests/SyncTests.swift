@@ -780,6 +780,124 @@ actor SyncTests {
         try? Lattice.delete(for: freshConfig)
     }
 
+    /// Test that server-side compaction doesn't break catch-up sync.
+    /// After the server compacts its audit log (replacing history with INSERT snapshots),
+    /// a fresh client should still receive all current data on connect.
+    @Test(.timeLimit(.minutes(1))) func test_ServerCompactionCatchUp() async throws {
+        let lattice = localLattice1!
+
+        // Step 1: Write data and wait for it to sync to the server
+        var syncTask: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            syncTask = Task.detached {
+                let l1 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice1Configuration)
+                let changeStream = l1.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let resolved = changes.compactMap({ $0.resolve(on: l1) })
+                    if resolved.allSatisfy({ $0.isSynchronized }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        let obj = SimpleSyncObject(value: 555, floatValue: 5.5)
+        lattice.add(obj)
+        try await syncTask?.value
+
+        // Step 2: Compact the server's audit log — replaces all history with INSERT snapshots
+        let serverEntries = syncedLattice.compactHistory()
+        #expect(serverEntries >= 1, "Server should create snapshot entries for existing objects")
+
+        // Verify the server still has the data
+        #expect(syncedLattice.objects(SimpleSyncObject.self).count >= 1, "Server data should survive compaction")
+
+        // Step 3: A fresh client connects — should receive data from the compacted snapshots
+        let freshURL = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 30)).sqlite")
+        let freshConfig = Lattice.Configuration(
+            fileURL: freshURL,
+            authorizationToken: "compact-test",
+            wssEndpoint: URL(string: "http://localhost:\(port)/test"))
+
+        let freshLattice = try Lattice(SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self, SyncVectorObject.self, SyncGeoObject.self, SyncEmbeddedObject.self, configuration: freshConfig)
+        var attempts = 0
+        while freshLattice.objects(SimpleSyncObject.self).count == 0 && attempts < 50 {
+            try await Task.sleep(for: .milliseconds(100))
+            attempts += 1
+        }
+
+        let objects = freshLattice.objects(SimpleSyncObject.self)
+        #expect(objects.count >= 1, "Fresh client should receive data from compacted server")
+        #expect(objects.first?.value == 555, "Value should match original")
+        #expect(objects.first?.floatValue == 5.5, "Float value should match original")
+
+        try? Lattice.delete(for: freshConfig)
+    }
+
+    /// Test that client-side compaction doesn't break ongoing sync.
+    /// After a client compacts its local audit log, new changes should still sync.
+    @Test(.timeLimit(.minutes(1))) func test_ClientCompactionThenSync() async throws {
+        let lattice = localLattice1!
+        let lattice2 = localLattice2!
+
+        // Step 1: Write data and wait for sync to lattice2
+        var receiveTask: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            receiveTask = Task.detached {
+                let l2 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice2Configuration)
+                let changeStream = l2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let resolved = changes.compactMap({ $0.resolve(on: l2) })
+                    if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        let obj1 = SimpleSyncObject(value: 100, floatValue: 1.0)
+        lattice.add(obj1)
+        try await receiveTask?.value
+        #expect(lattice2.objects(SimpleSyncObject.self).count >= 1, "Initial sync should work")
+
+        // Step 2: Compact lattice1's audit log
+        let compactedEntries = lattice.compactHistory()
+        #expect(compactedEntries >= 1, "Should create snapshot entries")
+
+        // Step 3: Write NEW data after compaction and wait for it on lattice2.
+        // After compaction, lattice1 has fresh INSERT snapshot entries (isSynchronized=0).
+        // Adding obj2 triggers upload_pending_changes which sends BOTH the compacted
+        // snapshot AND obj2. The C++ fix in apply_remote_changes resolves local rowId
+        // and operation so flush_changes can correlate them with the update_hook.
+        var receiveTask2: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            receiveTask2 = Task.detached {
+                let l2 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice2Configuration)
+                let changeStream = l2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let resolved = changes.compactMap({ $0.resolve(on: l2) })
+                    if resolved.contains(where: { $0.tableName == "SimpleSyncObject" }),
+                       l2.objects(SimpleSyncObject.self).contains(where: { $0.value == 200 }) {
+                        break
+                    }
+                }
+            }
+        }
+
+        let obj2 = SimpleSyncObject(value: 200, floatValue: 2.0)
+        lattice.add(obj2)
+        try await receiveTask2?.value
+
+        #expect(lattice2.objects(SimpleSyncObject.self).count >= 2,
+                "Lattice2 should have both objects after compaction sync")
+        #expect(lattice2.objects(SimpleSyncObject.self).contains(where: { $0.value == 200 }),
+                "New data written after client compaction should sync")
+    }
+
     /// Test that closing the lattice instance that owns the synchronizer
     /// hands off sync responsibility to a surviving sibling instance.
     @Test(.timeLimit(.minutes(1))) func test_SyncHandoff() async throws {

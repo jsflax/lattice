@@ -26,7 +26,7 @@ public class AuditLog: CustomStringConvertible {
     /// The global id of the record that was affected in the target table
     var globalRowId: UUID?
     /// JSON string containing the changed fields (if any)
-    var changedFields: [String: AnyProperty]
+    package var changedFields: [String: AnyProperty]
     /// JSON containing the names of the changes properties
     var changedFieldsNames: [String?]?
     /// Timestamp for when the change occurred
