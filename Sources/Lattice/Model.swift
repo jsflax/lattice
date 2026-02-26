@@ -219,6 +219,7 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     static func _nameForKeyPath(_ keyPath: AnyKeyPath) -> String
     static var constraints: [Constraint] { get }
     static var fullTextProperties: Set<String> { get }
+    static var indexedProperties: Set<String> { get }
     #if canImport(Combine)
     var _objectWillChange: Combine.ObservableObjectPublisher { get }
     #else
@@ -254,6 +255,7 @@ extension Model {
     public static var sqlType: String { "BIGINT" }
     public static var anyPropertyKind: AnyProperty.Kind { .int }
     public static var fullTextProperties: Set<String> { [] }
+    public static var indexedProperties: Set<String> { [] }
 
     public var lattice: Lattice? {
         _dynamicObject._ref.lattice.map { Lattice.init(ref: $0) }
@@ -404,7 +406,8 @@ extension Model {
                                              link_table: .init(),
                                              nullable: property is (any OptionalProtocol.Type),
                                              is_vector: false, is_geo_bounds: true,
-                                             is_full_text: false)
+                                             is_full_text: false,
+                                             is_indexed: false)
         }
 
         for (name, property) in primitiveProperties {
@@ -418,11 +421,13 @@ extension Model {
             // Check if this is a Vector type for automatic vec0 indexing
             let isVector = property is Vector<Float>.Type || property is Vector<Double>.Type
             let isFullText = fullTextProperties.contains(name)
+            let isIndexed = indexedProperties.contains(name)
             schema[std.string(name)] = .init(name: std.string(name), type: columnType, kind: .primitive,
                                              target_table: .init(), link_table: .init(),
                                              nullable: property is (any OptionalProtocol.Type),
                                              is_vector: isVector, is_geo_bounds: false,
-                                             is_full_text: isFullText)
+                                             is_full_text: isFullText,
+                                             is_indexed: isIndexed)
         }
 
         for (name, property) in linkProperties {
@@ -432,7 +437,8 @@ extension Model {
                                              target_table: std.string(property.modelType.entityName),
                                              link_table: .init(Self.entityName),
                                              nullable: true, is_vector: isVector, is_geo_bounds: false,
-                                             is_full_text: false)
+                                             is_full_text: false,
+                                             is_indexed: false)
         }
 
         return schema
@@ -515,6 +521,10 @@ public macro Unique<T>(compoundedWith: PartialKeyPath<T>...,
 @attached(peer)
 public macro Unique(allowsUpsert: Bool = false) = #externalMacro(module: "LatticeMacros",
                                                                  type: "UniqueMacro")
+
+@attached(peer)
+public macro Indexed() = #externalMacro(module: "LatticeMacros",
+                                        type: "IndexedMacro")
 
 // MARK: Constraints
 public struct Constraint {

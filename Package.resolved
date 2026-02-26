@@ -1,5 +1,5 @@
 {
-  "originHash" : "134aad750a9d5a2686482a5e281d4ef007dba86d4bf09a075afcbaf669af4f6e",
+  "originHash" : "452c40515e073a89018f847002b43b5649d33b9a8c1a3b1de33e3269a01c71ac",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jsflax/LatticeCore.git",
       "state" : {
-        "revision" : "9f24a5d996a128ca477d63081c83409f0d6b0181",
-        "version" : "0.4.1"
+        "revision" : "1407cb5cbd9d510d0d1b1bfd523825af9313faea",
+        "version" : "0.5.0"
       }
     },
     {

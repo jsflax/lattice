@@ -56,6 +56,9 @@ private struct MemberView {
     var isFullText: Bool {
         attributeKey == "FullText"
     }
+    var isIndexed: Bool {
+        attributeKey == "Indexed"
+    }
     var constraint: Constraint?
     var assignment: String?
     var isComputed: Bool = false       // Flag for computed properties
@@ -197,6 +200,12 @@ class TransientMacro: PeerMacro {
 }
 
 class FullTextMacro: PeerMacro {
+    static func expansion(of node: SwiftSyntax.AttributeSyntax, providingPeersOf declaration: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.DeclSyntax] {
+        []
+    }
+}
+
+class IndexedMacro: PeerMacro {
     static func expansion(of node: SwiftSyntax.AttributeSyntax, providingPeersOf declaration: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.DeclSyntax] {
         []
     }
@@ -796,6 +805,9 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         let fullTextNames = members.filter { $0.isFullText && !$0.isComputed }
             .map { "\"\($0.mappedName ?? $0.name)\"" }
         let fullTextSet = fullTextNames.joined(separator: ", ")
+        let indexedNames = members.filter { $0.isIndexed && !$0.isComputed }
+            .map { "\"\($0.mappedName ?? $0.name)\"" }
+        let indexedSet = indexedNames.joined(separator: ", ")
         dtoInheritedTypes.append(InheritedTypeSyntax(type: TypeSyntax("Sendable")))
             return [
                 ExtensionDeclSyntax(
@@ -816,6 +828,10 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
 
                         public static var fullTextProperties: Set<String> {
                             [\(raw: fullTextSet)]
+                        }
+
+                        public static var indexedProperties: Set<String> {
+                            [\(raw: indexedSet)]
                         }
                     }
                     """
@@ -880,6 +896,6 @@ struct LatticeMacrosPlugin: CompilerPlugin {
         ModelMacro.self, TransientMacro.self, PropertyMacro.self,
 //        LatticeMemberMacro.self,
         UniqueMacro.self, CodableMacro.self, EnumMacro.self, EmbeddedModelMacro.self,
-        VirtualModelMacro.self, FullTextMacro.self
+        VirtualModelMacro.self, FullTextMacro.self, IndexedMacro.self
     ]
 }
