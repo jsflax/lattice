@@ -84,6 +84,7 @@ extension Lattice {
         app.migrations.add(CreateUser())
         app.migrations.add(CreateOAuthAccount())
         app.migrations.add(CreateToken())
+        app.migrations.add(AddProfilePictureUrl())
         
         // Session middleware (if you ever do cookies)
         app.middleware.use(app.sessions.middleware)
@@ -108,7 +109,10 @@ extension Lattice {
             ? baseProtected
             : baseProtected.grouped(additionalMiddlewares)
         protected.get("profile") { req in
-            print(req)
+            let user = try req.auth.require(User.self)
+            return try await auth.attachProviders(to: user, req: req)
+        }
+        protected.get("me") { req in
             let user = try req.auth.require(User.self)
             return try await auth.attachProviders(to: user, req: req)
         }

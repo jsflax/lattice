@@ -118,18 +118,23 @@ struct AuthController {
         let providerID = payload.subject.value
         let email      = payload.email
         let name       = payload.name
-        
+        let picture    = payload.picture
+
         let acct = try await OAuthAccount.query(on: req.db)
             .filter(\.$provider == "google")
             .filter(\.$providerUserID == providerID)
             .with(\.$user)
             .first()
-        
+
         let user: User
         if let existing = acct {
             user = existing.user
+            // Update profile fields that may have changed
+            if let name { user.fullName = name }
+            if let picture { user.profilePictureUrl = picture }
+            try await user.update(on: req.db)
         } else {
-            user = User(email: email, passwordHash: nil, fullName: name)
+            user = User(email: email, passwordHash: nil, fullName: name, profilePictureUrl: picture)
             try await user.save(on: req.db)
             let oa = OAuthAccount(provider: "google",
                                   providerUserID: providerID,

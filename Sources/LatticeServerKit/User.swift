@@ -12,6 +12,8 @@ public final class User: Model, Content, Authenticatable, @unchecked Sendable {
     public var passwordHash: String?
     @OptionalField(key: "full_name")
     public var fullName: String?
+    @OptionalField(key: "profile_picture_url")
+    public var profilePictureUrl: String?
     @Timestamp(key: "created_at", on: .create)
     public var createdAt: Date?
     @Timestamp(key: "updated_at", on: .update)
@@ -26,17 +28,20 @@ public final class User: Model, Content, Authenticatable, @unchecked Sendable {
     public init(id: UUID? = nil,
          email: String?,
          passwordHash: String?,
-         fullName: String?) {
+         fullName: String?,
+         profilePictureUrl: String? = nil) {
         self.id = id
         self.email = email
         self.passwordHash = passwordHash
         self.fullName = fullName
+        self.profilePictureUrl = profilePictureUrl
     }
 
     public struct Public: Content {
         public let id: UUID
         public let email: String?
         public let fullName: String?
+        public let profilePictureUrl: String?
         public let providers: [String]
     }
 
@@ -46,6 +51,7 @@ public final class User: Model, Content, Authenticatable, @unchecked Sendable {
         return Public(id: try requireID(),
                       email: email,
                       fullName: fullName,
+                      profilePictureUrl: profilePictureUrl,
                       providers: provs)
     }
 }
@@ -67,6 +73,20 @@ struct CreateUser: AsyncMigration {
 
     func revert(on db: Database) async throws {
         try await db.schema(User.schema).delete()
+    }
+}
+
+struct AddProfilePictureUrl: AsyncMigration {
+    func prepare(on db: Database) async throws {
+        try await db.schema(User.schema)
+            .field("profile_picture_url", .string)
+            .update()
+    }
+
+    func revert(on db: Database) async throws {
+        try await db.schema(User.schema)
+            .deleteField("profile_picture_url")
+            .update()
     }
 }
 

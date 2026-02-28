@@ -773,6 +773,16 @@ public struct Lattice {
         // Register for cross-instance observation now that the object has a primaryKey
         object._registerIfNeeded()
     }
+
+    public func add<T: Model>(_ object: borrowing T, preservingGlobalId globalId: UUID) {
+        guard object.lattice == nil else {
+            fatalError()
+        }
+        let ref = object._dynamicObject._ref
+        cxxLattice.add_preserving_global_id(ref, std.string(globalId.uuidString))
+        object._dynamicObject._ref = ref
+        object._registerIfNeeded()
+    }
     
     public func add<S: Sequence>(contentsOf newElements: S) where S.Element: Model {
         // Bulk insert via C++
