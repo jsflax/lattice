@@ -351,7 +351,7 @@ extension UUID: CxxListManaged {
         return UUID(uuidString: str) ?? UUID()
     }
     public func setUnmanaged(to object: inout lattice.swift_dynamic_object, name: std.string) {
-        object.set_string(name, std.string(self.uuidString))
+        object.set_string(name, std.string(self.uuidString.lowercased()))
     }
     public static func getManaged(from object: lattice.ManagedModel, name: std.string) -> CxxManagedSpecialization {
         object.get_managed_field(name)
@@ -367,7 +367,7 @@ extension UUID: CxxListManaged {
         UUID(uuidString: String(storage._ref.getString(named: std.string(name)))) ?? UUID()
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: UUID) {
-        storage._ref.setString(named: std.string(name), std.string(value.uuidString))
+        storage._ref.setString(named: std.string(name), std.string(value.uuidString.lowercased()))
     }
 }
 

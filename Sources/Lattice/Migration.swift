@@ -221,7 +221,7 @@ internal protocol MigrationProtocol {
     var schemas: [String: (from: lattice.SwiftSchema, to: lattice.SwiftSchema)] { get }
 }
 
-public struct Migration : MigrationProtocol {
+public struct Migration : MigrationProtocol, @unchecked Sendable {
     private var typeErasedBlocks: [String: (CxxDynamicObjectRef, CxxDynamicObjectRef) -> ()] = [:]
     var schemas: [String: (from: lattice.SwiftSchema, to: lattice.SwiftSchema)] = [:]
     

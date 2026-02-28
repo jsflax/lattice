@@ -387,6 +387,11 @@ public struct Lattice {
         public var wssEndpoint: URL?
         private var scheduler: Scheduler
 
+        /// Schema migration definitions keyed by version number.
+        /// Stored here so that `SendableReference.resolve(on:)` can reconstruct
+        /// a `Lattice` with the correct target schema version.
+        public var migration: [Int: Migration]?
+
         /// Read-only mode. When true:
         /// - Database is opened with SQLITE_OPEN_READONLY
         /// - No WAL mode (uses existing journal mode)
@@ -395,9 +400,28 @@ public struct Lattice {
         /// Use this for bundled template databases in app resources.
         public var isReadOnly: Bool = false
 
+        // MARK: Equatable / Hashable (migration excluded — closures aren't comparable)
+        public static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.isStoredInMemoryOnly == rhs.isStoredInMemoryOnly &&
+            lhs.fileURL == rhs.fileURL &&
+            lhs.authorizationToken == rhs.authorizationToken &&
+            lhs.wssEndpoint == rhs.wssEndpoint &&
+            lhs.scheduler == rhs.scheduler &&
+            lhs.isReadOnly == rhs.isReadOnly
+        }
+
+        public func hash(into hasher: inout Hasher) {
+            hasher.combine(isStoredInMemoryOnly)
+            hasher.combine(fileURL)
+            hasher.combine(authorizationToken)
+            hasher.combine(wssEndpoint)
+            hasher.combine(scheduler)
+            hasher.combine(isReadOnly)
+        }
+
         public init(isStoredInMemoryOnly: Bool = false, fileURL: URL? = nil,
                     authorizationToken: String? = nil, wssEndpoint: URL? = nil,
-                    isReadOnly: Bool = false) {
+                    isReadOnly: Bool = false, migration: [Int: Migration]? = nil) {
             self.isStoredInMemoryOnly = isStoredInMemoryOnly
             let fileURL = if isStoredInMemoryOnly {
                 URL(fileURLWithPath: ":memory:")
@@ -418,6 +442,7 @@ public struct Lattice {
             self.wssEndpoint = wssEndpoint
             self.scheduler = Scheduler()
             self.isReadOnly = isReadOnly
+            self.migration = migration
         }
 
         fileprivate func cxxConfiguration(isolation: isolated (any Actor)? = #isolation) -> lattice.swift_configuration {
@@ -520,8 +545,7 @@ public struct Lattice {
     internal init(isolation: isolated (any Actor)? = #isolation,
                   for schema: [any Model.Type],
                   configuration: Configuration = defaultConfiguration,
-                  isSynchronizing: Bool,
-                  migration: [Int: Migration]? = nil) throws {
+                  isSynchronizing: Bool) throws {
         // Register Swift network factory on first use
         Self.registerNetworkFactoryIfNeeded()
 
@@ -554,7 +578,7 @@ public struct Lattice {
             cxxSchemas.push_back(entry)
         }
 
-        if let migration {
+        if let migration = configuration.migration {
             // Find the target version from migration dict (highest key)
             let targetVersion = migration.keys.max() ?? 1
 
@@ -603,9 +627,8 @@ public struct Lattice {
     // MARK: Public Inits
     public init(isolation: isolated (any Actor)? = #isolation,
                 for schema: [any Model.Type],
-                configuration: Configuration = defaultConfiguration,
-                migration: [Int: Migration]? = nil) throws {
-        try self.init(for: schema, configuration: configuration, isSynchronizing: false, migration: migration)
+                configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: schema, configuration: configuration, isSynchronizing: false)
     }
 
     internal var schema: _Schema?
@@ -660,13 +683,12 @@ public struct Lattice {
     ///   - migration: Block called when schema changes are detected
     public init<each M: Model>(isolation: isolated (any Actor)? = #isolation,
                                _ modelTypes: repeat (each M).Type,
-                               configuration: Configuration = defaultConfiguration,
-                               migration: [Int: Migration]? = nil) throws {
+                               configuration: Configuration = defaultConfiguration) throws {
         var types = [any Model.Type]()
         for type in repeat each modelTypes {
             types.append(type)
         }
-        try self.init(for: types, configuration: configuration, migration: migration)
+        try self.init(for: types, configuration: configuration)
         self.schema = Schema(repeat each modelTypes)
     }
 

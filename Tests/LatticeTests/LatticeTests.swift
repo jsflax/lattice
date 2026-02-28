@@ -178,7 +178,7 @@ class BaseTest {
         let path = FileManager.default.temporaryDirectory.appending(path: path ?? "\(String.random(length: 32)).sqlite")
         paths.append(path)
         print("Lattice path: \(path)")
-        return try Lattice(repeat each types, configuration: .init(fileURL: path), migration: migration)
+        return try Lattice(repeat each types, configuration: .init(fileURL: path, migration: migration))
     }
 }
 

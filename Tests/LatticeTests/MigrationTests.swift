@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import Lattice
+import SQLite3
 #if canImport(MapKit)
 import MapKit
 #endif
@@ -158,6 +159,61 @@ class MultiGeoBoundsListV2 {
         var name: String
         var plannedRoute: Lattice.List<MKCoordinateRegion>  // Existing
         var actualRoute: Lattice.List<CLLocationCoordinate2D>  // NEW second list
+    }
+}
+
+// MARK: - Int64-to-UUID Migration Test Models
+
+// V1: Edge references nodes by Int64 primary key
+class FKToUUIDV1 {
+    @Model class Node {
+        var label: String
+    }
+    @Model class Edge {
+        var sourceId: Int64
+        var targetId: Int64
+        var weight: Double
+    }
+}
+
+// V2: Edge references nodes by UUID globalId
+class FKToUUIDV2 {
+    @Model class Node {
+        var label: String
+    }
+    @Model class Edge {
+        var sourceGlobalId: UUID
+        var targetGlobalId: UUID
+        var weight: Double
+    }
+}
+
+// MARK: - Edge-Only Migration Test Models (lookup target NOT in migration)
+// Mirrors Engram scenario: Memory (unchanged) + Edge (sourceId→sourceGlobalId)
+
+class EdgeOnlyMigV1 {
+    @Model class Memory {
+        var content: String
+        var topic: String
+    }
+    @Model class Edge {
+        var sourceId: Int64
+        var targetId: Int64
+        var relation: String
+        var createdAt: Date
+    }
+}
+
+class EdgeOnlyMigV2 {
+    @Model class Memory {
+        var content: String
+        var topic: String
+    }
+    @Model class Edge {
+        var sourceGlobalId: UUID
+        var targetGlobalId: UUID
+        var relation: String
+        var createdAt: Date
     }
 }
 
@@ -860,5 +916,538 @@ class MigrationTests: BaseTest {
             // (FK-to-List requires a different pattern - the list owner needs to
             // look up each child and append, which requires the lookup API)
         }
+    }
+
+    // MARK: - Int64-to-UUID Migration Test
+
+    @Test
+    func test_FKToUUIDMigration() throws {
+        typealias V1Node = FKToUUIDV1.Node
+        typealias V1Edge = FKToUUIDV1.Edge
+        typealias V2Node = FKToUUIDV2.Node
+        typealias V2Edge = FKToUUIDV2.Edge
+
+        let dbPath = "migration_fk_to_uuid_\(String.random(length: 16)).sqlite"
+        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+
+        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+        try? Lattice.delete(for: .init(fileURL: dbURL))
+
+        var nodeGlobalIds: [Int64: UUID] = [:]
+
+        // Phase 1: Create V1 data with Int64 FK references
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V1Node.self, V1Edge.self)
+
+            let nodeA = V1Node()
+            nodeA.label = "A"
+            lattice.add(nodeA)
+
+            let nodeB = V1Node()
+            nodeB.label = "B"
+            lattice.add(nodeB)
+
+            let nodeC = V1Node()
+            nodeC.label = "C"
+            lattice.add(nodeC)
+
+            // Record globalIds for verification
+            nodeGlobalIds[nodeA.primaryKey!] = nodeA.__globalId!
+            nodeGlobalIds[nodeB.primaryKey!] = nodeB.__globalId!
+            nodeGlobalIds[nodeC.primaryKey!] = nodeC.__globalId!
+
+            // Edges referencing nodes by Int64 primaryKey
+            let edgeAB = V1Edge()
+            edgeAB.sourceId = nodeA.primaryKey!
+            edgeAB.targetId = nodeB.primaryKey!
+            edgeAB.weight = 1.5
+            lattice.add(edgeAB)
+
+            let edgeBC = V1Edge()
+            edgeBC.sourceId = nodeB.primaryKey!
+            edgeBC.targetId = nodeC.primaryKey!
+            edgeBC.weight = 2.0
+            lattice.add(edgeBC)
+
+            #expect(lattice.objects(V1Node.self).count == 3)
+            #expect(lattice.objects(V1Edge.self).count == 2)
+        }
+
+        // Phase 2: Migrate Int64 FKs to UUID globalId references
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V2Node.self, V2Edge.self, migration: [
+                2: Migration(
+                    (from: V1Node.self, to: V2Node.self),
+                    (from: V1Edge.self, to: V2Edge.self),
+                    blocks: { old, new in
+                        // Node: no changes
+                    }, { old, new in
+                        // Edge: look up source/target Node by old Int64 PK, get globalId
+                        if let sourceNode = Migration.lookup(V2Node.self, id: old.sourceId),
+                           let gid = sourceNode.__globalId {
+                            new.sourceGlobalId = gid
+                        }
+                        if let targetNode = Migration.lookup(V2Node.self, id: old.targetId),
+                           let gid = targetNode.__globalId {
+                            new.targetGlobalId = gid
+                        }
+                    })
+            ])
+
+            let nodes = lattice.objects(V2Node.self)
+            #expect(nodes.count == 3)
+
+            let edges = lattice.objects(V2Edge.self)
+            #expect(edges.count == 2)
+
+            // Verify UUID references match original globalIds
+            let nodeA = nodes.first { $0.label == "A" }!
+            let nodeB = nodes.first { $0.label == "B" }!
+            let nodeC = nodes.first { $0.label == "C" }!
+
+            let edgeAB = edges.first { $0.sourceGlobalId == nodeA.__globalId! }!
+            #expect(edgeAB.targetGlobalId == nodeB.__globalId!)
+            #expect(edgeAB.weight == 1.5)
+
+            let edgeBC = edges.first { $0.sourceGlobalId == nodeB.__globalId! }!
+            #expect(edgeBC.targetGlobalId == nodeC.__globalId!)
+            #expect(edgeBC.weight == 2.0)
+
+            // Verify globalIds match what we recorded in phase 1
+            #expect(nodeA.__globalId == nodeGlobalIds[nodeA.primaryKey!])
+            #expect(nodeB.__globalId == nodeGlobalIds[nodeB.primaryKey!])
+            #expect(nodeC.__globalId == nodeGlobalIds[nodeC.primaryKey!])
+        }
+    }
+
+    // MARK: - Edge-Only Migration (lookup target NOT in migration)
+
+    /// Reproduces the Engram scenario: Memory is NOT in the Migration definition,
+    /// but Edge migration uses Migration.lookup(Memory.self, ...) to resolve FKs.
+    /// Only Edge is listed in the Migration tuple.
+    @Test
+    func test_EdgeOnlyMigration_LookupTargetNotInMigration() throws {
+        typealias V1Memory = EdgeOnlyMigV1.Memory
+        typealias V1Edge = EdgeOnlyMigV1.Edge
+        typealias V2Memory = EdgeOnlyMigV2.Memory
+        typealias V2Edge = EdgeOnlyMigV2.Edge
+
+        let dbPath = "migration_edge_only_\(String.random(length: 16)).sqlite"
+        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+
+        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+        try? Lattice.delete(for: .init(fileURL: dbURL))
+
+        var memoryGlobalIds: [Int64: UUID] = [:]
+
+        // Phase 1: Create V1 data — Memory + Edge with Int64 FK references
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V1Memory.self, V1Edge.self)
+
+            let mem1 = V1Memory()
+            mem1.content = "First memory"
+            mem1.topic = "test"
+            lattice.add(mem1)
+
+            let mem2 = V1Memory()
+            mem2.content = "Second memory"
+            mem2.topic = "test"
+            lattice.add(mem2)
+
+            let mem3 = V1Memory()
+            mem3.content = "Third memory"
+            mem3.topic = "test"
+            lattice.add(mem3)
+
+            // Record globalIds for verification
+            memoryGlobalIds[mem1.primaryKey!] = mem1.__globalId!
+            memoryGlobalIds[mem2.primaryKey!] = mem2.__globalId!
+            memoryGlobalIds[mem3.primaryKey!] = mem3.__globalId!
+
+            // Edges referencing memories by Int64 primaryKey
+            let edge12 = V1Edge()
+            edge12.sourceId = mem1.primaryKey!
+            edge12.targetId = mem2.primaryKey!
+            edge12.relation = "relates_to"
+            edge12.createdAt = Date(timeIntervalSince1970: 1000000)
+            lattice.add(edge12)
+
+            let edge23 = V1Edge()
+            edge23.sourceId = mem2.primaryKey!
+            edge23.targetId = mem3.primaryKey!
+            edge23.relation = "part_of"
+            edge23.createdAt = Date(timeIntervalSince1970: 2000000)
+            lattice.add(edge23)
+
+            #expect(lattice.objects(V1Memory.self).count == 3)
+            #expect(lattice.objects(V1Edge.self).count == 2)
+        }
+
+        // Phase 2: Migrate — ONLY Edge in Migration, Memory NOT included.
+        // Edge migration uses Migration.lookup(V2Memory.self, ...) to resolve FKs.
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V2Memory.self, V2Edge.self, migration: [
+                2: Migration(
+                    // NOTE: Only Edge is in the migration — Memory is NOT listed
+                    (from: V1Edge.self, to: V2Edge.self),
+                    blocks: { old, new in
+                        // Look up source memory by old Int64 PK, get globalId
+                        if let sourceMem = Migration.lookup(V2Memory.self, id: old.sourceId),
+                           let gid = sourceMem.__globalId {
+                            new.sourceGlobalId = gid
+                        } else {
+                            new.sourceGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+                        }
+
+                        // Look up target memory by old Int64 PK, get globalId
+                        if let targetMem = Migration.lookup(V2Memory.self, id: old.targetId),
+                           let gid = targetMem.__globalId {
+                            new.targetGlobalId = gid
+                        } else {
+                            new.targetGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+                        }
+
+                        // Copy relation and createdAt
+                        new.relation = old.relation
+                        new.createdAt = old.createdAt
+                    })
+            ])
+
+            // Verify memories survived unchanged
+            let memories = lattice.objects(V2Memory.self)
+            #expect(memories.count == 3)
+
+            // Verify edges were migrated
+            let edges = lattice.objects(V2Edge.self)
+            #expect(edges.count == 2, "Expected 2 edges but got \(edges.count)")
+
+            // Verify UUID references match original globalIds
+            let mem1 = memories.first { $0.content == "First memory" }!
+            let mem2 = memories.first { $0.content == "Second memory" }!
+            let mem3 = memories.first { $0.content == "Third memory" }!
+
+            let edge12 = edges.first { $0.sourceGlobalId == mem1.__globalId! }
+            #expect(edge12 != nil, "Edge from mem1→mem2 not found. Edge sourceGlobalIds: \(edges.map { $0.sourceGlobalId })")
+            #expect(edge12?.targetGlobalId == mem2.__globalId!)
+            #expect(edge12?.relation == "relates_to")
+            #expect(edge12?.createdAt == Date(timeIntervalSince1970: 1000000))
+
+            let edge23 = edges.first { $0.sourceGlobalId == mem2.__globalId! }
+            #expect(edge23 != nil, "Edge from mem2→mem3 not found")
+            #expect(edge23?.targetGlobalId == mem3.__globalId!)
+            #expect(edge23?.relation == "part_of")
+
+            // Verify globalIds match what we recorded in phase 1
+            #expect(mem1.__globalId == memoryGlobalIds[mem1.primaryKey!])
+            #expect(mem2.__globalId == memoryGlobalIds[mem2.primaryKey!])
+            #expect(mem3.__globalId == memoryGlobalIds[mem3.primaryKey!])
+        }
+    }
+
+    // MARK: - Partial Migration Recovery Test
+
+    /// Helper: Execute raw SQL on a SQLite database file
+    private func executeRawSQL(_ dbURL: URL, _ statements: [String]) throws {
+        var db: OpaquePointer?
+        guard sqlite3_open(dbURL.path, &db) == SQLITE_OK else {
+            throw NSError(domain: "SQLite", code: Int(sqlite3_errcode(db)),
+                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db)!)])
+        }
+        defer { sqlite3_close(db) }
+
+        for sql in statements {
+            var errMsg: UnsafeMutablePointer<CChar>?
+            guard sqlite3_exec(db, sql, nil, nil, &errMsg) == SQLITE_OK else {
+                let msg = errMsg.map { String(cString: $0) } ?? "unknown error"
+                sqlite3_free(errMsg)
+                throw NSError(domain: "SQLite", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "SQL error: \(msg) in: \(sql)"])
+            }
+        }
+    }
+
+    /// Helper: Query a single integer value from the database
+    private func queryRawInt(_ dbURL: URL, _ sql: String) throws -> Int {
+        var db: OpaquePointer?
+        guard sqlite3_open(dbURL.path, &db) == SQLITE_OK else {
+            throw NSError(domain: "SQLite", code: Int(sqlite3_errcode(db)),
+                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db)!)])
+        }
+        defer { sqlite3_close(db) }
+
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw NSError(domain: "SQLite", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db)!)])
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int64(stmt, 0))
+    }
+
+    /// Simulates a partial migration failure: table was rebuilt (sourceId→sourceGlobalId)
+    /// but schema version was NOT bumped. Then a second open attempts the migration again.
+    /// This reproduces the Engram production bug: "no such column: sourceId".
+    @Test
+    func test_PartialMigrationRecovery_TableRebuiltButVersionNotBumped() throws {
+        typealias V1Memory = EdgeOnlyMigV1.Memory
+        typealias V1Edge = EdgeOnlyMigV1.Edge
+        typealias V2Memory = EdgeOnlyMigV2.Memory
+        typealias V2Edge = EdgeOnlyMigV2.Edge
+
+        let dbPath = "migration_partial_recovery_\(String.random(length: 16)).sqlite"
+        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+
+        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+        try? Lattice.delete(for: .init(fileURL: dbURL))
+
+        // Phase 1: Create V1 data
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V1Memory.self, V1Edge.self)
+
+            let mem1 = V1Memory()
+            mem1.content = "Alpha"
+            mem1.topic = "test"
+            lattice.add(mem1)
+
+            let mem2 = V1Memory()
+            mem2.content = "Beta"
+            mem2.topic = "test"
+            lattice.add(mem2)
+
+            let edge = V1Edge()
+            edge.sourceId = mem1.primaryKey!
+            edge.targetId = mem2.primaryKey!
+            edge.relation = "relates_to"
+            edge.createdAt = Date()
+            lattice.add(edge)
+        }
+
+        // Phase 2: Simulate a partial migration — manually rebuild Edge table
+        // with new columns but DON'T bump schema version (simulates crash/failure mid-migration)
+        try executeRawSQL(dbURL, [
+            // Drop audit triggers
+            "DROP TRIGGER IF EXISTS AuditEdgeInsert",
+            "DROP TRIGGER IF EXISTS AuditLog_Update_Edge",
+            "DROP TRIGGER IF EXISTS AuditEdgeDelete",
+            // Rename old table
+            "ALTER TABLE Edge RENAME TO Edge_old",
+            // Create new table with V2 schema
+            """
+            CREATE TABLE Edge(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                globalId TEXT UNIQUE COLLATE NOCASE DEFAULT (
+                    lower(hex(randomblob(4))) || '-' ||
+                    lower(hex(randomblob(2))) || '-' ||
+                    '4' || substr(lower(hex(randomblob(2))),2) || '-' ||
+                    substr('89AB', 1 + (abs(random()) % 4), 1) ||
+                    substr(lower(hex(randomblob(2))),2) || '-' ||
+                    lower(hex(randomblob(6)))
+                ),
+                sourceGlobalId TEXT DEFAULT '',
+                targetGlobalId TEXT DEFAULT '',
+                relation TEXT DEFAULT '',
+                createdAt REAL DEFAULT 0.0
+            )
+            """,
+            // Copy with defaults for new columns (like rebuild_table does)
+            "INSERT INTO Edge (id, globalId, sourceGlobalId, targetGlobalId, relation, createdAt) SELECT id, globalId, '', '', relation, createdAt FROM Edge_old",
+            // Drop old table
+            "DROP TABLE Edge_old"
+            // NOTE: schema_version is NOT bumped — still 1
+        ])
+
+        // Verify: Edge has V2 schema but version is still 1
+        let version = try queryRawInt(dbURL, "SELECT CAST(value AS INTEGER) FROM _lattice_meta WHERE key = 'schema_version'")
+        #expect(version == 1, "Version should still be 1 (not bumped)")
+
+        let edgeCount = try queryRawInt(dbURL, "SELECT COUNT(*) FROM Edge")
+        #expect(edgeCount == 1, "Edge should still have 1 row")
+
+        // Phase 3: Open with V2 + migration — this is where the bug would occur.
+        // Schema version is 1 (migration thinks it needs to run), but Edge table
+        // already has V2 schema (sourceGlobalId instead of sourceId).
+        // The migration code would try to hydrate with old_schema (sourceId)
+        // but the table has new columns → "no such column: sourceId"
+        do {
+            try autoreleasepool {
+                let lattice = try testLattice(path: dbPath, V2Memory.self, V2Edge.self, migration: [
+                    2: Migration(
+                        (from: V1Edge.self, to: V2Edge.self),
+                        blocks: { old, new in
+                            if let sourceMem = Migration.lookup(V2Memory.self, id: old.sourceId),
+                               let gid = sourceMem.__globalId {
+                                new.sourceGlobalId = gid
+                            } else {
+                                new.sourceGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+                            }
+                            if let targetMem = Migration.lookup(V2Memory.self, id: old.targetId),
+                               let gid = targetMem.__globalId {
+                                new.targetGlobalId = gid
+                            } else {
+                                new.targetGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+                            }
+                            new.relation = old.relation
+                            new.createdAt = old.createdAt
+                        })
+                ])
+
+                // If we get here, migration handled the partial state gracefully
+                let edges = lattice.objects(V2Edge.self)
+                #expect(edges.count == 1, "Expected 1 edge after recovery")
+            }
+        } catch {
+            // This is the bug: "no such column: sourceId"
+            Issue.record("Migration failed on partially-migrated DB: \(error)")
+        }
+    }
+
+    // MARK: - Schema Version Guard Tests
+
+    /// Opening a migrated DB with the correct migration dict should succeed.
+    @Test
+    func test_SchemaVersionGuard_SameVersion_Succeeds() throws {
+        typealias M1Person = MigrationV1.Person
+        typealias M2Person = MigrationV2.Person
+        typealias M1Dog = MigrationV1.Dog
+        typealias M2Dog = MigrationV2.Dog
+
+        let dbPath = "schema_guard_same_\(String.random(length: 16)).sqlite"
+        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+        try? Lattice.delete(for: .init(fileURL: dbURL))
+
+        let migration: [Int: Migration] = [
+            2: Migration((from: M1Person.self, to: M2Person.self),
+                         (from: M1Dog.self, to: M2Dog.self),
+                         blocks: { old, new in new.age = Int(old.age) ?? 0 },
+                                { _, _ in })
+        ]
+
+        // Phase 1: Create DB and migrate to v2
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, M1Person.self, M1Dog.self)
+            let person = M1Person()
+            person.name = "Alice"
+            person.age = "25"
+            lattice.add(person)
+        }
+        try autoreleasepool {
+            let _ = try testLattice(path: dbPath, M2Person.self, M2Dog.self, migration: migration)
+        }
+
+        // Phase 2: Reopen with same migration dict — should succeed (current=2, target=2)
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, M2Person.self, M2Dog.self, migration: migration)
+            #expect(lattice.objects(M2Person.self).count == 1)
+        }
+    }
+
+    // TODO: Re-enable once C++ exceptions bridge to Swift errors.
+    // The C++ schema version guard throws std::runtime_error which causes SIGTRAP
+    // instead of being caught as a Swift error.
+//    /// Opening a migrated DB with a LOWER target version should throw.
+//    @Test
+//    func test_SchemaVersionGuard_OlderBinary_Throws() throws {
+//        typealias M1Person = MigrationV1.Person
+//        typealias M2Person = MigrationV2.Person
+//        typealias M1Dog = MigrationV1.Dog
+//        typealias M2Dog = MigrationV2.Dog
+//
+//        let dbPath = "schema_guard_older_\(String.random(length: 16)).sqlite"
+//        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+//        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+//        try? Lattice.delete(for: .init(fileURL: dbURL))
+//
+//        // Phase 1: Create and migrate to v2
+//        try autoreleasepool {
+//            let lattice = try testLattice(path: dbPath, M1Person.self, M1Dog.self)
+//            let person = M1Person()
+//            person.name = "Bob"
+//            person.age = "30"
+//            lattice.add(person)
+//        }
+//        try autoreleasepool {
+//            let _ = try testLattice(path: dbPath, M2Person.self, M2Dog.self, migration: [
+//                2: Migration((from: M1Person.self, to: M2Person.self),
+//                             (from: M1Dog.self, to: M2Dog.self),
+//                             blocks: { old, new in new.age = Int(old.age) ?? 0 },
+//                                    { _, _ in })
+//            ])
+//        }
+//
+//        // Phase 2: Manually bump schema version to 3 (simulates a future migration)
+//        try executeRawSQL(dbURL, [
+//            "UPDATE _lattice_meta SET value = '3' WHERE key = 'schema_version'"
+//        ])
+//
+//        // Phase 3: Reopen with v2 migration — should throw (current=3 > target=2)
+//        #expect(throws: (any Error).self) {
+//            try autoreleasepool {
+//                let _ = try testLattice(path: dbPath, M2Person.self, M2Dog.self, migration: [
+//                    2: Migration((from: M1Person.self, to: M2Person.self),
+//                                 (from: M1Dog.self, to: M2Dog.self),
+//                                 blocks: { old, new in new.age = Int(old.age) ?? 0 },
+//                                        { _, _ in })
+//                ])
+//            }
+//        }
+//    }
+
+    // MARK: - Cache Eviction Regression Test
+
+    /// Resolving a LatticeThreadSafeReference (which carries migration config) must not
+    /// invalidate the ptr_cache_ entry of an existing Lattice instance. If it does,
+    /// managed objects from the old instance lose their lattice_ref(), causing the
+    /// dynamic_object copy constructor to read the wrong union member (EXC_BAD_ACCESS).
+    @Test
+    func test_CacheEviction_PreservesPtrCache() throws {
+        typealias M1Person = MigrationV1.Person
+        typealias M2Person = MigrationV2.Person
+        typealias M1Dog = MigrationV1.Dog
+        typealias M2Dog = MigrationV2.Dog
+
+        let dbPath = "cache_eviction_\(String.random(length: 16)).sqlite"
+        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+        try? Lattice.delete(for: .init(fileURL: dbURL))
+
+        let migration: [Int: Migration] = [
+            2: Migration((from: M1Person.self, to: M2Person.self),
+                         (from: M1Dog.self, to: M2Dog.self),
+                         blocks: { old, new in new.age = Int(old.age) ?? 0 },
+                                { _, _ in })
+        ]
+
+        // Phase 1: Create V1 DB with data
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, M1Person.self, M1Dog.self)
+            for i in 0..<10 {
+                let person = M1Person()
+                person.name = "Person \(i)"
+                person.age = "\(20 + i)"
+                lattice.add(person)
+            }
+        }
+
+        // Phase 2: Open with V2 + migration → latticeA
+        let latticeA = try testLattice(path: dbPath, M2Person.self, M2Dog.self, migration: migration)
+
+        // Phase 3: Resolve a sendable reference → creates latticeB.
+        // Because configuration carries migration (target_schema_version > 1), the C++ cache
+        // uses the skip_cache path. Before the fix, this erased latticeA's ptr_cache_ entry.
+        let ref = latticeA.sendableReference
+        let latticeB = ref.resolve()
+        #expect(latticeB != nil)
+
+        // Phase 4: Query latticeA — snapshot() calls make_shared() on managed objects,
+        // which triggers dynamic_object's copy constructor. That constructor calls
+        // lattice_ref() → get_by_pointer() to look up the lattice in ptr_cache_.
+        // Before the fix: ptr_cache_ entry was erased → nullptr → union mismatch → crash.
+        // After the fix: ptr_cache_ entry is preserved → valid shared_ptr → works.
+        let people = latticeA.objects(M2Person.self).snapshot()
+        #expect(people.count == 10)
+        #expect(people.first?.name.starts(with: "Person") == true)
     }
 }
