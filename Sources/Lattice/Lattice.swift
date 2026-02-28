@@ -380,6 +380,39 @@ public struct Lattice {
         }
     }
     
+    // MARK: - SyncFilter
+
+    /// Controls which tables and rows are uploaded during sync.
+    ///
+    /// Semantics:
+    /// - `nil` (default on Configuration) → sync everything (backwards compatible)
+    /// - `SyncFilter()` (empty) → sync nothing
+    /// - `SyncFilter` with entries → whitelist: only listed tables, with optional per-row SQL predicates
+    ///
+    /// The filter is **upload-only** — it controls what leaves the device.
+    /// Downloads from the server are always accepted unfiltered.
+    public struct SyncFilter: Sendable, Equatable, Hashable {
+        /// tableName → SQL WHERE clause (nil = all rows in that table)
+        internal var entries: [String: String?] = [:]
+
+        public init() {}
+
+        /// Include all rows of this model type in the sync set.
+        public mutating func include<T: Model>(_ type: T.Type) {
+            entries.updateValue(nil, forKey: T.entityName)
+        }
+
+        /// Include only rows matching the predicate.
+        public mutating func include<T: Model>(_ type: T.Type, where predicate: @Sendable (Query<T>) -> Query<Bool>) {
+            entries[T.entityName] = predicate(Query<T>()).predicate
+        }
+
+        /// Remove this model type from the sync set.
+        public mutating func exclude<T: Model>(_ type: T.Type) {
+            entries.removeValue(forKey: T.entityName)
+        }
+    }
+
     public struct Configuration: Sendable, Equatable, Hashable {
         public var isStoredInMemoryOnly: Bool = false
         public var fileURL: URL
@@ -400,6 +433,10 @@ public struct Lattice {
         /// Use this for bundled template databases in app resources.
         public var isReadOnly: Bool = false
 
+        /// Filter controlling which tables/rows are uploaded during sync.
+        /// `nil` (default) syncs everything. Empty filter syncs nothing.
+        public var syncFilter: SyncFilter?
+
         // MARK: Equatable / Hashable (migration excluded — closures aren't comparable)
         public static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.isStoredInMemoryOnly == rhs.isStoredInMemoryOnly &&
@@ -407,7 +444,8 @@ public struct Lattice {
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
             lhs.scheduler == rhs.scheduler &&
-            lhs.isReadOnly == rhs.isReadOnly
+            lhs.isReadOnly == rhs.isReadOnly &&
+            lhs.syncFilter == rhs.syncFilter
         }
 
         public func hash(into hasher: inout Hasher) {
@@ -417,11 +455,13 @@ public struct Lattice {
             hasher.combine(wssEndpoint)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
+            hasher.combine(syncFilter)
         }
 
         public init(isStoredInMemoryOnly: Bool = false, fileURL: URL? = nil,
                     authorizationToken: String? = nil, wssEndpoint: URL? = nil,
-                    isReadOnly: Bool = false, migration: [Int: Migration]? = nil) {
+                    isReadOnly: Bool = false, migration: [Int: Migration]? = nil,
+                    syncFilter: SyncFilter? = nil) {
             self.isStoredInMemoryOnly = isStoredInMemoryOnly
             let fileURL = if isStoredInMemoryOnly {
                 URL(fileURLWithPath: ":memory:")
@@ -443,6 +483,7 @@ public struct Lattice {
             self.scheduler = Scheduler()
             self.isReadOnly = isReadOnly
             self.migration = migration
+            self.syncFilter = syncFilter
         }
 
         fileprivate func cxxConfiguration(isolation: isolated (any Actor)? = #isolation) -> lattice.swift_configuration {
@@ -466,6 +507,18 @@ public struct Lattice {
                       currentScheduler.scheduler)
             }
             config.read_only = isReadOnly
+            if let syncFilter {
+                var filterEntries = lattice.SyncFilterVector()
+                for (tableName, whereClause) in syncFilter.entries {
+                    var entry = lattice.sync_filter_entry()
+                    entry.table_name = std.string(tableName)
+                    if let whereClause {
+                        entry.where_clause = lattice.string_to_optional(std.string(whereClause))
+                    }
+                    filterEntries.push_back(entry)
+                }
+                config.set_sync_filter(filterEntries)
+            }
             return config
         }
     }
@@ -874,6 +927,27 @@ public struct Lattice {
     /// If a sibling instance exists for the same database, it will inherit sync responsibility.
     public func close() {
         cxxLattice.close()
+    }
+
+    // MARK: Sync Filter
+
+    /// Update the sync filter at runtime, triggering reconciliation.
+    /// Pass `nil` to clear the filter and sync everything.
+    public func updateSyncFilter(_ filter: SyncFilter?) {
+        if let filter {
+            var filterEntries = lattice.SyncFilterVector()
+            for (tableName, whereClause) in filter.entries {
+                var entry = lattice.sync_filter_entry()
+                entry.table_name = std.string(tableName)
+                if let whereClause {
+                    entry.where_clause = lattice.string_to_optional(std.string(whereClause))
+                }
+                filterEntries.push_back(entry)
+            }
+            cxxLattice.update_sync_filter(filterEntries)
+        } else {
+            cxxLattice.clear_sync_filter()
+        }
     }
 
     public func count<T>(_ modelType: T.Type, where: ((Query<T>) -> Query<Bool>)? = nil) -> Int where T: Model {
