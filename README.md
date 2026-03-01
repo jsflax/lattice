@@ -6,6 +6,8 @@ A modern, type-safe Swift ORM framework built on SQLite with real-time synchroni
 
 - 🎯 **Type-Safe Queries** - Compile-time query validation using Swift's type system
 - 🔄 **Real-Time Sync** - WebSocket-based synchronization across devices
+- 🔗 **IPC Sync** - Cross-process synchronization via Unix domain sockets
+- 🎛️ **Filtered Sync** - Per-table upload filtering with predicate support
 - 📱 **SwiftUI Integration** - Native reactive data binding with `@LatticeQuery` property wrapper
 - 🎭 **Actor Isolation** - Built-in Swift concurrency support with actor-based isolation
 - 🔗 **Relationships** - One-to-one, one-to-many, and inverse relationships
@@ -169,6 +171,90 @@ let config = Lattice.Configuration(
 
 let lattice = try Lattice(Person.self, configuration: config)
 // Changes are automatically synced via WebSocket
+```
+
+### IPC Sync
+
+Synchronize databases across processes via Unix domain sockets. Both sides reference a shared channel name — the socket path is auto-derived per platform.
+
+```swift
+// Source process (hub): serves sync data with a filter
+var filter = Lattice.SyncFilter()
+filter.include(Person.self, where: { $0.age >= 18 })
+
+let sourceConfig = Lattice.Configuration(
+    fileURL: sourceURL,
+    ipcTargets: [
+        .init(channel: "adults", role: .server, syncFilter: filter)
+    ]
+)
+let source = try Lattice(Person.self, configuration: sourceConfig)
+
+// Target process (spoke): connects and receives filtered data
+let targetConfig = Lattice.Configuration(
+    fileURL: targetURL,
+    ipcTargets: [
+        .init(channel: "adults", role: .client)
+    ]
+)
+let target = try Lattice(Person.self, configuration: targetConfig)
+// Sync is bidirectional — changes flow both ways
+```
+
+IPC and WSS compose for cloud relay — a target database can receive changes via IPC and automatically forward them to the cloud via WSS:
+
+```swift
+// Target: receives from IPC, relays to cloud
+let relayConfig = Lattice.Configuration(
+    fileURL: relayURL,
+    wssEndpoint: URL(string: "wss://your-server.com/sync"),
+    authorizationToken: token,
+    ipcTargets: [.init(channel: "adults", role: .client)]
+)
+```
+
+Per-synchronizer state (`_lattice_sync_state` table) tracks sync status independently per transport, preventing loops and enabling automatic relay.
+
+### Filtered Sync
+
+Control which rows are uploaded per table:
+
+```swift
+var filter = Lattice.SyncFilter()
+filter.include(Person.self, where: { $0.age >= 18 })
+filter.include(Pet.self) // all pets
+
+let config = Lattice.Configuration(
+    fileURL: url,
+    wssEndpoint: wssURL,
+    authorizationToken: token,
+    syncFilter: filter
+)
+```
+
+Only matching rows are uploaded. Incoming remote changes are always applied regardless of filter.
+
+### Migrations
+
+```swift
+@Model class V1Person {
+    var firstName: String
+    var lastName: String
+}
+
+@Model class V2Person {
+    var fullName: String
+}
+
+let config = Lattice.Configuration(
+    fileURL: url,
+    migration: [
+        2: Migration((from: V1Person.self, to: V2Person.self), blocks: { old, new in
+            new.fullName = "\(old.firstName) \(old.lastName)"
+        })
+    ]
+)
+let lattice = try Lattice(V2Person.self, configuration: config)
 ```
 
 ### SwiftUI Integration
@@ -494,8 +580,8 @@ let config = Lattice.Configuration(
 ## Requirements
 
 - Swift 6.2+
-- iOS 17.0+ / macOS 14.0+
-- Xcode 16.0+
+- iOS 17.0+ / macOS 14.0+ / Linux (Ubuntu 24.04+)
+- Xcode 16.0+ (Apple platforms)
 
 ## License
 

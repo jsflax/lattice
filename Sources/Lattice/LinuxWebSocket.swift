@@ -9,7 +9,7 @@ import NIOPosix
 /// NIO-backed WebSocket client for Linux, bridging to C++ generic_websocket_client.
 internal final class NIOWebsocketClient: @unchecked Sendable {
     private var ws: WebSocket?
-    private var currentState: lattice.websocket_state = .closed
+    private var currentState: lattice.transport_state = .closed
     private let eventLoopGroup: MultiThreadedEventLoopGroup
 
     // Pointer to the C++ generic_websocket_client for triggering callbacks
@@ -22,7 +22,7 @@ internal final class NIOWebsocketClient: @unchecked Sendable {
     func createCxxClient() -> UnsafeMutableRawPointer {
         let clientPtr = Unmanaged.passRetained(self).toOpaque()
 
-        let cxxClient = lattice.generic_websocket_client(
+        let cxxClient = lattice.generic_sync_transport(
             clientPtr,
             // connect_fn
             { ptr, urlPtr, headersPtr in
@@ -48,12 +48,12 @@ internal final class NIOWebsocketClient: @unchecked Sendable {
             { ptr, messagePtr in
                 guard let ptr = ptr, let messagePtr = messagePtr else { return }
                 let client = Unmanaged<NIOWebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
-                let message = messagePtr.assumingMemoryBound(to: lattice.websocket_message.self).pointee
+                let message = messagePtr.assumingMemoryBound(to: lattice.transport_message.self).pointee
                 client.performSend(message)
             }
         )
 
-        let cxxPtr = UnsafeMutablePointer<lattice.generic_websocket_client>.allocate(capacity: 1)
+        let cxxPtr = UnsafeMutablePointer<lattice.generic_sync_transport>.allocate(capacity: 1)
         cxxPtr.initialize(to: cxxClient)
         self.cxxClientPtr = UnsafeMutableRawPointer(cxxPtr)
 
@@ -87,7 +87,7 @@ internal final class NIOWebsocketClient: @unchecked Sendable {
 
             ws.onText { [weak self] _, text in
                 guard let self = self else { return }
-                let msg = lattice.websocket_message.from_string(std.string(text))
+                let msg = lattice.transport_message.from_string(std.string(text))
                 self.triggerMessage(msg)
             }
 
@@ -99,7 +99,7 @@ internal final class NIOWebsocketClient: @unchecked Sendable {
                 for byte in data {
                     vec.push_back(byte)
                 }
-                let msg = lattice.websocket_message.from_binary(vec)
+                let msg = lattice.transport_message.from_binary(vec)
                 self.triggerMessage(msg)
             }
 
@@ -125,7 +125,7 @@ internal final class NIOWebsocketClient: @unchecked Sendable {
         _ = ws?.close(code: .normalClosure)
     }
 
-    private func performSend(_ message: lattice.websocket_message) {
+    private func performSend(_ message: lattice.transport_message) {
         guard let ws = ws else { return }
 
         if message.msg_type == .text {
@@ -140,22 +140,22 @@ internal final class NIOWebsocketClient: @unchecked Sendable {
 
     private func triggerOpen() {
         guard let ptr = cxxClientPtr else { return }
-        ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_open()
+        ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_open()
     }
 
-    private func triggerMessage(_ message: lattice.websocket_message) {
+    private func triggerMessage(_ message: lattice.transport_message) {
         guard let ptr = cxxClientPtr else { return }
-        ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_message(message)
+        ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_message(message)
     }
 
     private func triggerError(_ error: String) {
         guard let ptr = cxxClientPtr else { return }
-        ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_error(std.string(error))
+        ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_error(std.string(error))
     }
 
     private func triggerClose(code: Int, reason: String) {
         guard let ptr = cxxClientPtr else { return }
-        ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_close(Int32(code), std.string(reason))
+        ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_close(Int32(code), std.string(reason))
     }
 
     deinit {

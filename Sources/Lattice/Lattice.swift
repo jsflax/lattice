@@ -91,10 +91,10 @@ public struct Lattice {
         
     }
     
-    /// URLSession-backed websocket client that bridges to C++ generic_websocket_client
+    /// URLSession-backed sync transport that bridges to C++ generic_sync_transport
     internal final class WebsocketClient: @unchecked Sendable {
         private var webSocketTask: URLSessionWebSocketTask?
-        private var currentState: lattice.websocket_state = .closed
+        private var currentState: lattice.transport_state = .closed
         private let session: URLSession
         private let delegateHandler: WebSocketDelegateHandler
 
@@ -130,12 +130,12 @@ public struct Lattice {
             delegateHandler.client = self
         }
 
-        /// Creates the C++ generic_websocket_client that wraps this Swift client.
+        /// Creates the C++ generic_sync_transport that wraps this Swift client.
         /// Returns a raw pointer that C++ will take ownership of via unique_ptr.
         func createCxxClient() -> UnsafeMutableRawPointer {
             let clientPtr = Unmanaged.passRetained(self).toOpaque()
 
-            let cxxClient = lattice.generic_websocket_client(
+            let cxxClient = lattice.generic_sync_transport(
                 clientPtr,
                 // connect_fn
                 { ptr, urlPtr, headersPtr in
@@ -161,13 +161,13 @@ public struct Lattice {
                 { ptr, messagePtr in
                     guard let ptr = ptr, let messagePtr = messagePtr else { return }
                     let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
-                    let message = messagePtr.assumingMemoryBound(to: lattice.websocket_message.self).pointee
+                    let message = messagePtr.assumingMemoryBound(to: lattice.transport_message.self).pointee
                     client.performSend(message)
                 }
             )
 
             // Allocate and store the C++ client so we can call trigger methods
-            let cxxPtr = UnsafeMutablePointer<lattice.generic_websocket_client>.allocate(capacity: 1)
+            let cxxPtr = UnsafeMutablePointer<lattice.generic_sync_transport>.allocate(capacity: 1)
             cxxPtr.initialize(to: cxxClient)
             self.cxxClientPtr = UnsafeMutableRawPointer(cxxPtr)
 
@@ -204,7 +204,7 @@ public struct Lattice {
             webSocketTask?.cancel(with: .normalClosure, reason: nil)
         }
 
-        private func performSend(_ message: lattice.websocket_message) {
+        private func performSend(_ message: lattice.transport_message) {
             guard let task = webSocketTask else { return }
 
             let wsMessage: URLSessionWebSocketTask.Message
@@ -229,16 +229,16 @@ public struct Lattice {
                 }
                 switch result {
                 case .success(let message):
-                    var cxxMessage = lattice.websocket_message()
+                    var cxxMessage = lattice.transport_message()
                     switch message {
                     case .string(let text):
-                        cxxMessage = lattice.websocket_message.from_string(std.string(text))
+                        cxxMessage = lattice.transport_message.from_string(std.string(text))
                     case .data(let data):
                         var vec = lattice.ByteVector()
                         for byte in data {
                             vec.push_back(byte)
                         }
-                        cxxMessage = lattice.websocket_message.from_binary(vec)
+                        cxxMessage = lattice.transport_message.from_binary(vec)
                     @unknown default:
                         break
                     }
@@ -271,22 +271,22 @@ public struct Lattice {
 
         private func triggerOpen() {
             guard let ptr = cxxClientPtr else { return }
-            ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_open()
+            ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_open()
         }
 
-        private func triggerMessage(_ message: lattice.websocket_message) {
+        private func triggerMessage(_ message: lattice.transport_message) {
             guard let ptr = cxxClientPtr else { return }
-            ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_message(message)
+            ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_message(message)
         }
 
         private func triggerError(_ error: String) {
             guard let ptr = cxxClientPtr else { return }
-            ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_error(std.string(error))
+            ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_error(std.string(error))
         }
 
         private func triggerClose(code: Int, reason: String) {
             guard let ptr = cxxClientPtr else { return }
-            ptr.assumingMemoryBound(to: lattice.generic_websocket_client.self).pointee.trigger_on_close(Int32(code), std.string(reason))
+            ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_close(Int32(code), std.string(reason))
         }
 
         deinit {
@@ -313,7 +313,7 @@ public struct Lattice {
                 #else
                 let client = WebsocketClient()
                 #endif
-                return client.createCxxClient().assumingMemoryBound(to: lattice.websocket_client.self)
+                return client.createCxxClient().assumingMemoryBound(to: lattice.sync_transport.self)
             },
             nil   // destroy_fn
         )
@@ -413,6 +413,22 @@ public struct Lattice {
         }
     }
 
+    /// IPC sync target. Each target creates a Unix domain socket channel for
+    /// cross-process sync. The first process to open a channel becomes the
+    /// server; subsequent processes connect as clients.
+    public struct IPCSyncTarget: Sendable, Equatable, Hashable {
+        /// Shared channel name. Both sides use the same name → same socket path.
+        public var channel: String
+
+        /// Optional upload filter for this IPC channel.
+        public var syncFilter: SyncFilter?
+
+        public init(channel: String, syncFilter: SyncFilter? = nil) {
+            self.channel = channel
+            self.syncFilter = syncFilter
+        }
+    }
+
     public struct Configuration: Sendable, Equatable, Hashable {
         public var isStoredInMemoryOnly: Bool = false
         public var fileURL: URL
@@ -437,6 +453,9 @@ public struct Lattice {
         /// `nil` (default) syncs everything. Empty filter syncs nothing.
         public var syncFilter: SyncFilter?
 
+        /// IPC sync targets for cross-process database synchronization.
+        public var ipcTargets: [IPCSyncTarget]?
+
         // MARK: Equatable / Hashable (migration excluded — closures aren't comparable)
         public static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.isStoredInMemoryOnly == rhs.isStoredInMemoryOnly &&
@@ -445,7 +464,8 @@ public struct Lattice {
             lhs.wssEndpoint == rhs.wssEndpoint &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
-            lhs.syncFilter == rhs.syncFilter
+            lhs.syncFilter == rhs.syncFilter &&
+            lhs.ipcTargets == rhs.ipcTargets
         }
 
         public func hash(into hasher: inout Hasher) {
@@ -456,6 +476,7 @@ public struct Lattice {
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
             hasher.combine(syncFilter)
+            hasher.combine(ipcTargets)
         }
 
         public init(isStoredInMemoryOnly: Bool = false, fileURL: URL? = nil,
@@ -518,6 +539,27 @@ public struct Lattice {
                     filterEntries.push_back(entry)
                 }
                 config.set_sync_filter(filterEntries)
+            }
+            if let ipcTargets, !ipcTargets.isEmpty {
+                var targets = lattice.IPCTargetVector()
+                for target in ipcTargets {
+                    var ipcTarget = lattice.configuration.ipc_target()
+                    ipcTarget.channel = std.string(target.channel)
+                    if let filter = target.syncFilter {
+                        var filterEntries = lattice.SyncFilterVector()
+                        for (tableName, whereClause) in filter.entries {
+                            var entry = lattice.sync_filter_entry()
+                            entry.table_name = std.string(tableName)
+                            if let whereClause {
+                                entry.where_clause = lattice.string_to_optional(std.string(whereClause))
+                            }
+                            filterEntries.push_back(entry)
+                        }
+                        ipcTarget.sync_filter = lattice.sync_filter_to_optional(filterEntries)
+                    }
+                    targets.push_back(ipcTarget)
+                }
+                config.set_ipc_targets(targets)
             }
             return config
         }

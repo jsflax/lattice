@@ -1374,3 +1374,314 @@ actor FilteredSyncTests {
         #expect(receiver.objects(FilteredNote.self).first?.title == "from-sender")
     }
 }
+
+// =============================================================================
+// MARK: - IPC Sync Tests
+// =============================================================================
+
+@Model class IPCNote {
+    var title: String
+    var isPublic: Bool
+
+    init(title: String = "", isPublic: Bool = false) {
+        self.title = title
+        self.isPublic = isPublic
+    }
+}
+
+@Suite("IPC Sync Tests", .serialized)
+actor IPCSyncTests {
+    let sourceURL = FileManager.default.temporaryDirectory
+        .appending(path: "\(String.random(length: 30)).sqlite")
+    let targetURL = FileManager.default.temporaryDirectory
+        .appending(path: "\(String.random(length: 30)).sqlite")
+    var sourceConfig: Lattice.Configuration
+    var targetConfig: Lattice.Configuration
+
+    init() {
+        lattice_set_log_level(lattice.log_level.debug)
+        self.sourceConfig = .init(fileURL: sourceURL)
+        self.targetConfig = .init(fileURL: targetURL)
+    }
+
+    deinit {
+        try? Lattice.delete(for: sourceConfig)
+        try? Lattice.delete(for: targetConfig)
+    }
+
+    /// Create an observer config from an IPC config by stripping ipcTargets.
+    /// This opens a plain DB connection (no new IPC endpoints) to the same file.
+    private func observerConfig(from config: Lattice.Configuration) -> Lattice.Configuration {
+        var c = config
+        c.ipcTargets = nil
+        return c
+    }
+
+    /// Wait for a specific table+operation to arrive on a Lattice DB via changeStream.
+    /// Opens a read-only view (no IPC targets) to avoid creating new IPC connections.
+    private func waitForChange(
+        on config: Lattice.Configuration,
+        table: String,
+        operation: AuditLog.Operation
+    ) async -> Task<Void, any Error> {
+        let readConfig = observerConfig(from: config)
+        var task: Task<Void, any Error>!
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let db = try await Lattice(IPCNote.self, configuration: readConfig)
+                let stream = db.changeStream
+                continuation.resume()
+                for await changes in stream {
+                    let resolved = changes.compactMap { $0.resolve(on: db) }
+                    if resolved.contains(where: { $0.tableName == table && $0.operation == operation }) {
+                        return
+                    }
+                }
+            }
+        }
+        return task
+    }
+
+    // =========================================================================
+    // Test 1: Source → Target (basic IPC sync)
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_IPCSync_SourceToTarget() async throws {
+        let channel = "ipc-test-\(String.random(length: 8))"
+
+        sourceConfig.ipcTargets = [.init(channel: channel)]
+        let source = try Lattice(IPCNote.self, configuration: sourceConfig)
+
+        // Small delay for server socket to bind
+        try await Task.sleep(for: .milliseconds(100))
+
+        targetConfig.ipcTargets = [.init(channel: channel)]
+
+        // Target connects as client (server already listening)
+        let target = try Lattice(IPCNote.self, configuration: targetConfig)
+
+        // Wait for IPC connection to establish
+        try await Task.sleep(for: .milliseconds(200))
+
+        let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
+
+        let note = IPCNote(title: "hello from source", isPublic: true)
+        source.add(note)
+
+        try await task.value
+
+        let targetNotes = target.objects(IPCNote.self)
+        #expect(targetNotes.count == 1)
+        #expect(targetNotes.first?.title == "hello from source")
+    }
+
+    // =========================================================================
+    // Test 2: Bidirectional (target → source flows back)
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_IPCSync_Bidirectional() async throws {
+        let channel = "ipc-bidi-\(String.random(length: 8))"
+
+        sourceConfig.ipcTargets = [.init(channel: channel)]
+        let source = try Lattice(IPCNote.self, configuration: sourceConfig)
+        try await Task.sleep(for: .milliseconds(100))
+
+        targetConfig.ipcTargets = [.init(channel: channel)]
+        let target = try Lattice(IPCNote.self, configuration: targetConfig)
+        try await Task.sleep(for: .milliseconds(200))
+
+        // Phase 1: source → target
+        let task1 = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
+        source.add(IPCNote(title: "from source"))
+        try await task1.value
+
+        #expect(target.objects(IPCNote.self).count == 1)
+        #expect(target.objects(IPCNote.self).first?.title == "from source")
+
+        // Phase 2: target → source
+        let task2 = await waitForChange(on: sourceConfig, table: "IPCNote", operation: .insert)
+        target.add(IPCNote(title: "from target"))
+        try await task2.value
+
+        #expect(source.objects(IPCNote.self).count == 2)
+        let sourceTitles = source.objects(IPCNote.self).snapshot().map(\.title).sorted()
+        #expect(sourceTitles == ["from source", "from target"])
+    }
+
+    // =========================================================================
+    // Test 3: Filtered IPC (only matching rows sync)
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_IPCSync_WithFilter() async throws {
+        let channel = "ipc-filt-\(String.random(length: 8))"
+
+        var filter = Lattice.SyncFilter()
+        filter.include(IPCNote.self, where: { $0.isPublic == true })
+
+        sourceConfig.ipcTargets = [.init(channel: channel, syncFilter: filter)]
+        let source = try Lattice(IPCNote.self, configuration: sourceConfig)
+        try await Task.sleep(for: .milliseconds(100))
+
+        targetConfig.ipcTargets = [.init(channel: channel)]
+        let target = try Lattice(IPCNote.self, configuration: targetConfig)
+        try await Task.sleep(for: .milliseconds(200))
+
+        let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
+
+        // Add both public and private notes
+        source.add(IPCNote(title: "public note", isPublic: true))
+        source.add(IPCNote(title: "private note", isPublic: false))
+
+        try await task.value
+
+        // Only the public note should arrive on target
+        // Wait a bit more to ensure no extra sync arrives
+        try await Task.sleep(for: .milliseconds(500))
+
+        let targetNotes = target.objects(IPCNote.self)
+        #expect(targetNotes.count == 1)
+        #expect(targetNotes.first?.title == "public note")
+    }
+}
+
+// =============================================================================
+// MARK: - IPC Cloud Relay Test (local ←IPC→ synced ←WSS→ server)
+// =============================================================================
+
+@Suite("IPC Cloud Relay Tests", .serialized)
+actor IPCCloudRelayTests {
+    let app: Application
+    let localURL = FileManager.default.temporaryDirectory
+        .appending(path: "\(String.random(length: 30)).sqlite")
+    let syncedURL = FileManager.default.temporaryDirectory
+        .appending(path: "\(String.random(length: 30)).sqlite")
+    let serverURL = FileManager.default.temporaryDirectory
+        .appending(path: "\(String.random(length: 30)).sqlite")
+    var localConfig: Lattice.Configuration
+    var syncedConfig: Lattice.Configuration
+    var serverConfig: Lattice.Configuration
+    var port: Int = 0
+
+    private let sockets = SocketStore()
+
+    deinit {
+        app.shutdown()
+        try? Lattice.delete(for: localConfig)
+        try? Lattice.delete(for: syncedConfig)
+        try? Lattice.delete(for: serverConfig)
+    }
+
+    init() async throws {
+        lattice_set_log_level(lattice.log_level.debug)
+        var env = try Environment.detect()
+        env.arguments = ["vapor"]
+        self.app = try await Application.make(env)
+        self.localConfig = .init(fileURL: localURL)
+        self.syncedConfig = .init(fileURL: syncedURL)
+        self.serverConfig = .init(fileURL: serverURL)
+        app.http.server.configuration.port = 0
+
+        // Server-side lattice (no sync)
+        let _ = try Lattice(IPCNote.self, configuration: serverConfig)
+
+        // WebSocket relay server
+        let serverConfigCopy = self.serverConfig
+        app.webSocket("test", maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 500 * 1024 * 1024)) { req, ws in
+            self.sockets.append(ws)
+            ws.onBinary { ws, bb in
+                let data = Data(buffer: bb)
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let kind = json["kind"] as? String else { return }
+                if kind == "auditLog" {
+                    if let auditLogs = json["auditLog"] as? [[String: Any]] {
+                        let globalIds = auditLogs.compactMap { $0["globalId"] as? String }
+                            .compactMap(UUID.init(uuidString:))
+                        ws.send(try! JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
+                    }
+                    for socket in self.sockets.others(excluding: ws) {
+                        socket.send(bb)
+                    }
+                }
+                Task.detached {
+                    let lattice = try Lattice(configuration: serverConfigCopy)
+                    _ = try? lattice.receive(data)
+                }
+            }
+            let lattice = try! Lattice(configuration: serverConfigCopy)
+            let events = try! lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
+            let encoded = events.isEmpty ? nil : try! JSONEncoder().encode(ServerSentEvent.auditLog(events))
+            encoded.map { encoded in ws.send(ByteBuffer(data: encoded)) }
+        }
+
+        try await app.startup()
+        guard let localAddress = app.http.server.shared.localAddress,
+              let assignedPort = localAddress.port else {
+            throw SyncTests.SyncTestError.noPort
+        }
+        self.port = assignedPort
+    }
+
+    /// Wait for a change on a plain DB (no IPC, no WSS).
+    private func waitForChange(
+        on config: Lattice.Configuration,
+        table: String,
+        operation: AuditLog.Operation
+    ) async -> Task<Void, any Error> {
+        var task: Task<Void, any Error>!
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let db = try await Lattice(IPCNote.self, configuration: config)
+                let stream = db.changeStream
+                continuation.resume()
+                for await changes in stream {
+                    let resolved = changes.compactMap { $0.resolve(on: db) }
+                    if resolved.contains(where: { $0.tableName == table && $0.operation == operation }) {
+                        return
+                    }
+                }
+            }
+        }
+        return task
+    }
+
+    // =========================================================================
+    // Full pipeline: local →IPC→ synced →WSS→ server
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_IPCSync_CloudRelay() async throws {
+        let channel = "ipc-relay-\(String.random(length: 8))"
+
+        // local (memory.db): IPC server with filter — only public notes leave
+        var filter = Lattice.SyncFilter()
+        filter.include(IPCNote.self, where: { $0.isPublic == true })
+
+        localConfig.ipcTargets = [.init(channel: channel, syncFilter: filter)]
+        let local = try Lattice(IPCNote.self, configuration: localConfig)
+        try await Task.sleep(for: .milliseconds(100))
+
+        // synced (memory_synced.db): IPC client + WSS to cloud
+        syncedConfig.ipcTargets = [.init(channel: channel)]
+        syncedConfig.authorizationToken = "relay-token"
+        syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
+        let synced = try Lattice(IPCNote.self, configuration: syncedConfig)
+        try await Task.sleep(for: .milliseconds(500))
+
+        // Listen for the note to arrive on the server DB
+        let task = await waitForChange(on: serverConfig, table: "IPCNote", operation: .insert)
+
+        // Insert on local — should flow: local →IPC→ synced →WSS→ server
+        local.add(IPCNote(title: "relayed note", isPublic: true))
+
+        try await task.value
+
+        // Verify the full pipeline
+        let server = try Lattice(IPCNote.self, configuration: serverConfig)
+        let serverNotes = server.objects(IPCNote.self)
+        #expect(serverNotes.count == 1)
+        #expect(serverNotes.first?.title == "relayed note")
+
+        let syncedNotes = synced.objects(IPCNote.self)
+        #expect(syncedNotes.count == 1)
+        #expect(syncedNotes.first?.title == "relayed note")
+    }
+}

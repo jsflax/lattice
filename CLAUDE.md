@@ -84,3 +84,33 @@ let lattice = try Lattice(MyModel.self, configuration: .init(isStoredInMemoryOnl
 ```
 
 Run tests: `swift test` or `swift test --filter testName`
+
+### Sync
+
+WSS sync connects to a WebSocket relay server:
+```swift
+let config = Lattice.Configuration(
+    fileURL: url,
+    authorizationToken: token,
+    wssEndpoint: URL(string: "wss://server/sync"))
+```
+
+IPC sync connects databases across processes via Unix domain sockets:
+```swift
+// Source process (hub — binds and listens)
+var filter = Lattice.SyncFilter()
+filter.include(Memory.self, where: { $0.isPrivate == false })
+
+let sourceConfig = Lattice.Configuration(
+    fileURL: memoryURL,
+    ipcTargets: [.init(channel: "synced", syncFilter: filter)])
+
+// Target process (spoke — connects to hub, plus WSS to cloud)
+let targetConfig = Lattice.Configuration(
+    fileURL: syncedURL,
+    authorizationToken: token,
+    wssEndpoint: wssURL,
+    ipcTargets: [.init(channel: "synced")])
+```
+
+IPC + WSS compose for cloud relay: `source →IPC→ target →WSS→ server`. Per-synchronizer state (`_lattice_sync_state` table) tracks sync status independently per transport, enabling automatic relay without loop prevention logic.

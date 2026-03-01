@@ -1,7 +1,9 @@
 import Foundation
 import Testing
 import Lattice
+#if canImport(SQLite3)
 import SQLite3
+#endif
 #if canImport(MapKit)
 import MapKit
 #endif
