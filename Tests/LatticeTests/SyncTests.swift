@@ -1542,6 +1542,101 @@ actor IPCSyncTests {
         #expect(targetNotes.count == 1)
         #expect(targetNotes.first?.title == "public note")
     }
+
+    // =========================================================================
+    // Test 4: Multiple IPC channels from one source
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_IPCSync_MultipleChannels() async throws {
+        let channelA = "ipc-multi-a-\(String.random(length: 8))"
+        let channelB = "ipc-multi-b-\(String.random(length: 8))"
+
+        let targetBURL = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 30)).sqlite")
+        var targetBConfig = Lattice.Configuration(fileURL: targetBURL)
+        defer { try? Lattice.delete(for: targetBConfig) }
+
+        // Source serves two channels: A gets public notes, B gets all notes
+        var filterPublic = Lattice.SyncFilter()
+        filterPublic.include(IPCNote.self, where: { $0.isPublic == true })
+
+        sourceConfig.ipcTargets = [
+            .init(channel: channelA, syncFilter: filterPublic),
+            .init(channel: channelB)
+        ]
+        let source = try Lattice(IPCNote.self, configuration: sourceConfig)
+        try await Task.sleep(for: .milliseconds(100))
+
+        // Target A connects on channel A (filtered)
+        targetConfig.ipcTargets = [.init(channel: channelA)]
+        let targetA = try Lattice(IPCNote.self, configuration: targetConfig)
+
+        // Target B connects on channel B (unfiltered)
+        targetBConfig.ipcTargets = [.init(channel: channelB)]
+        let targetB = try Lattice(IPCNote.self, configuration: targetBConfig)
+
+        try await Task.sleep(for: .milliseconds(200))
+
+        let taskA = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
+        let taskB = await waitForChange(on: targetBConfig, table: "IPCNote", operation: .insert)
+
+        source.add(IPCNote(title: "public note", isPublic: true))
+        source.add(IPCNote(title: "private note", isPublic: false))
+
+        // Both targets should receive at least one insert
+        try await taskA.value
+        try await taskB.value
+
+        // Wait for any stragglers
+        try await Task.sleep(for: .milliseconds(500))
+
+        // Target A: only public note (filtered)
+        #expect(targetA.objects(IPCNote.self).count == 1)
+        #expect(targetA.objects(IPCNote.self).first?.title == "public note")
+
+        // Target B: both notes (unfiltered)
+        let bTitles = targetB.objects(IPCNote.self).snapshot().map(\.title).sorted()
+        #expect(bTitles == ["private note", "public note"])
+    }
+
+    // =========================================================================
+    // Test 5: Reconnection after server restart
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_IPCSync_Reconnection() async throws {
+        let channel = "ipc-recon-\(String.random(length: 8))"
+
+        // Phase 1: Start source, connect target, sync a note
+        sourceConfig.ipcTargets = [.init(channel: channel)]
+        var source: Lattice! = try Lattice(IPCNote.self, configuration: sourceConfig)
+        try await Task.sleep(for: .milliseconds(100))
+
+        targetConfig.ipcTargets = [.init(channel: channel)]
+        let target = try Lattice(IPCNote.self, configuration: targetConfig)
+        try await Task.sleep(for: .milliseconds(200))
+
+        let task1 = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
+        source.add(IPCNote(title: "before restart"))
+        try await task1.value
+        #expect(target.objects(IPCNote.self).count == 1)
+
+        // Phase 2: Close source (simulates process exit)
+        source = nil
+        try await Task.sleep(for: .milliseconds(200))
+
+        // Phase 3: Re-open source on same channel, add a note
+        source = try Lattice(IPCNote.self, configuration: sourceConfig)
+
+        // Wait for target to reconnect (exponential backoff: first retry ~1s)
+        try await Task.sleep(for: .seconds(2))
+
+        let task2 = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
+        source.add(IPCNote(title: "after restart"))
+        try await task2.value
+
+        let targetTitles = target.objects(IPCNote.self).snapshot().map(\.title).sorted()
+        #expect(targetTitles == ["after restart", "before restart"])
+    }
 }
 
 // =============================================================================
