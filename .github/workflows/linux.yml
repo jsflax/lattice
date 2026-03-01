@@ -12,10 +12,6 @@ jobs:
     container: swift:6.2-noble
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: jsflax/LatticeCore
-          path: ../LatticeCore
 
       - name: Install dependencies
         run: apt-get update && apt-get install -y libsqlite3-dev

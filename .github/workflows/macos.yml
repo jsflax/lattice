@@ -11,10 +11,6 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: jsflax/LatticeCore
-          path: ../LatticeCore
 
       - name: Build
         run: swift build
