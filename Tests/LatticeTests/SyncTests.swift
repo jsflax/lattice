@@ -2104,60 +2104,10 @@ actor IPCSyncTests {
         try? Lattice.delete(for: tgtCfg)
     }
 
-    // =========================================================================
-    // Test: Destroy synchronizer while scheduled work is in-flight (race)
-    // =========================================================================
-    //
-    // Reproduces a crash where on_websocket_open() dispatches a lambda to the
-    // std_thread_scheduler. The lambda starts executing (upload_pending_changes
-    // with real data), and the synchronizer is destroyed on another thread
-    // while the lambda is mid-execution → use-after-free on db_.
-    //
-    // The server has data so that upload_pending_changes does real work
-    // (query + serialize + send), giving the race window time to open.
-    @Test(.timeLimit(.minutes(1)))
-    func test_IPCSync_DestroyDuringScheduledWork_NoCrash() async throws {
-        for i in 0..<10 {
-            let channel = "destroy-race-\(i)-\(String.random(length: 6))"
-
-            let srvURL = FileManager.default.temporaryDirectory
-                .appending(path: "drace-srv-\(String.random(length: 12)).sqlite")
-            var srvCfg = Lattice.Configuration(fileURL: srvURL)
-            srvCfg.ipcTargets = [.init(channel: channel)]
-
-            let cliURL = FileManager.default.temporaryDirectory
-                .appending(path: "drace-cli-\(String.random(length: 12)).sqlite")
-            var cliCfg = Lattice.Configuration(fileURL: cliURL)
-            cliCfg.ipcTargets = [.init(channel: channel)]
-
-            do {
-                // Create server and seed data → generates AuditLog entries
-                var server: Lattice! = try Lattice(IPCNote.self, configuration: srvCfg)
-                for j in 0..<200 {
-                    server.add(IPCNote(title: "data \(j)", isPublic: true))
-                }
-
-                try await Task.sleep(for: .milliseconds(50))
-
-                // Client connects → server creates IPC synchronizer for this
-                // connection → on_open fires synchronously → lambda queued to
-                // scheduler.  Lambda will query and upload 200 AuditLog entries.
-                let client = try Lattice(IPCNote.self, configuration: cliCfg)
-
-                // Immediately destroy server while its IPC synchronizer's
-                // upload lambda is running on the scheduler thread.
-                server = nil
-
-                _ = client
-            }
-
-            try await Task.sleep(for: .milliseconds(50))
-
-            try? Lattice.delete(for: srvCfg)
-            try? Lattice.delete(for: cliCfg)
-        }
-        // Reaching here without crash = pass
-    }
+    // NOTE: The "destroy synchronizer during scheduled work" race is tested
+    // at the C++ level in LatticeCore (test_synchronizer_destroy_race).
+    // A Swift-level test cannot trigger this race because the Lattice static
+    // cache holds a strong reference — `server = nil` is a no-op.
 }
 
 // =============================================================================
