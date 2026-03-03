@@ -18,23 +18,23 @@ public class AuditLog: CustomStringConvertible {
     }
     
     /// Name of the affected table, e.g., "Person"
-    package var tableName: String
+    public package(set) var tableName: String
     /// Operation type: "INSERT", "UPDATE", "DELETE", etc.
     public var operation: Operation = .insert
     /// The id of the record that was affected in the target table
-    package var rowId: Int64
+    public package(set) var rowId: Int64
     /// The global id of the record that was affected in the target table
-    var globalRowId: UUID?
+    public package(set) var globalRowId: UUID?
     /// JSON string containing the changed fields (if any)
-    package var changedFields: [String: AnyProperty]
+    public package(set) var changedFields: [String: AnyProperty]
     /// JSON containing the names of the changes properties
-    var changedFieldsNames: [String?]?
+    public package(set) var changedFieldsNames: [String?]?
     /// Timestamp for when the change occurred
-    var timestamp: Date
+    public package(set) var timestamp: Date
     /// Whether or not this event was propagated locally
-    var isFromRemote: Bool
-    /// WHether not this event has been synchronized
-    package var isSynchronized: Bool = false
+    public package(set) var isFromRemote: Bool
+    /// Whether or not this event has been synchronized
+    public package(set) var isSynchronized: Bool = false
 }
 
 extension AuditLog {

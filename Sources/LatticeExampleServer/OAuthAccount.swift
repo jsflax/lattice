@@ -26,8 +26,9 @@ public final class OAuthAccount: Model, Content, @unchecked Sendable {
 
 import Fluent
 
-struct CreateOAuthAccount: AsyncMigration {
-    func prepare(on db: Database) async throws {
+public struct CreateOAuthAccount: AsyncMigration {
+    public init() {}
+    public func prepare(on db: Database) async throws {
         try await db.schema(OAuthAccount.schema)
           .id()
           .field("provider",          .string, .required)
@@ -41,7 +42,7 @@ struct CreateOAuthAccount: AsyncMigration {
           .create()
     }
 
-    func revert(on db: Database) async throws {
+    public func revert(on db: Database) async throws {
         try await db.schema(OAuthAccount.schema).delete()
     }
 }

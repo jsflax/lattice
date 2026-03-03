@@ -1453,3 +1453,53 @@ class MigrationTests: BaseTest {
         #expect(people.first?.name.starts(with: "Person") == true)
     }
 }
+
+// MARK: - LatticeEnum auto-migration (new enum column on existing rows)
+
+class EnumMigrationV1 {
+    @Model class Config {
+        var name: String = ""
+        var enabled: Bool = false
+    }
+}
+
+@LatticeEnum
+enum ConfigMode: String {
+    case basic, advanced, expert
+}
+
+class EnumMigrationV2 {
+    @Model class Config {
+        var name: String = ""
+        var enabled: Bool = false
+        var mode: ConfigMode = .basic
+    }
+}
+
+@Suite("Enum Auto-Migration Tests") class EnumAutoMigrationTests: BaseTest {
+    @Test func test_ExistingRowGetsDefaultEnumValue() async throws {
+        let path = "\(String.random(length: 32)).sqlite"
+
+        // Phase 1: Create DB with V1 schema (no enum column), insert a row
+        do {
+            let lattice = try testLattice(path: path, EnumMigrationV1.Config.self)
+            let config = EnumMigrationV1.Config()
+            config.name = "test"
+            config.enabled = true
+            lattice.add(config)
+            #expect(lattice.objects(EnumMigrationV1.Config.self).count == 1)
+        }
+
+        // Phase 2: Reopen with V2 schema (new enum column). The existing row
+        // has DEFAULT '' for the mode column. Reading it must not crash.
+        let lattice = try testLattice(path: path, EnumMigrationV2.Config.self)
+        let configs = lattice.objects(EnumMigrationV2.Config.self)
+        #expect(configs.count == 1)
+
+        let config = configs.first!
+        #expect(config.name == "test")
+        #expect(config.enabled == true)
+        // Empty string raw value should fall back to the enum's defaultValue (.basic)
+        #expect(config.mode == .basic)
+    }
+}

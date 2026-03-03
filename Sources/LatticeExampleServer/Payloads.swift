@@ -1,11 +1,10 @@
-// Sources/App/Controllers/Payloads.swift
 import JWTKit
 import Foundation
 import Vapor
 
 // Apple identity-token payload
 struct ApplePayload: JWTPayload {
-    struct EmailVerified: Codable, Equatable {
+    struct EmailVerified: Codable, Sendable, Equatable {
       let value: String  // "true" or "false"
       var bool: Bool { value == "true" }
     }
@@ -21,16 +20,15 @@ struct ApplePayload: JWTPayload {
     let auth_time: Date?
     let name: PersonNameComponents?
 
-    func verify(using signer: JWTSigner) throws {
+    func verify(using algorithm: some JWTAlgorithm) async throws {
         try exp.verifyNotExpired()
         guard iss.value == "https://appleid.apple.com" else {
             throw JWTError.claimVerificationFailure(
-               name: "iss", reason: "Invalid issuer")
+               failedClaim: iss, reason: "Invalid issuer")
         }
-        // YOUR_SERVICE_ID is the Services ID you defined in Apple Dev Portal
         guard aud.contains(Environment.get("APPLE_SERVICE_ID")!) else {
             throw JWTError.claimVerificationFailure(
-                name: "aud", reason: "Invalid audience")
+                failedClaim: nil, reason: "Invalid audience")
         }
     }
 }
@@ -48,16 +46,16 @@ struct GooglePayload: JWTPayload {
     let name: String?
     let picture: String?
 
-    func verify(using signer: JWTSigner) throws {
+    func verify(using algorithm: some JWTAlgorithm) async throws {
         try exp.verifyNotExpired()
         guard iss.value == "https://accounts.google.com" ||
               iss.value == "accounts.google.com" else {
             throw JWTError.claimVerificationFailure(
-               name: "iss", reason: "Invalid issuer")
+               failedClaim: iss, reason: "Invalid issuer")
         }
         guard aud.value.contains(Environment.get("GOOGLE_CLIENT_ID")!) else {
             throw JWTError.claimVerificationFailure(
-               name: "aud", reason: "Invalid audience")
+               failedClaim: aud, reason: "Invalid audience")
         }
     }
 }

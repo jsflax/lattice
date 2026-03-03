@@ -842,12 +842,30 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
 
 class EnumMacro: ExtensionMacro {
     static func expansion(of node: SwiftSyntax.AttributeSyntax, attachedTo declaration: some SwiftSyntax.DeclGroupSyntax, providingExtensionsOf type: some SwiftSyntax.TypeSyntaxProtocol, conformingTo protocols: [SwiftSyntax.TypeSyntax], in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.ExtensionDeclSyntax] {
+        guard let enumDecl = declaration.as(EnumDeclSyntax.self) else {
+            throw MacroError.message("@LatticeEnum can only be applied to enums")
+        }
+
+        var firstCaseName: String?
+        for member in enumDecl.memberBlock.members {
+            if let caseDecl = member.decl.as(EnumCaseDeclSyntax.self),
+               let firstElement = caseDecl.elements.first {
+                firstCaseName = firstElement.name.text
+                break
+            }
+        }
+
+        guard let caseName = firstCaseName else {
+            throw MacroError.message("@LatticeEnum requires at least one case")
+        }
+
         return [
             ExtensionDeclSyntax(
                 extendedType: type,
                 inheritanceClause: .init(inheritedTypes: .init(arrayLiteral: InheritedTypeSyntax(type: TypeSyntax("LatticeEnum")))),
                 memberBlock: """
                 {
+                    public static var defaultValue: Self { .\(raw: caseName) }
                 }
                 """
             )

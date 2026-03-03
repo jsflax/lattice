@@ -2,18 +2,14 @@ import Foundation
 import Vapor
 import Lattice
 import NIOConcurrencyHelpers
-import Fluent
-
-struct LoginRequest: Content { let username, password: String }
-struct LoginResponse: Content { let token: String }
 
 actor SocketManager {
     var sockets: [UUID: [WebSocket]] = [:]
-    
+
     func sockets(for uuid: UUID) -> [WebSocket] {
         sockets[uuid, default: []]
     }
-    
+
     func remove(socket: WebSocket, for uuid: UUID) {
         _ = sockets[uuid]?.firstIndex(where: {
             $0 === socket
@@ -21,12 +17,12 @@ actor SocketManager {
             sockets[uuid, default: []].remove(at: $0)
         }
     }
-    
+
     func add(socket: WebSocket, for uuid: UUID) {
         reap(for: uuid)
         sockets[uuid, default: []].append(socket)
     }
-    
+
     func reap(for uuid: UUID) {
         for socket in sockets[uuid, default: []] {
             if socket.isClosed {
@@ -35,116 +31,56 @@ actor SocketManager {
         }
     }
 }
-//
-//struct LatticeDB: Database {
-//    let app: Application
-////    let lattice: Lattice
-//    
-//    public nonisolated func withConnection<T>(_ closure: @escaping @Sendable (any FluentKit.Database) -> NIOCore.EventLoopFuture<T>) -> NIOCore.EventLoopFuture<T> {
-//        closure(self)
-//    }
-//    
-//    public nonisolated func transaction<T>(_ closure: @escaping @Sendable (any FluentKit.Database) -> NIOCore.EventLoopFuture<T>) -> NIOCore.EventLoopFuture<T> {
-//        app.eventLoopGroup.next().submit {
-//            
-//        }
-//    }
-//    
-//    public nonisolated func execute(enum: FluentKit.DatabaseEnum) -> NIOCore.EventLoopFuture<Void> {
-//        
-//    }
-//    
-//    public nonisolated func execute(schema: FluentKit.DatabaseSchema) -> NIOCore.EventLoopFuture<Void> {
-//        <#code#>
-//    }
-//    
-//    public nonisolated func execute(query: FluentKit.DatabaseQuery, onOutput: @escaping @Sendable (any FluentKit.DatabaseOutput) -> ()) -> NIOCore.EventLoopFuture<Void> {
-//        <#code#>
-//    }
-//    
-//    public nonisolated var context: FluentKit.DatabaseContext {
-//        
-//    }
-//    
-//    public nonisolated var inTransaction: Bool {
-//        
-//    }
-//}
 
 extension Lattice {
-    public static func configure(_ app: Application,
-                                 for schema: [any Lattice.Model.Type],
-                                 storagePath: String,
-                                 additionalMiddlewares: [any AsyncMiddleware] = []) throws {
-        var env = try Environment.detect()
-        try LoggingSystem.bootstrap(from: &env)
-        
-        // Protect routes that need auth:
-        // Migrations
-        app.migrations.add(CreateUser())
-        app.migrations.add(CreateOAuthAccount())
-        app.migrations.add(CreateToken())
-        app.migrations.add(AddProfilePictureUrl())
-        
-        // Session middleware (if you ever do cookies)
-        app.middleware.use(app.sessions.middleware)
-        
-        // Token authenticator for "Bearer <token>"
-        app.middleware.use(Token.authenticator())
-        
-        let auth = AuthController()
-        // email/password
-        app.post("register", use: auth.register)
-        app.post("login",    use: auth.login)
-        
-        // OAuth
-        app.post("auth", "apple",  use: auth.appleLogin)
-        app.post("auth", "google", use: auth.googleLogin)
-        
-        // protected profile
+    /// Configures the sync relay WebSocket endpoint on the given route group.
+    ///
+    /// This is the only thing LatticeServerKit provides — auth, migrations, and route setup
+    /// are the responsibility of the consuming application.
+    ///
+    /// - Parameters:
+    ///   - routes: A `RoutesBuilder` (typically already protected by auth middleware)
+    ///   - schema: The Lattice model types to sync
+    ///   - storagePath: Subdirectory under Application Support for per-user databases
+    ///   - userIdExtractor: Closure that extracts the authenticated user's UUID from the request
+    public static func configureSyncRelay(
+        on routes: any RoutesBuilder,
+        for schema: [any Lattice.Model.Type],
+        storagePath: String,
+        userIdExtractor: @escaping @Sendable (Request) throws -> UUID
+    ) {
         let sockets = SocketManager()
-        
-        let baseProtected = app.grouped(DebugTokenAuth(), Token.authenticator(), User.guardMiddleware())
-        let protected: any RoutesBuilder = additionalMiddlewares.isEmpty
-            ? baseProtected
-            : baseProtected.grouped(additionalMiddlewares)
-        protected.get("profile") { req in
-            let user = try req.auth.require(User.self)
-            return try await auth.attachProviders(to: user, req: req)
-        }
-        protected.get("me") { req in
-            let user = try req.auth.require(User.self)
-            return try await auth.attachProviders(to: user, req: req)
-        }
-        
-        protected.webSocket("sync", maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 300 * 1024 * 1024)) { req, ws in
-            guard let user = try? req.auth.require(User.self) else {
-                print(">>> Could not authenticate user for sync: \(req.auth)")
+
+        routes.webSocket("sync", maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 300 * 1024 * 1024)) { req, ws in
+            let userId: UUID
+            do {
+                userId = try userIdExtractor(req)
+            } catch {
+                print(">>> Could not authenticate user for sync: \(error)")
                 try? await ws.close()
                 return
             }
-            
+
             try? FileManager.default.createDirectory(at: FileManager.default.url(for: .applicationSupportDirectory,
                                                                                  in: .userDomainMask,
                                                                                  appropriateFor: nil,
                                                                                  create: false)
                 .appending(path: storagePath), withIntermediateDirectories: true)
-            
+
             let latticeURL = try? FileManager.default.url(for: .applicationSupportDirectory,
                                                           in: .userDomainMask,
                                                           appropriateFor: nil,
                                                           create: false)
                 .appending(path: storagePath)
-                .appending(path: "\(user.id!.uuidString).sqlite")
-            
+                .appending(path: "\(userId.uuidString).sqlite")
+
             await Task {
                 guard let lattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
-                    print(">>> Could not open lattice for url: \(latticeURL)")
+                    print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
                     try? await ws.close()
                     return
                 }
-                
-                // bring the user up to date
+
                 let encodedChunks: [Data] = try! await LatticeActor(lattice).withModelContext { lattice in
                     let events = try lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
                     print(">>> Bringing user up to date with \(events.count) events")
@@ -159,7 +95,7 @@ extension Lattice {
                     }
                 }
             }.value
-            await sockets.add(socket: ws, for: user.id!)
+            await sockets.add(socket: ws, for: userId)
             ws.eventLoop.execute {
                 ws.onText { ws, str in
                     print("🧦", "Received String Event", str)
@@ -167,7 +103,7 @@ extension Lattice {
                 }
                 ws.onBinary { ws, bb in
                     print("🧦", "Received Binary Event")
-                    
+
                     try? await LatticeActor(for: schema, configuration: .init(fileURL: latticeURL))
                         .withModelContext({ lattice in
                             do {
@@ -177,14 +113,14 @@ extension Lattice {
                                 print("Error:", error)
                             }
                         })
-                    
-                    for socket in await sockets.sockets(for: user.id!) where socket !== ws {
+
+                    for socket in await sockets.sockets(for: userId) where socket !== ws {
                         socket.send(bb)
                     }
                 }
                 ws.onClose.whenComplete { _ in
                     Task {
-                        await sockets.remove(socket: ws, for: user.id!)
+                        await sockets.remove(socket: ws, for: userId)
                     }
                 }
             }
@@ -193,11 +129,4 @@ extension Lattice {
 }
 
 extension Data: DataProtocol {
-}
-
-struct DebugTokenAuth: AsyncMiddleware {
-  func respond(to req: Request, chainingTo next: AsyncResponder) async throws -> Response {
-    print(">>> Authorization header:", req.headers["Authorization"].first ?? "nil")
-    return try await next.respond(to: req)
-  }
 }

@@ -272,6 +272,15 @@ public struct Query<T>: Sendable {
         .init(.comparison(operator: .notIn, node, .select(_name(for: keyPath), from: M.entityName),
                           options: []))
     }
+
+    /// `IN (SELECT column FROM table WHERE ...)`  — subquery with a filter.
+    public func `in`<M: Model, V>(_ keyPath: KeyPath<M, V>,
+                                   where predicate: @Sendable (Query<M>) -> Query<Bool>) -> Query<Bool> {
+        let whereClause = predicate(Query<M>()).predicate
+        return .init(.comparison(operator: .in, node,
+                                 .select(_name(for: keyPath), from: M.entityName, where: whereClause),
+                                 options: []))
+    }
     
     public func `in`<K, V>(_ collection: [K]) -> Query<Bool> where T == Dictionary<K, V> {
         .init(.comparison(operator: .in, node, .constant(collection), options: []))
@@ -837,7 +846,7 @@ private indirect enum QueryNode: @unchecked Sendable {
     case mapAnySubscripts(_ keyPath: QueryNode, keys: [CollectionSubscript])
     case geoWithin(_ keyPath: QueryNode, _ value: QueryNode)
     case jsonArrayLength(_ keyPath: QueryNode)
-    case select(_ keyPath: String, from: String)
+    case select(_ keyPath: String, from: String, where: String? = nil)
 }
 
 private enum CollectionSubscript {
@@ -1030,8 +1039,12 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
         switch node {
         case .constant(let value):
             formatValue(value)
-        case .select(let keyPath, let tableName):
-            formatStr.append("(SELECT \(keyPath) FROM \(tableName))")
+        case .select(let keyPath, let tableName, let whereClause):
+            if let whereClause {
+                formatStr.append("(SELECT \(keyPath) FROM \(tableName) WHERE \(whereClause))")
+            } else {
+                formatStr.append("(SELECT \(keyPath) FROM \(tableName))")
+            }
         case .embeddedKeyPath(var kp, var isAnyProperty, options: let options):
             if isNewNode {
                 buildBool(node)
@@ -1209,7 +1222,7 @@ private struct SubqueryRewriter {
                                continuation: rewrite(continuation))
         case .jsonArrayLength(let keyPath):
             return .jsonArrayLength(rewrite(keyPath))
-        case .select(let keyPaths, let subquery):
+        case .select:
             fatalError()
         }
     }

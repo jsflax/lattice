@@ -15,7 +15,7 @@ let package = Package(
         .executable(name: "LatticeMain", targets: ["LatticeMain"])
     ],
     dependencies: [
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "0.6.0"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "0.7.0"),
         .package(url: "https://github.com/apple/swift-syntax.git", from: "602.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -23,7 +23,8 @@ let package = Package(
         ),
         .package(url: "https://github.com/vapor/vapor.git", from: "4.76.0"),
         .package(url: "https://github.com/vapor/fluent.git", from: "4.0.0"),
-        .package(url: "https://github.com/vapor/jwt.git",    from: "4.0.0"),
+        .package(url: "https://github.com/vapor/fluent-sqlite-driver.git", from: "4.8.0"),
+        .package(url: "https://github.com/vapor/jwt.git",    from: "5.0.0"),
         .package(url: "https://github.com/vapor/websocket-kit.git", from: "2.15.0"),
     ],
     targets: [
@@ -59,8 +60,16 @@ let package = Package(
             dependencies: [
                 "Lattice",
                 .product(name: "Vapor", package: "vapor"),
+            ],
+            swiftSettings: [.interoperabilityMode(.Cxx)]),
+        .executableTarget(
+            name: "LatticeExampleServer",
+            dependencies: [
+                "LatticeServerKit",
+                .product(name: "Vapor", package: "vapor"),
                 .product(name: "Fluent", package: "fluent"),
-                .product(name: "JWT",      package: "jwt"),
+                .product(name: "FluentSQLiteDriver", package: "fluent-sqlite-driver"),
+                .product(name: "JWT", package: "jwt"),
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]),
         .executableTarget(name: "LatticeMain",

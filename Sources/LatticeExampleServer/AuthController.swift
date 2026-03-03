@@ -4,26 +4,27 @@ import Fluent
 import JWT
 import JWTKit
 
-struct AuthController {
+public struct AuthController: Sendable {
+    public init() {}
     // MARK: – Email / Password
     
-    struct CreateUserRequest: Content {
-        let email: String
-        let password: String
-        let fullName: String?
+    public struct CreateUserRequest: Content {
+        public let email: String
+        public let password: String
+        public let fullName: String?
+    }
+
+    public struct LoginRequest: Content {
+        public let email: String
+        public let password: String
+    }
+
+    public struct LoginResponse: Content {
+        public let token: String
+        public let user: User.Public
     }
     
-    struct LoginRequest: Content {
-        let email: String
-        let password: String
-    }
-    
-    struct LoginResponse: Content {
-        let token: String
-        let user: User.Public
-    }
-    
-    func register(req: Request) async throws -> User.Public {
+    public func register(req: Request) async throws -> User.Public {
         let data = try req.content.decode(CreateUserRequest.self)
         let hash = try Bcrypt.hash(data.password)
         let user = User(email: data.email,
@@ -33,7 +34,7 @@ struct AuthController {
         return try await attachProviders(to: user, req: req)
     }
     
-    func login(req: Request) async throws -> LoginResponse {
+    public func login(req: Request) async throws -> LoginResponse {
         let data = try req.content.decode(LoginRequest.self)
         let email = data.email
         guard let user = try await User.query(on: req.db)

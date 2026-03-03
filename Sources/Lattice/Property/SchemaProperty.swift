@@ -31,7 +31,7 @@ extension LatticeEnum {
     public static func getField(from storage: inout ModelStorage, named name: String) -> Self {
         let rawValue = RawValue.getField(from: &storage, named: name)
         guard let result = Self(rawValue: rawValue) else {
-            fatalError("Invalid raw value for \(Self.self): \(rawValue)")
+            return Self.defaultValue
         }
         return result
     }

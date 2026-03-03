@@ -58,8 +58,9 @@ public final class User: Model, Content, Authenticatable, @unchecked Sendable {
 
 import Fluent
 
-struct CreateUser: AsyncMigration {
-    func prepare(on db: Database) async throws {
+public struct CreateUser: AsyncMigration {
+    public init() {}
+    public func prepare(on db: Database) async throws {
         try await db.schema(User.schema)
             .id()
             .field("email",        .string)
@@ -71,19 +72,20 @@ struct CreateUser: AsyncMigration {
             .create()
     }
 
-    func revert(on db: Database) async throws {
+    public func revert(on db: Database) async throws {
         try await db.schema(User.schema).delete()
     }
 }
 
-struct AddProfilePictureUrl: AsyncMigration {
-    func prepare(on db: Database) async throws {
+public struct AddProfilePictureUrl: AsyncMigration {
+    public init() {}
+    public func prepare(on db: Database) async throws {
         try await db.schema(User.schema)
             .field("profile_picture_url", .string)
             .update()
     }
 
-    func revert(on db: Database) async throws {
+    public func revert(on db: Database) async throws {
         try await db.schema(User.schema)
             .deleteField("profile_picture_url")
             .update()

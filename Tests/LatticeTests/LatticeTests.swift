@@ -162,7 +162,7 @@ func testLattice(isolation: isolated (any Actor)? = #isolation,
 
 class BaseTest {
     init() {
-        lattice_set_log_level(lattice.log_level.debug)
+        lattice_set_log_level(lattice.log_level.warn)
     }
     
     deinit {

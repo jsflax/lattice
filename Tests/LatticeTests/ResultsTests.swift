@@ -130,6 +130,127 @@ class ResultsTests: BaseTest {
     }
 }
 
+// MARK: - Subquery IN models
+
+@Model class SQItem {
+    var name: String
+    var category: String
+    var isPublic: Bool
+
+    init(name: String = "", category: String = "", isPublic: Bool = true) {
+        self.name = name
+        self.category = category
+        self.isPublic = isPublic
+    }
+}
+
+@Model class SQLink {
+    var sourceGlobalId: UUID
+    var targetGlobalId: UUID
+    var label: String
+
+    init(sourceGlobalId: UUID = UUID(), targetGlobalId: UUID = UUID(), label: String = "") {
+        self.sourceGlobalId = sourceGlobalId
+        self.targetGlobalId = targetGlobalId
+        self.label = label
+    }
+}
+
+@Suite("Subquery IN Tests")
+class SubqueryInTests: BaseTest {
+    @Test func testIn_subqueryWithWhere() async throws {
+        let lattice = try testLattice(SQItem.self, SQLink.self)
+
+        // Create items in two categories
+        let alphaItems = (0..<3).map { SQItem(name: "a\($0)", category: "alpha", isPublic: true) }
+        let betaItems  = (0..<2).map { SQItem(name: "b\($0)", category: "beta",  isPublic: true) }
+        let privateItem = SQItem(name: "secret", category: "alpha", isPublic: false)
+        lattice.add(contentsOf: alphaItems + betaItems + [privateItem])
+
+        // Create links: alpha↔alpha, alpha↔beta, beta↔beta
+        let alphaAlpha = SQLink(sourceGlobalId: alphaItems[0].__globalId!,
+                                targetGlobalId: alphaItems[1].__globalId!, label: "aa")
+        let alphaBeta  = SQLink(sourceGlobalId: alphaItems[2].__globalId!,
+                                targetGlobalId: betaItems[0].__globalId!,  label: "ab")
+        let betaBeta   = SQLink(sourceGlobalId: betaItems[0].__globalId!,
+                                targetGlobalId: betaItems[1].__globalId!,  label: "bb")
+        // Link involving the private item
+        let alphaPrivate = SQLink(sourceGlobalId: alphaItems[0].__globalId!,
+                                  targetGlobalId: privateItem.__globalId!,  label: "ap")
+        lattice.add(contentsOf: [alphaAlpha, alphaBeta, betaBeta, alphaPrivate])
+
+        // Query: links where BOTH endpoints are public alpha items
+        let alphaPredicate: @Sendable (Query<SQItem>) -> Query<Bool> = { item in
+            item.category == "alpha" && item.isPublic == true
+        }
+        let alphaLinks = lattice.objects(SQLink.self).where { link in
+            link.sourceGlobalId.in(\SQItem.__globalId, where: alphaPredicate)
+                && link.targetGlobalId.in(\SQItem.__globalId, where: alphaPredicate)
+        }
+
+        // Only alphaAlpha qualifies (both endpoints are public alpha)
+        #expect(alphaLinks.count == 1)
+        #expect(alphaLinks.first?.label == "aa")
+
+        // Query: links where source is any public item (alpha or beta)
+        let anyPublicLinks = lattice.objects(SQLink.self).where { link in
+            link.sourceGlobalId.in(\SQItem.__globalId, where: { $0.isPublic == true })
+        }
+        // alphaAlpha (source=a0 public), alphaBeta (source=a2 public),
+        // betaBeta (source=b0 public), alphaPrivate (source=a0 public) → 4
+        #expect(anyPublicLinks.count == 4)
+
+        // Query: links where target is a beta item
+        let targetBetaLinks = lattice.objects(SQLink.self).where { link in
+            link.targetGlobalId.in(\SQItem.__globalId, where: { $0.category == "beta" })
+        }
+        // alphaBeta (target=b0), betaBeta (target=b1) → 2
+        #expect(targetBetaLinks.count == 2)
+    }
+
+    @Test func testIn_subqueryEmptyResult() async throws {
+        let lattice = try testLattice(SQItem.self, SQLink.self)
+
+        let item = SQItem(name: "only", category: "gamma", isPublic: true)
+        lattice.add(item)
+        let link = SQLink(sourceGlobalId: item.__globalId!, targetGlobalId: item.__globalId!, label: "self")
+        lattice.add(link)
+
+        // No items match category "nonexistent" → subquery returns empty → no links match
+        let results = lattice.objects(SQLink.self).where { link in
+            link.sourceGlobalId.in(\SQItem.__globalId, where: { $0.category == "nonexistent" })
+        }
+        #expect(results.count == 0)
+    }
+
+    @Test func testIn_subqueryMultipleCategories() async throws {
+        let lattice = try testLattice(SQItem.self, SQLink.self)
+
+        // Create items across 3 categories
+        let cats = SQItem(name: "c0", category: "cats", isPublic: true)
+        let dogs = SQItem(name: "d0", category: "dogs", isPublic: true)
+        let fish = SQItem(name: "f0", category: "fish", isPublic: true)
+        lattice.add(contentsOf: [cats, dogs, fish])
+
+        let cdLink = SQLink(sourceGlobalId: cats.__globalId!, targetGlobalId: dogs.__globalId!, label: "cd")
+        let cfLink = SQLink(sourceGlobalId: cats.__globalId!, targetGlobalId: fish.__globalId!, label: "cf")
+        let dfLink = SQLink(sourceGlobalId: dogs.__globalId!, targetGlobalId: fish.__globalId!, label: "df")
+        lattice.add(contentsOf: [cdLink, cfLink, dfLink])
+
+        // Combined predicate: source in (cats OR dogs), target in (cats OR dogs)
+        let petPredicate: @Sendable (Query<SQItem>) -> Query<Bool> = { item in
+            item.category == "cats" || item.category == "dogs"
+        }
+        let petLinks = lattice.objects(SQLink.self).where { link in
+            link.sourceGlobalId.in(\SQItem.__globalId, where: petPredicate)
+                && link.targetGlobalId.in(\SQItem.__globalId, where: petPredicate)
+        }
+        // Only cd qualifies (both endpoints are cats/dogs)
+        #expect(petLinks.count == 1)
+        #expect(petLinks.first?.label == "cd")
+    }
+}
+
 @globalActor struct TestActor {
     actor ActorType {}
     static let shared = ActorType()

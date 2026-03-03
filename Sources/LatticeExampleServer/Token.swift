@@ -56,8 +56,9 @@ public final class Token: Model, Content, ModelTokenAuthenticatable, @unchecked 
 
 import Fluent
 
-struct CreateToken: AsyncMigration {
-    func prepare(on db: Database) async throws {
+public struct CreateToken: AsyncMigration {
+    public init() {}
+    public func prepare(on db: Database) async throws {
         try await db.schema(Token.schema)
           .id()
           .field("value",     .string, .required)
@@ -68,7 +69,7 @@ struct CreateToken: AsyncMigration {
           .create()
     }
 
-    func revert(on db: Database) async throws {
+    public func revert(on db: Database) async throws {
         try await db.schema(Token.schema).delete()
     }
 }
