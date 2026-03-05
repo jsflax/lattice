@@ -9,6 +9,7 @@ public final class TableResults<Element>: Results where Element: Model {
     internal let sortStatement: SortDescriptor<Element>?
     internal let boundsConstraint: BoundsConstraint?
     internal let groupByColumn: String?
+    internal let distinctByColumn: String?
 
     // Helper to build query parameters - always fetches fresh from DB (live results)
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
@@ -35,8 +36,13 @@ public final class TableResults<Element>: Results where Element: Model {
         } else {
             .init()
         }
+        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
+            lattice.string_to_optional(std.string(distinctByColumn))
+        } else {
+            .init()
+        }
 
-        let cxxResults = _lattice.cxxLattice.objects(tableName, whereClause, orderBy, limitOpt, offsetOpt, groupByOpt)
+        let cxxResults = _lattice.cxxLattice.objects(tableName, whereClause, orderBy, limitOpt, offsetOpt, groupByOpt, distinctByOpt)
 
         var objects: [Element] = []
         objects.reserveCapacity(cxxResults.size())
@@ -99,12 +105,13 @@ public final class TableResults<Element>: Results where Element: Model {
 
     private var token: AnyCancellable?
 
-    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil) {
+    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil, distinctByColumn: String? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement
         self.sortStatement = sortStatement
         self.boundsConstraint = boundsConstraint
         self.groupByColumn = groupByColumn
+        self.distinctByColumn = distinctByColumn
     }
 
     init(_ lattice: Lattice, whereStatement: Predicate<Element>, sortStatement: SortDescriptor<Element>? = nil) {
@@ -113,10 +120,11 @@ public final class TableResults<Element>: Results where Element: Model {
         self.sortStatement = sortStatement
         self.boundsConstraint = nil
         self.groupByColumn = nil
+        self.distinctByColumn = nil
     }
 
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> TableResults<Element> {
-        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn)
+        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func `where`(_ query: ((Query<Element>) -> Query<Bool>)) -> TableResults<Element> {
@@ -126,11 +134,15 @@ public final class TableResults<Element>: Results where Element: Model {
         } else {
             newWhere
         }
-        return TableResults(_lattice, whereStatement: combined, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn)
+        return TableResults(_lattice, whereStatement: combined, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> TableResults<Element> {
-        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: _name(for: keyPath))
+        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: _name(for: keyPath), distinctByColumn: distinctByColumn)
+    }
+
+    public func distinct<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> TableResults<Element> {
+        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: _name(for: keyPath))
     }
 
     public var startIndex: Int { 0 }
@@ -151,6 +163,11 @@ public final class TableResults<Element>: Results where Element: Model {
         } else {
             .init()
         }
+        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
+            lattice.string_to_optional(std.string(distinctByColumn))
+        } else {
+            .init()
+        }
 
         // If we have a bounds constraint, use the spatial count method
         if let bounds = boundsConstraint {
@@ -166,7 +183,7 @@ public final class TableResults<Element>: Results where Element: Model {
         }
 
         // Live count from C++
-        return Int(_lattice.cxxLattice.count(tableName, whereClause, groupByOpt))
+        return Int(_lattice.cxxLattice.count(tableName, whereClause, groupByOpt, distinctByOpt))
     }
 
     public func index(after i: Int) -> Int {
@@ -218,7 +235,8 @@ public final class TableResults<Element>: Results where Element: Model {
             },
             boundsConstraint: boundsConstraint,
             proximity: .vector(constraint),
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 
@@ -244,7 +262,7 @@ public final class TableResults<Element>: Results where Element: Model {
         minLon: Double, maxLon: Double
     ) -> TableResults<Element> {
         let constraint = BoundsConstraint(keyPath: keyPath, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon)
-        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, groupByColumn: groupByColumn)
+        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     // MARK: - Geo Nearest (proximity search)
@@ -275,7 +293,8 @@ public final class TableResults<Element>: Results where Element: Model {
             },
             boundsConstraint: boundsConstraint,
             proximity: .geo(constraint),
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 
@@ -303,7 +322,8 @@ public final class TableResults<Element>: Results where Element: Model {
             },
             boundsConstraint: boundsConstraint,
             proximity: .text(constraint),
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 
@@ -329,7 +349,8 @@ public final class TableResults<Element>: Results where Element: Model {
             },
             boundsConstraint: boundsConstraint,
             proximity: .text(constraint),
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 }

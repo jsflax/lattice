@@ -15,6 +15,7 @@ public protocol Results<Element>: Sequence, RandomAccessCollection where SubSequ
     func `where`(_ query: (QueryType) -> Query<Bool>) -> Self
     func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self
     func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self
+    func distinct<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self
     func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable
     func snapshot(limit: Int64?, offset: Int64?) -> [Element]
 

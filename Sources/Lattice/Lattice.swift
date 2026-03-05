@@ -562,6 +562,12 @@ public struct Lattice {
                 }
                 config.set_ipc_targets(targets)
             }
+            // Propagate target schema version from migrations so that any new
+            // connection (e.g., from attaching()) knows the DB may be at a
+            // higher schema version than the default of 1.
+            if let migration, let maxVersion = migration.keys.max() {
+                config.target_schema_version = Int32(maxVersion)
+            }
             return config
         }
     }
@@ -935,13 +941,26 @@ public struct Lattice {
 
     // MARK: Maintenance
 
-    /// Compacts the audit log by replacing all history with INSERT snapshots
-    /// of the current state. Reduces sync payload size while preserving the
-    /// ability to sync current data.
+    /// Slot-aware compaction: deletes only entries all synchronizers have confirmed.
+    /// Safe during active sync. Returns entries deleted, or -1 if no slots exist.
+    /// - Parameter staleThresholdSeconds: If > 0, evict slots inactive for this long.
+    @discardableResult
+    public func compactHistory(staleThresholdSeconds: Int64 = 0) -> Int64 {
+        cxxLattice.safe_compact_audit_log(staleThresholdSeconds)
+    }
+
+    /// Backdate all replication slots' last_active_at by the given number of seconds.
+    /// Test-only: enables deterministic stale-slot eviction without wall-clock sleeps.
+    public func backdateReplicationSlots(seconds: Int64) {
+        cxxLattice.backdate_replication_slots(seconds)
+    }
+
+    /// Nuclear compaction: deletes ALL history, regenerates snapshots, resets slots.
+    /// Active synchronizers will re-sync all data.
     /// - Returns: Number of snapshot entries created.
     @discardableResult
-    public func compactHistory() -> Int64 {
-        cxxLattice.compact_audit_log()
+    public func forceCompactHistory() -> Int64 {
+        cxxLattice.force_compact_audit_log()
     }
 
     /// Flushes WAL contents to the main database file and truncates the WAL.
@@ -991,53 +1010,20 @@ public struct Lattice {
         }
     }
 
-    /// Polls the current sync progress (reads atomics from synchronizer).
-    public var syncProgress: SyncProgress {
-        SyncProgress(
-            pendingUpload: Int(cxxLattice.sync_progress_pending_upload()),
-            totalUpload: Int(cxxLattice.sync_progress_total_upload()),
-            acked: Int(cxxLattice.sync_progress_acked()),
-            received: Int(cxxLattice.sync_progress_received())
-        )
-    }
-
     /// Register a callback for sync progress updates.
     /// The callback fires on the synchronizer's background thread — callers must
     /// dispatch to the appropriate actor/queue.
+    ///
+    /// Transparently works cross-process: if this process holds the WSS sync lock
+    /// (is_sync_agent), the callback is registered on the in-process synchronizer.
+    /// Otherwise, it observes AuditLog changes via Darwin notifications and derives
+    /// progress from the count of unsynchronized entries.
     public func onSyncProgress(_ handler: @escaping @Sendable (SyncProgress) -> Void) {
-        let context = SyncProgressContext(handler)
-        let contextPtr = Unmanaged.passRetained(context).toOpaque()
-        cxxLattice.set_on_sync_progress(
-            contextPtr,
-            { ctx, pending, total, acked, received in
-                guard let ctx else { return }
-                let context = Unmanaged<SyncProgressContext>.fromOpaque(ctx).takeUnretainedValue()
-                context.callback(SyncProgress(
-                    pendingUpload: Int(pending),
-                    totalUpload: Int(total),
-                    acked: Int(acked),
-                    received: Int(received)
-                ))
-            },
-            { ctx in
-                guard let ctx else { return }
-                Unmanaged<SyncProgressContext>.fromOpaque(ctx).release()
-            }
-        )
-    }
-
-    /// AsyncStream of sync progress updates. Yields on every progress change
-    /// from the synchronizer's background thread.
-    /// Termination: when the consumer cancels iteration, the callback is replaced
-    /// with nil (clearing the C++ handler and releasing the context).
-    public var syncProgressStream: AsyncStream<SyncProgress> {
-        let cxx = cxxLattice
-        return AsyncStream { continuation in
-            let context = SyncProgressContext { progress in
-                continuation.yield(progress)
-            }
+        if cxxLattice.is_sync_agent() {
+            // In-process path: register callback on synchronizer atomics
+            let context = SyncProgressContext(handler)
             let contextPtr = Unmanaged.passRetained(context).toOpaque()
-            cxx.set_on_sync_progress(
+            cxxLattice.set_on_sync_progress(
                 contextPtr,
                 { ctx, pending, total, acked, received in
                     guard let ctx else { return }
@@ -1054,11 +1040,130 @@ public struct Lattice {
                     Unmanaged<SyncProgressContext>.fromOpaque(ctx).release()
                 }
             )
+        } else {
+            // Cross-process path: observe AuditLog changes and derive progress
+            // from the count of unsynchronized entries.
+            _startPassiveSyncProgressObserver(handler)
+        }
+    }
 
-            continuation.onTermination = { _ in
-                // Clear the C++ handler, which triggers the destroy function
-                // on the old context (releasing the Unmanaged reference).
-                cxx.set_on_sync_progress(nil, nil, nil)
+    /// Register a callback for sync errors (connection failures, protocol errors, etc.).
+    public func onSyncError(_ handler: @escaping @Sendable (String) -> Void) {
+        let context = SyncErrorContext(handler)
+        let contextPtr = Unmanaged.passRetained(context).toOpaque()
+        cxxLattice.set_on_sync_error(
+            contextPtr,
+            { ctx, errorPtr, len in
+                guard let ctx, let errorPtr else { return }
+                let error = String(
+                    bytesNoCopy: UnsafeMutableRawPointer(mutating: errorPtr),
+                    length: Int(len),
+                    encoding: .utf8,
+                    freeWhenDone: false
+                ) ?? "unknown error"
+                Unmanaged<SyncErrorContext>.fromOpaque(ctx).takeUnretainedValue().callback(error)
+            },
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<SyncErrorContext>.fromOpaque(ctx).release()
+            }
+        )
+    }
+
+    /// Register a callback for sync connection state changes.
+    public func onSyncStateChange(_ handler: @escaping @Sendable (Bool) -> Void) {
+        let context = SyncStateContext(handler)
+        let contextPtr = Unmanaged.passRetained(context).toOpaque()
+        cxxLattice.set_on_sync_state_change(
+            contextPtr,
+            { ctx, connected in
+                guard let ctx else { return }
+                Unmanaged<SyncStateContext>.fromOpaque(ctx).takeUnretainedValue().callback(connected)
+            },
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<SyncStateContext>.fromOpaque(ctx).release()
+            }
+        )
+    }
+
+    /// AsyncStream of sync progress updates. Yields on every progress change
+    /// from the synchronizer's background thread.
+    /// Termination: when the consumer cancels iteration, the callback is replaced
+    /// with nil (clearing the C++ handler and releasing the context).
+    ///
+    /// Transparently works cross-process via AuditLog observation when
+    /// this process is not the sync agent.
+    public var syncProgressStream: AsyncStream<SyncProgress> {
+        let cxx = cxxLattice
+        let isSyncAgent = cxx.is_sync_agent()
+        let modelTypes = self.modelTypes
+        let configuration = self.configuration
+        return AsyncStream { continuation in
+            if isSyncAgent {
+                // In-process path
+                let context = SyncProgressContext { progress in
+                    continuation.yield(progress)
+                }
+                let contextPtr = Unmanaged.passRetained(context).toOpaque()
+                cxx.set_on_sync_progress(
+                    contextPtr,
+                    { ctx, pending, total, acked, received in
+                        guard let ctx else { return }
+                        let context = Unmanaged<SyncProgressContext>.fromOpaque(ctx).takeUnretainedValue()
+                        context.callback(SyncProgress(
+                            pendingUpload: Int(pending),
+                            totalUpload: Int(total),
+                            acked: Int(acked),
+                            received: Int(received)
+                        ))
+                    },
+                    { ctx in
+                        guard let ctx else { return }
+                        Unmanaged<SyncProgressContext>.fromOpaque(ctx).release()
+                    }
+                )
+
+                continuation.onTermination = { _ in
+                    cxx.set_on_sync_progress(nil, nil, nil)
+                }
+            } else {
+                // Cross-process path: observe AuditLog changes via Darwin notifications
+                let queryLattice = try! Lattice(for: modelTypes, configuration: configuration)
+                let tableName = std.string(AuditLog.entityName)
+                var previousPending = 0
+
+                let context = TableObserverContext { _, _, _ in
+                    let pending = queryLattice.count(AuditLog.self, where: { $0.isSynchronized == false })
+                    let diff = previousPending - pending
+                    let acked = max(0, diff)
+                    previousPending = pending
+                    continuation.yield(SyncProgress(
+                        pendingUpload: pending,
+                        totalUpload: pending + acked,
+                        acked: acked,
+                        received: 0
+                    ))
+                }
+                let contextPtr = Unmanaged.passRetained(context).toOpaque()
+
+                let observerId = cxx.add_table_observer(
+                    tableName,
+                    contextPtr,
+                    { (contextPtr, operation, rowId, globalRowId) in
+                        guard let contextPtr else { return }
+                        let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
+                        context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
+                    },
+                    { ptr in
+                        guard let ptr else { return }
+                        Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
+                    }
+                )
+
+                continuation.onTermination = { _ in
+                    cxx.remove_table_observer(tableName, observerId)
+                }
             }
         }
     }
@@ -1140,6 +1245,58 @@ public struct Lattice {
         init(_ callback: @escaping @Sendable (SyncProgress) -> Void) {
             self.callback = callback
         }
+    }
+
+    private final class SyncErrorContext: @unchecked Sendable {
+        let callback: @Sendable (String) -> Void
+
+        init(_ callback: @escaping @Sendable (String) -> Void) {
+            self.callback = callback
+        }
+    }
+
+    private final class SyncStateContext: @unchecked Sendable {
+        let callback: @Sendable (Bool) -> Void
+
+        init(_ callback: @escaping @Sendable (Bool) -> Void) {
+            self.callback = callback
+        }
+    }
+
+    /// Start a passive AuditLog-based sync progress observer for cross-process use.
+    /// Called when this process is NOT the sync agent — observes AuditLog table
+    /// changes via Darwin notifications and derives progress from pending count.
+    private func _startPassiveSyncProgressObserver(_ handler: @escaping @Sendable (SyncProgress) -> Void) {
+        let tableName = std.string(AuditLog.entityName)
+        var previousPending = 0
+
+        let context = TableObserverContext { [self] _, _, _ in
+            let pending = Int(cxxLattice.pending_sync_entry_count())
+            let diff = previousPending - pending
+            let acked = max(0, diff)
+            previousPending = pending
+            handler(SyncProgress(
+                pendingUpload: pending,
+                totalUpload: pending + acked,
+                acked: acked,
+                received: 0
+            ))
+        }
+        let contextPtr = Unmanaged.passRetained(context).toOpaque()
+
+        _ = cxxLattice.add_table_observer(
+            tableName,
+            contextPtr,
+            { (contextPtr, operation, rowId, globalRowId) in
+                guard let contextPtr else { return }
+                let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
+                context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
+            },
+            { ptr in
+                guard let ptr else { return }
+                Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
+            }
+        )
     }
 
     public func observe(_ block: @escaping ([AuditLog]) -> ()) -> AnyCancellable {
@@ -1327,7 +1484,15 @@ public struct Lattice {
     }
     
     public func attaching(lattice: Lattice) -> Lattice {
-        let newCxxLattice = LatticeCxx.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(),
+        // Build a query-only config: strip IPC/WSS to avoid duplicate socket
+        // bind and unnecessary sync on a connection used only for UNION ALL reads.
+        var queryConfig = configuration
+        queryConfig.ipcTargets = nil
+        queryConfig.wssEndpoint = nil
+        queryConfig.authorizationToken = nil
+        queryConfig.syncFilter = nil
+        let cxxConfig = queryConfig.cxxConfiguration()
+        let newCxxLattice = LatticeCxx.swift_lattice_ref.create(swiftConfig: cxxConfig,
                                                                 schemas: modelTypes.cxxSchema)!
         newCxxLattice.get().attach(lattice.cxxLattice)
         var newLattice = Lattice.init(ref: newCxxLattice)

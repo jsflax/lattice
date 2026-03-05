@@ -1,7 +1,10 @@
 import Foundation
+import os
 #if canImport(SwiftUI)
 import SwiftUI
 import Combine
+
+private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "FrameStall")
 
 @MainActor
 @propertyWrapper public struct LatticeQuery<T: Model>: @preconcurrency DynamicProperty {
@@ -11,7 +14,7 @@ import Combine
         let predicate: Predicate<T>
         var lastFetched = Date.now
         var lattice: Lattice?
-        
+
         @MainActor var fetchLimit: Int? {
             didSet {
                 fetch()
@@ -23,10 +26,11 @@ import Combine
             }
         }
         private var tokens: [AnyCancellable] = []
+        @MainActor private var debouncedFetchTask: Task<Void, Never>?
         deinit {
             tokens.forEach { $0.cancel() }
         }
-        
+
         @MainActor init(predicate: @escaping Predicate<T>, fetchLimit: Int? = nil,
                         sortBy: SortDescriptor<T>?) {
             self.predicate = predicate
@@ -34,12 +38,11 @@ import Combine
             self.sortBy = sortBy
             self.wrappedValue = try! TableResults(LatticeEnvironmentKey.defaultValue)
         }
-        
+
         @MainActor func fetch() {
             guard let lattice else {
                 return
             }
-            
             wrappedValue = lattice.objects().where(predicate)
             if let sortBy {
                 wrappedValue = wrappedValue.sortedBy(sortBy)
@@ -48,21 +51,30 @@ import Combine
                 self.objectWillChange.send()
             }
         }
-        
+
+        /// Debounced fetch — coalesces rapid observer fires into a single fetch per frame.
+        @MainActor func scheduleFetch() {
+            guard debouncedFetchTask == nil else { return }
+            debouncedFetchTask = Task { @MainActor in
+                await Task.yield()  // yield to end of current run loop cycle
+                self.debouncedFetchTask = nil
+                self.fetch()
+            }
+        }
+
         private let historyDispatchQueue = DispatchQueue(label: "io.trader.wrapper.history")
         private var cancellable: AnyCancellable?
-        
+
         @MainActor func updateWrappedValue(lattice: Lattice) {
             guard self.lattice == nil else { return
             }
             self.lattice = lattice
-            
+
             lattice.objects().where(predicate).observe { _ in
                 Task { @MainActor in
-                    await self.fetch()
+                    self.scheduleFetch()
                 }
             }.store(in: &tokens)
-            let entityName = T.entityName
             fetch()
         }
     }
@@ -99,7 +111,11 @@ import Combine
         self._wrapper = .init(wrappedValue: Wrapper(predicate: predicate, fetchLimit: fetchLimit, sortBy: sort.map { SortDescriptor($0, order: order ?? .forward) }))
     }
     
-
+    @MainActor public init(fetchLimit: Int) {
+        self.predicate = { _ in true }
+        self._wrapper = .init(wrappedValue: Wrapper(predicate: predicate, fetchLimit: fetchLimit, sortBy: nil))
+    }
+    
     @MainActor public mutating func update() {
         wrapper.updateWrappedValue(lattice: lattice)
     }

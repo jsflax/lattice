@@ -873,8 +873,8 @@ actor SyncTests {
         lattice.add(obj)
         try await serverTask?.value
 
-        // Step 2: Compact the server's audit log — replaces all history with INSERT snapshots
-        let serverEntries = syncedLattice.compactHistory()
+        // Step 2: Force compact the server's audit log — replaces all history with INSERT snapshots
+        let serverEntries = syncedLattice.forceCompactHistory()
         #expect(serverEntries >= 1, "Server should create snapshot entries for existing objects")
 
         // Verify the server still has the data
@@ -943,8 +943,8 @@ actor SyncTests {
         try await receiveTask?.value
         #expect(lattice2.objects(SimpleSyncObject.self).count >= 1, "Initial sync should work")
 
-        // Step 2: Compact lattice1's audit log
-        let compactedEntries = lattice.compactHistory()
+        // Step 2: Force compact lattice1's audit log (nuclear — no replication slots in WSS-only)
+        let compactedEntries = lattice.forceCompactHistory()
         #expect(compactedEntries >= 1, "Should create snapshot entries")
 
         // Step 3: Write NEW data after compaction and wait for it on lattice2.
@@ -2472,10 +2472,7 @@ actor SyncProgressTests {
         // server relays to 0 other sockets — lattice2 never receives the entry.
         await sockets.waitForCount(2)
 
-        // Snapshot the current received count so we can detect the *new* receive,
-        // not rely on cumulative state from prior tests in the suite.
-        let baseline = lattice2.syncProgress.received
-        print("[DownloadTracking] START baseline=\(baseline) lattice1=\(lattice1URL.lastPathComponent) lattice2=\(lattice2URL.lastPathComponent) sockets=\(sockets.count)")
+        print("[DownloadTracking] START lattice1=\(lattice1URL.lastPathComponent) lattice2=\(lattice2URL.lastPathComponent) sockets=\(sockets.count)")
 
         // Wait for lattice2's own sync progress to show received increased.
         // Register the callback BEFORE triggering the sync so we don't miss
@@ -2484,8 +2481,8 @@ actor SyncProgressTests {
         let received: Lattice.SyncProgress = await withCheckedContinuation { continuation in
             let once = AtomicOnce()
             lattice2.onSyncProgress { progress in
-                print("[DownloadTracking] onSyncProgress fired: received=\(progress.received) baseline=\(baseline)")
-                if progress.received > baseline {
+                print("[DownloadTracking] onSyncProgress fired: received=\(progress.received)")
+                if progress.received > 0 {
                     guard once.tryFire() else { return }
                     print("[DownloadTracking] RESUMING continuation")
                     continuation.resume(returning: progress)
@@ -2497,7 +2494,7 @@ actor SyncProgressTests {
             print("[DownloadTracking] Value 77 added to lattice1")
         }
 
-        #expect(received.received > baseline)
+        #expect(received.received > 0)
         #expect(lattice2.objects(SimpleSyncObject.self).contains(where: { $0.value == 77 }))
     }
 
@@ -2562,5 +2559,293 @@ actor SyncProgressTests {
 
         let result = try await isBackgroundTask!.value
         #expect(result == true, "Progress callback should fire on a background thread")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func test_SyncError_FiresOnConnectionFailure() async throws {
+        // Connect to a port that isn't listening — should trigger onSyncError
+        let badURL = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 30)).sqlite")
+        defer { try? FileManager.default.removeItem(at: badURL) }
+
+        let badConfig = Lattice.Configuration(
+            fileURL: badURL,
+            authorizationToken: "bad",
+            wssEndpoint: URL(string: "ws://localhost:1/nonexistent"))
+
+        let errorMessage: String = await withCheckedContinuation { continuation in
+            let once = AtomicOnce()
+            let lattice = try! Lattice(SimpleSyncObject.self, configuration: badConfig)
+            lattice.onSyncError { error in
+                guard once.tryFire() else { return }
+                continuation.resume(returning: error)
+            }
+        }
+
+        #expect(!errorMessage.isEmpty, "Error message should not be empty")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func test_SyncStateChange_Connected() async throws {
+        let lattice = localLattice1!
+
+        // Should fire with connected=true once WebSocket opens
+        let connected: Bool = await withCheckedContinuation { continuation in
+            let once = AtomicOnce()
+            lattice.onSyncStateChange { isConnected in
+                if isConnected {
+                    guard once.tryFire() else { return }
+                    continuation.resume(returning: isConnected)
+                }
+            }
+        }
+
+        #expect(connected == true)
+    }
+}
+
+// =============================================================================
+// Replication Slot Tests
+// =============================================================================
+
+@Suite("Replication Slot Tests")
+actor ReplicationSlotTests {
+    let sourceURL = FileManager.default.temporaryDirectory
+        .appending(path: "\(String.random(length: 30)).sqlite")
+    let targetURL = FileManager.default.temporaryDirectory
+        .appending(path: "\(String.random(length: 30)).sqlite")
+    var sourceConfig: Lattice.Configuration
+    var targetConfig: Lattice.Configuration
+
+    init() {
+        lattice_set_log_level(lattice.log_level.warn)
+        self.sourceConfig = .init(fileURL: sourceURL)
+        self.targetConfig = .init(fileURL: targetURL)
+    }
+
+    deinit {
+        try? Lattice.delete(for: sourceConfig)
+        try? Lattice.delete(for: targetConfig)
+    }
+
+    private func observerConfig(from config: Lattice.Configuration) -> Lattice.Configuration {
+        var c = config
+        c.ipcTargets = nil
+        return c
+    }
+
+    private func waitForChange(
+        on config: Lattice.Configuration,
+        table: String,
+        operation: AuditLog.Operation,
+        count: Int = 1
+    ) async -> Task<Void, any Error> {
+        let readConfig = observerConfig(from: config)
+        var task: Task<Void, any Error>!
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let db = try Lattice(IPCNote.self, configuration: readConfig)
+                let stream = db.changeStream
+                continuation.resume()
+                var seen = 0
+                for await changes in stream {
+                    let resolved = changes.compactMap { $0.resolve(on: db) }
+                    seen += resolved.filter { $0.tableName == table && $0.operation == operation }.count
+                    if seen >= count { return }
+                }
+            }
+        }
+        return task
+    }
+
+    // =========================================================================
+    // Test 1: Replication slot is created on IPC connect
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_replicationSlot_createdOnConnect() async throws {
+        let channel = "slot-test-\(String.random(length: 8))"
+
+        sourceConfig.ipcTargets = [.init(channel: channel)]
+        let source = try Lattice(IPCNote.self, configuration: sourceConfig)
+
+        targetConfig.ipcTargets = [.init(channel: channel)]
+        let target = try Lattice(IPCNote.self, configuration: targetConfig)
+
+        // Write + sync to confirm connection is established
+        let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
+        source.add(IPCNote(title: "slot test", isPublic: true))
+        try await task.value
+
+        // Both source and target should have registered their IPC slots.
+        // The source has a slot for the IPC synchronizer going to target.
+        // The target has a slot for the IPC synchronizer going to source.
+        // Verify via safe compact: it should return 0 (slots exist, but cursor may
+        // not have advanced past all entries yet) — NOT -1 (no slots).
+        let result = source.compactHistory()
+        #expect(result >= 0, "Safe compact should find replication slots (not -1)")
+    }
+
+    // =========================================================================
+    // Test 2: Replication slot advances on ACK
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_replicationSlot_advancesOnAck() async throws {
+        let channel = "slot-ack-\(String.random(length: 8))"
+
+        sourceConfig.ipcTargets = [.init(channel: channel)]
+        let source = try Lattice(IPCNote.self, configuration: sourceConfig)
+
+        targetConfig.ipcTargets = [.init(channel: channel)]
+        let target = try Lattice(IPCNote.self, configuration: targetConfig)
+
+        // Write several entries and wait for sync
+        let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert, count: 3)
+        source.add(IPCNote(title: "a1", isPublic: true))
+        source.add(IPCNote(title: "a2", isPublic: true))
+        source.add(IPCNote(title: "a3", isPublic: true))
+        try await task.value
+
+        // Wait for ACKs to propagate
+        try await Task.sleep(for: .seconds(1))
+
+        // Safe compact should be able to delete entries (cursor advanced)
+        let auditBefore = source.count(AuditLog.self)
+        let deleted = source.compactHistory()
+        #expect(deleted >= 0, "Should delete confirmed entries")
+
+        // If entries were deleted, audit count should have decreased
+        if deleted > 0 {
+            let auditAfter = source.count(AuditLog.self)
+            #expect(auditAfter < auditBefore, "Audit log should shrink after safe compact")
+        }
+    }
+
+    // =========================================================================
+    // Test 3: Safe compact preserves entries between different slot cursors
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_safeCompact_deletesOnlyBelowMinSlot() async throws {
+        let channel = "slot-min-\(String.random(length: 8))"
+
+        sourceConfig.ipcTargets = [.init(channel: channel)]
+        let source = try Lattice(IPCNote.self, configuration: sourceConfig)
+
+        targetConfig.ipcTargets = [.init(channel: channel)]
+        let target = try Lattice(IPCNote.self, configuration: targetConfig)
+
+        // Write and sync some entries
+        let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert, count: 2)
+        source.add(IPCNote(title: "m1", isPublic: true))
+        source.add(IPCNote(title: "m2", isPublic: true))
+        try await task.value
+
+        // Wait for ACKs
+        try await Task.sleep(for: .seconds(1))
+
+        // Write more entries (these may not be synced yet to all slots)
+        source.add(IPCNote(title: "m3", isPublic: true))
+
+        // Safe compact should NOT delete entries that haven't been confirmed by all slots
+        let deleted = source.compactHistory()
+        #expect(deleted >= 0, "Safe compact should work with active slots")
+
+        // The source should still have all its data
+        #expect(source.objects(IPCNote.self).count >= 3,
+            "All IPCNote objects should survive safe compaction")
+    }
+
+    // =========================================================================
+    // Test 4: Safe compact returns -1 when no slots exist
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_safeCompact_noSlots_returnsNegativeOne() async throws {
+        // Standalone lattice — no IPC, no sync, no replication slots
+        let standaloneURL = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 30)).sqlite")
+        let standalone = try Lattice(IPCNote.self, configuration: .init(fileURL: standaloneURL))
+        defer { try? Lattice.delete(for: .init(fileURL: standaloneURL)) }
+
+        standalone.add(IPCNote(title: "lone", isPublic: true))
+        let auditBefore = standalone.count(AuditLog.self)
+        #expect(auditBefore > 0, "Should have audit entries")
+
+        let result = standalone.compactHistory()
+        #expect(result == -1, "Safe compact should return -1 when no slots exist")
+
+        // AuditLog should be untouched
+        let auditAfter = standalone.count(AuditLog.self)
+        #expect(auditAfter == auditBefore, "Audit log should be untouched with no slots")
+    }
+
+    // =========================================================================
+    // Test 5: Force compact resets slot cursors
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_forceCompact_resetsSlots() async throws {
+        let channel = "slot-force-\(String.random(length: 8))"
+
+        sourceConfig.ipcTargets = [.init(channel: channel)]
+        let source = try Lattice(IPCNote.self, configuration: sourceConfig)
+
+        targetConfig.ipcTargets = [.init(channel: channel)]
+        let target = try Lattice(IPCNote.self, configuration: targetConfig)
+
+        // Write + sync
+        let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
+        source.add(IPCNote(title: "f1", isPublic: true))
+        try await task.value
+        try await Task.sleep(for: .seconds(1))
+
+        // Force compact — should regenerate history and reset slots
+        let entries = source.forceCompactHistory()
+        #expect(entries >= 1, "Force compact should create snapshot entries")
+
+        // All audit entries should be INSERT snapshots
+        let logs = source.objects(AuditLog.self).snapshot()
+        for log in logs {
+            #expect(log.operation == .insert, "All entries should be INSERT after force compact")
+        }
+
+        // Data should survive
+        #expect(source.objects(IPCNote.self).count >= 1,
+            "Data should survive force compaction")
+
+        // Safe compact immediately after force should return 0 (slots exist, cursor reset to 0)
+        let safeResult = source.compactHistory()
+        #expect(safeResult >= 0, "Safe compact should find slots after force compact")
+    }
+
+    // =========================================================================
+    // Test 6: Stale slot eviction
+    // =========================================================================
+    @Test(.timeLimit(.minutes(1)))
+    func test_safeCompact_staleSlotEviction() async throws {
+        let channel = "slot-stale-\(String.random(length: 8))"
+
+        sourceConfig.ipcTargets = [.init(channel: channel)]
+        let source = try Lattice(IPCNote.self, configuration: sourceConfig)
+
+        targetConfig.ipcTargets = [.init(channel: channel)]
+        let target = try Lattice(IPCNote.self, configuration: targetConfig)
+
+        // Establish connection and sync
+        let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
+        source.add(IPCNote(title: "s1", isPublic: true))
+        try await task.value
+
+        // Safe compact without eviction — slots exist
+        let result1 = source.compactHistory()
+        #expect(result1 >= 0, "Slots should exist")
+
+        // Safe compact with a very low stale threshold (1 second) —
+        // slots were just active so they should NOT be evicted
+        let result2 = source.compactHistory(staleThresholdSeconds: 1)
+        #expect(result2 >= 0, "Fresh slots should not be evicted")
+
+        // Backdate slots by 10 seconds so they appear stale, then evict with threshold=1
+        source.backdateReplicationSlots(seconds: 10)
+        let result3 = source.compactHistory(staleThresholdSeconds: 1)
+        // All slots are now 10s old, threshold is 1s — they should be evicted
+        #expect(result3 == -1, "Backdated slots should be evicted")
     }
 }

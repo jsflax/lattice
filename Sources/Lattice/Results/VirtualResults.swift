@@ -21,6 +21,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
     internal let sortStatement: SortDescriptor<Element>?
     internal let boundsConstraint: BoundsConstraint?
     internal let groupByColumn: String?
+    internal let distinctByColumn: String?
 
     public func _addType<Q: Model>(_ type: Q.Type) -> any VirtualResults<Element> {
         _VirtualResults<repeat each M, Q, Element>.init(self._lattice)
@@ -36,6 +37,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         sortStatement = nil
         boundsConstraint = nil
         groupByColumn = nil
+        distinctByColumn = nil
     }
     private var firstType: any Model.Type {
         for t in repeat (each M).self {
@@ -93,12 +95,13 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         return objects
     }
     
-    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil) {
+    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil, distinctByColumn: String? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement
         self.sortStatement = sortStatement
         self.boundsConstraint = boundsConstraint
         self.groupByColumn = groupByColumn
+        self.distinctByColumn = distinctByColumn
     }
 
     init(_ lattice: Lattice, whereStatement: Predicate<Element>, sortStatement: SortDescriptor<Element>? = nil) {
@@ -107,6 +110,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         self.sortStatement = sortStatement
         self.boundsConstraint = nil
         self.groupByColumn = nil
+        self.distinctByColumn = nil
     }
     
     private func constructVirtualQuery<T>(_ t: T.Type) -> some _Query<Element> where T: Model {
@@ -120,13 +124,14 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
                         whereStatement: query(_VirtualQuery<repeat each M, Element>()),
                         sortStatement: sortStatement,
                         boundsConstraint: boundsConstraint,
-                        groupByColumn: groupByColumn)
+                        groupByColumn: groupByColumn,
+                        distinctByColumn: distinctByColumn)
         }
         fatalError()
     }
 
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self {
-        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn)
+        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self {
@@ -136,7 +141,17 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         }
         _ = virtualInst[keyPath: keyPath]
         let columnName = inst._lastKeyPathUsed ?? "id"
-        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: columnName)
+        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: columnName, distinctByColumn: distinctByColumn)
+    }
+
+    public func distinct<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self {
+        let inst = firstType.init(isolation: #isolation)
+        guard let virtualInst = inst as? Element else {
+            preconditionFailure()
+        }
+        _ = virtualInst[keyPath: keyPath]
+        let columnName = inst._lastKeyPathUsed ?? "id"
+        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: columnName)
     }
     
     public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
@@ -215,7 +230,8 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
             },
             boundsConstraint: boundsConstraint,
             proximity: .vector(constraint),
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 
@@ -227,7 +243,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         _ = virtualInst[keyPath: keyPath]
         return inst._lastKeyPathUsed ?? "id"
     }
-    
+
     // MARK: - Spatial Query (geo_bounds)
 
     /// Filter results to objects within a geographic bounding box.
@@ -249,7 +265,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
             minLat: minLat, maxLat: maxLat,
             minLon: minLon, maxLon: maxLon
         )
-        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, groupByColumn: groupByColumn)
+        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     /// Find objects nearest to a geographic point.
@@ -287,7 +303,8 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
             },
             boundsConstraint: boundsConstraint,
             proximity: .geo(constraint),
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 
@@ -333,7 +350,8 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
             },
             boundsConstraint: boundsConstraint,
             proximity: .text(constraint),
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 }

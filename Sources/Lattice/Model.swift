@@ -103,15 +103,27 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         ref.cxxObserverId = observerId
         ref.cxxLatticeRef = latticeRef
         lock.lock()
-        defer { lock.unlock() }
-
         registeredKeys[objectId] = key
-        var refs = instances[key, default: []]
+        var refs = instances.removeValue(forKey: key) ?? []
+        lock.unlock()
+
+        // Clean up nil weak refs outside the lock (same deadlock avoidance as deregister).
         if !refs.contains(where: { $0.objectIdentifier == objectId }) {
             refs.append(ref)
         }
         refs.removeAll { $0.instance == nil }
-        instances[key] = refs
+
+        lock.lock()
+        // Merge with any refs added concurrently for this key.
+        if var existing = instances[key] {
+            for r in refs where !existing.contains(where: { $0.objectIdentifier == r.objectIdentifier }) {
+                existing.append(r)
+            }
+            instances[key] = existing
+        } else {
+            instances[key] = refs
+        }
+        lock.unlock()
     }
 
     /// Deregister a model instance and remove its C++ object observer.
@@ -126,25 +138,43 @@ final class ModelInstanceRegistry: @unchecked Sendable {
             return
         }
 
+        // Take the entire ref list out while locked. This avoids accessing
+        // weak var instance inside the lock — reading a weak var creates a
+        // temporary strong ref whose release can trigger Model.deinit →
+        // recursive deregister → deadlock on this non-recursive lock.
+        let allRefs = instances.removeValue(forKey: key) ?? []
+        lock.unlock()
+
+        // Process outside the lock: partition into removed, alive, and nil.
+        // Any Model.deinit triggered by temporary strong refs here is safe
+        // (lock is not held).
         var removedRefs: [WeakModelRef] = []
-        instances[key]?.removeAll { ref in
+        var keptRefs: [WeakModelRef] = []
+        for ref in allRefs {
             if ref.objectIdentifier == objectId {
                 removedRefs.append(ref)
-                return true
+            } else if ref.instance != nil {
+                keptRefs.append(ref)
             }
-            return ref.instance == nil
         }
-        if instances[key]?.isEmpty == true {
-            instances.removeValue(forKey: key)
+
+        // Put back surviving refs, merging with any added concurrently.
+        if !keptRefs.isEmpty {
+            lock.lock()
+            if var existing = instances[key] {
+                existing.append(contentsOf: keptRefs)
+                instances[key] = existing
+            } else {
+                instances[key] = keptRefs
+            }
+            lock.unlock()
         }
-        lock.unlock()
 
         for ref in removedRefs {
             if let observerId = ref.cxxObserverId,
                let latticeRef = ref.cxxLatticeRef {
                 latticeRef.get().remove_object_observer(std.string(tableName), key.primaryKey, observerId)
             }
-            // Context release handled by C++ shared_ptr destroy callback
         }
     }
 

@@ -1502,4 +1502,5 @@ class EnumMigrationV2 {
         // Empty string raw value should fall back to the enum's defaultValue (.basic)
         #expect(config.mode == .basic)
     }
+
 }

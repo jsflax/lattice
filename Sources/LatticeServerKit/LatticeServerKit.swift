@@ -74,27 +74,33 @@ extension Lattice {
                 .appending(path: storagePath)
                 .appending(path: "\(userId.uuidString).sqlite")
 
-            await Task {
-                guard let lattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
-                    print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
-                    try? await ws.close()
-                    return
-                }
-
-                let encodedChunks: [Data] = try! await LatticeActor(lattice).withModelContext { lattice in
-                    let events = try lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-                    print(">>> Bringing user up to date with \(events.count) events")
-                    return try events.chunked(into: 1000).map { events in
-                        try JSONEncoder().encode(ServerSentEvent.auditLog(events))
+            do {
+                try await Task {
+                    guard let lattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
+                        print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
+                        try? await ws.close()
+                        return
                     }
-                }
-                if !encodedChunks.isEmpty {
-                    print(">>> Sending chunks")
-                    for chunk in encodedChunks {
-                        ws.send(ByteBuffer(data: chunk))
+                    
+                    let encodedChunks: [Data] = try {
+                        let events = try lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
+                        print(">>> Bringing user up to date with \(events.count) events")
+                        return try events.chunked(into: 1000).map { events in
+                            try JSONEncoder().encode(ServerSentEvent.auditLog(events))
+                        }
+                    }()
+                    
+                    if !encodedChunks.isEmpty {
+                        print(">>> Sending chunks")
+                        for chunk in encodedChunks {
+                            ws.send(ByteBuffer(data: chunk))
+                        }
                     }
-                }
-            }.value
+                }.value
+            } catch {
+                print("Error bringing user up to date: \(error.localizedDescription)")
+            }
+            
             await sockets.add(socket: ws, for: userId)
             ws.eventLoop.execute {
                 ws.onText { ws, str in
@@ -104,15 +110,18 @@ extension Lattice {
                 ws.onBinary { ws, bb in
                     print("🧦", "Received Binary Event")
 
-                    try? await LatticeActor(for: schema, configuration: .init(fileURL: latticeURL))
-                        .withModelContext({ lattice in
-                            do {
-                                let globalIds = try lattice.receive(Data(buffer: bb))
-                                ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
-                            } catch {
-                                print("Error:", error)
-                            }
-                        })
+                    guard let lattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
+                        print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
+                        try? await ws.close()
+                        return
+                    }
+                    
+                    do {
+                        let globalIds = try lattice.receive(Data(buffer: bb))
+                        ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
+                    } catch {
+                        print("Error:", error)
+                    }
 
                     for socket in await sockets.sockets(for: userId) where socket !== ws {
                         socket.send(bb)

@@ -2140,8 +2140,8 @@ class LatticeTests: BaseTest {
         let auditCountBefore = lattice.count(AuditLog.self)
         #expect(auditCountBefore > 0)
 
-        // Compact should replace history with INSERT snapshots
-        let snapshotCount = lattice.compactHistory()
+        // Force compact should replace history with INSERT snapshots
+        let snapshotCount = lattice.forceCompactHistory()
         #expect(snapshotCount > 0)
 
         // All remaining entries should be INSERT operations
@@ -2188,7 +2188,4 @@ class LatticeTests: BaseTest {
         #expect(lattice.count(Person.self) == 1)
         #expect(lattice.object(Person.self, primaryKey: p.primaryKey!)?.name == "After Vacuum")
     }
-
 }
-
-

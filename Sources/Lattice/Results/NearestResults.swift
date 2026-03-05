@@ -303,19 +303,22 @@ public struct TableNearestResults<T: Model>: NearestResults {
     internal let boundsConstraint: BoundsConstraint?
     internal let proximity: ProximityType
     internal let groupByColumn: String?
+    internal let distinctByColumn: String?
 
     init(lattice: Lattice,
          whereStatement: Query<Bool>? = nil,
          sortStatement: RawNearestSortDescriptor? = nil,
          boundsConstraint: BoundsConstraint? = nil,
          proximity: ProximityType,
-         groupByColumn: String? = nil) {
+         groupByColumn: String? = nil,
+         distinctByColumn: String? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement
         self.sortStatement = sortStatement
         self.boundsConstraint = boundsConstraint
         self.proximity = proximity
         self.groupByColumn = groupByColumn
+        self.distinctByColumn = distinctByColumn
     }
 
     // MARK: - Chainable Methods
@@ -340,7 +343,8 @@ public struct TableNearestResults<T: Model>: NearestResults {
             sortStatement: sortStatement,
             boundsConstraint: boundsConstraint,
             proximity: proximity,
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 
@@ -357,23 +361,39 @@ public struct TableNearestResults<T: Model>: NearestResults {
             sortStatement: sortStatement,
             boundsConstraint: boundsConstraint,
             proximity: proximity,
-            groupByColumn: columnName
+            groupByColumn: columnName,
+            distinctByColumn: distinctByColumn
+        )
+    }
+
+    public func distinct<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self {
+        let object = T.init(isolation: #isolation)
+        let match = _NearestMatch(object: object, distance: 0)
+        _ = match[keyPath: keyPath]
+        guard let columnName = object._lastKeyPathUsed else {
+            preconditionFailure("Could not resolve keyPath to column name")
+        }
+        return Self(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement,
+            boundsConstraint: boundsConstraint,
+            proximity: proximity,
+            groupByColumn: groupByColumn,
+            distinctByColumn: columnName
         )
     }
 
     // MARK: - Results Protocol Conformance
 
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self {
-        // NearestResults are sorted by distance from the proximity query
-        // Additional sorting would require storing and applying a sort descriptor
-        // For now, return self (proximity results are pre-sorted by distance)
         let t = T.init(isolation: #isolation)
         _ = _NearestMatch.init(object: t, distance: 0)[keyPath: sortDescriptor.keyPath!]
         return .init(lattice: self._lattice,
                      whereStatement: whereStatement,
                      sortStatement: .init(descriptor: .keyPath(t._lastKeyPathUsed!),
                                           order: sortDescriptor.order),
-                     boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+                     boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func sortedBy(_ sortDescriptor: NearestSortDescriptor<Element>) -> Self {
@@ -381,15 +401,15 @@ public struct TableNearestResults<T: Model>: NearestResults {
         case .geoDistance(let sortOrder):
             return .init(lattice: self._lattice,
                          whereStatement: whereStatement,
-                         sortStatement: .init(descriptor: .geoDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+                         sortStatement: .init(descriptor: .geoDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
         case .vectorDistance(let sortOrder):
             return .init(lattice: self._lattice,
                          whereStatement: whereStatement,
-                         sortStatement: .init(descriptor: .vectorDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+                         sortStatement: .init(descriptor: .vectorDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
         case .textRank(let sortOrder):
             return .init(lattice: self._lattice,
                          whereStatement: whereStatement,
-                         sortStatement: .init(descriptor: .textRank, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+                         sortStatement: .init(descriptor: .textRank, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
         }
     }
 
@@ -523,9 +543,14 @@ public struct TableNearestResults<T: Model>: NearestResults {
         let effectiveLimit = limit.map { Int($0) } ?? constraintLimit
         let fetchLimit = Int64(Swift.min(effectiveOffset + effectiveLimit, constraintLimit))
 
-        // Build group by
+        // Build group by / distinct by
         let groupByOpt: lattice.OptionalString = if let groupByColumn {
             lattice.string_to_optional(std.string(groupByColumn))
+        } else {
+            .init()
+        }
+        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
+            lattice.string_to_optional(std.string(distinctByColumn))
         } else {
             .init()
         }
@@ -540,7 +565,8 @@ public struct TableNearestResults<T: Model>: NearestResults {
             where: whereClause,
             sort: cxxSort,
             limit: fetchLimit,
-            groupBy: groupByOpt
+            groupBy: groupByOpt,
+            distinctBy: distinctByOpt
         )
 
         // Convert results
@@ -599,7 +625,7 @@ public struct TableNearestResults<T: Model>: NearestResults {
             preconditionFailure()
         }
         let constraint = BoundsConstraint(keyPath: keyPath, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon)
-        return Self(lattice: _lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, proximity: self.proximity, groupByColumn: groupByColumn)
+        return Self(lattice: _lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, proximity: self.proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func nearest<V: VectorElement>(
@@ -616,7 +642,7 @@ public struct TableNearestResults<T: Model>: NearestResults {
         }
         let constraint = VectorConstraint(keyPath: keyPath, queryVector: queryVector, k: k, metric: metric)
         return Self(lattice: _lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: self.boundsConstraint,
-                    proximity: .conjunction(self.proximity, .vector(constraint)), groupByColumn: groupByColumn)
+                    proximity: .conjunction(self.proximity, .vector(constraint)), groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func nearest<G: GeoboundsProperty>(
@@ -648,7 +674,8 @@ public struct TableNearestResults<T: Model>: NearestResults {
             sortStatement: sortStatement,
             boundsConstraint: boundsConstraint,
             proximity: combined,
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 
@@ -674,7 +701,8 @@ public struct TableNearestResults<T: Model>: NearestResults {
             sortStatement: sortStatement,
             boundsConstraint: boundsConstraint,
             proximity: .conjunction(self.proximity, .text(constraint)),
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 }
@@ -691,21 +719,24 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
     internal let boundsConstraint: BoundsConstraint?
     internal let proximity: ProximityType
     internal let groupByColumn: String?
+    internal let distinctByColumn: String?
 
     init(lattice: Lattice,
          whereStatement: Query<Bool>? = nil,
          sortStatement: RawNearestSortDescriptor? = nil,
          boundsConstraint: BoundsConstraint? = nil,
          proximity: ProximityType,
-         groupByColumn: String? = nil) {
+         groupByColumn: String? = nil,
+         distinctByColumn: String? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement
         self.sortStatement = sortStatement
         self.boundsConstraint = boundsConstraint
         self.proximity = proximity
         self.groupByColumn = groupByColumn
+        self.distinctByColumn = distinctByColumn
     }
-    
+
     private var firstType: any Model.Type {
         for t in repeat (each M).self {
             return t
@@ -735,7 +766,8 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
             sortStatement: sortStatement,
             boundsConstraint: boundsConstraint,
             proximity: proximity,
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 
@@ -752,16 +784,32 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
             sortStatement: sortStatement,
             boundsConstraint: boundsConstraint,
             proximity: proximity,
-            groupByColumn: columnName
+            groupByColumn: columnName,
+            distinctByColumn: distinctByColumn
+        )
+    }
+
+    public func distinct<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self {
+        let object = firstType.init(isolation: #isolation)
+        let match = _NearestMatch(object: object as! T, distance: 0)
+        _ = match[keyPath: keyPath]
+        guard let columnName = object._lastKeyPathUsed else {
+            preconditionFailure("Could not resolve keyPath to column name")
+        }
+        return Self(
+            lattice: _lattice,
+            whereStatement: whereStatement,
+            sortStatement: sortStatement,
+            boundsConstraint: boundsConstraint,
+            proximity: proximity,
+            groupByColumn: groupByColumn,
+            distinctByColumn: columnName
         )
     }
 
     // MARK: - Results Protocol Conformance
 
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self {
-        // NearestResults are sorted by distance from the proximity query
-        // Additional sorting would require storing and applying a sort descriptor
-        // For now, return self (proximity results are pre-sorted by distance)
         let object = firstType.init(isolation: #isolation) as! T
         let match = _NearestMatch(object: object as! T, distance: 0)
         _ = match[keyPath: sortDescriptor.keyPath!]
@@ -772,7 +820,7 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
                      whereStatement: whereStatement,
                      sortStatement: .init(descriptor: .keyPath(keyPath),
                                           order: sortDescriptor.order),
-                     boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+                     boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func sortedBy(_ sortDescriptor: NearestSortDescriptor<Element>) -> Self {
@@ -780,15 +828,15 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
         case .geoDistance(let sortOrder):
             return .init(lattice: self._lattice,
                          whereStatement: whereStatement,
-                         sortStatement: .init(descriptor: .geoDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+                         sortStatement: .init(descriptor: .geoDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
         case .vectorDistance(let sortOrder):
             return .init(lattice: self._lattice,
                          whereStatement: whereStatement,
-                         sortStatement: .init(descriptor: .vectorDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+                         sortStatement: .init(descriptor: .vectorDistance, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
         case .textRank(let sortOrder):
             return .init(lattice: self._lattice,
                          whereStatement: whereStatement,
-                         sortStatement: .init(descriptor: .textRank, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn)
+                         sortStatement: .init(descriptor: .textRank, order: sortOrder), boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
         }
     }
 
@@ -934,9 +982,14 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
             uniquingKeysWith: { first, _ in first }
         )
 
-        // Build group by
+        // Build group by / distinct by
         let groupByOpt: lattice.OptionalString = if let groupByColumn {
             lattice.string_to_optional(std.string(groupByColumn))
+        } else {
+            .init()
+        }
+        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
+            lattice.string_to_optional(std.string(distinctByColumn))
         } else {
             .init()
         }
@@ -956,7 +1009,8 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
                 where: whereClause,
                 sort: cxxSort,
                 limit: fetchLimit,
-                groupBy: groupByOpt
+                groupBy: groupByOpt,
+                distinctBy: distinctByOpt
             )
 
             for i in 0..<Int(cxxResults.size()) {
@@ -1011,7 +1065,7 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
             preconditionFailure()
         }
         let constraint = BoundsConstraint(keyPath: keyPath, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon)
-        return Self(lattice: _lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, proximity: self.proximity, groupByColumn: groupByColumn)
+        return Self(lattice: _lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, proximity: self.proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func nearest<V: VectorElement>(
@@ -1028,7 +1082,7 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
         }
         let constraint = VectorConstraint(keyPath: keyPath, queryVector: queryVector, k: k, metric: metric)
         return Self(lattice: _lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: self.boundsConstraint,
-                    proximity: .conjunction(self.proximity, .vector(constraint)), groupByColumn: groupByColumn)
+                    proximity: .conjunction(self.proximity, .vector(constraint)), groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func nearest<G: GeoboundsProperty>(
@@ -1060,7 +1114,8 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
             sortStatement: sortStatement,
             boundsConstraint: boundsConstraint,
             proximity: combined,
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 
@@ -1094,7 +1149,8 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
             sortStatement: sortStatement,
             boundsConstraint: boundsConstraint,
             proximity: .conjunction(self.proximity, .text(constraint)),
-            groupByColumn: groupByColumn
+            groupByColumn: groupByColumn,
+            distinctByColumn: distinctByColumn
         )
     }
 }
