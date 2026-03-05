@@ -45,6 +45,7 @@ extension Logger {
 public enum LatticeError: Error {
     case missingLatticeContext
     case transactionError(String)
+    case syncReceiveFailed(String)
 }
 
 public struct IsolationWeakRef: @unchecked Sendable {

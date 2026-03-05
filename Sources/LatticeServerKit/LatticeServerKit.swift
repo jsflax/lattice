@@ -32,6 +32,7 @@ actor SocketManager {
     }
 }
 
+
 extension Lattice {
     /// Configures the sync relay WebSocket endpoint on the given route group.
     ///
@@ -93,7 +94,7 @@ extension Lattice {
                     if !encodedChunks.isEmpty {
                         print(">>> Sending chunks")
                         for chunk in encodedChunks {
-                            ws.send(ByteBuffer(data: chunk))
+                            await ws.send(ByteBuffer(data: chunk))
                         }
                     }
                 }.value

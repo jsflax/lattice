@@ -172,9 +172,14 @@ struct UncheckedSendable<T>: @unchecked Sendable {
 
 extension Lattice {
     public func receive(_ data: Data) throws -> [UUID] {
-        cxxLattice.receive_sync_data(data.toCxxValue()).compactMap {
+        let result = cxxLattice.receive_sync_data(data.toCxxValue()).compactMap {
             UUID(uuidString: String($0))
         }
+        let lastError = cxxLattice.last_receive_error()
+        if lastError.__convertToBool() {
+            throw LatticeError.syncReceiveFailed(String(lastError.pointee))
+        }
+        return result
     }
     
     /// Get audit log events after a checkpoint (for server-side sync)
