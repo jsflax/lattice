@@ -2848,4 +2848,50 @@ actor ReplicationSlotTests {
         // All slots are now 10s old, threshold is 1s — they should be evicted
         #expect(result3 == -1, "Backdated slots should be evicted")
     }
+
+    /// Test that AuditLog globalId survives the C++ → Swift → JSON round-trip.
+    ///
+    /// The server calls `eventsAfter()` which converts C++ audit_log_entry to Swift AuditLog
+    /// via `AuditLog(from: cxx)`, then encodes with `JSONEncoder` for the WebSocket payload.
+    /// The client decodes this JSON and feeds it to `receive()` (C++ apply_remote_changes).
+    ///
+    /// Bug: `AuditLog(from: cxx)` never copies the C++ entry's globalId to Swift's `__globalId`,
+    /// so `JSONEncoder` emits `"globalId": null`. The C++ parser treats null as empty string.
+    /// When multiple batches arrive, the fast-path dedup (`SELECT id FROM AuditLog WHERE globalId = ?`)
+    /// matches the empty-globalId rows from batch 1, causing all subsequent batches to be skipped.
+    @Test(.timeLimit(.minutes(1)))
+    func test_EventsAfter_GlobalId_Roundtrip() async throws {
+        // Create a Lattice and add some objects so we have audit log entries
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 30)).sqlite")
+        let config = Lattice.Configuration(fileURL: url)
+        let lattice = try Lattice(SimpleSyncObject.self, configuration: config)
+
+        for i in 0..<5 {
+            lattice.add(SimpleSyncObject(value: i, floatValue: Float(i)))
+        }
+
+        // Get events through the same path the server uses
+        let events = try lattice.eventsAfter(globalId: nil)
+        #expect(events.count >= 5, "Should have at least 5 audit log entries")
+
+        // Encode to JSON (same as ServerSentEvent.auditLog does)
+        let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(events))
+
+        // Parse the JSON and check that globalId fields are not null
+        let json = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+        let auditLogs = json["auditLog"] as! [[String: Any]]
+
+        var nullCount = 0
+        for entry in auditLogs {
+            if entry["globalId"] is NSNull || entry["globalId"] == nil {
+                nullCount += 1
+            }
+        }
+
+        #expect(nullCount == 0,
+                "All \(auditLogs.count) audit entries should have non-null globalId, but \(nullCount) had null. This causes multi-batch sync dedup failures.")
+
+        try? Lattice.delete(for: config)
+    }
 }
