@@ -219,6 +219,36 @@ class EdgeOnlyMigV2 {
     }
 }
 
+// MARK: - Lookup with new column on target (isPrivate bug)
+// V1: Memory has content+topic, Edge has Int64 FKs
+// V2: Memory gains a new column (isPrivate), Edge migrates to UUID FKs
+// Migration.lookup(Memory) must not crash on the missing isPrivate column
+
+class NewColLookupV1 {
+    @Model class Memory {
+        var content: String
+        var topic: String
+    }
+    @Model class Edge {
+        var sourceId: Int64
+        var targetId: Int64
+        var relation: String
+    }
+}
+
+class NewColLookupV2 {
+    @Model class Memory {
+        var content: String
+        var topic: String
+        var isPrivate: Bool  // NEW column — not in DB at migration time
+    }
+    @Model class Edge {
+        var sourceGlobalId: UUID
+        var targetGlobalId: UUID
+        var relation: String
+    }
+}
+
 // MARK: - FK-to-Link Migration Test Models
 
 // V1: Child has a raw FK column referencing Parent
@@ -1143,6 +1173,99 @@ class MigrationTests: BaseTest {
             #expect(mem1.__globalId == memoryGlobalIds[mem1.primaryKey!])
             #expect(mem2.__globalId == memoryGlobalIds[mem2.primaryKey!])
             #expect(mem3.__globalId == memoryGlobalIds[mem3.primaryKey!])
+        }
+    }
+
+    // MARK: - Lookup with new column on target
+
+    /// Reproduces the Engram isPrivate bug: Memory gains a new column in V2, but
+    /// the edge migration does Migration.lookup(Memory) before that column exists
+    /// in the DB. Without the fix, detach() tries SELECT isPrivate FROM Memory
+    /// and crashes with "no such column".
+    @Test
+    func test_LookupTargetWithNewColumn_DoesNotCrash() throws {
+        typealias V1Memory = NewColLookupV1.Memory
+        typealias V1Edge = NewColLookupV1.Edge
+        typealias V2Memory = NewColLookupV2.Memory
+        typealias V2Edge = NewColLookupV2.Edge
+
+        let dbPath = "migration_new_col_lookup_\(String.random(length: 16)).sqlite"
+        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+
+        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+        try? Lattice.delete(for: .init(fileURL: dbURL))
+
+        var memoryGlobalIds: [Int64: UUID] = [:]
+
+        // Phase 1: Create V1 data — Memory (no isPrivate) + Edge with Int64 FKs
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V1Memory.self, V1Edge.self)
+
+            let mem1 = V1Memory()
+            mem1.content = "First"
+            mem1.topic = "test"
+            lattice.add(mem1)
+
+            let mem2 = V1Memory()
+            mem2.content = "Second"
+            mem2.topic = "test"
+            lattice.add(mem2)
+
+            memoryGlobalIds[mem1.primaryKey!] = mem1.__globalId!
+            memoryGlobalIds[mem2.primaryKey!] = mem2.__globalId!
+
+            let edge = V1Edge()
+            edge.sourceId = mem1.primaryKey!
+            edge.targetId = mem2.primaryKey!
+            edge.relation = "relates_to"
+            lattice.add(edge)
+        }
+
+        // Phase 2: Open with V2 schema — Memory now has isPrivate (new column).
+        // Edge migration uses Migration.lookup(V2Memory.self, ...) which must
+        // NOT crash even though isPrivate doesn't exist in the DB yet.
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, V2Memory.self, V2Edge.self, migration: [
+                2: Migration(
+                    (from: V1Edge.self, to: V2Edge.self),
+                    blocks: { old, new in
+                        if let sourceMem = Migration.lookup(V2Memory.self, id: old.sourceId),
+                           let gid = sourceMem.__globalId {
+                            new.sourceGlobalId = gid
+                        } else {
+                            new.sourceGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+                        }
+
+                        if let targetMem = Migration.lookup(V2Memory.self, id: old.targetId),
+                           let gid = targetMem.__globalId {
+                            new.targetGlobalId = gid
+                        } else {
+                            new.targetGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+                        }
+
+                        new.relation = old.relation
+                    })
+            ])
+
+            // Verify memories survived and gained the new column
+            let memories = lattice.objects(V2Memory.self)
+            #expect(memories.count == 2)
+
+            // New column should have default value
+            for mem in memories {
+                #expect(mem.isPrivate == false)
+            }
+
+            // Verify edge was migrated correctly
+            let edges = lattice.objects(V2Edge.self)
+            #expect(edges.count == 1)
+
+            let edge = edges.first!
+            let mem1 = memories.first { $0.content == "First" }!
+            let mem2 = memories.first { $0.content == "Second" }!
+            #expect(edge.sourceGlobalId == mem1.__globalId!)
+            #expect(edge.targetGlobalId == mem2.__globalId!)
+            #expect(edge.relation == "relates_to")
         }
     }
 

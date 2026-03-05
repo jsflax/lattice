@@ -1,6 +1,6 @@
 import Foundation
-import os
 #if canImport(SwiftUI)
+import os
 import SwiftUI
 import Combine
 

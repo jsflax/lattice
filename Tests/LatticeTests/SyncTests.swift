@@ -2837,9 +2837,9 @@ actor ReplicationSlotTests {
         let result1 = source.compactHistory()
         #expect(result1 >= 0, "Slots should exist")
 
-        // Safe compact with a very low stale threshold (1 second) —
+        // Safe compact with a threshold longer than the test could possibly take —
         // slots were just active so they should NOT be evicted
-        let result2 = source.compactHistory(staleThresholdSeconds: 1)
+        let result2 = source.compactHistory(staleThresholdSeconds: 60)
         #expect(result2 >= 0, "Fresh slots should not be evicted")
 
         // Backdate slots by 10 seconds so they appear stale, then evict with threshold=1
