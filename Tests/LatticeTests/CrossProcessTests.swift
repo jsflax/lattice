@@ -2,6 +2,9 @@ import Testing
 import Foundation
 import Lattice
 import XCTest
+#if canImport(SQLite3)
+import SQLite3
+#endif
 
 /// Thread-unsafe sendable box for cross-thread communication in tests.
 private class Box<T>: @unchecked Sendable {
@@ -27,6 +30,16 @@ class CrossProcessChildRunner: XCTestCase {
             if let person = lattice.objects(Person.self).where({ $0.name == "ExistingPerson" }).first {
                 person.age = 99
             }
+        case "update_audit":
+            // Directly mark AuditLog entries as synced (simulates daemon sync ACK).
+            // This UPDATEs existing rows without creating new AuditLog entries.
+            // Use SQLite3 C API since Lattice doesn't expose raw SQL execution.
+            var db: OpaquePointer?
+            guard sqlite3_open(childDBPath, &db) == SQLITE_OK else { return }
+            defer { sqlite3_close(db) }
+            sqlite3_exec(db, "UPDATE AuditLog SET isSynchronized = 1 WHERE isSynchronized = 0", nil, nil, nil)
+            // Post the Darwin notification manually since we bypassed Lattice's write hooks.
+            _lattice_post_cross_process_notification(std.string(childDBPath))
         default:
             let p = Person()
             p.name = "FromOtherProcess"
@@ -512,5 +525,80 @@ struct CrossProcessTests {
         if let found = results.first {
             #expect(found.age == 99)
         }
+    }
+
+    /// Tests that the passive sync progress observer fires when a cross-process
+    /// write UPDATEs existing AuditLog rows (e.g., marking isSynchronized = 1)
+    /// without creating new rows. This is the exact production path: the daemon
+    /// ACKs synced entries, and the Visualizer's onSyncProgress should update.
+    @Test(.timeLimit(.minutes(1)))
+    func crossProcessAuditLogUpdateFiresObserver() async throws {
+        // ── Child path ──────────────────────────────────────────────
+        if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
+            let op = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_OP"] ?? "insert"
+            guard op == "update_audit" else { return }
+            var db: OpaquePointer?
+            guard sqlite3_open(childDBPath, &db) == SQLITE_OK else { return }
+            defer { sqlite3_close(db) }
+            sqlite3_exec(db, "UPDATE AuditLog SET isSynchronized = 1 WHERE isSynchronized = 0", nil, nil, nil)
+            _lattice_post_cross_process_notification(std.string(childDBPath))
+            return
+        }
+
+        // ── Parent path ─────────────────────────────────────────────
+        let dbName = "xproc_audit_update_\(UUID().uuidString).sqlite"
+        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let dbPath = fileURL.path(percentEncoded: false)
+
+        let lattice = try Lattice(
+            for: [Person.self, Dog.self],
+            configuration: .init(fileURL: fileURL)
+        )
+        defer { try? Lattice.delete(for: .init(fileURL: fileURL)) }
+
+        // Seed data to create AuditLog entries with isSynchronized = 0
+        let p = Person()
+        p.name = "SeedPerson"
+        p.age = 1
+        lattice.add(p)
+
+        // Set up sync filter so pending_sync_entry_count() returns non-zero
+        var syncFilter = Lattice.SyncFilter()
+        syncFilter.include(Person.self)
+        lattice.updateSyncFilter(syncFilter)
+
+        guard let (execURL, childArgs) = childProcessConfig(filter: "crossProcessAuditLogUpdateFiresObserver") else {
+            Issue.record("Could not determine child process configuration")
+            return
+        }
+
+        // Use onSyncProgress (the production API) with a continuation.
+        // The test's timeLimit handles the failure case if the observer never fires.
+        let resumed = Box(false)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lattice.onSyncProgress { progress in
+                guard resumed.value != true else { return }
+                resumed.value = true
+                continuation.resume()
+            }
+
+            // Spawn child that UPDATEs isSynchronized (no new AuditLog rows)
+            let child = Process()
+            child.executableURL = execURL
+            var env = ProcessInfo.processInfo.environment
+            env["LATTICE_XPROC_CHILD_DB_PATH"] = dbPath
+            env["LATTICE_XPROC_CHILD_OP"] = "update_audit"
+            for key in env.keys where key.hasPrefix("XCTest") {
+                env.removeValue(forKey: key)
+            }
+            child.environment = env
+            child.arguments = childArgs
+            child.standardOutput = FileHandle.nullDevice
+            child.standardError = FileHandle.nullDevice
+            try! child.run()
+        }
+
+        // If we reach here, onSyncProgress fired for a cross-process AuditLog
+        // UPDATE (not INSERT). Without the fix, this test times out.
     }
 }
