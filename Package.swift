@@ -46,7 +46,10 @@ let package = Package(
                 .product(name: "Collections", package: "swift-collections"),
                 .product(name: "WebSocketKit", package: "websocket-kit", condition: .when(platforms: [.linux])),
             ],
-            swiftSettings: [.interoperabilityMode(.Cxx)]),
+            swiftSettings: [.interoperabilityMode(.Cxx)],
+            linkerSettings: [
+                .linkedLibrary("FoundationInternationalization", .when(platforms: [.linux])),
+            ]),
         .testTarget(
             name: "LatticeTests",
             dependencies: [
