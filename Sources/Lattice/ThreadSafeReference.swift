@@ -64,17 +64,20 @@ protocol AnyResultsThreadSafeReference<NonSendable>: SendableReference where Non
 
 private struct TableResultsThreadSafeReference<T: Model>: AnyResultsThreadSafeReference {
     typealias Res = TableResults<T>
-    
+
     private let whereStatement: Query<Bool>?
-    private let sortStatement: SortDescriptor<T>?
-    
+    // Store as existential to avoid direct SortDescriptor type metadata
+    // reference at link time (swift-foundation bug: AllowedComparison
+    // metadata not exported on Linux release builds)
+    private let sortComparator: (any SortComparator)?
+
     public init(_ results: TableResults<T>) {
         self.whereStatement = results.whereStatement
-        self.sortStatement = results.sortStatement
+        self.sortComparator = results.sortStatement
     }
-    
+
     public func resolve(on lattice: Lattice) -> (some Results<T>)? {
-        TableResults(lattice, whereStatement: whereStatement, sortStatement: sortStatement)
+        TableResults(lattice, whereStatement: whereStatement, sortStatement: sortComparator)
     }
 }
 
@@ -82,15 +85,15 @@ private struct VirtualResultsThreadSafeReference<each M: Model, Element>: AnyRes
     typealias Res = _VirtualResults<repeat each M, Element>
 
     private let whereStatement: Query<Bool>?
-    private let sortStatement: SortDescriptor<Element>?
+    private let sortComparator: (any SortComparator)?
 
     public init(_ results: Res) {
         self.whereStatement = results.whereStatement
-        self.sortStatement = results.sortStatement
+        self.sortComparator = results.sortStatement
     }
 
     public func resolve(on lattice: Lattice) -> (some Results<Element>)? {
-        Res(lattice, whereStatement: whereStatement, sortStatement: sortStatement)
+        Res(lattice, whereStatement: whereStatement, sortStatement: sortComparator)
     }
 }
 

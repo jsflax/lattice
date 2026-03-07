@@ -6,7 +6,13 @@ public final class TableResults<Element>: Results where Element: Model {
 
     private let _lattice: Lattice
     internal let whereStatement: Query<Bool>?
-    internal let sortStatement: SortDescriptor<Element>?
+    // Stored as existential to avoid SortDescriptor type metadata link
+    // failure on Linux release builds (swift-foundation bug: internal
+    // AllowedComparison metadata not exported)
+    internal let sortStatement: (any SortComparator)?
+    internal var _sortDescriptor: SortDescriptor<Element>? {
+        sortStatement as? SortDescriptor<Element>
+    }
     internal let boundsConstraint: BoundsConstraint?
     internal let groupByColumn: String?
     internal let distinctByColumn: String?
@@ -24,8 +30,8 @@ public final class TableResults<Element>: Results where Element: Model {
         } else {
             .init()
         }
-        let orderBy: lattice.OptionalString = if let sortStatement, let keyPath = sortStatement.keyPath {
-            lattice.string_to_optional(std.string("\(_name(for: keyPath)) \(sortStatement.order == .forward ? "ASC" : "DESC")"))
+        let orderBy: lattice.OptionalString = if let sd = _sortDescriptor, let keyPath = sd.keyPath {
+            lattice.string_to_optional(std.string("\(_name(for: keyPath)) \(sd.order == .forward ? "ASC" : "DESC")"))
         } else {
             .init()
         }
@@ -63,8 +69,8 @@ public final class TableResults<Element>: Results where Element: Model {
             .init()
         }
 
-        let orderBy: lattice.OptionalString = if let sortStatement, let kp = sortStatement.keyPath {
-            lattice.string_to_optional(std.string("\(_name(for: kp)) \(sortStatement.order == .forward ? "ASC" : "DESC")"))
+        let orderBy: lattice.OptionalString = if let sd = _sortDescriptor, let kp = sd.keyPath {
+            lattice.string_to_optional(std.string("\(_name(for: kp)) \(sd.order == .forward ? "ASC" : "DESC")"))
         } else {
             .init()
         }
@@ -105,7 +111,7 @@ public final class TableResults<Element>: Results where Element: Model {
 
     private var token: AnyCancellable?
 
-    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil, distinctByColumn: String? = nil) {
+    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: (any SortComparator)? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil, distinctByColumn: String? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement
         self.sortStatement = sortStatement
@@ -114,7 +120,7 @@ public final class TableResults<Element>: Results where Element: Model {
         self.distinctByColumn = distinctByColumn
     }
 
-    init(_ lattice: Lattice, whereStatement: Predicate<Element>, sortStatement: SortDescriptor<Element>? = nil) {
+    init(_ lattice: Lattice, whereStatement: Predicate<Element>, sortStatement: (any SortComparator)? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement(Query())
         self.sortStatement = sortStatement
@@ -230,7 +236,7 @@ public final class TableResults<Element>: Results where Element: Model {
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: sortStatement.map {
+            sortStatement: _sortDescriptor.map {
                 RawNearestSortDescriptor($0.keyPath!, order: $0.order)
             },
             boundsConstraint: boundsConstraint,
@@ -288,7 +294,7 @@ public final class TableResults<Element>: Results where Element: Model {
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: sortStatement.map {
+            sortStatement: _sortDescriptor.map {
                 RawNearestSortDescriptor($0.keyPath!, order: $0.order)
             },
             boundsConstraint: boundsConstraint,
@@ -317,7 +323,7 @@ public final class TableResults<Element>: Results where Element: Model {
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: sortStatement.map {
+            sortStatement: _sortDescriptor.map {
                 RawNearestSortDescriptor($0.keyPath!, order: $0.order)
             },
             boundsConstraint: boundsConstraint,
@@ -344,7 +350,7 @@ public final class TableResults<Element>: Results where Element: Model {
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: sortStatement.map {
+            sortStatement: _sortDescriptor.map {
                 RawNearestSortDescriptor($0.keyPath!, order: $0.order)
             },
             boundsConstraint: boundsConstraint,

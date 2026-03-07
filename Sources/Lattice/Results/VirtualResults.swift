@@ -18,7 +18,10 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
 
     private var _lattice: Lattice
     internal let whereStatement: Query<Bool>?
-    internal let sortStatement: SortDescriptor<Element>?
+    internal let sortStatement: (any SortComparator)?
+    internal var _sortDescriptor: SortDescriptor<Element>? {
+        sortStatement as? SortDescriptor<Element>
+    }
     internal let boundsConstraint: BoundsConstraint?
     internal let groupByColumn: String?
     internal let distinctByColumn: String?
@@ -63,7 +66,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         } else {
             .init()
         }
-        let orderBy: lattice.OptionalString = if let sortStatement, let keyPath = sortStatement.keyPath {
+        let orderBy: lattice.OptionalString = if let sd = _sortDescriptor, let keyPath = sd.keyPath {
             {
                 let inst = firstType.init(isolation: #isolation)
                 guard let virtualInst = inst as? Element else {
@@ -71,7 +74,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
                 }
                 _ = virtualInst[keyPath: keyPath]
                 let keyPath = inst._lastKeyPathUsed ?? "id"
-                return lattice.string_to_optional(std.string("\(keyPath) \(sortStatement.order == .forward ? "ASC" : "DESC")"))
+                return lattice.string_to_optional(std.string("\(keyPath) \(sd.order == .forward ? "ASC" : "DESC")"))
             }()
         } else {
             .init()
@@ -95,7 +98,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         return objects
     }
     
-    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: SortDescriptor<Element>? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil, distinctByColumn: String? = nil) {
+    init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: (any SortComparator)? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil, distinctByColumn: String? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement
         self.sortStatement = sortStatement
@@ -104,7 +107,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         self.distinctByColumn = distinctByColumn
     }
 
-    init(_ lattice: Lattice, whereStatement: Predicate<Element>, sortStatement: SortDescriptor<Element>? = nil) {
+    init(_ lattice: Lattice, whereStatement: Predicate<Element>, sortStatement: (any SortComparator)? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement(Query())
         self.sortStatement = sortStatement
@@ -224,7 +227,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         return _VirtualNearestResults<repeat each M, Element>(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: sortStatement.map {
+            sortStatement: _sortDescriptor.map {
                 RawNearestSortDescriptor(descriptor: .keyPath(nameForKeyPath($0.keyPath!)),
                                          order: $0.order)
             },
@@ -297,7 +300,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         return _VirtualNearestResults<repeat each M, Element>(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: sortStatement.map {
+            sortStatement: _sortDescriptor.map {
                 RawNearestSortDescriptor(descriptor: .keyPath(nameForKeyPath($0.keyPath!)),
                                          order: $0.order)
             },
@@ -344,7 +347,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         return _VirtualNearestResults<repeat each M, Element>(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: sortStatement.map {
+            sortStatement: _sortDescriptor.map {
                 RawNearestSortDescriptor(descriptor: .keyPath(nameForKeyPath($0.keyPath!)),
                                          order: $0.order)
             },
