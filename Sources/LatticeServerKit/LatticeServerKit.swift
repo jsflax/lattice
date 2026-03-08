@@ -42,12 +42,12 @@ extension Lattice {
     /// - Parameters:
     ///   - routes: A `RoutesBuilder` (typically already protected by auth middleware)
     ///   - schema: The Lattice model types to sync
-    ///   - storagePath: Subdirectory under Application Support for per-user databases
+    ///   - storageURL: Directory URL for per-user databases. Created if it doesn't exist.
     ///   - userIdExtractor: Closure that extracts the authenticated user's UUID from the request
     public static func configureSyncRelay(
         on routes: any RoutesBuilder,
         for schema: [any Lattice.Model.Type],
-        storagePath: String,
+        storageURL: URL,
         userIdExtractor: @escaping @Sendable (Request) throws -> UUID
     ) {
         let sockets = SocketManager()
@@ -62,17 +62,9 @@ extension Lattice {
                 return
             }
 
-            try? FileManager.default.createDirectory(at: FileManager.default.url(for: .applicationSupportDirectory,
-                                                                                 in: .userDomainMask,
-                                                                                 appropriateFor: nil,
-                                                                                 create: false)
-                .appending(path: storagePath), withIntermediateDirectories: true)
+            try? FileManager.default.createDirectory(at: storageURL, withIntermediateDirectories: true)
 
-            let latticeURL = try? FileManager.default.url(for: .applicationSupportDirectory,
-                                                          in: .userDomainMask,
-                                                          appropriateFor: nil,
-                                                          create: false)
-                .appending(path: storagePath)
+            let latticeURL: URL? = storageURL
                 .appending(path: "\(userId.uuidString).sqlite")
 
             do {
