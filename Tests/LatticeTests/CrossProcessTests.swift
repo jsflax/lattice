@@ -6,12 +6,6 @@ import XCTest
 import SQLite3
 #endif
 
-/// Thread-unsafe sendable box for cross-thread communication in tests.
-private class Box<T>: @unchecked Sendable {
-    var value: T?
-    init(_ value: T? = nil) { self.value = value }
-}
-
 /// XCTest wrapper so `xctest -XCTest` can target the child path.
 /// (`xctest -XCTest` only filters XCTest tests, not Swift Testing @Test.)
 class CrossProcessChildRunner: XCTestCase {
@@ -26,19 +20,14 @@ class CrossProcessChildRunner: XCTestCase {
         let op = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_OP"] ?? "insert"
         switch op {
         case "update":
-            // Find the seeded object and update it
             if let person = lattice.objects(Person.self).where({ $0.name == "ExistingPerson" }).first {
                 person.age = 99
             }
         case "update_audit":
-            // Directly mark AuditLog entries as synced (simulates daemon sync ACK).
-            // This UPDATEs existing rows without creating new AuditLog entries.
-            // Use SQLite3 C API since Lattice doesn't expose raw SQL execution.
             var db: OpaquePointer?
             guard sqlite3_open(childDBPath, &db) == SQLITE_OK else { return }
             defer { sqlite3_close(db) }
             sqlite3_exec(db, "UPDATE AuditLog SET isSynchronized = 1 WHERE isSynchronized = 0", nil, nil, nil)
-            // Post the Darwin notification manually since we bypassed Lattice's write hooks.
             _lattice_post_cross_process_notification(std.string(childDBPath))
         default:
             let p = Person()
@@ -85,7 +74,6 @@ private func childProcessConfig(filter: String = "crossProcessObservation") -> (
     guard let bundlePath = bundle.bundlePath as String?,
           bundlePath.hasSuffix(".xctest") else { return nil }
 
-    // Find xctest binary
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
     proc.arguments = ["-f", "xctest"]
@@ -106,6 +94,23 @@ private func childProcessConfig(filter: String = "crossProcessObservation") -> (
     #endif
 
     return nil
+}
+
+/// Spawns a child process (fire-and-forget from the caller's perspective).
+private func spawnChild(execURL: URL, args: [String], dbPath: String, op: String) {
+    let child = Process()
+    child.executableURL = execURL
+    var env = ProcessInfo.processInfo.environment
+    env["LATTICE_XPROC_CHILD_DB_PATH"] = dbPath
+    env["LATTICE_XPROC_CHILD_OP"] = op
+    for key in env.keys where key.hasPrefix("XCTest") {
+        env.removeValue(forKey: key)
+    }
+    child.environment = env
+    child.arguments = args
+    child.standardOutput = FileHandle.nullDevice
+    child.standardError = FileHandle.nullDevice
+    try! child.run()
 }
 
 @Suite("Cross-Process Observation Tests")
@@ -148,54 +153,27 @@ struct CrossProcessTests {
 
         let person = lattice.objects(Person.self).where { $0.name == "ExistingPerson" }.first!
 
-        // Simulate what @Bindable does: track property access via Observation framework
-        let observationFired = Box<Bool>(false)
-        withObservationTracking {
-            _ = person.age
-        } onChange: {
-            observationFired.value = true
-        }
-
-        // Spawn child to update the person
         guard let (execURL, childArgs) = childProcessConfig(filter: "crossProcessBindableObservation") else {
             Issue.record("Could not determine child process configuration")
             return
         }
 
-        let child = Process()
-        child.executableURL = execURL
-        var env = ProcessInfo.processInfo.environment
-        env["LATTICE_XPROC_CHILD_DB_PATH"] = dbPath
-        env["LATTICE_XPROC_CHILD_OP"] = "update"
-        for key in env.keys where key.hasPrefix("XCTest") {
-            env.removeValue(forKey: key)
-        }
-        child.environment = env
-        child.arguments = childArgs
-        child.standardOutput = FileHandle.nullDevice
-        child.standardError = FileHandle.nullDevice
-
-        try child.run()
-
-        let deadline = Date().addingTimeInterval(10)
-        while child.isRunning && Date() < deadline {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        if child.isRunning {
-            child.terminate()
-            Issue.record("Child process timed out after 10s")
-            return
+        // AsyncStream that yields once when withObservationTracking fires.
+        // `for await` is cancellation-safe — .timeLimit can kill it.
+        let observations = AsyncStream<Void> { stream in
+            withObservationTracking {
+                _ = person.age
+            } onChange: {
+                stream.yield()
+                stream.finish()
+            }
+            spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "update")
         }
 
-        #expect(child.terminationStatus == 0, "Child process failed with exit code \(child.terminationStatus)")
+        var fired = false
+        for await _ in observations { fired = true }
 
-        for _ in 0..<40 {
-            if observationFired.value == true { break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-
-        #expect(observationFired.value == true,
-                "withObservationTracking did not fire — @Bindable would not update from cross-process change")
+        #expect(fired, "withObservationTracking did not fire — @Bindable would not update from cross-process change")
         #expect(person.age == 99, "Expected age 99 after cross-process update, got \(person.age)")
     }
 
@@ -235,67 +213,33 @@ struct CrossProcessTests {
         )
         defer { try? Lattice.delete(for: .init(fileURL: fileURL)) }
 
-        // Seed an initial object
         let initial = Person()
         initial.name = "ExistingPerson"
         initial.age = 1
         lattice.add(initial)
 
-        // Set up observer
-        let observerFired = Box<Bool>(false)
-        let cancellable = lattice.objects(Person.self).observe { change in
-            if case .insert = change {
-                observerFired.value = true
-            }
-        }
-        defer { cancellable.cancel() }
-
-        // Find testing infrastructure
         guard let (execURL, childArgs) = childProcessConfig() else {
             Issue.record("Could not determine child process configuration")
             return
         }
 
-        // Spawn child process
-        let child = Process()
-        child.executableURL = execURL
-        var env = ProcessInfo.processInfo.environment
-        env["LATTICE_XPROC_CHILD_DB_PATH"] = dbPath
-        // Strip Xcode test session vars so the child xctest doesn't try
-        // to connect back to Xcode's test reporter and hang.
-        for key in env.keys where key.hasPrefix("XCTest") {
-            env.removeValue(forKey: key)
-        }
-        child.environment = env
-        child.arguments = childArgs
-
-        child.standardOutput = FileHandle.nullDevice
-        child.standardError = FileHandle.nullDevice
-
-        try child.run()
-
-        // Wait with timeout (10s) to avoid hanging forever
-        let deadline = Date().addingTimeInterval(10)
-        while child.isRunning && Date() < deadline {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        if child.isRunning {
-            child.terminate()
-            Issue.record("Child process timed out after 10s")
-            return
+        var cancellable: AnyCancellable?
+        let changes = AsyncStream<Void> { stream in
+            cancellable = lattice.objects(Person.self).observe { change in
+                if case .insert = change {
+                    stream.yield()
+                    stream.finish()
+                }
+            }
+            spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "insert")
         }
 
-        #expect(child.terminationStatus == 0, "Child process failed with exit code \(child.terminationStatus)")
+        var fired = false
+        for await _ in changes { fired = true }
+        cancellable?.cancel()
 
-        // Poll for the notification to arrive
-        for _ in 0..<40 {
-            if observerFired.value == true { break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
+        #expect(fired, "Cross-process observer did not fire")
 
-        #expect(observerFired.value == true, "Cross-process observer did not fire")
-
-        // Verify the data arrived
         let results = lattice.objects(Person.self).where { $0.name == "FromOtherProcess" }
         #expect(results.count == 1)
         if let found = results.first {
@@ -316,17 +260,19 @@ struct CrossProcessTests {
         defer { try? Lattice.delete(for: .init(fileURL: fileURL)) }
 
         var insertCount = 0
-        var checkedContinuation: CheckedContinuation<Void, Never>?
         var cancellable: AnyCancellable?
 
+        // The observer fires synchronously during add(), so the continuation
+        // resumes immediately — no cancellation risk here.
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            checkedContinuation = continuation
+            var resumed = false
             cancellable = lattice.objects(Person.self).observe { change in
                 if case .insert = change {
                     insertCount += 1
                 }
-                checkedContinuation?.resume()
-                checkedContinuation = nil
+                guard !resumed else { return }
+                resumed = true
+                continuation.resume()
             }
 
             let p = Person()
@@ -335,6 +281,7 @@ struct CrossProcessTests {
             lattice.add(p)
         }
 
+        // Wait a bit to ensure no spurious duplicate notifications arrive
         try await Task.sleep(for: .milliseconds(200))
 
         cancellable?.cancel()
@@ -370,65 +317,32 @@ struct CrossProcessTests {
         )
         defer { try? Lattice.delete(for: .init(fileURL: fileURL)) }
 
-        // Seed and hydrate a live instance
         let seed = Person()
         seed.name = "ExistingPerson"
         seed.age = 1
         lattice.add(seed)
 
-        // Query back to get a managed, hydrated instance
         let person = lattice.objects(Person.self).where { $0.name == "ExistingPerson" }.first!
 
-        // Subscribe to objectWillChange on the live instance
-        let objectWillChangeFired = Box<Bool>(false)
-        let cancellable = person.objectWillChange.sink {
-            objectWillChangeFired.value = true
-        }
-        defer { cancellable.cancel() }
-
-        // Spawn child to update the person
         guard let (execURL, childArgs) = childProcessConfig(filter: "crossProcessObjectObservation") else {
             Issue.record("Could not determine child process configuration")
             return
         }
 
-        let child = Process()
-        child.executableURL = execURL
-        var env = ProcessInfo.processInfo.environment
-        env["LATTICE_XPROC_CHILD_DB_PATH"] = dbPath
-        env["LATTICE_XPROC_CHILD_OP"] = "update"
-        for key in env.keys where key.hasPrefix("XCTest") {
-            env.removeValue(forKey: key)
-        }
-        child.environment = env
-        child.arguments = childArgs
-        child.standardOutput = FileHandle.nullDevice
-        child.standardError = FileHandle.nullDevice
-
-        try child.run()
-
-        let deadline = Date().addingTimeInterval(10)
-        while child.isRunning && Date() < deadline {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        if child.isRunning {
-            child.terminate()
-            Issue.record("Child process timed out after 10s")
-            return
+        var cancellable: AnyCancellable?
+        let changes = AsyncStream<Void> { stream in
+            cancellable = person.objectWillChange.sink {
+                stream.yield()
+                stream.finish()
+            }
+            spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "update")
         }
 
-        #expect(child.terminationStatus == 0, "Child process failed with exit code \(child.terminationStatus)")
+        var fired = false
+        for await _ in changes { fired = true }
+        cancellable?.cancel()
 
-        // Poll for objectWillChange to fire
-        for _ in 0..<40 {
-            if objectWillChangeFired.value == true { break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-
-        #expect(objectWillChangeFired.value == true,
-                "objectWillChange did not fire on hydrated instance from cross-process update")
-
-        // dynamic_object_ref reads through to DB, so value should reflect the update
+        #expect(fired, "objectWillChange did not fire on hydrated instance from cross-process update")
         #expect(person.age == 99, "Expected age 99 after cross-process update, got \(person.age)")
     }
 
@@ -460,66 +374,33 @@ struct CrossProcessTests {
         )
         defer { try? Lattice.delete(for: .init(fileURL: fileURL)) }
 
-        // Seed an object for the child to update
         let initial = Person()
         initial.name = "ExistingPerson"
         initial.age = 1
         lattice.add(initial)
 
-        // Set up observer for updates
-        let updateFired = Box<Bool>(false)
-        let cancellable = lattice.objects(Person.self).observe { change in
-            if case .update = change {
-                updateFired.value = true
-            }
-        }
-        defer { cancellable.cancel() }
-
-        // Find testing infrastructure
         guard let (execURL, childArgs) = childProcessConfig(filter: "crossProcessUpdateObservation") else {
             Issue.record("Could not determine child process configuration")
             return
         }
 
-        // Spawn child process
-        let child = Process()
-        child.executableURL = execURL
-        var env = ProcessInfo.processInfo.environment
-        env["LATTICE_XPROC_CHILD_DB_PATH"] = dbPath
-        env["LATTICE_XPROC_CHILD_OP"] = "update"
-        for key in env.keys where key.hasPrefix("XCTest") {
-            env.removeValue(forKey: key)
-        }
-        child.environment = env
-        child.arguments = childArgs
-
-        child.standardOutput = FileHandle.nullDevice
-        child.standardError = FileHandle.nullDevice
-
-        try child.run()
-
-        // Wait with timeout
-        let deadline = Date().addingTimeInterval(10)
-        while child.isRunning && Date() < deadline {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        if child.isRunning {
-            child.terminate()
-            Issue.record("Child process timed out after 10s")
-            return
+        var cancellable: AnyCancellable?
+        let changes = AsyncStream<Void> { stream in
+            cancellable = lattice.objects(Person.self).observe { change in
+                if case .update = change {
+                    stream.yield()
+                    stream.finish()
+                }
+            }
+            spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "update")
         }
 
-        #expect(child.terminationStatus == 0, "Child process failed with exit code \(child.terminationStatus)")
+        var fired = false
+        for await _ in changes { fired = true }
+        cancellable?.cancel()
 
-        // Poll for the notification to arrive
-        for _ in 0..<40 {
-            if updateFired.value == true { break }
-            try await Task.sleep(for: .milliseconds(50))
-        }
+        #expect(fired, "Cross-process update observer did not fire")
 
-        #expect(updateFired.value == true, "Cross-process update observer did not fire")
-
-        // Verify the data was updated
         let results = lattice.objects(Person.self).where { $0.name == "ExistingPerson" }
         #expect(results.count == 1)
         if let found = results.first {
@@ -556,13 +437,11 @@ struct CrossProcessTests {
         )
         defer { try? Lattice.delete(for: .init(fileURL: fileURL)) }
 
-        // Seed data to create AuditLog entries with isSynchronized = 0
         let p = Person()
         p.name = "SeedPerson"
         p.age = 1
         lattice.add(p)
 
-        // Set up sync filter so pending_sync_entry_count() returns non-zero
         var syncFilter = Lattice.SyncFilter()
         syncFilter.include(Person.self)
         lattice.updateSyncFilter(syncFilter)
@@ -572,33 +451,20 @@ struct CrossProcessTests {
             return
         }
 
-        // Use onSyncProgress (the production API) with a continuation.
-        // The test's timeLimit handles the failure case if the observer never fires.
-        let resumed = Box(false)
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            lattice.onSyncProgress { progress in
-                guard resumed.value != true else { return }
-                resumed.value = true
-                continuation.resume()
+        // Use onSyncProgress (the production API) via AsyncStream.
+        // `for await` is cancellation-safe — .timeLimit can kill it if the
+        // observer never fires, instead of hanging forever.
+        let progress = AsyncStream<Void> { stream in
+            lattice.onSyncProgress { _ in
+                stream.yield()
+                stream.finish()
             }
-
-            // Spawn child that UPDATEs isSynchronized (no new AuditLog rows)
-            let child = Process()
-            child.executableURL = execURL
-            var env = ProcessInfo.processInfo.environment
-            env["LATTICE_XPROC_CHILD_DB_PATH"] = dbPath
-            env["LATTICE_XPROC_CHILD_OP"] = "update_audit"
-            for key in env.keys where key.hasPrefix("XCTest") {
-                env.removeValue(forKey: key)
-            }
-            child.environment = env
-            child.arguments = childArgs
-            child.standardOutput = FileHandle.nullDevice
-            child.standardError = FileHandle.nullDevice
-            try! child.run()
+            spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "update_audit")
         }
 
-        // If we reach here, onSyncProgress fired for a cross-process AuditLog
-        // UPDATE (not INSERT). Without the fix, this test times out.
+        var fired = false
+        for await _ in progress { fired = true }
+
+        #expect(fired, "onSyncProgress did not fire for cross-process AuditLog UPDATE")
     }
 }
