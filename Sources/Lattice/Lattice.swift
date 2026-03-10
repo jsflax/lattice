@@ -659,6 +659,11 @@ public struct Lattice {
         let allTypes = Self.discoverAllTypes(from: schema)
         self.modelTypes = allTypes
 
+        // Register all model types in the global registry for VirtualList type resolution
+        for type in allTypes {
+            ModelTypeRegistry.shared.register(type)
+        }
+
         // Build SchemaVector for C++
         var cxxSchemas = lattice.SchemaVector()
         for modelType in allTypes {

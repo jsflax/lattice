@@ -1,0 +1,134 @@
+import Foundation
+import LatticeSwiftCppBridge
+import LatticeSwiftModule
+
+// MARK: - ModelTypeRegistry
+
+/// Global registry mapping entity names to Model types.
+/// Populated during Lattice initialization; used by VirtualList for type resolution.
+public final class ModelTypeRegistry: @unchecked Sendable {
+    public static let shared = ModelTypeRegistry()
+    private var types: [String: any Model.Type] = [:]
+    private let lock = NSLock()
+
+    public func register(_ type: any Model.Type) {
+        lock.lock()
+        defer { lock.unlock() }
+        types[type.entityName] = type
+    }
+
+    public func resolve(_ entityName: String) -> (any Model.Type)? {
+        lock.lock()
+        defer { lock.unlock() }
+        return types[entityName]
+    }
+}
+
+// MARK: - VirtualList
+
+public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
+                                     RandomAccessCollection, SchemaProperty,
+                                     VirtualListProperty, CxxManaged {
+
+    var linkListRef: lattice.link_list_ref
+
+    public typealias CxxManagedSpecialization = lattice.ManagedLinkList
+
+    public static func fromCxxValue(_ value: CxxManagedSpecialization.SwiftType) -> VirtualList<Element> {
+        return VirtualList<Element>()
+    }
+    public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
+    public func toCxxValue() -> CxxManagedSpecialization.SwiftType {
+        return CxxManagedSpecialization.SwiftType.init()
+    }
+
+    public static func getField(from storage: inout ModelStorage, named name: String) -> VirtualList<Element> {
+        let ref = storage._ref.getLinkList(named: std.string(name))
+        return VirtualList(linkListRef: ref!)
+    }
+
+    public static func setField(on storage: inout ModelStorage, named name: String, _ value: VirtualList<Element>) {
+        // Virtual lists use link tables, nothing to set inline
+    }
+
+    public static func getManagedOptional(from object: lattice.ManagedModel, name: std.string) -> CxxManagedSpecialization {
+        fatalError()
+    }
+    public func setUnmanaged(to object: inout lattice.swift_dynamic_object, name: std.string) {
+        // Virtual lists aren't stored inline - they use link tables
+    }
+    public static func getManaged(from object: lattice.ManagedModel, name: std.string) -> CxxManagedSpecialization {
+        object.get_managed_field(name)
+    }
+
+    public static var anyPropertyKind: AnyProperty.Kind {
+        .string
+    }
+
+    public static var defaultValue: VirtualList<Element> {
+        VirtualList()
+    }
+
+    public init() {
+        self.linkListRef = .create()
+    }
+
+    init(linkListRef: lattice.link_list_ref) {
+        self.linkListRef = linkListRef
+    }
+
+    public var startIndex: Int { 0 }
+
+    public var endIndex: Int {
+        linkListRef.size()
+    }
+
+    public func index(after i: Int) -> Int { i + 1 }
+    public func index(before i: Int) -> Int { i - 1 }
+
+    public subscript(position: Int) -> Element {
+        get {
+            let proxy = linkListRef[position]
+            let ref = proxy.objectRef!
+            let tableName = String(ref.getTableName())
+            guard let modelType = ModelTypeRegistry.shared.resolve(tableName) else {
+                fatalError("Unknown model type for table: \(tableName). Ensure all conforming types are registered with Lattice.")
+            }
+            let object = modelType.init(ref)
+            return object as! Element
+        }
+        set {
+            guard let model = newValue as? any Model else { return }
+            var proxy = linkListRef[position]
+            proxy.assign(model._dynamicObject._ref)
+        }
+    }
+
+    public mutating func append(_ element: Element) {
+        guard let model = element as? any Model else { return }
+        linkListRef.pushBack(model._dynamicObject._ref)
+    }
+
+    public mutating func append<S: Sequence>(contentsOf elements: S) where S.Element == Element {
+        for element in elements {
+            append(element)
+        }
+    }
+
+    public func remove(_ element: Element) {
+        guard let model = element as? any Model else { return }
+        let opt = linkListRef.findIndex(model._dynamicObject._ref)
+        guard opt.hasValue else { return }
+        linkListRef.erase(Int(opt.pointee))
+    }
+
+    public mutating func remove(at position: Int) -> Element {
+        let element = self[position]
+        linkListRef.erase(position)
+        return element
+    }
+
+    public func removeAll() {
+        linkListRef.clear()
+    }
+}

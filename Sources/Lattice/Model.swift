@@ -471,6 +471,40 @@ extension Model {
                                              is_indexed: false)
         }
 
+        let virtualListProperties: [(String, any VirtualListProperty.Type)] = filteredProperties.compactMap {
+            if let vlType = $0.1 as? (any VirtualListProperty.Type) {
+                return ($0.0, vlType)
+            }
+            return nil
+        }
+
+        for (name, _) in virtualListProperties {
+            schema[std.string(name)] = .init(name: std.string(name), type: .integer,
+                                             kind: .virtual_list,
+                                             target_table: .init(),
+                                             link_table: .init(Self.entityName),
+                                             nullable: true, is_vector: false, is_geo_bounds: false,
+                                             is_full_text: false,
+                                             is_indexed: false)
+        }
+
+        let virtualLinkProperties: [(String, VirtualLinkMarker.Type)] = filteredProperties.compactMap {
+            if $0.1 is VirtualLinkMarker.Type {
+                return ($0.0, VirtualLinkMarker.self)
+            }
+            return nil
+        }
+
+        for (name, _) in virtualLinkProperties {
+            schema[std.string(name)] = .init(name: std.string(name), type: .integer,
+                                             kind: .virtual_link,
+                                             target_table: .init(),
+                                             link_table: .init(Self.entityName),
+                                             nullable: true, is_vector: false, is_geo_bounds: false,
+                                             is_full_text: false,
+                                             is_indexed: false)
+        }
+
         return schema
     }
     
@@ -541,6 +575,10 @@ public macro FullText() = #externalMacro(module: "LatticeMacros",
 @attached(accessor, names: arbitrary)
 public macro Property(name mappedTo: String? = nil) = #externalMacro(module: "LatticeMacros",
                                                                      type: "PropertyMacro")
+
+@attached(accessor, names: arbitrary)
+public macro VirtualLinkProperty(name mappedTo: String? = nil) = #externalMacro(
+    module: "LatticeMacros", type: "VirtualLinkPropertyMacro")
 
 
 @attached(peer)

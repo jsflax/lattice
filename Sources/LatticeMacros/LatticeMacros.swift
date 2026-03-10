@@ -28,6 +28,8 @@ private func qualifyTypeReferences(propertyType: String, fullTypePath: String, s
         ("[\(simpleTypeName)]", "[\(fullTypePath)]"),
         // List<Person> -> List<FullPath>
         ("List<\(simpleTypeName)>", "List<\(fullTypePath)>"),
+        // VirtualList<Person> -> VirtualList<FullPath>
+        ("VirtualList<\(simpleTypeName)>", "VirtualList<\(fullTypePath)>"),
         // Standalone Person (exact match only)
         (simpleTypeName, fullTypePath),
     ]
@@ -355,6 +357,34 @@ class PropertyMacro: AccessorMacro, MemberMacro {
     }
 }
 
+class VirtualLinkPropertyMacro: AccessorMacro {
+    static func expansion(of node: AttributeSyntax,
+                          providingAccessorsOf declaration: some DeclSyntaxProtocol,
+                          in context: some MacroExpansionContext) throws -> [AccessorDeclSyntax] {
+        guard let declaration = declaration.as(VariableDeclSyntax.self),
+              let binding = declaration.bindings.first,
+              let id = binding.pattern.as(IdentifierPatternSyntax.self) else { return [] }
+        guard let property = view(for: declaration) else { fatalError() }
+        let name = property.mappedName ?? property.name
+
+        return [
+            """
+            get {
+                _lastKeyPathUsed = "\(raw: name)"
+                _$observationRegistrar.access(self, keyPath: \\.\(id.identifier))
+                return _getVirtualLink(from: &_dynamicObject, named: "\(raw: name)")
+            }
+            set {
+                _$observationRegistrar.withMutation(of: self, keyPath: \\.\(id.identifier)) {
+                    _setVirtualLink(on: &_dynamicObject, named: "\(raw: name)", newValue)
+                }
+                _notifyOtherInstances(propertyName: "\(raw: property.name)")
+            }
+            """
+        ]
+    }
+}
+
 class UniqueMacro: PeerMacro {
     static func expansion(of node: SwiftSyntax.AttributeSyntax, providingPeersOf declaration: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.DeclSyntax] {
         []
@@ -426,6 +456,40 @@ class CodableMacro: ExtensionMacro, MemberMacro {
     }
 }
 
+private func isOptionalExistential(_ type: TypeSyntax) -> Bool {
+    // Check X? where X is (any Protocol)
+    if let optionalType = type.as(OptionalTypeSyntax.self) {
+        let wrapped = optionalType.wrappedType
+        // Direct: any Protocol?
+        if wrapped.as(SomeOrAnyTypeSyntax.self)?.someOrAnySpecifier.text == "any" {
+            return true
+        }
+        // Parenthesized: (any Protocol)?
+        if let tuple = wrapped.as(TupleTypeSyntax.self),
+           tuple.elements.count == 1,
+           tuple.elements.first?.type.as(SomeOrAnyTypeSyntax.self)?.someOrAnySpecifier.text == "any" {
+            return true
+        }
+    }
+    return false
+}
+
+private func isOptionalExistentialString(_ typeStr: String) -> Bool {
+    // Matches patterns like "(any Animal)?", "any Animal?", "(any X.Y)?"
+    let trimmed = typeStr.trimmingCharacters(in: .whitespaces)
+    if trimmed.hasSuffix("?") {
+        let inner = String(trimmed.dropLast())
+        // (any X)?
+        if inner.hasPrefix("(") && inner.hasSuffix(")") {
+            let unwrapped = String(inner.dropFirst().dropLast())
+            return unwrapped.hasPrefix("any ")
+        }
+        // any X?
+        return inner.hasPrefix("any ")
+    }
+    return false
+}
+
 class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
     static func expansion(of node: SwiftSyntax.AttributeSyntax, attachedTo declaration: some SwiftSyntax.DeclGroupSyntax, providingAttributesFor member: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.AttributeSyntax] {
         // Try to cast the member to a variable declaration.
@@ -489,12 +553,14 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         // Check if the variable already has the @Property attribute.
         let attributes = variableDecl.attributes
         for attr in attributes {
-            if let simpleAttr = attr.as(AttributeSyntax.self),
-               simpleAttr.attributeName.description.trimmingCharacters(in: .whitespacesAndNewlines) == "Property"
-                || simpleAttr.attributeName.description.trimmingCharacters(in: .whitespacesAndNewlines) == "Transient" ||
-                simpleAttr.attributeName.as(IdentifierTypeSyntax.self)?.name.text == "Relation" {
-                // Already has @Property or is ignored as @Transient; do nothing.
-                return []
+            if let simpleAttr = attr.as(AttributeSyntax.self) {
+                let attrName = simpleAttr.attributeName.description.trimmingCharacters(in: .whitespacesAndNewlines)
+                if attrName == "Property" || attrName == "VirtualLinkProperty"
+                    || attrName == "Transient"
+                    || simpleAttr.attributeName.as(IdentifierTypeSyntax.self)?.name.text == "Relation" {
+                    // Already has @Property/@VirtualLinkProperty or is ignored as @Transient; do nothing.
+                    return []
+                }
             }
         }
         
@@ -526,6 +592,15 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                 case .getter(let getter):
                     return []
                 }
+            }
+        }
+
+        // Check if this is an optional existential type: (any X)? or any X?
+        // These need @VirtualLinkProperty instead of @Property
+        if let binding = variableDecl.bindings.first,
+           let typeAnn = binding.typeAnnotation {
+            if isOptionalExistential(typeAnn.type) {
+                return ["@VirtualLinkProperty(name: \"\(raw: propertyName)\")"]
             }
         }
 
@@ -628,7 +703,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             
             public var _dynamicObject: ModelStorage = {
                 var obj = ModelStorage._default(\(name.trimmed).self)
-                \(raw: allowedMembers.filter { $0.assignment != nil }.map { "\($0.type).setField(on: &obj, named: \"\($0.mappedName ?? $0.name)\", \($0.assignment ?? ".defaultValue"))" }.joined(separator: "\n\t\t"))
+                \(raw: allowedMembers.filter { $0.assignment != nil && !isOptionalExistentialString($0.type) }.map { "\($0.type).setField(on: &obj, named: \"\($0.mappedName ?? $0.name)\", \($0.assignment ?? ".defaultValue"))" }.joined(separator: "\n\t\t"))
                 return obj
             }()
             
@@ -779,7 +854,12 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             .filter { !$0.isTransient && !$0.isRelation }
             .filter { $0.name != "globalId" }
             .map { member in
-                let qualifiedType = qualifyTypeReferences(propertyType: member.type, fullTypePath: fullTypePath, simpleTypeName: typeName)
+                let qualifiedType: String
+                if isOptionalExistentialString(member.type) {
+                    qualifiedType = "VirtualLinkMarker"
+                } else {
+                    qualifiedType = qualifyTypeReferences(propertyType: member.type, fullTypePath: fullTypePath, simpleTypeName: typeName)
+                }
                 return "(\"\(member.mappedName ?? member.name)\", \(qualifiedType).self)"
             }
         let modelProperties = (["(\"globalId\", UUID.self)"] + userProperties).joined(separator: ", ")
@@ -914,6 +994,7 @@ struct LatticeMacrosPlugin: CompilerPlugin {
         ModelMacro.self, TransientMacro.self, PropertyMacro.self,
 //        LatticeMemberMacro.self,
         UniqueMacro.self, CodableMacro.self, EnumMacro.self, EmbeddedModelMacro.self,
-        VirtualModelMacro.self, FullTextMacro.self, IndexedMacro.self
+        VirtualModelMacro.self, FullTextMacro.self, IndexedMacro.self,
+        VirtualLinkPropertyMacro.self
     ]
 }
