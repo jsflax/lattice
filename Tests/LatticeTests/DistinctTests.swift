@@ -5,16 +5,16 @@ import Testing
 @Suite("Distinct Tests", .serialized)
 class DistinctTests: BaseTest {
 
-    // MARK: - KeyPath tracking for __globalId
+    // MARK: - KeyPath tracking for globalId
 
     @Test func distinct_globalId_keyPathTracking() async throws {
         let lattice = try testLattice(PlainItem.self)
         let item = PlainItem(content: "test", project: "test")
         lattice.add(item)
 
-        // Verify _name(for:) resolves __globalId to "globalId"
+        // Verify _name(for:) resolves globalId to "globalId"
         let results = lattice.objects(PlainItem.self)
-            .distinct(by: \.__globalId)
+            .distinct(by: \.globalId)
             .snapshot()
         // Should return 1 (one unique globalId)
         #expect(results.count == 1)
@@ -84,12 +84,12 @@ class DistinctTests: BaseTest {
         // Simulate overlapping memories across two DBs
         let shared1 = PlainItem(content: "memory1", project: "alpha")
         local.add(shared1)
-        let gid1 = shared1.__globalId!
+        let gid1 = shared1.globalId!
         synced.add(PlainItem(content: "memory1", project: "alpha"), preservingGlobalId: gid1)
 
         let shared2 = PlainItem(content: "memory2", project: "beta")
         local.add(shared2)
-        let gid2 = shared2.__globalId!
+        let gid2 = shared2.globalId!
         synced.add(PlainItem(content: "memory2", project: "beta"), preservingGlobalId: gid2)
 
         // Unique to synced
@@ -104,16 +104,16 @@ class DistinctTests: BaseTest {
         // After dedup: memory1(alpha), memory2(beta), memory3(alpha) = 3 rows
         // After group by project: alpha, beta = 2 groups
         let results = query.objects(PlainItem.self)
-            .distinct(by: \.__globalId)
+            .distinct(by: \.globalId)
             .group(by: \.project)
             .snapshot()
         #expect(results.count == 2)
 
         // distinct by globalId: count should be 3
-        #expect(query.objects(PlainItem.self).distinct(by: \.__globalId).count == 3)
+        #expect(query.objects(PlainItem.self).distinct(by: \.globalId).count == 3)
 
         // distinct by globalId + group by project: count should be 2
-        #expect(query.objects(PlainItem.self).distinct(by: \.__globalId).group(by: \.project).count == 2)
+        #expect(query.objects(PlainItem.self).distinct(by: \.globalId).group(by: \.project).count == 2)
     }
 
     // MARK: - Distinct across attached DBs (the real use case)
@@ -125,7 +125,7 @@ class DistinctTests: BaseTest {
         // Simulate the same item existing in both DBs (same globalId)
         let item = PlainItem(content: "shared item", project: "test")
         local.add(item)
-        let globalId = item.__globalId!
+        let globalId = item.globalId!
 
         // Insert with same globalId into synced DB
         synced.add(PlainItem(content: "shared item", project: "test"), preservingGlobalId: globalId)
@@ -136,7 +136,7 @@ class DistinctTests: BaseTest {
 
         // With distinct by globalId, deduplicates to 1
         let results = query.objects(PlainItem.self)
-            .distinct(by: \.__globalId)
+            .distinct(by: \.globalId)
             .snapshot()
         #expect(results.count == 1)
     }
@@ -148,7 +148,7 @@ class DistinctTests: BaseTest {
         // 2 items in local, 1 overlapping + 1 unique in synced
         let item1 = PlainItem(content: "shared", project: "test")
         local.add(item1)
-        let gid1 = item1.__globalId!
+        let gid1 = item1.globalId!
 
         let item2 = PlainItem(content: "local only", project: "test")
         local.add(item2)
@@ -165,7 +165,7 @@ class DistinctTests: BaseTest {
         #expect(query.objects(PlainItem.self).count == 4)
 
         // With distinct: 3 (shared deduped + local only + synced only)
-        #expect(query.objects(PlainItem.self).distinct(by: \.__globalId).count == 3)
+        #expect(query.objects(PlainItem.self).distinct(by: \.globalId).count == 3)
     }
 
     @Test func distinct_attachedDBs_withWhereClause() async throws {
@@ -175,7 +175,7 @@ class DistinctTests: BaseTest {
         // Overlapping item
         let shared = PlainItem(content: "shared", project: "alpha")
         local.add(shared)
-        let gid = shared.__globalId!
+        let gid = shared.globalId!
 
         synced.add(PlainItem(content: "shared", project: "alpha"), preservingGlobalId: gid)
 
@@ -188,14 +188,14 @@ class DistinctTests: BaseTest {
         // Filter to alpha + distinct: should be 1
         let alphaResults = query.objects(PlainItem.self)
             .where { $0.project == "alpha" }
-            .distinct(by: \.__globalId)
+            .distinct(by: \.globalId)
             .snapshot()
         #expect(alphaResults.count == 1)
 
         // Filter to beta + distinct: 2 (different globalIds)
         let betaResults = query.objects(PlainItem.self)
             .where { $0.project == "beta" }
-            .distinct(by: \.__globalId)
+            .distinct(by: \.globalId)
             .snapshot()
         #expect(betaResults.count == 2)
     }

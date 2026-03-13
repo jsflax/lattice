@@ -22,6 +22,9 @@ public protocol LinkListRef<Element> {
     func removeAll()
     func indexOf(_ element: Element) -> Int?
     func indicesWhere(_ query: String) -> [Int]
+
+    var linkTableName: String { get }
+    var latticeRef: lattice.swift_lattice_ref? { get }
 }
 
 public protocol LinkListable: SchemaProperty {
@@ -77,6 +80,14 @@ public struct ModelLinkListRef<T: Model>: @unchecked Sendable, LinkListRef {
     public func indicesWhere(_ query: String) -> [Int] {
         let results = _ref.findWhere(std.string(query))
         return (0..<results.count).map { Int(results[$0]) }
+    }
+
+    public var linkTableName: String {
+        String(_ref.linkTableName)
+    }
+
+    public var latticeRef: lattice.swift_lattice_ref? {
+        _ref.lattice
     }
 }
 
@@ -141,12 +152,6 @@ public struct List<Element>: MutableCollection, BidirectionalCollection, SchemaP
     }
     public func index(before i: Int) -> Int {
         i - 1
-    }
-    
-    public enum CollectionChange {
-        case insert(Int64)
-        case update(Int64)
-        case delete(Int64)
     }
     
     public var endIndex: Int {
@@ -222,6 +227,18 @@ public struct List<Element>: MutableCollection, BidirectionalCollection, SchemaP
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> any Results<Element> {
         fatalError()
     }
+
+    #if canImport(Combine)
+    /// Observe structural changes (add/remove/reorder) on this list's link table.
+    /// Does NOT fire for child property changes — only link table mutations.
+    public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
+        let linkTableName = linkListRef.linkTableName
+        guard !linkTableName.isEmpty, let latticeRef = linkListRef.latticeRef else {
+            return AnyCancellable {}
+        }
+        return Lattice.observeLinkTable(linkTableName, cxxLattice: latticeRef.get(), block: observer)
+    }
+    #endif
 }
 
 extension List: LinkProperty where Element: Model {

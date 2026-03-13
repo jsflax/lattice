@@ -52,6 +52,14 @@ public struct GeoBoundsLinkListRef<T>: @unchecked Sendable, LinkListRef {
         let results = _ref.findWhere(std.string(query))
         return (0..<results.count).map { Int(results[$0]) }
     }
+
+    public var linkTableName: String {
+        String(_ref.linkTableName)
+    }
+
+    public var latticeRef: lattice.swift_lattice_ref? {
+        _ref.lattice
+    }
 }
 
 /// Unit for geographic distance measurements

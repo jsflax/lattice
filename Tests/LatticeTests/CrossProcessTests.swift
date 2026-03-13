@@ -12,16 +12,23 @@ class CrossProcessChildRunner: XCTestCase {
     func testChildPath() throws {
         guard let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] else { return }
         let fileURL = URL(fileURLWithPath: childDBPath)
-        let lattice = try Lattice(
-            for: [Person.self, Dog.self],
-            configuration: .init(fileURL: fileURL)
-        )
-
         let op = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_OP"] ?? "insert"
+
         switch op {
-        case "update":
-            if let person = lattice.objects(Person.self).where({ $0.name == "ExistingPerson" }).first {
-                person.age = 99
+        case "update", "insert":
+            let lattice = try Lattice(
+                for: [Person.self, Dog.self],
+                configuration: .init(fileURL: fileURL)
+            )
+            if op == "update" {
+                if let person = lattice.objects(Person.self).where({ $0.name == "ExistingPerson" }).first {
+                    person.age = 99
+                }
+            } else {
+                let p = Person()
+                p.name = "FromOtherProcess"
+                p.age = 42
+                lattice.add(p)
             }
         case "update_audit":
             var db: OpaquePointer?
@@ -29,7 +36,34 @@ class CrossProcessChildRunner: XCTestCase {
             defer { sqlite3_close(db) }
             sqlite3_exec(db, "UPDATE AuditLog SET isSynchronized = 1 WHERE isSynchronized = 0", nil, nil, nil)
             _lattice_post_cross_process_notification(std.string(childDBPath))
+        case "append_to_list":
+            let lattice = try Lattice(
+                for: [Person.self, Dog.self, PersonWithDogs.self],
+                configuration: .init(fileURL: fileURL)
+            )
+            if let owner = lattice.objects(PersonWithDogs.self).where({ $0.name == "DogOwner" }).first {
+                let dog = Dog()
+                dog.name = "Buddy"
+                lattice.add(dog)
+                owner.dogs.append(dog)
+            }
+        case "append_to_virtual_list":
+            let lattice = try Lattice(
+                for: [TestDog.self, TestCat.self, TestPersonWithPets.self],
+                configuration: .init(fileURL: fileURL)
+            )
+            if let owner = lattice.objects(TestPersonWithPets.self).where({ $0.label == "PetOwner" }).first {
+                let dog = TestDog()
+                dog.name = "Buddy"
+                dog.breed = "Lab"
+                lattice.add(dog)
+                owner.pets.append(dog as any Animal)
+            }
         default:
+            let lattice = try Lattice(
+                for: [Person.self, Dog.self],
+                configuration: .init(fileURL: fileURL)
+            )
             let p = Person()
             p.name = "FromOtherProcess"
             p.age = 42
@@ -110,6 +144,7 @@ private func spawnChild(execURL: URL, args: [String], dbPath: String, op: String
     child.arguments = args
     child.standardOutput = FileHandle.nullDevice
     child.standardError = FileHandle.nullDevice
+    child.terminationHandler = nil
     try! child.run()
 }
 
@@ -466,5 +501,136 @@ struct CrossProcessTests {
         for await _ in progress { fired = true }
 
         #expect(fired, "onSyncProgress did not fire for cross-process AuditLog UPDATE")
+    }
+
+    /// Tests that a cross-process List<T> append (link table INSERT) triggers
+    /// an observer on the parent model. This is the CanaryBuilder scenario:
+    /// MCP server appends a node to a container's children list, and the
+    /// macOS builder app should see the change.
+    @Test(.timeLimit(.minutes(1)))
+    func crossProcessListAppend() async throws {
+        // ── Child path ──────────────────────────────────────────────
+        if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
+            let fileURL = URL(fileURLWithPath: childDBPath)
+            let lattice = try Lattice(
+                for: [Person.self, Dog.self, PersonWithDogs.self],
+                configuration: .init(fileURL: fileURL)
+            )
+            if let owner = lattice.objects(PersonWithDogs.self).where({ $0.name == "DogOwner" }).first {
+                let dog = Dog()
+                dog.name = "Buddy"
+                lattice.add(dog)
+                owner.dogs.append(dog)
+            }
+            return
+        }
+
+        // ── Parent path ─────────────────────────────────────────────
+        let dbName = "xproc_list_\(UUID().uuidString).sqlite"
+        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let dbPath = fileURL.path(percentEncoded: false)
+
+        let lattice = try Lattice(
+            for: [Person.self, Dog.self, PersonWithDogs.self],
+            configuration: .init(fileURL: fileURL)
+        )
+        defer {
+            try? Lattice.delete(for: .init(fileURL: fileURL))
+        }
+
+        let owner = PersonWithDogs()
+        owner.name = "DogOwner"
+        owner.age = 30
+        lattice.add(owner)
+
+        guard let (execURL, childArgs) = childProcessConfig(filter: "crossProcessListAppend") else {
+            Issue.record("Could not determine child process configuration")
+            return
+        }
+
+        var cancellable: AnyCancellable?
+        let changes = AsyncStream<Void> { stream in
+            cancellable = lattice.objects(PersonWithDogs.self).observe { change in
+                if case .update = change {
+                    stream.yield()
+                    stream.finish()
+                }
+            }
+            spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "append_to_list")
+        }
+
+        var fired = false
+        for await _ in changes { fired = true }
+        cancellable?.cancel()
+
+        #expect(fired, "Cross-process List<T> append did not trigger parent observer — link table notification not resolved")
+
+        let reloaded = lattice.objects(PersonWithDogs.self).where { $0.name == "DogOwner" }.first
+        #expect(reloaded?.dogs.count == 1, "Expected 1 dog after cross-process append, got \(reloaded?.dogs.count ?? 0)")
+    }
+
+    /// Tests that a cross-process VirtualList<any Protocol> append (polymorphic
+    /// link table INSERT) triggers an observer on the parent model.
+    @Test(.timeLimit(.minutes(1)))
+    func crossProcessVirtualListAppend() async throws {
+        // ── Child path ──────────────────────────────────────────────
+        if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
+            let fileURL = URL(fileURLWithPath: childDBPath)
+            let lattice = try Lattice(
+                for: [TestDog.self, TestCat.self, TestPersonWithPets.self],
+                configuration: .init(fileURL: fileURL)
+            )
+            if let owner = lattice.objects(TestPersonWithPets.self).where({ $0.label == "PetOwner" }).first {
+                let dog = TestDog()
+                dog.name = "Buddy"
+                dog.breed = "Lab"
+                lattice.add(dog)
+                owner.pets.append(dog as any Animal)
+            }
+            return
+        }
+
+        // ── Parent path ─────────────────────────────────────────────
+        let dbName = "xproc_vlist_\(UUID().uuidString).sqlite"
+        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let dbPath = fileURL.path(percentEncoded: false)
+
+        let lattice = try Lattice(
+            for: [TestDog.self, TestCat.self, TestPersonWithPets.self],
+            configuration: .init(fileURL: fileURL)
+        )
+        defer { try? Lattice.delete(for: .init(fileURL: fileURL)) }
+
+        let owner = TestPersonWithPets()
+        owner.label = "PetOwner"
+        lattice.add(owner)
+
+        guard let (execURL, childArgs) = childProcessConfig(filter: "crossProcessVirtualListAppend") else {
+            Issue.record("Could not determine child process configuration")
+            return
+        }
+
+        // Observe the TestPersonWithPets collection for updates.
+        // When the child appends to the VirtualList, the polymorphic link
+        // table INSERT should be resolved to a TestPersonWithPets UPDATE.
+        var cancellable: AnyCancellable?
+        let changes = AsyncStream<Void> { stream in
+            cancellable = lattice.objects(TestPersonWithPets.self).observe { change in
+                if case .update = change {
+                    stream.yield()
+                    stream.finish()
+                }
+            }
+            spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "append_to_virtual_list")
+        }
+
+        var fired = false
+        for await _ in changes { fired = true }
+        cancellable?.cancel()
+
+        #expect(fired, "Cross-process VirtualList append did not trigger parent observer — link table notification not resolved")
+
+        let reloaded = lattice.objects(TestPersonWithPets.self).where { $0.label == "PetOwner" }.first
+        #expect(reloaded?.pets.count == 1, "Expected 1 pet after cross-process append, got \(reloaded?.pets.count ?? 0)")
     }
 }

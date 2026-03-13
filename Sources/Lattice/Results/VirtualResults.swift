@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Combine)
+import Combine
+#endif
 import LatticeSwiftCppBridge
 
 extension Lattice {
@@ -12,11 +15,11 @@ public protocol VirtualResults<Element> : Results where UnderlyingElement == Ele
     func _addType<M: Model>(_ type: M.Type) -> any VirtualResults<Element>
 }
 
-public struct _VirtualResults<each M: Model, Element>: VirtualResults {
+public final class _VirtualResults<each M: Model, Element>: VirtualResults, ObservableObject, @unchecked Sendable {
     public typealias UnderlyingElement = Element
     public typealias Models = (repeat each M)
 
-    private var _lattice: Lattice
+    private let _lattice: Lattice
     internal let whereStatement: Query<Bool>?
     internal let sortStatement: (any SortComparator)?
     internal var _sortDescriptor: SortDescriptor<Element>? {
@@ -25,6 +28,16 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
     internal let boundsConstraint: BoundsConstraint?
     internal let groupByColumn: String?
     internal let distinctByColumn: String?
+
+    // MARK: - Observation infrastructure
+    #if canImport(Combine)
+    public var objectWillChange: ResultsChangePublisher {
+        ResultsChangePublisher { [weak self] callback in
+            guard let self else { return AnyCancellable {} }
+            return self.observe { change in callback(change) }
+        }
+    }
+    #endif
 
     public func _addType<Q: Model>(_ type: Q.Type) -> any VirtualResults<Element> {
         _VirtualResults<repeat each M, Q, Element>.init(self._lattice)
@@ -48,7 +61,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         }
         fatalError()
     }
-    
+
     private var tableNames: [String] {
         var tableNames: [String] = []
         for type in repeat (each M).self {
@@ -56,7 +69,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         }
         return tableNames
     }
-    
+
     // Helper to build query parameters - always fetches fresh from DB (live results)
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
         var objects: [Element] = []
@@ -105,6 +118,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         self.boundsConstraint = boundsConstraint
         self.groupByColumn = groupByColumn
         self.distinctByColumn = distinctByColumn
+
     }
 
     init(_ lattice: Lattice, whereStatement: Predicate<Element>, sortStatement: (any SortComparator)? = nil) {
@@ -114,16 +128,17 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         self.boundsConstraint = nil
         self.groupByColumn = nil
         self.distinctByColumn = nil
+
     }
     
     private func constructVirtualQuery<T>(_ t: T.Type) -> some _Query<Element> where T: Model {
         _VirtualQuery<T, Element>()
     }
     
-    public func `where`(_ query: (_VirtualQuery<repeat each M, Element>) -> Query<Bool>) -> Self {
+    public func `where`(_ query: (_VirtualQuery<repeat each M, Element>) -> Query<Bool>) -> _VirtualResults<repeat each M, Element> {
         let types = (repeat (each M).self)
         for t in repeat each types {
-            return Self(_lattice,
+            return _VirtualResults(_lattice,
                         whereStatement: query(_VirtualQuery<repeat each M, Element>()),
                         sortStatement: sortStatement,
                         boundsConstraint: boundsConstraint,
@@ -133,28 +148,28 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         fatalError()
     }
 
-    public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self {
-        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
+    public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> _VirtualResults<repeat each M, Element> {
+        return _VirtualResults(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
-    public func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self {
+    public func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> _VirtualResults<repeat each M, Element> {
         let inst = firstType.init(isolation: #isolation)
         guard let virtualInst = inst as? Element else {
             preconditionFailure()
         }
         _ = virtualInst[keyPath: keyPath]
         let columnName = inst._lastKeyPathUsed ?? "id"
-        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: columnName, distinctByColumn: distinctByColumn)
+        return _VirtualResults(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: columnName, distinctByColumn: distinctByColumn)
     }
 
-    public func distinct<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self {
+    public func distinct<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> _VirtualResults<repeat each M, Element> {
         let inst = firstType.init(isolation: #isolation)
         guard let virtualInst = inst as? Element else {
             preconditionFailure()
         }
         _ = virtualInst[keyPath: keyPath]
         let columnName = inst._lastKeyPathUsed ?? "id"
-        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: columnName)
+        return _VirtualResults(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: columnName)
     }
     
     public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
@@ -255,7 +270,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
         _ keyPath: KeyPath<Element, G>,
         minLat: Double, maxLat: Double,
         minLon: Double, maxLon: Double
-    ) -> Self {
+    ) -> _VirtualResults<repeat each M, Element> {
         let inst = firstType.init(isolation: #isolation)
         guard let virtualInst = inst as? Element else {
             preconditionFailure()
@@ -268,7 +283,7 @@ public struct _VirtualResults<each M: Model, Element>: VirtualResults {
             minLat: minLat, maxLat: maxLat,
             minLon: minLon, maxLon: maxLon
         )
-        return Self(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
+        return _VirtualResults(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: constraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     /// Find objects nearest to a geographic point.

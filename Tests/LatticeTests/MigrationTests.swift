@@ -984,9 +984,9 @@ class MigrationTests: BaseTest {
             lattice.add(nodeC)
 
             // Record globalIds for verification
-            nodeGlobalIds[nodeA.primaryKey!] = nodeA.__globalId!
-            nodeGlobalIds[nodeB.primaryKey!] = nodeB.__globalId!
-            nodeGlobalIds[nodeC.primaryKey!] = nodeC.__globalId!
+            nodeGlobalIds[nodeA.primaryKey!] = nodeA.globalId!
+            nodeGlobalIds[nodeB.primaryKey!] = nodeB.globalId!
+            nodeGlobalIds[nodeC.primaryKey!] = nodeC.globalId!
 
             // Edges referencing nodes by Int64 primaryKey
             let edgeAB = V1Edge()
@@ -1016,11 +1016,11 @@ class MigrationTests: BaseTest {
                     }, { old, new in
                         // Edge: look up source/target Node by old Int64 PK, get globalId
                         if let sourceNode = Migration.lookup(V2Node.self, id: old.sourceId),
-                           let gid = sourceNode.__globalId {
+                           let gid = sourceNode.globalId {
                             new.sourceGlobalId = gid
                         }
                         if let targetNode = Migration.lookup(V2Node.self, id: old.targetId),
-                           let gid = targetNode.__globalId {
+                           let gid = targetNode.globalId {
                             new.targetGlobalId = gid
                         }
                     })
@@ -1037,18 +1037,18 @@ class MigrationTests: BaseTest {
             let nodeB = nodes.first { $0.label == "B" }!
             let nodeC = nodes.first { $0.label == "C" }!
 
-            let edgeAB = edges.first { $0.sourceGlobalId == nodeA.__globalId! }!
-            #expect(edgeAB.targetGlobalId == nodeB.__globalId!)
+            let edgeAB = edges.first { $0.sourceGlobalId == nodeA.globalId! }!
+            #expect(edgeAB.targetGlobalId == nodeB.globalId!)
             #expect(edgeAB.weight == 1.5)
 
-            let edgeBC = edges.first { $0.sourceGlobalId == nodeB.__globalId! }!
-            #expect(edgeBC.targetGlobalId == nodeC.__globalId!)
+            let edgeBC = edges.first { $0.sourceGlobalId == nodeB.globalId! }!
+            #expect(edgeBC.targetGlobalId == nodeC.globalId!)
             #expect(edgeBC.weight == 2.0)
 
             // Verify globalIds match what we recorded in phase 1
-            #expect(nodeA.__globalId == nodeGlobalIds[nodeA.primaryKey!])
-            #expect(nodeB.__globalId == nodeGlobalIds[nodeB.primaryKey!])
-            #expect(nodeC.__globalId == nodeGlobalIds[nodeC.primaryKey!])
+            #expect(nodeA.globalId == nodeGlobalIds[nodeA.primaryKey!])
+            #expect(nodeB.globalId == nodeGlobalIds[nodeB.primaryKey!])
+            #expect(nodeC.globalId == nodeGlobalIds[nodeC.primaryKey!])
         }
     }
 
@@ -1092,9 +1092,9 @@ class MigrationTests: BaseTest {
             lattice.add(mem3)
 
             // Record globalIds for verification
-            memoryGlobalIds[mem1.primaryKey!] = mem1.__globalId!
-            memoryGlobalIds[mem2.primaryKey!] = mem2.__globalId!
-            memoryGlobalIds[mem3.primaryKey!] = mem3.__globalId!
+            memoryGlobalIds[mem1.primaryKey!] = mem1.globalId!
+            memoryGlobalIds[mem2.primaryKey!] = mem2.globalId!
+            memoryGlobalIds[mem3.primaryKey!] = mem3.globalId!
 
             // Edges referencing memories by Int64 primaryKey
             let edge12 = V1Edge()
@@ -1125,7 +1125,7 @@ class MigrationTests: BaseTest {
                     blocks: { old, new in
                         // Look up source memory by old Int64 PK, get globalId
                         if let sourceMem = Migration.lookup(V2Memory.self, id: old.sourceId),
-                           let gid = sourceMem.__globalId {
+                           let gid = sourceMem.globalId {
                             new.sourceGlobalId = gid
                         } else {
                             new.sourceGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
@@ -1133,7 +1133,7 @@ class MigrationTests: BaseTest {
 
                         // Look up target memory by old Int64 PK, get globalId
                         if let targetMem = Migration.lookup(V2Memory.self, id: old.targetId),
-                           let gid = targetMem.__globalId {
+                           let gid = targetMem.globalId {
                             new.targetGlobalId = gid
                         } else {
                             new.targetGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
@@ -1158,21 +1158,21 @@ class MigrationTests: BaseTest {
             let mem2 = memories.first { $0.content == "Second memory" }!
             let mem3 = memories.first { $0.content == "Third memory" }!
 
-            let edge12 = edges.first { $0.sourceGlobalId == mem1.__globalId! }
+            let edge12 = edges.first { $0.sourceGlobalId == mem1.globalId! }
             #expect(edge12 != nil, "Edge from mem1→mem2 not found. Edge sourceGlobalIds: \(edges.map { $0.sourceGlobalId })")
-            #expect(edge12?.targetGlobalId == mem2.__globalId!)
+            #expect(edge12?.targetGlobalId == mem2.globalId!)
             #expect(edge12?.relation == "relates_to")
             #expect(edge12?.createdAt == Date(timeIntervalSince1970: 1000000))
 
-            let edge23 = edges.first { $0.sourceGlobalId == mem2.__globalId! }
+            let edge23 = edges.first { $0.sourceGlobalId == mem2.globalId! }
             #expect(edge23 != nil, "Edge from mem2→mem3 not found")
-            #expect(edge23?.targetGlobalId == mem3.__globalId!)
+            #expect(edge23?.targetGlobalId == mem3.globalId!)
             #expect(edge23?.relation == "part_of")
 
             // Verify globalIds match what we recorded in phase 1
-            #expect(mem1.__globalId == memoryGlobalIds[mem1.primaryKey!])
-            #expect(mem2.__globalId == memoryGlobalIds[mem2.primaryKey!])
-            #expect(mem3.__globalId == memoryGlobalIds[mem3.primaryKey!])
+            #expect(mem1.globalId == memoryGlobalIds[mem1.primaryKey!])
+            #expect(mem2.globalId == memoryGlobalIds[mem2.primaryKey!])
+            #expect(mem3.globalId == memoryGlobalIds[mem3.primaryKey!])
         }
     }
 
@@ -1211,8 +1211,8 @@ class MigrationTests: BaseTest {
             mem2.topic = "test"
             lattice.add(mem2)
 
-            memoryGlobalIds[mem1.primaryKey!] = mem1.__globalId!
-            memoryGlobalIds[mem2.primaryKey!] = mem2.__globalId!
+            memoryGlobalIds[mem1.primaryKey!] = mem1.globalId!
+            memoryGlobalIds[mem2.primaryKey!] = mem2.globalId!
 
             let edge = V1Edge()
             edge.sourceId = mem1.primaryKey!
@@ -1230,14 +1230,14 @@ class MigrationTests: BaseTest {
                     (from: V1Edge.self, to: V2Edge.self),
                     blocks: { old, new in
                         if let sourceMem = Migration.lookup(V2Memory.self, id: old.sourceId),
-                           let gid = sourceMem.__globalId {
+                           let gid = sourceMem.globalId {
                             new.sourceGlobalId = gid
                         } else {
                             new.sourceGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
                         }
 
                         if let targetMem = Migration.lookup(V2Memory.self, id: old.targetId),
-                           let gid = targetMem.__globalId {
+                           let gid = targetMem.globalId {
                             new.targetGlobalId = gid
                         } else {
                             new.targetGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
@@ -1263,8 +1263,8 @@ class MigrationTests: BaseTest {
             let edge = edges.first!
             let mem1 = memories.first { $0.content == "First" }!
             let mem2 = memories.first { $0.content == "Second" }!
-            #expect(edge.sourceGlobalId == mem1.__globalId!)
-            #expect(edge.targetGlobalId == mem2.__globalId!)
+            #expect(edge.sourceGlobalId == mem1.globalId!)
+            #expect(edge.targetGlobalId == mem2.globalId!)
             #expect(edge.relation == "relates_to")
         }
     }
@@ -1402,13 +1402,13 @@ class MigrationTests: BaseTest {
                         (from: V1Edge.self, to: V2Edge.self),
                         blocks: { old, new in
                             if let sourceMem = Migration.lookup(V2Memory.self, id: old.sourceId),
-                               let gid = sourceMem.__globalId {
+                               let gid = sourceMem.globalId {
                                 new.sourceGlobalId = gid
                             } else {
                                 new.sourceGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
                             }
                             if let targetMem = Migration.lookup(V2Memory.self, id: old.targetId),
-                               let gid = targetMem.__globalId {
+                               let gid = targetMem.globalId {
                                 new.targetGlobalId = gid
                             } else {
                                 new.targetGlobalId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!

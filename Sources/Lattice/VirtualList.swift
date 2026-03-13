@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Combine)
+import Combine
+#endif
 import LatticeSwiftCppBridge
 import LatticeSwiftModule
 
@@ -131,4 +134,16 @@ public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
     public func removeAll() {
         linkListRef.clear()
     }
+
+    #if canImport(Combine)
+    /// Observe structural changes (add/remove/reorder) on this list's link table.
+    /// Does NOT fire for child property changes — only link table mutations.
+    public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
+        let linkTableName = String(linkListRef.linkTableName)
+        guard !linkTableName.isEmpty, let latticeRef = linkListRef.lattice else {
+            return AnyCancellable {}
+        }
+        return Lattice.observeLinkTable(linkTableName, cxxLattice: latticeRef.get(), block: observer)
+    }
+    #endif
 }

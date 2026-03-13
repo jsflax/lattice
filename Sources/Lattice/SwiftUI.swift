@@ -159,7 +159,7 @@ struct TestView: View {
         Button("Increment Age") {
             person.age += 1
         }.onAppear {
-            print(person.__globalId)
+            print(person.globalId)
         }.onChange(of: person) { oldValue, newValue in
             print("change")
         }
@@ -174,7 +174,7 @@ struct TestView: View {
         Task.detached { [ref = person.sendableReference] in
             let lattice = try! Lattice(Person.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "preview_lattice.sqlite")))
             let person = ref.resolve(on: lattice)!
-            print(person.__globalId)
+            print(person.globalId)
             while true {
                 try await Task.sleep(for: .seconds(2))
                 person.age += 1

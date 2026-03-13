@@ -68,6 +68,58 @@ class VirtualLinkTests: BaseTest {
         #expect(person.favoritePet == nil)
     }
 
+    @Test func testAddVirtualModel() async throws {
+        let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPet.self)
+
+        let dog = TestDog()
+        dog.name = "Rex"
+        dog.breed = "Lab"
+
+        // Add via existential (any VirtualModel) overload
+        let animal: any Animal = dog
+        lattice.add(animal)
+
+        #expect(lattice.objects(TestDog.self).count == 1)
+        #expect(lattice.objects(TestDog.self).first?.name == "Rex")
+        #expect(lattice.objects(TestDog.self).first?.breed == "Lab")
+    }
+
+    @Test func testDeleteVirtualModel() async throws {
+        let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPet.self)
+
+        let cat = TestCat()
+        cat.name = "Whiskers"
+        lattice.add(cat)
+        #expect(lattice.objects(TestCat.self).count == 1)
+
+        // Delete via existential (any VirtualModel) overload
+        let animal: any Animal = cat
+        lattice.delete(animal)
+        #expect(lattice.objects(TestCat.self).count == 0)
+    }
+
+    @Test func testAddAndDeleteMultipleVirtualTypes() async throws {
+        let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPet.self)
+
+        let animals: [any Animal] = [
+            { let d = TestDog(); d.name = "Rex"; d.breed = "Lab"; return d }(),
+            { let c = TestCat(); c.name = "Whiskers"; c.indoor = true; return c }(),
+            { let d = TestDog(); d.name = "Buddy"; d.breed = "Poodle"; return d }(),
+        ]
+
+        for animal in animals {
+            lattice.add(animal)
+        }
+
+        #expect(lattice.objects(TestDog.self).count == 2)
+        #expect(lattice.objects(TestCat.self).count == 1)
+
+        // Delete first dog via existential
+        lattice.delete(animals[0])
+        #expect(lattice.objects(TestDog.self).count == 1)
+        #expect(lattice.objects(TestDog.self).first?.name == "Buddy")
+    }
+
     @Test func testPersistence() async throws {
         let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPet.self)
         let person = TestPersonWithPet()

@@ -260,7 +260,7 @@ actor ReplicationSlotTests {
     /// via `AuditLog(from: cxx)`, then encodes with `JSONEncoder` for the WebSocket payload.
     /// The client decodes this JSON and feeds it to `receive()` (C++ apply_remote_changes).
     ///
-    /// Bug: `AuditLog(from: cxx)` never copies the C++ entry's globalId to Swift's `__globalId`,
+    /// Bug: `AuditLog(from: cxx)` never copies the C++ entry's globalId to Swift's `globalId`,
     /// so `JSONEncoder` emits `"globalId": null`. The C++ parser treats null as empty string.
     /// When multiple batches arrive, the fast-path dedup (`SELECT id FROM AuditLog WHERE globalId = ?`)
     /// matches the empty-globalId rows from batch 1, causing all subsequent batches to be skipped.

@@ -1,7 +1,10 @@
 import Foundation
+#if canImport(Combine)
+import Combine
+#endif
 import LatticeSwiftCppBridge
 
-public final class TableResults<Element>: Results where Element: Model {
+public final class TableResults<Element>: Results, ObservableObject, @unchecked Sendable where Element: Model {
     public typealias UnderlyingElement = Element
 
     private let _lattice: Lattice
@@ -17,8 +20,11 @@ public final class TableResults<Element>: Results where Element: Model {
     internal let groupByColumn: String?
     internal let distinctByColumn: String?
 
+    // MARK: - Observation infrastructure
+
     // Helper to build query parameters - always fetches fresh from DB (live results)
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
+
         // If we have a bounds constraint, use the spatial query path
         if let bounds = boundsConstraint {
             return snapshotWithBounds(bounds, limit: limit, offset: offset)
@@ -109,8 +115,6 @@ public final class TableResults<Element>: Results where Element: Model {
         return results
     }
 
-    private var token: AnyCancellable?
-
     init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: (any SortComparator)? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil, distinctByColumn: String? = nil) {
         self._lattice = lattice
         self.whereStatement = whereStatement
@@ -153,11 +157,18 @@ public final class TableResults<Element>: Results where Element: Model {
 
     public var startIndex: Int { 0 }
 
-    deinit {
-        token?.cancel()
+    #if canImport(Combine)
+    public var objectWillChange: ResultsChangePublisher {
+        ResultsChangePublisher { [weak self] callback in
+            guard let self else { return AnyCancellable {} }
+            return self.observe { change in callback(change) }
+        }
     }
+    #endif
+
 
     public var endIndex: Int {
+
         let tableName = std.string(Element.entityName)
         let whereClause: lattice.OptionalString = if let whereStatement {
             lattice.string_to_optional(std.string(whereStatement.predicate))

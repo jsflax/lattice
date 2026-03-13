@@ -1284,7 +1284,7 @@ class LatticeTests: BaseTest {
 //        let entry1 = lattice1.objects(AuditLog.self).first
 //        lattice2.applyInstructions(from: lattice1.objects(AuditLog.self).snapshot())
 //        let entry2 = lattice2.objects(AuditLog.self).first
-//        try #require(entry1?.__globalId == entry2?.__globalId)
+//        try #require(entry1?.globalId == entry2?.globalId)
 //        
 //        #expect(lattice1.objects(Person.self).count == 1)
 //        #expect(lattice2.objects(Person.self).count == 1)
@@ -1335,7 +1335,7 @@ class LatticeTests: BaseTest {
         model.email = "invalid"
         
         lattice.add(model)
-        let globalId = model.__globalId
+        let globalId = model.globalId
         
         #expect(lattice.objects(ModelWithConstraints.self).count == 1)
         
@@ -1349,7 +1349,7 @@ class LatticeTests: BaseTest {
         
         #expect(lattice.objects(ModelWithConstraints.self).count == 1)
         #expect(lattice.objects(ModelWithConstraints.self).first?.name == "Bob")
-        #expect(lattice.objects(ModelWithConstraints.self).first?.__globalId == globalId)
+        #expect(lattice.objects(ModelWithConstraints.self).first?.globalId == globalId)
         
         let modelsToAdd = [ModelWithConstraints(), ModelWithConstraints(), ModelWithConstraints()]
         modelsToAdd.enumerated().forEach { (idx, model) in
@@ -1362,7 +1362,7 @@ class LatticeTests: BaseTest {
         
         #expect(lattice.objects(ModelWithConstraints.self).count == 1)
         #expect(lattice.objects(ModelWithConstraints.self).first?.name == "Mary")
-        #expect(lattice.objects(ModelWithConstraints.self).first?.__globalId == globalId)
+        #expect(lattice.objects(ModelWithConstraints.self).first?.globalId == globalId)
     }
     
     @Test func testNestedSchemaDiscoveryForList() throws {
@@ -1828,17 +1828,17 @@ class LatticeTests: BaseTest {
         lattice.add(person2)
 
         // Get the globalId of person1
-        let globalId = person1.__globalId
+        let globalId = person1.globalId
         #expect(globalId != nil, "globalId should be set after adding to lattice")
 
         // Query by globalId
         let results = lattice.objects(Person.self).where {
-            $0.__globalId == globalId
+            $0.globalId == globalId
         }
 
         #expect(results.count == 1)
         #expect(results.first?.name == "Alice")
-        #expect(results.first?.__globalId == globalId)
+        #expect(results.first?.globalId == globalId)
     }
 
     protocol POI: VirtualModel {

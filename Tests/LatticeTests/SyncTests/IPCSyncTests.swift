@@ -540,8 +540,8 @@ actor IPCSyncTests {
         var filter = Lattice.SyncFilter()
         filter.include(SQItem.self, where: alphaPredicate)
         filter.include(SQLink.self) { link in
-            link.sourceGlobalId.in(\SQItem.__globalId, where: alphaPredicate)
-                && link.targetGlobalId.in(\SQItem.__globalId, where: alphaPredicate)
+            link.sourceGlobalId.in(\SQItem.globalId, where: alphaPredicate)
+                && link.targetGlobalId.in(\SQItem.globalId, where: alphaPredicate)
         }
 
         var srcCfg = Lattice.Configuration(fileURL: srcURL)
@@ -563,9 +563,9 @@ actor IPCSyncTests {
         source.add(contentsOf: [a0, a1, b0, secret])
 
         // Create links
-        let aaLink = SQLink(sourceGlobalId: a0.__globalId!, targetGlobalId: a1.__globalId!, label: "aa")
-        let abLink = SQLink(sourceGlobalId: a0.__globalId!, targetGlobalId: b0.__globalId!, label: "ab")
-        let asLink = SQLink(sourceGlobalId: a0.__globalId!, targetGlobalId: secret.__globalId!, label: "as")
+        let aaLink = SQLink(sourceGlobalId: a0.globalId!, targetGlobalId: a1.globalId!, label: "aa")
+        let abLink = SQLink(sourceGlobalId: a0.globalId!, targetGlobalId: b0.globalId!, label: "ab")
+        let asLink = SQLink(sourceGlobalId: a0.globalId!, targetGlobalId: secret.globalId!, label: "as")
         source.add(contentsOf: [aaLink, abLink, asLink])
 
         _ = try await task.value

@@ -717,6 +717,8 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             
             @Property(name: "globalId")
             public var __globalId: UUID?
+
+            public var globalId: UUID? { __globalId }
             
             public var _instanceObservers: [_ModelObserver] = []
             public let _$observationRegistrar = Observation.ObservationRegistrar()
@@ -743,7 +745,9 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                 switch keyPath {
                     \(raw: allowedMembers.map {
                         """
-                        case "\($0.mappedName ?? $0.name)": _$observationRegistrar.willSet(self, keyPath: \\\(name).\($0.name))
+                        case "\($0.mappedName ?? $0.name)":
+                            _$observationRegistrar.willSet(self, keyPath: \\\(name).\($0.name))
+                            _$observationRegistrar.didSet(self, keyPath: \\\(name).\($0.name))
                         """
                     }.joined(separator: "\n\t\t"))
                     default: break

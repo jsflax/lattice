@@ -295,6 +295,47 @@ public enum CollectionChange: Sendable {
     case delete(Int64)
 }
 
+#if canImport(Combine)
+/// A publisher that subscribes to C++ table observers on demand.
+/// Used as `objectWillChange` for Results types — observation is lazy,
+/// only active while SwiftUI (or any Combine subscriber) is subscribed.
+public struct ResultsChangePublisher: Publisher {
+    public typealias Output = Void
+    public typealias Failure = Never
+
+    private let _subscribe: (@escaping (CollectionChange) -> Void) -> AnyCancellable
+
+    init(subscribe: @escaping (@escaping (CollectionChange) -> Void) -> AnyCancellable) {
+        self._subscribe = subscribe
+    }
+
+    public func receive<S: Subscriber>(subscriber: S) where S.Input == Void, S.Failure == Never {
+        let subscription = Subscription(subscriber: subscriber, subscribe: _subscribe)
+        subscriber.receive(subscription: subscription)
+    }
+
+    private final class Subscription<S: Subscriber>: Combine.Subscription where S.Input == Void, S.Failure == Never {
+        private var subscriber: S?
+        private var token: AnyCancellable?
+
+        init(subscriber: S, subscribe: (@escaping (CollectionChange) -> Void) -> AnyCancellable) {
+            self.subscriber = subscriber
+            self.token = subscribe { [weak self] _ in
+                _ = self?.subscriber?.receive(())
+            }
+        }
+
+        func request(_ demand: Subscribers.Demand) {}
+
+        func cancel() {
+            token?.cancel()
+            token = nil
+            subscriber = nil
+        }
+    }
+}
+#endif
+
 @propertyWrapper public struct Relation<EnclosingType: Model, Element: Model> {
     public typealias Value = Results<Element>
     

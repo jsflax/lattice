@@ -488,7 +488,7 @@ actor EngramSyncRealismTests {
                     isPrivate: false
                 )
                 local.add(memory)
-                projectGlobalIds.append(memory.__globalId!)
+                projectGlobalIds.append(memory.globalId!)
             }
             globalIdsByProject[projectName] = projectGlobalIds
 

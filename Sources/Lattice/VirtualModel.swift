@@ -3,6 +3,8 @@ import LatticeSwiftCppBridge
 
 
 public protocol VirtualModel {
+    var primaryKey: Int64? { get }
+    var globalId: UUID? { get }
 }
 
 

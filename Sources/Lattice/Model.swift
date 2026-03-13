@@ -240,7 +240,9 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     static var entityName: String { get }
     static var properties: [(String, any SchemaProperty.Type)] { get }
     var primaryKey: Int64? { get set }
-    var __globalId: UUID? { get }  // Unique identifier for sync across clients
+    var globalId: UUID? { get }
+    @available(*, deprecated, renamed: "globalId")
+    var __globalId: UUID? { get }
 
     var _$observationRegistrar: Observation.ObservationRegistrar { get }
     func _objectWillChange_send()

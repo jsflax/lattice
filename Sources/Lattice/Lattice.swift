@@ -425,9 +425,15 @@ public struct Lattice {
         /// Optional upload filter for this IPC channel.
         public var syncFilter: SyncFilter?
 
-        public init(channel: String, syncFilter: SyncFilter? = nil) {
+        /// Optional explicit socket path. When set, bypasses the default
+        /// platform-specific path resolution. Required when the two processes
+        /// have different HOME directories (e.g. macOS app ↔ iOS simulator).
+        public var socketPath: String?
+
+        public init(channel: String, syncFilter: SyncFilter? = nil, socketPath: String? = nil) {
             self.channel = channel
             self.syncFilter = syncFilter
+            self.socketPath = socketPath
         }
     }
 
@@ -547,6 +553,9 @@ public struct Lattice {
                 for target in ipcTargets {
                     var ipcTarget = lattice.configuration.ipc_target()
                     ipcTarget.channel = std.string(target.channel)
+                    if let socketPath = target.socketPath {
+                        ipcTarget.socket_path = lattice.string_to_optional(std.string(socketPath))
+                    }
                     if let filter = target.syncFilter {
                         var filterEntries = lattice.SyncFilterVector()
                         for (tableName, whereClause) in filter.entries {
@@ -902,6 +911,26 @@ public struct Lattice {
         cxxLattice.add_bulk(&cxxObjects)
     }
 
+    // MARK: Add/Delete for VirtualModel (existential)
+
+    public func add(_ object: any VirtualModel) {
+        guard let model = object as? any Model else {
+            fatalError("VirtualModel type must also conform to Model")
+        }
+        guard model.lattice == nil else { fatalError() }
+        let ref = model._dynamicObject._ref
+        cxxLattice.add(ref)
+        model._dynamicObject._ref = ref
+        model._registerIfNeeded()
+    }
+
+    @discardableResult public func delete(_ object: any VirtualModel) -> Bool {
+        guard let model = object as? any Model else {
+            fatalError("VirtualModel type must also conform to Model")
+        }
+        return cxxLattice.remove(model._dynamicObject._ref)
+    }
+
     func beginObserving<T: Model>(_ object: T) {
     }
     func finishObserving<T: Model>(_ object: T) {
@@ -915,8 +944,8 @@ public struct Lattice {
         return nil
     }
     
-    internal func object<T>(_ type: T.Type = T.self, globalKey: UUID) -> T? where T: Model {
-        let globalIdString = globalKey.uuidString.lowercased()
+    public func object<T>(_ type: T.Type = T.self, globalId: UUID) -> T? where T: Model {
+        let globalIdString = globalId.uuidString.lowercased()
         if let object = cxxLattice.object_by_global_id(std.string(globalIdString), std.string(type.entityName)).value {
             return T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(object.pointee).make_shared()))
         }
@@ -1421,7 +1450,11 @@ public struct Lattice {
                     block(.delete(rowId))
                 }
             case "UPDATE":
-                if let `where` {
+                if rowId == 0 {
+                    // Broadcast: internal table (link/list) change resolved to parent UPDATE.
+                    // No specific row — fire unconditionally for all table-level observers.
+                    block(.update(rowId))
+                } else if let `where` {
                     let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
                     let auditResults = TableResults<AuditLog>(self).where({
                         $0.rowId == rowId && convertedQuery && $0.operation == .update
@@ -1466,7 +1499,47 @@ public struct Lattice {
                                   block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
         observe(modelType, where: `where`?(Query()), block: block)
     }
-    
+
+    /// Observe structural changes on a link table (insert/delete/update rows in the link table itself).
+    /// Used by List.observe and VirtualList.observe for add/remove/reorder notifications.
+    static func observeLinkTable(_ linkTableName: String, cxxLattice: lattice.swift_lattice, block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
+        let tableName = std.string(linkTableName)
+
+        let context = TableObserverContext { operation, rowId, _ in
+            switch operation {
+            case "INSERT":
+                block(.insert(rowId))
+            case "DELETE":
+                block(.delete(rowId))
+            case "UPDATE":
+                block(.update(rowId))
+            default:
+                break
+            }
+        }
+
+        let contextPtr = Unmanaged.passRetained(context).toOpaque()
+
+        let observerId = cxxLattice.add_table_observer(
+            tableName,
+            contextPtr,
+            { (contextPtr, operation, rowId, globalRowId) in
+                guard let contextPtr else { return }
+                let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
+                context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
+            },
+            { ptr in
+                guard let ptr else { return }
+                Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
+            }
+        )
+
+        let token = TableObservationToken(cxxLattice: cxxLattice, tableName: tableName, observerId: observerId)
+        return AnyCancellable {
+            token.cancel()
+        }
+    }
+
     public func beginTransaction(isolation: isolated (any Actor)? = #isolation) {
         // Start the transaction.
         cxxLattice.begin_transaction()

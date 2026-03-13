@@ -104,8 +104,8 @@ extension TableResults {
 }
 
 extension _VirtualResults {
-    public var sendableReference: ResultsThreadSafeReference<Self> {
-        .init(VirtualResultsThreadSafeReference(self) as! (any AnyResultsThreadSafeReference<Self>))
+    public var sendableReference: ResultsThreadSafeReference<_VirtualResults<repeat each M, Element>> {
+        .init(VirtualResultsThreadSafeReference(self) as! (any AnyResultsThreadSafeReference<_VirtualResults<repeat each M, Element>>))
     }
 }
 
