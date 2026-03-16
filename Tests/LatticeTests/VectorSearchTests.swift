@@ -63,6 +63,42 @@ class VectorSearchTests: BaseTest {
         }
     }
 
+    @Test func test_EmptyVectorDoesNotCrashQuery() async throws {
+        let lattice = try testLattice(Document.self)
+
+        // Insert a document with a real vector — creates vec0 table + triggers
+        let doc1 = Document(title: "Has Embedding", embedding: [1.0, 0.0, 0.0])
+        lattice.add(doc1)
+
+        // Insert a document with an empty/default vector — should NOT crash vec0
+        let doc2 = Document(title: "No Embedding")
+        lattice.add(doc2)
+
+        // Query nearest — previously crashed with "zero-length vectors are not supported"
+        let query = FloatVector([1.0, 0.0, 0.0])
+        let nearest = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 5)
+
+        // Only the document with a real embedding should appear in results
+        #expect(nearest.count == 1)
+        #expect(nearest.first?.object.title == "Has Embedding")
+    }
+
+    @Test func test_EmptyQueryVectorDoesNotCrash() async throws {
+        let lattice = try testLattice(Document.self)
+
+        // Insert a document with a real vector
+        lattice.add(Document(title: "Has Embedding", embedding: [1.0, 0.0, 0.0]))
+
+        // Query with an empty vector — should not crash
+        let emptyQuery = FloatVector([])
+        let nearest = lattice.objects(Document.self)
+            .nearest(to: emptyQuery, on: \.embedding, limit: 5)
+
+        // Should return empty results (not crash)
+        #expect(nearest.count == 0)
+    }
+
     @Test func test_VectorDistanceFunctions() async throws {
         let v1 = FloatVector([1.0, 0.0, 0.0])
         let v2 = FloatVector([0.0, 1.0, 0.0])
@@ -354,5 +390,110 @@ class VectorSearchTests: BaseTest {
             .nearest(to: query, on: \.embedding, limit: 5, distance: .cosine)
 
         #expect(nearest.isEmpty)
+    }
+}
+
+// =============================================================================
+// MARK: - Vec0 Lock Storm Regression Test
+// =============================================================================
+
+/// Regression test for "database is locked" storm on _*_embedding_vec tables.
+///
+/// Before the fix, db::execute() treated vec0 DELETE returning SQLITE_ROW as
+/// an error. This caused knn_query reconciliation to fail and retry on every
+/// query — a cascade of lock contention with hundreds of error log lines.
+@Suite("Vec0 Lock Storm Tests")
+class Vec0LockStormTests: BaseTest {
+
+    /// Rapid add + nearest on same Lattice.
+    /// The INSERT trigger fires DELETE+INSERT on vec0 for each add,
+    /// while nearest() may trigger reconciliation if counts diverge.
+    @Test(.timeLimit(.minutes(1)))
+    func test_Vec0RapidAddAndQuery_NoLockErrors() async throws {
+        let lattice = try testLattice(Document.self)
+
+        // Seed initial data
+        for i in 0..<10 {
+            lattice.add(Document(
+                title: "initial-\(i)",
+                embedding: [Float(i) / 10.0, Float(10 - i) / 10.0, 0.5]))
+        }
+
+        // Interleave adds and nearest queries rapidly
+        let query = FloatVector([1.0, 0.0, 0.0])
+        var querySuccesses = 0
+        var addSuccesses = 0
+
+        for i in 0..<100 {
+            if i % 2 == 0 {
+                // Add a document (triggers vec0 INSERT trigger)
+                lattice.add(Document(
+                    title: "rapid-\(i)",
+                    embedding: [Float.random(in: 0...1), Float.random(in: 0...1), Float.random(in: 0...1)]))
+                addSuccesses += 1
+            } else {
+                // Query nearest (may trigger reconciliation)
+                let results = lattice.objects(Document.self)
+                    .nearest(to: query, on: \.embedding, limit: 5)
+                if !results.isEmpty {
+                    querySuccesses += 1
+                }
+            }
+        }
+
+        #expect(addSuccesses == 50)
+        #expect(querySuccesses > 0, "nearest() queries should succeed during rapid adds")
+
+        let total = lattice.objects(Document.self).count
+        #expect(total == 60, "Should have 10 initial + 50 rapid adds = 60 documents, got \(total)")
+    }
+
+    /// Bulk delete + re-add with embeddings (simulates memory consolidation).
+    /// Each remove triggers DELETE on vec0, each add triggers INSERT trigger
+    /// which does DELETE+INSERT. Interleaved nearest() queries must not fail.
+    @Test(.timeLimit(.minutes(1)))
+    func test_Vec0BulkDeleteAndReAdd_NoLockErrors() async throws {
+        let lattice = try testLattice(Document.self)
+
+        // Create 50 documents
+        var docs: [Document] = []
+        for i in 0..<50 {
+            let doc = Document(
+                title: "doc-\(i)",
+                embedding: [Float(i) / 50.0, Float(50 - i) / 50.0, 0.1])
+            lattice.add(doc)
+            docs.append(doc)
+        }
+
+        // Verify nearest works before churn
+        let query = FloatVector([1.0, 0.0, 0.0])
+        let before = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 5)
+        #expect(before.count == 5)
+
+        // Now delete half and re-add new ones (simulates consolidation)
+        for i in 0..<25 {
+            lattice.delete(docs[i])
+        }
+
+        // Query nearest mid-churn — reconciliation fires if vec0 count != model count
+        let mid = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 5)
+        #expect(mid.count == 5, "nearest() should work after deletes, got \(mid.count)")
+
+        // Re-add 25 new docs
+        for i in 0..<25 {
+            lattice.add(Document(
+                title: "new-\(i)",
+                embedding: [Float.random(in: 0...1), Float.random(in: 0...1), Float.random(in: 0...1)]))
+        }
+
+        // Final query
+        let after = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 5)
+        #expect(after.count == 5, "nearest() should work after re-adds, got \(after.count)")
+
+        let total = lattice.objects(Document.self).count
+        #expect(total == 50, "Should have 25 remaining + 25 new = 50 documents, got \(total)")
     }
 }

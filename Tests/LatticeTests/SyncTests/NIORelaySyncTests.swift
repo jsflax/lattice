@@ -48,39 +48,39 @@ actor NIORelaySyncTests {
 
         func addConnection(_ conn: NIOWebSocketConnection) {
             connections[conn.id] = conn
-            fputs("[NIOSyncRelay] addConnection: \(conn.id) lastEventId=\(conn.lastEventId?.uuidString ?? "nil") total=\(connections.count)\n", stderr)
+            print("[NIOSyncRelay] addConnection: \(conn.id) lastEventId=\(conn.lastEventId?.uuidString ?? "nil") total=\(connections.count)\n")
             do {
                 let events = try lattice.eventsAfter(globalId: conn.lastEventId)
-                fputs("[NIOSyncRelay] catch-up: \(events.count) events for \(conn.id)\n", stderr)
+                print("[NIOSyncRelay] catch-up: \(events.count) events for \(conn.id)\n")
                 if !events.isEmpty {
                     let data = try JSONEncoder().encode(ServerSentEvent.auditLog(events))
-                    fputs("[NIOSyncRelay] sending catch-up: \(data.count) bytes to \(conn.id)\n", stderr)
+                    print("[NIOSyncRelay] sending catch-up: \(data.count) bytes to \(conn.id)\n")
                     conn.send(data)
                 }
             } catch {
-                fputs("[NIOSyncRelay] Error sending catch-up: \(error)\n", stderr)
+                print("[NIOSyncRelay] Error sending catch-up: \(error)\n")
             }
         }
 
         func removeConnection(_ id: UUID) {
             connections.removeValue(forKey: id)
-            fputs("[NIOSyncRelay] removeConnection: \(id) remaining=\(connections.count)\n", stderr)
+            print("[NIOSyncRelay] removeConnection: \(id) remaining=\(connections.count)\n")
         }
 
         func handleBinaryFrame(_ data: Data, from sender: UUID) {
             do {
                 let globalIds = try lattice.receive(data)
-                fputs("[NIOSyncRelay] received \(globalIds.count) entries from \(sender), broadcasting to \(connections.count - 1) others\n", stderr)
+                print("[NIOSyncRelay] received \(globalIds.count) entries from \(sender), broadcasting to \(connections.count - 1) others\n")
 
                 let ack = try JSONEncoder().encode(ServerSentEvent.ack(globalIds))
                 connections[sender]?.send(ack)
 
                 for (id, conn) in connections where id != sender {
-                    fputs("[NIOSyncRelay] broadcast \(data.count) bytes to \(id)\n", stderr)
+                    print("[NIOSyncRelay] broadcast \(data.count) bytes to \(id)\n")
                     conn.send(data)
                 }
             } catch {
-                fputs("[NIOSyncRelay] Error handling binary frame: \(error)\n", stderr)
+                print("[NIOSyncRelay] Error handling binary frame: \(error)\n")
             }
         }
 
@@ -190,7 +190,7 @@ actor NIORelaySyncTests {
         case unsupported
     }
 
-    private func startNIOServer(relay: NIOSyncRelay) async throws -> (Channel, Int) {
+    private func startNIOServer(relay: NIOSyncRelay) async throws -> (Channel, Int, MultiThreadedEventLoopGroup) {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 
         let upgrader = NIOWebSocketServerUpgrader(
@@ -239,8 +239,8 @@ actor NIORelaySyncTests {
 
         let channel = try await bootstrap.bind(host: "127.0.0.1", port: 0).get()
         let port = channel.localAddress!.port!
-        fputs("[NIORelaySyncTests] Server bound to port \(port)\n", stderr)
-        return (channel, port)
+        print("[NIORelaySyncTests] Server bound to port \(port)\n")
+        return (channel, port, group)
     }
 
     // MARK: - Tests
@@ -249,10 +249,13 @@ actor NIORelaySyncTests {
     /// Lattice1 inserts data → relay receives & broadcasts → Lattice2 should see it.
     @Test(.timeLimit(.minutes(1))) func test_NIORelayBasicSync() async throws {
         let relay = try NIOSyncRelay(config: serverLatticeConfig)
-        let (serverChannel, port) = try await startNIOServer(relay: relay)
-        defer { try? serverChannel.close().wait() }
+        let (serverChannel, port, eventLoopGroup) = try await startNIOServer(relay: relay)
+        defer {
+            try? serverChannel.close().wait()
+            eventLoopGroup.shutdownGracefully { _ in }
+        }
 
-        fputs("[NIORelaySyncTests] Server running on port \(port)\n", stderr)
+        print("[NIORelaySyncTests] Server running on port \(port)\n")
 
         // Config with sync endpoint pointing to our NIO server
         // authorizationToken is required — is_sync_enabled() checks both url AND token
@@ -287,7 +290,7 @@ actor NIORelaySyncTests {
         // Wait for lattice2 to connect to relay
         try await Task.sleep(for: .seconds(2))
         let connCount1 = await relay.connectionCount
-        fputs("[NIORelaySyncTests] After lattice2 connect: relay has \(connCount1) connections\n", stderr)
+        print("[NIORelaySyncTests] After lattice2 connect: relay has \(connCount1) connections\n")
         #expect(connCount1 >= 1, "Lattice2 should be connected to relay")
 
         // Create lattice1, wait for it to connect, then insert
@@ -310,14 +313,14 @@ actor NIORelaySyncTests {
         // Wait for lattice1 to connect
         try await Task.sleep(for: .seconds(2))
         let connCount2 = await relay.connectionCount
-        fputs("[NIORelaySyncTests] After lattice1 connect: relay has \(connCount2) connections\n", stderr)
+        print("[NIORelaySyncTests] After lattice1 connect: relay has \(connCount2) connections\n")
         #expect(connCount2 >= 2, "Both lattices should be connected to relay")
 
         // Insert on lattice1 (via a separate instance sharing the same DB)
         let inserter = try Lattice(SimpleSyncObject.self, configuration: c1)
         let obj = SimpleSyncObject(value: 42, floatValue: 3.14)
         inserter.add(obj)
-        fputs("[NIORelaySyncTests] Inserted SimpleSyncObject(value: 42) on lattice1\n", stderr)
+        print("[NIORelaySyncTests] Inserted SimpleSyncObject(value: 42) on lattice1\n")
 
         // Wait for receiver to see the synced insert (with timeout)
         let receiver = receiverTask!
@@ -331,7 +334,7 @@ actor NIORelaySyncTests {
         // Check results via a fresh Lattice on lattice2's DB
         let verifier = try Lattice(SimpleSyncObject.self, configuration: c2)
         let objects2 = verifier.objects(SimpleSyncObject.self)
-        fputs("[NIORelaySyncTests] lattice2 SimpleSyncObject count: \(objects2.count)\n", stderr)
+        print("[NIORelaySyncTests] lattice2 SimpleSyncObject count: \(objects2.count)\n")
 
         #expect(objects2.count == 1,
                 "SimpleSyncObject should sync from lattice1 → NIO relay → lattice2. Got \(objects2.count) objects.")
@@ -351,11 +354,14 @@ actor NIORelaySyncTests {
             lattice.add(seedObj)
         }
         let eventCount = try await relay.eventCount()
-        fputs("[NIORelaySyncTests] Server seeded with \(eventCount) events\n", stderr)
+        print("[NIORelaySyncTests] Server seeded with \(eventCount) events\n")
         #expect(eventCount > 0, "Server should have events to send as catch-up")
 
-        let (serverChannel, port) = try await startNIOServer(relay: relay)
-        defer { try? serverChannel.close().wait() }
+        let (serverChannel, port, eventLoopGroup) = try await startNIOServer(relay: relay)
+        defer {
+            try? serverChannel.close().wait()
+            eventLoopGroup.shutdownGracefully { _ in }
+        }
 
         // Client connects AFTER data exists
         let clientConfig = Lattice.Configuration(
@@ -393,7 +399,7 @@ actor NIORelaySyncTests {
         // Verify via a fresh Lattice on the client's DB
         let verifier = try Lattice(SimpleSyncObject.self, configuration: clientConfig)
         let objects = verifier.objects(SimpleSyncObject.self)
-        fputs("[NIORelaySyncTests] Client SimpleSyncObject count after catch-up: \(objects.count)\n", stderr)
+        print("[NIORelaySyncTests] Client SimpleSyncObject count after catch-up: \(objects.count)\n")
 
         #expect(objects.count == 1,
                 "Client should receive catch-up data from NIO relay. Got \(objects.count) objects.")

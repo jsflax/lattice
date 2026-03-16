@@ -1298,15 +1298,26 @@ public struct Lattice {
         }
     }
 
-    /// Start a passive AuditLog-based sync progress observer for cross-process use.
-    /// Called when this process is NOT the sync agent — observes AuditLog table
-    /// changes via Darwin notifications and derives progress from pending count.
+    /// Start a passive sync progress observer for cross-process use.
+    /// Called when this process is NOT the sync agent. Uses the dedicated
+    /// xproc idle hint callback (fires on the xproc background thread)
+    /// instead of an AuditLog table observer, avoiding scheduler dispatch
+    /// to MainActor and the thread pile-ups that caused.
     private func _startPassiveSyncProgressObserver(_ handler: @escaping @Sendable (SyncProgress) -> Void) {
-        let tableName = std.string(AuditLog.entityName)
-        var previousPending = 0
+        // nonisolated(unsafe) because the callback fires on the xproc background
+        // thread, not on this actor. The closure only captures value types after
+        // the first call (previousPending is mutated but only from the serial
+        // xproc callback — no concurrent access).
+        nonisolated(unsafe) var previousPending = 0
+        let cxx = cxxLattice
 
-        let context = TableObserverContext { [self] _, _, _ in
-            let pending = Int(cxxLattice.pending_sync_entry_count())
+        class XprocIdleContext {
+            let callback: () -> Void
+            init(_ callback: @escaping () -> Void) { self.callback = callback }
+        }
+
+        let context = XprocIdleContext { [cxx] in
+            let pending = Int(cxx.pending_sync_entry_count())
             let diff = previousPending - pending
             let acked = max(0, diff)
             previousPending = pending
@@ -1319,17 +1330,15 @@ public struct Lattice {
         }
         let contextPtr = Unmanaged.passRetained(context).toOpaque()
 
-        _ = cxxLattice.add_table_observer(
-            tableName,
+        cxxLattice.set_on_xproc_idle(
             contextPtr,
-            { (contextPtr, operation, rowId, globalRowId) in
-                guard let contextPtr else { return }
-                let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
-                context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<XprocIdleContext>.fromOpaque(ctx).takeUnretainedValue().callback()
             },
-            { ptr in
-                guard let ptr else { return }
-                Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<XprocIdleContext>.fromOpaque(ctx).release()
             }
         )
     }
@@ -1383,7 +1392,15 @@ public struct Lattice {
             // Creating a Lattice runs ensure_tables() which acquires the WAL write lock
             // (via INSERT OR IGNORE). Doing this on every notification blocks the
             // synchronizer's scheduler thread and risks SQLITE_BUSY under load.
-            let queryLattice = try! Lattice(for: modelTypes, configuration: configuration)
+            // Strip sync config — queryLattice only reads AuditLog entries by PK.
+            // Keeping ipcTargets/wssEndpoint would join sync channels, receive a
+            // catchup of existing data, and generate spurious AuditLog entries that
+            // fire observers before the real change arrives.
+            var queryConfig = configuration
+            queryConfig.ipcTargets = nil
+            queryConfig.wssEndpoint = nil
+            queryConfig.authorizationToken = nil
+            let queryLattice = try! Lattice(for: modelTypes, configuration: queryConfig)
 
             let context = TableObserverContext { operation, rowId, globalRowId in
                 log.debug("changeStream: op=\(operation) auditPK=\(rowId) globalId=\(globalRowId)")
@@ -1417,58 +1434,88 @@ public struct Lattice {
         }
     }
 
+    @dynamicCallable struct UnsafeBlock: @unchecked Sendable {
+        let block: (CollectionChange) -> ()
+        
+        func dynamicallyCall(withArguments args: [CollectionChange]) {
+            args.forEach(block)
+        }
+    }
+    
     func observe<T: Model>(_ modelType: T.Type, where: Query<Bool>? = nil,
                            block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
         let tableName = std.string(T.entityName)
+        
+        let block = UnsafeBlock(block: block)
 
-        let context = TableObserverContext { [self] operation, rowId, globalRowId in
-            switch operation {
-            case "INSERT":
-                if let `where` {
-                    let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                    let auditResults = TableResults<AuditLog>(self).where({
-                        $0.rowId == rowId && convertedQuery && $0.operation == .insert
-                    })
-                    if let _ = auditResults.first {
-                        block(.insert(rowId))
-                    }
-                } else {
-                    if self.object(modelType, primaryKey: rowId) != nil {
-                        block(.insert(rowId))
+        // Capture a sendable reference once, rather than resolving on every
+        // notification. Avoids creating a new Lattice (and running
+        // ensure_tables()) per callback, which races with teardown under load.
+        let ref = self.sendableReference
+
+        let context = TableObserverContext { operation, rowId, globalRowId in
+            Task.detached {
+                guard let self = ref.resolve() else {
+                    return
+                }
+
+                let isolation = self.isolation
+                @Sendable func dispatch(_ change: CollectionChange) async {
+                    if let isolation {
+                        await isolation.invoke { _ in block(change) }
+                    } else {
+                        block(change)
                     }
                 }
-            case "DELETE":
-                if let `where` {
-                    let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                    let auditResults = TableResults<AuditLog>(self).where({
-                        $0.rowId == rowId && convertedQuery && $0.operation == .delete
-                    })
-                    if let _ = auditResults.first {
-                        block(.delete(rowId))
+
+                switch operation {
+                case "INSERT":
+                    if let `where` {
+                        let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
+                        let auditResults = TableResults<AuditLog>(self).where({
+                            $0.rowId == rowId && convertedQuery && $0.operation == .insert
+                        })
+                        if let _ = auditResults.first {
+                            await dispatch(.insert(rowId))
+                        }
+                    } else {
+                        if self.object(modelType, primaryKey: rowId) != nil {
+                            await dispatch(.insert(rowId))
+                        }
                     }
-                } else {
-                    block(.delete(rowId))
+                case "DELETE":
+                    if let `where` {
+                        let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
+                        let auditResults = TableResults<AuditLog>(self).where({
+                            $0.rowId == rowId && convertedQuery && $0.operation == .delete
+                        })
+                        if let _ = auditResults.first {
+                            await dispatch(.delete(rowId))
+                        }
+                    } else {
+                        await dispatch(.delete(rowId))
+                    }
+                case "UPDATE":
+                    if rowId == 0 {
+                        // Broadcast: internal table (link/list) change resolved to parent UPDATE.
+                        // No specific row — fire unconditionally for all table-level observers.
+                        await dispatch(.update(rowId))
+                    } else if let `where` {
+                        let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
+                        let auditResults = TableResults<AuditLog>(self).where({
+                            $0.rowId == rowId && convertedQuery && $0.operation == .update
+                        })
+                        if let _ = auditResults.first {
+                            await dispatch(.update(rowId))
+                        }
+                    } else {
+                        if self.object(modelType, primaryKey: rowId) != nil {
+                            await dispatch(.update(rowId))
+                        }
+                    }
+                default:
+                    break
                 }
-            case "UPDATE":
-                if rowId == 0 {
-                    // Broadcast: internal table (link/list) change resolved to parent UPDATE.
-                    // No specific row — fire unconditionally for all table-level observers.
-                    block(.update(rowId))
-                } else if let `where` {
-                    let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                    let auditResults = TableResults<AuditLog>(self).where({
-                        $0.rowId == rowId && convertedQuery && $0.operation == .update
-                    })
-                    if let _ = auditResults.first {
-                        block(.update(rowId))
-                    }
-                } else {
-                    if self.object(modelType, primaryKey: rowId) != nil {
-                        block(.update(rowId))
-                    }
-                }
-            default:
-                break
             }
         }
 
@@ -1676,5 +1723,11 @@ extension Lattice {
 
     public static func setLogLevel(_ level: LogLevel) {
         lattice.set_log_level(lattice.log_level(rawValue: level.rawValue) ?? .off)
+    }
+
+    /// Direct log output to a file instead of stderr.
+    /// Pass nil to revert to stderr. Caller owns the FILE* lifetime.
+    public static func setLogFile(_ file: UnsafeMutablePointer<FILE>?) {
+        lattice.set_log_file(file)
     }
 }

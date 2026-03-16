@@ -439,7 +439,8 @@ extension Model {
                                              nullable: property is (any OptionalProtocol.Type),
                                              is_vector: false, is_geo_bounds: true,
                                              is_full_text: false,
-                                             is_indexed: false)
+                                             is_indexed: false,
+                                             is_unique: false, column_name: .init())
         }
 
         for (name, property) in primitiveProperties {
@@ -459,7 +460,9 @@ extension Model {
                                              nullable: property is (any OptionalProtocol.Type),
                                              is_vector: isVector, is_geo_bounds: false,
                                              is_full_text: isFullText,
-                                             is_indexed: isIndexed)
+                                             is_indexed: isIndexed,
+                                             is_unique: false,
+                                             column_name: .init())
         }
 
         for (name, property) in linkProperties {
@@ -470,7 +473,8 @@ extension Model {
                                              link_table: .init(Self.entityName),
                                              nullable: true, is_vector: isVector, is_geo_bounds: false,
                                              is_full_text: false,
-                                             is_indexed: false)
+                                             is_indexed: false,
+                                             is_unique: false, column_name: .init())
         }
 
         let virtualListProperties: [(String, any VirtualListProperty.Type)] = filteredProperties.compactMap {
@@ -487,7 +491,8 @@ extension Model {
                                              link_table: .init(Self.entityName),
                                              nullable: true, is_vector: false, is_geo_bounds: false,
                                              is_full_text: false,
-                                             is_indexed: false)
+                                             is_indexed: false,
+                                             is_unique: false, column_name: .init())
         }
 
         let virtualLinkProperties: [(String, VirtualLinkMarker.Type)] = filteredProperties.compactMap {
@@ -504,7 +509,8 @@ extension Model {
                                              link_table: .init(Self.entityName),
                                              nullable: true, is_vector: false, is_geo_bounds: false,
                                              is_full_text: false,
-                                             is_indexed: false)
+                                             is_indexed: false,
+                                             is_unique: false, column_name: .init())
         }
 
         return schema

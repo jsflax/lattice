@@ -23,6 +23,55 @@ import Vapor
     }
 }
 
+// Helper actors for truly concurrent vec0 tests.
+// Each resolves from a sendableRef → separate Lattice instance (different SQLite connection).
+private actor Vec0Writer {
+    let lattice: Lattice
+
+    init(ref: LatticeThreadSafeReference) throws {
+        guard let l = ref.resolve() else { throw LatticeError.missingLatticeContext }
+        self.lattice = l
+    }
+
+    func seed(count: Int) {
+        for i in 0..<count {
+            lattice.add(SyncVectorObject(
+                label: "seed-\(i)",
+                embedding: [Float(i) / Float(count), Float(count - i) / Float(count), 0.5]))
+        }
+    }
+
+    func writeDocuments(count: Int) async throws {
+        for i in 0..<count {
+            lattice.add(SyncVectorObject(
+                label: "doc-\(i)",
+                embedding: [Float(i) / Float(count), Float(count - i) / Float(count), 0.1]))
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
+private actor Vec0Reader {
+    let lattice: Lattice
+
+    init(ref: LatticeThreadSafeReference) throws {
+        guard let l = ref.resolve() else { throw LatticeError.missingLatticeContext }
+        self.lattice = l
+    }
+
+    func queryNearest(count: Int) async throws -> Int {
+        let query = FloatVector([1.0, 0.0, 0.0])
+        var successes = 0
+        for _ in 0..<count {
+            let results = lattice.objects(SyncVectorObject.self)
+                .nearest(to: query, on: \.embedding, limit: 5)
+            if !results.isEmpty { successes += 1 }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        return successes
+    }
+}
+
 @Suite("IPC Sync Tests")
 actor IPCSyncTests {
     let sourceURL = FileManager.default.temporaryDirectory
@@ -126,8 +175,6 @@ actor IPCSyncTests {
         target.add(IPCNote(title: "from target"))
         try await task2.value
 
-        // Use snapshot() to avoid "count differed in successive traversals" —
-        // the lazy Results cursor can see concurrent IPC writes mid-iteration.
         let sourceNotes = source.objects(IPCNote.self).snapshot()
         #expect(sourceNotes.count == 2)
         let sourceTitles = sourceNotes.map(\.title).sorted()
@@ -481,6 +528,9 @@ actor IPCSyncTests {
     // =========================================================================
     @Test(.timeLimit(.minutes(1)))
     func test_IPCSync_BlobColumnRoundTrip() async throws {
+        Lattice.setLogLevel(.debug)
+        defer { Lattice.setLogLevel(.warn) }
+
         let channel = "ipc-blob-\(String.random(length: 8))"
 
         let sourceURL = FileManager.default.temporaryDirectory
@@ -517,8 +567,141 @@ actor IPCSyncTests {
             #expect(Swift.abs(a - b) < 0.001, "Embedding mismatch: \(a) vs \(b)")
         }
 
+        // Verify nearest() works on synced vec0 data.
+        // IPC sync applies changes via a separate sync db connection whose vec0
+        // triggers populate the vec0 shadow tables. The target's connection should
+        // see these via WAL. If nearest() returns empty, vec0 shadow table writes
+        // from the sync connection may not be visible to the target's connection.
+        let query = FloatVector(embedding)
+        let nearest = target.objects(SyncVectorObject.self)
+            .nearest(to: query, on: \.embedding, limit: 1)
+
+        // Diagnostic: if nearest is empty, try a local insert to confirm vec0 works
+        // on the target's own connection
+        if nearest.isEmpty {
+            let localObj = SyncVectorObject(label: "local", embedding: [0.0, 0.0, 0.0, 0.0, 0.0])
+            target.add(localObj)
+            let localNearest = target.objects(SyncVectorObject.self)
+                .nearest(to: FloatVector([0.0, 0.0, 0.0, 0.0, 0.0]), on: \.embedding, limit: 5)
+            print("[VEC0] nearest after local insert: \(localNearest.count) results")
+            for r in localNearest {
+                print("[VEC0]   \(r.object.label): distance=\(r.distance)")
+            }
+        }
+
+        #expect(nearest.count == 1, "Synced vec0 data should be queryable via nearest()")
+        #expect(nearest.first?.object.label == "blob test")
+        #expect((nearest.first?.distance ?? 999) < 0.001, "Exact match should have ~0 distance")
+
         try? Lattice.delete(for: srcCfg)
         try? Lattice.delete(for: tgtCfg)
+    }
+
+    // =========================================================================
+    // Test: Vec0 lock storm — bulk IPC sync with vectors + concurrent nearest()
+    // =========================================================================
+    /// Reproduces the Engram scenario: IPC sync with vec0 data + concurrent nearest().
+    /// Before the fix, apply_remote_changes didn't call ensure_vec0_table, so triggers
+    /// never populated vec0 on the target — every nearest() triggered full reconciliation.
+    @Test(.timeLimit(.minutes(2)))
+    func test_IPCSync_Vec0BulkWithConcurrentNearest_NoLockStorm() async throws {
+        Lattice.setLogLevel(.warn)
+
+        let channel = "ipc-vec0storm-\(String.random(length: 8))"
+
+        let srcURL = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 30)).sqlite")
+        let tgtURL = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 30)).sqlite")
+        defer {
+            try? Lattice.delete(for: .init(fileURL: srcURL))
+            try? Lattice.delete(for: .init(fileURL: tgtURL))
+        }
+
+        var srcCfg = Lattice.Configuration(fileURL: srcURL)
+        srcCfg.ipcTargets = [.init(channel: channel)]
+        let source = try Lattice(SyncVectorObject.self, configuration: srcCfg)
+
+        var tgtCfg = Lattice.Configuration(fileURL: tgtURL)
+        tgtCfg.ipcTargets = [.init(channel: channel)]
+        let target = try Lattice(SyncVectorObject.self, configuration: tgtCfg)
+
+        // Seed one object so vec0 table exists on source
+        source.add(SyncVectorObject(label: "seed", embedding: [1.0, 0.0, 0.0]))
+
+        // Wait for seed to arrive at target
+        try await Task.sleep(for: .seconds(1))
+
+        // Bulk-add 50 objects with embeddings on source — IPC syncs them to target
+        for i in 0..<50 {
+            source.add(SyncVectorObject(
+                label: "doc-\(i)",
+                embedding: [Float(i) / 50.0, Float(50 - i) / 50.0, 0.1]))
+        }
+
+        // Query nearest() on target while sync writes are arriving
+        let query = FloatVector([1.0, 0.0, 0.0])
+        var queryResults = 0
+        for _ in 0..<20 {
+            let results = target.objects(SyncVectorObject.self)
+                .nearest(to: query, on: \.embedding, limit: 5)
+            if !results.isEmpty { queryResults += 1 }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+
+        // Wait for sync to finish
+        try await Task.sleep(for: .seconds(2))
+
+        print("Nearest query successes: \(queryResults)/20")
+        #expect(queryResults > 0, "nearest() should return results during IPC sync")
+
+        let targetCount = target.objects(SyncVectorObject.self).count
+        print("Target document count: \(targetCount)")
+        #expect(targetCount >= 20, "Target should have received documents via IPC sync, got \(targetCount)")
+    }
+
+    // =========================================================================
+    // Test: Multiple connections to same DB — vec0 lock storm
+    // =========================================================================
+    /// Reproduces the Engram scenario exactly:
+    /// - Connection A writes documents with embeddings on one actor
+    /// - Connection B queries nearest() on a different actor (truly concurrent)
+    /// - Connection B's vec0 index is stale → count mismatch → reconciliation
+    /// - Reconciliation contends with Connection A's writes → lock storm
+    @Test(.timeLimit(.minutes(2)))
+    func test_MultiConnection_Vec0LockStorm() async throws {
+        Lattice.setLogLevel(.error)
+        defer { Lattice.setLogLevel(.warn) }
+
+        let dbURL = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 30)).sqlite")
+        let config = Lattice.Configuration(fileURL: dbURL)
+        defer { try? Lattice.delete(for: config) }
+
+        // Create the initial Lattice + seed data
+        let base = try Lattice(SyncVectorObject.self, configuration: config)
+        for i in 0..<10 {
+            base.add(SyncVectorObject(
+                label: "seed-\(i)",
+                embedding: [Float(i) / 10.0, Float(10 - i) / 10.0, 0.1]))
+        }
+
+        // sendableRef → each actor resolves its own Lattice (separate SQLite connection)
+        let ref = base.sendableReference
+
+        let writerActor = try Vec0Writer(ref: ref)
+        let readerActor = try Vec0Reader(ref: ref)
+
+        // Run writer and reader on separate actors — truly concurrent, separate connections
+        async let writesDone: () = writerActor.writeDocuments(count: 50)
+        async let queryResults: Int = readerActor.queryNearest(count: 30)
+
+        _ = try await writesDone
+        let successes = try await queryResults
+
+        print("--- Multi-connection vec0 test results ---")
+        print("Nearest query successes: \(successes)/30")
+        #expect(successes > 0, "nearest() should succeed on reader while writer is active")
     }
 
     // =========================================================================

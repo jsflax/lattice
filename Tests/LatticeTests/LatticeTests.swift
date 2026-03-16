@@ -161,10 +161,19 @@ func testLattice(isolation: isolated (any Actor)? = #isolation,
 }
 
 class BaseTest {
+    private static let logFile: UnsafeMutablePointer<FILE>? = {
+        let f = fopen("/tmp/lattice_swift_tests.log", "w")
+        if let f {
+            Lattice.setLogFile(f)
+        }
+        return f
+    }()
+
     init() {
+        _ = Self.logFile // ensure log file is opened once
         lattice_set_log_level(lattice.log_level.warn)
     }
-    
+
     deinit {
         paths.forEach { try? Lattice.delete(for: .init(fileURL: $0)) }
     }

@@ -1,6 +1,10 @@
 import Foundation
 import Testing
+#if canImport(SQLite3)
 import SQLite3
+#elseif canImport(CSQLite)
+import CSQLite
+#endif
 @testable import Lattice
 
 /// Helper to check if a table exists in a SQLite database file.
