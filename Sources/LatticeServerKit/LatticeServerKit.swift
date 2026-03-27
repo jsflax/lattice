@@ -51,7 +51,7 @@ extension Lattice {
         userIdExtractor: @escaping @Sendable (Request) throws -> UUID
     ) {
         let sockets = SocketManager()
-
+        nonisolated(unsafe) let schema = schema
         routes.webSocket("sync", maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 300 * 1024 * 1024)) { req, ws in
             let userId: UUID
             do {
@@ -66,7 +66,7 @@ extension Lattice {
 
             let latticeURL: URL? = storageURL
                 .appending(path: "\(userId.uuidString).sqlite")
-
+            
             do {
                 try await Task {
                     guard let lattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
@@ -75,18 +75,14 @@ extension Lattice {
                         return
                     }
                     
-                    let encodedChunks: [Data] = try {
-                        let events = try lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-                        print(">>> Bringing user up to date with \(events.count) events")
-                        return try events.chunked(into: 1000).map { events in
-                            try JSONEncoder().encode(ServerSentEvent.auditLog(events))
-                        }
-                    }()
-                    
-                    if !encodedChunks.isEmpty {
-                        print(">>> Sending chunks")
-                        for chunk in encodedChunks {
-                            await ws.send(ByteBuffer(data: chunk))
+                    let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
+                    let count = events.count
+                    if count > 0 {
+                        print(">>> Bringing user up to date with \(count) events")
+                        for i in stride(from: 0, to: count, by: 1000) {
+                            let page = events[i..<min(count, i + 1000)]
+                            let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
+                            await ws.send(ByteBuffer(data: encoded))
                         }
                     }
                 }.value

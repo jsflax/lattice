@@ -110,7 +110,7 @@ extension AuditLog {
 // ============================================================================
 
 public enum ServerSentEvent: Codable {
-    case auditLog([AuditLog])
+    case auditLog(any Sequence<AuditLog>)
     case ack([UUID])
 
     private enum CodingKeys: String, CodingKey {
@@ -139,7 +139,7 @@ public enum ServerSentEvent: Codable {
         switch self {
         case .auditLog(let logs):
             try container.encode("auditLog", forKey: .kind)
-            try container.encode(logs, forKey: .auditLog)
+            try container.encode(Array(logs), forKey: .auditLog)
         case .ack(let ids):
             try container.encode("ack", forKey: .kind)
             try container.encode(ids, forKey: .ack)
@@ -182,20 +182,20 @@ extension Lattice {
         return result
     }
     
-    /// Get audit log events after a checkpoint (for server-side sync)
-    public func eventsAfter(globalId: UUID?) throws -> [AuditLog] {
-        let cxxEntries: lattice.AuditLogEntryVector
+    /// Get audit log events after a checkpoint as a lazy query.
+    /// Use `snapshot(limit:offset:)` to paginate without loading all entries into memory.
+    public func eventsAfter(globalId: UUID?) -> TableResults<AuditLog> {
+        var results = objects(AuditLog.self)
+            .sortedBy(.init(\.primaryKey, order: .forward))
         if let globalId {
-            cxxEntries = cxxLattice.events_after(
-                lattice.string_to_optional(std.string(globalId.uuidString.lowercased())))
-        } else {
-            cxxEntries = cxxLattice.events_after(lattice.OptionalString())
-        }
-
-        // Convert C++ entries to Swift AuditLog
-        var results: [AuditLog] = []
-        for entry in cxxEntries {
-            results.append(AuditLog(from: entry))
+            let checkpointId = objects(AuditLog.self)
+                .where { $0.globalId == globalId }
+                .snapshot(limit: 1)
+                .first?
+                .primaryKey
+            if let checkpointId {
+                results = results.where { $0.primaryKey > checkpointId }
+            }
         }
         return results
     }

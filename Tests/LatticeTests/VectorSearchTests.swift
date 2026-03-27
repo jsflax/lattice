@@ -1,6 +1,9 @@
 import Foundation
 import Lattice
 import Testing
+#if os(macOS)
+import SQLite3
+#endif
 #if canImport(NaturalLanguage)
 import NaturalLanguage
 #endif
@@ -390,6 +393,301 @@ class VectorSearchTests: BaseTest {
             .nearest(to: query, on: \.embedding, limit: 5, distance: .cosine)
 
         #expect(nearest.isEmpty)
+    }
+}
+
+// =============================================================================
+// MARK: - Vec0 Orphan Rowid Regression Test
+// =============================================================================
+
+/// Regression test: deleting a model row via Lattice leaves orphan entries in
+/// the vec0 backing table (_*_embedding_vec_rowids). The DELETE trigger fires
+/// but vec0 DELETE is unreliable inside triggers — the shadow table deletion
+/// silently fails, so the rowid and its chunk slot persist indefinitely.
+///
+/// Over time this bloats the vec0 chunk storage (each orphan reserves a full
+/// chunk slot of ~1.5 MB for 384-dim vectors). In production this grew the
+/// memory.sqlite vec0 index to 2.66 GB for only 10K live memories.
+@Suite("Vec0 Orphan Tests")
+class Vec0OrphanTests: BaseTest {
+
+    @Test func test_deleteLeaves_vec0OrphanRowids() async throws {
+        let lattice = try testLattice(Document.self)
+        let dbPath = lattice.configuration.fileURL.path(percentEncoded: false)
+
+        // Insert 5 documents with embeddings
+        for i in 0..<5 {
+            lattice.add(Document(
+                title: "doc-\(i)",
+                embedding: [Float(i), Float(5 - i), 0.5]))
+        }
+
+        // Verify model table and vec0 rowids are in sync
+        let modelCountBefore = lattice.objects(Document.self).count
+        #expect(modelCountBefore == 5)
+
+        let rowidsBefore = sqlite3Count(dbPath: dbPath,
+            table: "_Document_embedding_vec_rowids")
+        #expect(rowidsBefore == 5, "vec0 rowids should match model count before delete")
+
+        // Delete 3 documents via Lattice (fires DELETE trigger)
+        let toDelete = Array(lattice.objects(Document.self).prefix(3))
+        for doc in toDelete {
+            lattice.delete(doc)
+        }
+
+        // Model table should have 2 rows
+        let modelCountAfter = lattice.objects(Document.self).count
+        #expect(modelCountAfter == 2)
+
+        // Check vec0 rowids — if trigger DELETE works, should be 2.
+        // If trigger DELETE silently fails (the known bug), will be 5.
+        let rowidsAfter = sqlite3Count(dbPath: dbPath,
+            table: "_Document_embedding_vec_rowids")
+
+        // This documents the bug: orphan rowids accumulate
+        if rowidsAfter > modelCountAfter {
+            // Bug confirmed: vec0 DELETE inside trigger left orphans
+            let orphans = rowidsAfter - modelCountAfter
+            print("vec0 orphan rowids detected: \(orphans) orphans "
+                + "(\(rowidsAfter) rowids for \(modelCountAfter) live rows)")
+
+            // nearest() still returns correct results (joins back to model)
+            // but scans all chunks including orphans — O(total) not O(live)
+            let query = FloatVector([1.0, 0.0, 0.0])
+            let results = lattice.objects(Document.self)
+                .nearest(to: query, on: \.embedding, limit: 10)
+            #expect(results.count == modelCountAfter,
+                "nearest() should only return live rows despite orphan rowids")
+        }
+
+        // Mark expected failure until the fix lands
+        #expect(rowidsAfter == modelCountAfter,
+            "vec0 rowids should equal model count after delete — orphans indicate trigger-based DELETE silently failed")
+    }
+
+    /// Simulate the IPC sync path: local DB writes a memory, then the synced DB
+    /// relays a DELETE back via apply_remote_changes (inside a transaction).
+    /// This is the production path for cross-device deletes.
+    @Test func test_ipcSyncDelete_leaves_vec0OrphanRowids() async throws {
+        // Two DBs: local writes, synced receives from cloud and IPC-syncs back
+        let localPath = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 32))-local.sqlite")
+        let syncedPath = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 32))-synced.sqlite")
+
+        // Configure synced DB with IPC (this is the production setup)
+        var syncedConfig = Lattice.Configuration(fileURL: syncedPath)
+        syncedConfig.ipcTargets = [.init(channel: "test-orphan-\(String.random(length: 8))")]
+
+        let local = try Lattice(Document.self, configuration: .init(fileURL: localPath))
+        let synced = try Lattice(Document.self, configuration: syncedConfig)
+
+        let dbPath = localPath.path(percentEncoded: false)
+
+        // Insert 5 docs into local
+        for i in 0..<5 {
+            local.add(Document(
+                title: "doc-\(i)",
+                embedding: [Float(i), Float(5 - i), 0.5]))
+        }
+
+        // Verify vec0 is populated
+        let rowidsBefore = sqlite3Count(dbPath: dbPath,
+            table: "_Document_embedding_vec_rowids")
+        #expect(rowidsBefore == 5)
+
+        // Wait a moment for IPC sync to propagate local → synced
+        try await Task.sleep(for: .seconds(2))
+
+        // Check if synced DB received the data
+        let syncedCount = synced.objects(Document.self).count
+        print("Synced DB has \(syncedCount) documents after IPC sync")
+
+        // Now delete 3 docs from LOCAL (simulating what happens when
+        // a cross-device delete arrives via WSS → synced → IPC → local)
+        let toDelete = Array(local.objects(Document.self).prefix(3))
+        for doc in toDelete {
+            local.delete(doc)
+        }
+
+        let modelCountAfter = local.objects(Document.self).count
+        #expect(modelCountAfter == 2)
+
+        let rowidsAfter = sqlite3Count(dbPath: dbPath,
+            table: "_Document_embedding_vec_rowids")
+
+        if rowidsAfter > modelCountAfter {
+            print("IPC sync context left \(rowidsAfter - modelCountAfter) orphan vec0 rowids")
+        }
+
+        #expect(rowidsAfter == modelCountAfter,
+            "Delete in IPC sync context should not leave orphan vec0 rowids")
+
+        // Cleanup
+        try? Lattice.delete(for: .init(fileURL: localPath))
+        try? Lattice.delete(for: .init(fileURL: syncedPath))
+    }
+
+    @Test func test_deleteWhere_leaves_vec0OrphanRowids() async throws {
+        let lattice = try testLattice(Document.self)
+        let dbPath = lattice.configuration.fileURL.path(percentEncoded: false)
+
+        for i in 0..<5 {
+            lattice.add(Document(
+                title: "doc-\(i)",
+                embedding: [Float(i), Float(5 - i), 0.5]))
+        }
+
+        let rowidsBefore = sqlite3Count(dbPath: dbPath,
+            table: "_Document_embedding_vec_rowids")
+        #expect(rowidsBefore == 5)
+
+        // Bulk delete via delete(where:) — the path used by MemoryTools.forget
+        lattice.delete(Document.self, where: { $0.title == "doc-0" || $0.title == "doc-1" || $0.title == "doc-2" })
+
+        let modelCountAfter = lattice.objects(Document.self).count
+        #expect(modelCountAfter == 2)
+
+        let rowidsAfter = sqlite3Count(dbPath: dbPath,
+            table: "_Document_embedding_vec_rowids")
+
+        if rowidsAfter > modelCountAfter {
+            print("delete(where:) left \(rowidsAfter - modelCountAfter) orphan vec0 rowids")
+        }
+
+        #expect(rowidsAfter == modelCountAfter,
+            "vec0 rowids should equal model count after delete(where:)")
+    }
+
+    @Test func test_multiConnection_deleteLeaves_vec0OrphanRowids() async throws {
+        // Simulate production: connection A writes, connection B deletes.
+        let path = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 32)).sqlite")
+
+        let connA = try Lattice(Document.self, configuration: .init(fileURL: path))
+        let connB = try Lattice(Document.self, configuration: .init(fileURL: path))
+        let dbPath = path.path(percentEncoded: false)
+
+        // Insert on connection A
+        for i in 0..<5 {
+            connA.add(Document(
+                title: "doc-\(i)",
+                embedding: [Float(i), Float(5 - i), 0.5]))
+        }
+
+        // Verify connection B sees the rows
+        let countB = connB.objects(Document.self).count
+        #expect(countB == 5)
+
+        // Delete on connection B
+        let toDelete = Array(connB.objects(Document.self).prefix(3))
+        for doc in toDelete {
+            connB.delete(doc)
+        }
+
+        let modelCountAfter = connB.objects(Document.self).count
+        #expect(modelCountAfter == 2)
+
+        // Check vec0 rowids — cross-connection DELETE may leave orphans
+        let rowidsAfter = sqlite3Count(dbPath: dbPath,
+            table: "_Document_embedding_vec_rowids")
+
+        if rowidsAfter > modelCountAfter {
+            print("Multi-connection delete left \(rowidsAfter - modelCountAfter) orphan vec0 rowids")
+        }
+
+        #expect(rowidsAfter == modelCountAfter,
+            "Cross-connection delete should not leave orphan vec0 rowids")
+
+        // Cleanup
+        try? Lattice.delete(for: .init(fileURL: path))
+    }
+
+    /// Root cause reproduction: when a Lattice uses attaching() to create a
+    /// UNION ALL view over local + synced DBs, the knn_query reconciliation
+    /// reads from the combined view but writes into the local-only vec0 index.
+    /// This inserts vec0 entries for synced-only memories that don't exist in
+    /// the local Memory table, creating permanent orphans.
+    @Test func test_attachedLattice_reconcileCreatesOrphans() async throws {
+        let localPath = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 32)).sqlite")
+        let syncedPath = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 32)).sqlite")
+
+        let local = try Lattice(Document.self, configuration: .init(fileURL: localPath))
+        let synced = try Lattice(Document.self, configuration: .init(fileURL: syncedPath))
+        let dbPath = localPath.path(percentEncoded: false)
+
+        // Insert 3 docs in local, 5 docs in synced
+        for i in 0..<3 {
+            local.add(Document(
+                title: "local-\(i)",
+                embedding: [Float(i), 0.0, 1.0]))
+        }
+        for i in 0..<5 {
+            synced.add(Document(
+                title: "synced-\(i)",
+                embedding: [0.0, Float(i), 1.0]))
+        }
+
+        // Create the attached (UNION ALL) view — this is what readLattice()
+        // returns for synced projects in production
+        let combined = local.attaching(lattice: synced)
+
+        // Verify combined view sees all 8 docs
+        let combinedCount = combined.objects(Document.self).count
+        #expect(combinedCount == 8)
+
+        // Run nearest() — this triggers knn_query which does reconciliation.
+        // The reconcile compares COUNT(*) from the UNION ALL view (8) against
+        // the local vec0 count (3), sees mismatch, and inserts all 8 into
+        // the local vec0 — including the 5 synced-only memories.
+        let query = FloatVector([1.0, 0.0, 0.0])
+        let _ = combined.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 5)
+
+        // Check local vec0 rowids — should be 3 (local only).
+        // Use sqlite3 directly to get the true local Memory count, because
+        // the Lattice instance may still resolve to the UNION ALL view.
+        let rowidsAfter = sqlite3Count(dbPath: dbPath,
+            table: "_Document_embedding_vec_rowids")
+        let localMemoryCount = sqlite3Count(dbPath: dbPath, table: "Document")
+
+        if rowidsAfter > localMemoryCount {
+            let orphans = rowidsAfter - localMemoryCount
+            print("Attached reconcile created \(orphans) orphan vec0 rowids "
+                + "(\(rowidsAfter) rowids for \(localMemoryCount) local memories)")
+        }
+
+        #expect(rowidsAfter == localMemoryCount,
+            "vec0 should only contain entries for local memories, not synced ones")
+
+        // Cleanup
+        try? Lattice.delete(for: .init(fileURL: localPath))
+        try? Lattice.delete(for: .init(fileURL: syncedPath))
+    }
+
+    // MARK: - SQLite helper
+
+    /// Open the DB file directly and count rows in a backing table.
+    /// This bypasses Lattice to inspect vec0 shadow table state.
+    private func sqlite3Count(dbPath: String, table: String) -> Int {
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            return -1
+        }
+        defer { sqlite3_close(db) }
+
+        var stmt: OpaquePointer?
+        let sql = "SELECT COUNT(*) FROM \(table)"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            return -1
+        }
+        defer { sqlite3_finalize(stmt) }
+
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return -1 }
+        return Int(sqlite3_column_int64(stmt, 0))
     }
 }
 

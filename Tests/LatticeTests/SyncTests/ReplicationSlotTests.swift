@@ -277,7 +277,7 @@ actor ReplicationSlotTests {
         }
 
         // Get events through the same path the server uses
-        let events = try lattice.eventsAfter(globalId: nil)
+        let events = lattice.eventsAfter(globalId: nil)
         #expect(events.count >= 5, "Should have at least 5 audit log entries")
 
         // Encode to JSON (same as ServerSentEvent.auditLog does)

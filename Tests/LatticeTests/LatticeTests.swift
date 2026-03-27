@@ -70,7 +70,8 @@ struct Embedded: EmbeddedModel {
     var stringOpt: String?
     var stringArray: [String]
     var stringArrayOpt: [String]?
-
+    var stringOptArrayOpt: [String?]?
+    
     // MARK: - UUID
     var uuid: UUID
     var uuidOpt: UUID?
@@ -231,7 +232,8 @@ class LatticeTests: BaseTest {
         obj.stringOpt = "Optional String"
         obj.stringArray = ["one", "two", "three"]
         obj.stringArrayOpt = ["opt1", "opt2"]
-
+        obj.stringOptArrayOpt = ["opt1", nil]
+        
         // UUID
         obj.uuid = testUUID
         obj.uuidOpt = UUID()
@@ -291,7 +293,8 @@ class LatticeTests: BaseTest {
         #expect(retrieved.stringOpt == "Optional String")
         #expect(retrieved.stringArray == ["one", "two", "three"])
         #expect(retrieved.stringArrayOpt == ["opt1", "opt2"])
-
+        #expect(retrieved.stringOptArrayOpt == ["opt1", nil])
+        
         // UUID
         #expect(retrieved.uuid == testUUID)
         #expect(retrieved.uuidOpt != nil)

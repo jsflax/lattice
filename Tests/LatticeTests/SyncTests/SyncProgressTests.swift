@@ -71,10 +71,14 @@ actor SyncProgressTests {
             }
 
             let lattice = try! Lattice(configuration: syncedLatticeConfiguration)
-            let events = try! lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-            print("[SERVER:SyncProgress] Sending \(events.count) initial events to new connection")
-            let encoded = events.isEmpty ? nil : try! JSONEncoder().encode(ServerSentEvent.auditLog(events))
-            encoded.map { encoded in ws.send(ByteBuffer(data: encoded)) }
+            let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
+            let count = events.count
+            print("[SERVER:SyncProgress] Sending \(count) initial events to new connection")
+            for i in stride(from: 0, to: count, by: 1000) {
+                let page = events[i..<min(count, i + 1000)]
+                let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(page))
+                ws.send(ByteBuffer(data: encoded))
+            }
         }
     }
 

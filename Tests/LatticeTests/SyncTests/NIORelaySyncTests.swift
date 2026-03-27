@@ -50,10 +50,12 @@ actor NIORelaySyncTests {
             connections[conn.id] = conn
             print("[NIOSyncRelay] addConnection: \(conn.id) lastEventId=\(conn.lastEventId?.uuidString ?? "nil") total=\(connections.count)\n")
             do {
-                let events = try lattice.eventsAfter(globalId: conn.lastEventId)
-                print("[NIOSyncRelay] catch-up: \(events.count) events for \(conn.id)\n")
-                if !events.isEmpty {
-                    let data = try JSONEncoder().encode(ServerSentEvent.auditLog(events))
+                let events = lattice.eventsAfter(globalId: conn.lastEventId)
+                let count = events.count
+                print("[NIOSyncRelay] catch-up: \(count) events for \(conn.id)\n")
+                for i in stride(from: 0, to: count, by: 1000) {
+                    let page = events[i..<min(count, i + 1000)]
+                    let data = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
                     print("[NIOSyncRelay] sending catch-up: \(data.count) bytes to \(conn.id)\n")
                     conn.send(data)
                 }
@@ -90,7 +92,7 @@ actor NIORelaySyncTests {
         }
 
         func eventCount() throws -> Int {
-            try lattice.eventsAfter(globalId: nil).count
+            lattice.eventsAfter(globalId: nil).count
         }
     }
 

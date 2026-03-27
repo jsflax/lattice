@@ -1005,6 +1005,16 @@ public struct Lattice {
         cxxLattice.checkpoint()
     }
 
+    /// Drop and rebuild the vec0 index, purging orphan entries that bloat chunk storage.
+    @discardableResult
+    public func _vacuumVec0<T: Model, V>(_ model: T, for keyPath: KeyPath<T, V>) -> Int64 {
+        let tableName = T.entityName
+        let t = T.init(isolation: #isolation)
+        _ = t[keyPath: keyPath]
+        let column = t._lastKeyPathUsed
+        return Int64(cxxLattice.vacuum_vec0(std.string(tableName), std.string(column)))
+    }
+
     /// Rebuilds the database file, reclaiming disk space from deleted rows
     /// and eliminating fragmentation. Temporarily closes the read connection
     /// to obtain exclusive access.
@@ -1729,5 +1739,34 @@ extension Lattice {
     /// Pass nil to revert to stderr. Caller owns the FILE* lifetime.
     public static func setLogFile(_ file: UnsafeMutablePointer<FILE>?) {
         lattice.set_log_file(file)
+    }
+    
+    /// Direct log output to a file instead of stderr.
+    /// Pass nil to revert to stderr. Caller owns the FILE* lifetime.
+    public static func setLogFile(_ fileURL: URL) {
+        // Ensure the file exists before trying to open a handle for it
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            FileManager.default.createFile(atPath: fileURL.path, contents: nil, attributes: nil)
+        } else {
+            try? FileManager.default.removeItem(atPath: fileURL.path)
+            FileManager.default.createFile(atPath: fileURL.path, contents: nil, attributes: nil)
+        }
+        
+        guard let fileHandle = try? FileHandle(forWritingTo: fileURL) else {
+            return print("Failed to fdopen file descriptor")
+        }
+
+        // 2. Get the file descriptor
+        let fileDescriptor = fileHandle.fileDescriptor
+
+        // 3. Use fdopen to get a C FILE pointer (UnsafeMutablePointer<FILE>)
+        //    Specify the mode, e.g., "w" for writing.
+        if let cFilePointer = fdopen(fileDescriptor, "w") {
+            // You now have a FILE* and can use C standard library functions like fwrite or fprintf
+            lattice.set_log_file(cFilePointer)
+            print("Log file path: \(fileURL.path)")
+        } else {
+            print("Failed to fdopen file descriptor")
+        }
     }
 }

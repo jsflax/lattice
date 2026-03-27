@@ -69,9 +69,13 @@ actor IPCCloudRelayTests {
                 }
             }
             let lattice = try! Lattice(configuration: serverConfigCopy)
-            let events = try! lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-            let encoded = events.isEmpty ? nil : try! JSONEncoder().encode(ServerSentEvent.auditLog(events))
-            encoded.map { encoded in ws.send(ByteBuffer(data: encoded)) }
+            let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
+            let count = events.count
+            for i in stride(from: 0, to: count, by: 1000) {
+                let page = events[i..<min(count, i + 1000)]
+                let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(page))
+                ws.send(ByteBuffer(data: encoded))
+            }
         }
 
         try await app.startup()

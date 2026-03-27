@@ -73,6 +73,8 @@ class VirtualListJunctionTableTests: BaseTest {
     /// from Lattice A, then import them into Lattice B (which has never locally
     /// written to any VirtualList). This mimics the SyncRelay/macOS app scenario.
     @Test func test_receiveVirtualListEventsWithoutLocalWrite() async throws {
+        Lattice.setLogFile(.temporaryDirectory.appending(path: "vtests-lattice.log"))
+        Lattice.setLogLevel(.debug)
         // --- Lattice A: create objects and append to VirtualList ---
         let latticeA = try testLattice(TestDog.self, TestCat.self, TestPersonWithPets.self)
 
@@ -96,11 +98,15 @@ class VirtualListJunctionTableTests: BaseTest {
         #expect(person.pets.count == 2, "Sanity check: local VirtualList works")
 
         // Export all events from Lattice A
-        let events = try latticeA.eventsAfter(globalId: nil)
+        let events = latticeA.eventsAfter(globalId: nil)
         #expect(!events.isEmpty, "Should have audit log events")
 
         // Verify events include junction table entries
         let junctionEvents = events.filter { $0.tableName.hasPrefix("_TestPersonWithPets") }
+        for junctionEvent in junctionEvents {
+            print(junctionEvent.changedFields)
+            print(junctionEvent.changedFieldsNames)
+        }
         #expect(!junctionEvents.isEmpty, "Should have junction table events for VirtualList append")
 
         // --- Lattice B: fresh instance, same schema, no local writes ---
@@ -151,7 +157,13 @@ class VirtualListJunctionTableTests: BaseTest {
             person.pets.append(dog as any Animal)
         }
 
-        let events = try source.eventsAfter(globalId: nil)
+        let events = source.eventsAfter(globalId: nil)
+        for event in events {
+            print("[DIAG] table=\(event.tableName) op=\(event.operation) globalRowId=\(event.globalRowId?.uuidString ?? "nil") changedFields=\(event.changedFields.count) changedFieldsNames=\(event.changedFieldsNames?.count ?? -1)")
+            for (k, v) in event.changedFields {
+                print("[DIAG]   field: \(k) = \(v)")
+            }
+        }
         let data = try JSONEncoder().encode(ServerSentEvent.auditLog(events))
 
         // --- Relay Lattice: same schema, mimics SyncRelay ---

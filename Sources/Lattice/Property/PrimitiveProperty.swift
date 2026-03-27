@@ -259,20 +259,37 @@ public enum AnyProperty: PrimitiveProperty, Codable, Sendable {
     }
 
     public init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        let kind = try container.decode(Kind.self, forKey: .kind)
-        do {
-            switch kind {
-            case .int: self = .int(try container.decode(Int.self, forKey: .value))
-            case .int64: self = .int64(try container.decode(Int64.self, forKey: .value))
-            case .string: self = .string(try container.decode(String.self, forKey: .value))
-            case .date: self = .date(try container.decode(Date.self, forKey: .value))
-            case .data: self = .data(try container.decode(Data.self, forKey: .value))
-            case .float: self = .float(try container.decode(Float.self, forKey: .value))
-            case .double: self = .double(try container.decode(Double.self, forKey: .value))
-            case .null: self = .null
+        // Typed format: {"kind": <int>, "value": <val>}
+        if let container = try? decoder.container(keyedBy: CodingKeys.self),
+           let kind = try? container.decode(Kind.self, forKey: .kind) {
+            do {
+                switch kind {
+                case .int: self = .int(try container.decode(Int.self, forKey: .value))
+                case .int64: self = .int64(try container.decode(Int64.self, forKey: .value))
+                case .string: self = .string(try container.decode(String.self, forKey: .value))
+                case .date: self = .date(try container.decode(Date.self, forKey: .value))
+                case .data: self = .data(try container.decode(Data.self, forKey: .value))
+                case .float: self = .float(try container.decode(Float.self, forKey: .value))
+                case .double: self = .double(try container.decode(Double.self, forKey: .value))
+                case .null: self = .null
+                }
+            } catch {
+                self = .null
             }
-        } catch {
+            return
+        }
+
+        // Raw value fallback (flat JSON from SQLite audit log triggers)
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let v = try? container.decode(Int.self) {
+            self = .int(v)
+        } else if let v = try? container.decode(Double.self) {
+            self = .double(v)
+        } else if let v = try? container.decode(String.self) {
+            self = .string(v)
+        } else {
             self = .null
         }
     }
