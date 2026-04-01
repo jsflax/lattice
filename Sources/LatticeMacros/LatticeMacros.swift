@@ -47,7 +47,11 @@ private func qualifyTypeReferences(propertyType: String, fullTypePath: String, s
 private struct MemberView {
     let name: String
     var mappedName: String?
+    var codingKey: String?
+    var isCodableIgnored: Bool = false
     let type: String
+    let unwrappedType: String
+    var isOptional: Bool = false
     var attributeKey: String?
     var isTransient: Bool {
         attributeKey == "@Transient"
@@ -86,14 +90,17 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
     }
 
     // Unwrap implicitly unwrapped optionals (e.g., String! -> String)
+    let isOptional = type.is(OptionalTypeSyntax.self)
     let unwrappedType: TypeSyntax
-    if let iuo = type.as(ImplicitlyUnwrappedOptionalTypeSyntax.self) {
+    if let optional = type.as(OptionalTypeSyntax.self) {
+        unwrappedType = optional.wrappedType
+    } else if let iuo = type.as(ImplicitlyUnwrappedOptionalTypeSyntax.self) {
         unwrappedType = iuo.wrappedType
     } else {
         unwrappedType = type
     }
 
-    var memberView = MemberView(name: "\(identifier.trimmed)", type: unwrappedType.trimmedDescription, attributeKey: nil)
+    var memberView = MemberView(name: "\(identifier.trimmed)", type: type.trimmedDescription, unwrappedType: unwrappedType.trimmedDescription, isOptional: isOptional, attributeKey: nil)
 
     // Extract attributeKey if available.
 //    if let attribute = decl.attributes.first?.as(AttributeSyntax.self),
@@ -142,6 +149,21 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
             }
         }
     }
+    // Check for @CodingKey("...") and @CodableIgnored attributes
+    for attr in decl.attributes {
+        if let simpleAttr = attr.as(AttributeSyntax.self) {
+            let attrName = simpleAttr.attributeName.as(IdentifierTypeSyntax.self)?.name.text
+            if attrName == "CodingKey",
+               let arguments = simpleAttr.arguments?.as(LabeledExprListSyntax.self),
+               let firstArg = arguments.first,
+               let strLit = firstArg.expression.as(StringLiteralExprSyntax.self) {
+                memberView.codingKey = strLit.representedLiteralValue
+            } else if attrName == "CodableIgnored" {
+                memberView.isCodableIgnored = true
+            }
+        }
+    }
+
     // Check if this property has an accessorBlock (i.e. it's computed)
     if let accessorBlock = binding.accessorBlock {
         switch accessorBlock.accessors {
@@ -208,6 +230,18 @@ class FullTextMacro: PeerMacro {
 }
 
 class IndexedMacro: PeerMacro {
+    static func expansion(of node: SwiftSyntax.AttributeSyntax, providingPeersOf declaration: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.DeclSyntax] {
+        []
+    }
+}
+
+class CodingKeyMacro: PeerMacro {
+    static func expansion(of node: SwiftSyntax.AttributeSyntax, providingPeersOf declaration: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.DeclSyntax] {
+        []
+    }
+}
+
+class CodableIgnoredMacro: PeerMacro {
     static func expansion(of node: SwiftSyntax.AttributeSyntax, providingPeersOf declaration: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.DeclSyntax] {
         []
     }
@@ -397,15 +431,15 @@ class CodableMacro: ExtensionMacro, MemberMacro {
                           conformingTo protocols: [TypeSyntax],
                           in context: some MacroExpansionContext) throws -> [DeclSyntax] {
         let members = try declaration.memberBlock.members.compactMap(view(for:)).filter {
-            !$0.isTransient && !$0.isComputed
+            !$0.isTransient && !$0.isComputed && !$0.isCodableIgnored
         }
-        
+
         return [
             """
             enum CodingKeys: String, CodingKey {
                 \(raw: members.map { member in
                     """
-                    case \(member.name) = "\(member.mappedName ?? member.name)"
+                    case \(member.name) = "\(member.codingKey ?? member.mappedName ?? member.name)"
                     """
                 }.joined(separator: "\n\t\t"))
                 case __globalId = "globalId"
@@ -413,11 +447,13 @@ class CodableMacro: ExtensionMacro, MemberMacro {
 
             public required init(from decoder: Decoder) throws {
                 let container = try decoder.container(keyedBy: CodingKeys.self)
-                self.__globalId = try container.decode(UUID.self, forKey: .__globalId)
+                self.__globalId = try container.decodeIfPresent(UUID.self, forKey: .__globalId)
                 \(raw: members.map { member in
-                    """
-                    self.\(member.name) = try container.decode(\(member.type).self, forKey: .\(member.name))
-                    """
+                    if member.isOptional {
+                        return "self.\(member.name) = try container.decodeIfPresent(\(member.unwrappedType).self, forKey: .\(member.name))"
+                    } else {
+                        return "self.\(member.name) = try container.decode(\(member.type).self, forKey: .\(member.name))"
+                    }
                 }.joined(separator: "\n\t\t"))
             }
 
@@ -646,6 +682,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         if isModel, !members.contains(where: { $0.name == "id" }) {
             let idMember = MemberView(name: "id",
                                       type: "UUID",
+                                      unwrappedType: "UUID",
                                       attributeKey: nil,
                                       assignment: nil,
                                       isComputed: false,
@@ -805,6 +842,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         if isModel, !members.contains(where: { $0.name == "id" }) {
             let idMember = MemberView(name: "id",
                                       type: "UUID",
+                                      unwrappedType: "UUID",
                                       attributeKey: nil,
                                       assignment: nil,
                                       isComputed: false,
@@ -999,6 +1037,6 @@ struct LatticeMacrosPlugin: CompilerPlugin {
 //        LatticeMemberMacro.self,
         UniqueMacro.self, CodableMacro.self, EnumMacro.self, EmbeddedModelMacro.self,
         VirtualModelMacro.self, FullTextMacro.self, IndexedMacro.self,
-        VirtualLinkPropertyMacro.self
+        VirtualLinkPropertyMacro.self, CodingKeyMacro.self, CodableIgnoredMacro.self
     ]
 }

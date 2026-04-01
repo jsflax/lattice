@@ -602,6 +602,18 @@ public macro Unique(allowsUpsert: Bool = false) = #externalMacro(module: "Lattic
 public macro Indexed() = #externalMacro(module: "LatticeMacros",
                                         type: "IndexedMacro")
 
+/// Override the JSON key used by `@Codable` for this property.
+/// Does not affect the SQLite column name (use `@Property(name:)` for that).
+@attached(peer)
+public macro CodingKey(_ key: String) = #externalMacro(module: "LatticeMacros",
+                                                        type: "CodingKeyMacro")
+
+/// Exclude this property from `@Codable` encoding/decoding.
+/// The property is still persisted in Lattice — only JSON serialization is skipped.
+@attached(peer)
+public macro CodableIgnored() = #externalMacro(module: "LatticeMacros",
+                                                type: "CodableIgnoredMacro")
+
 // MARK: Constraints
 public struct Constraint {
     public var columns: [String]

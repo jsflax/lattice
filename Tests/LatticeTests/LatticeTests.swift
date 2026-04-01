@@ -1376,7 +1376,64 @@ class LatticeTests: BaseTest {
         #expect(lattice.objects(ModelWithConstraints.self).first?.name == "Mary")
         #expect(lattice.objects(ModelWithConstraints.self).first?.globalId == globalId)
     }
-    
+
+    @Test func testUpsert() async throws {
+        let lattice = try testLattice(path: path, ModelWithConstraints.self)
+        let date = Date()
+
+        // Insert initial row
+        let original = ModelWithConstraints()
+        original.name = "Alice"
+        original.age = 30
+        original.date = date
+        original.email = "alice@test.com"
+        lattice.add(original)
+
+        let originalGlobalId = original.globalId
+        #expect(lattice.objects(ModelWithConstraints.self).count == 1)
+
+        // Upsert with same compound key (age + date + email) but different name
+        let updated = ModelWithConstraints()
+        updated.name = "Alice Updated"
+        updated.age = 30
+        updated.date = date
+        updated.email = "alice@test.com"
+        lattice.add(updated)
+
+        // Should still be 1 row, with updated name, same globalId
+        #expect(lattice.objects(ModelWithConstraints.self).count == 1)
+        let result = lattice.objects(ModelWithConstraints.self).first
+        #expect(result?.name == "Alice Updated")
+        #expect(result?.globalId == originalGlobalId)
+
+        // Different compound key (different email) → new row, not upsert
+        let distinct = ModelWithConstraints()
+        distinct.name = "Bob"
+        distinct.age = 30
+        distinct.date = date
+        distinct.email = "bob@test.com"
+        lattice.add(distinct)
+
+        #expect(lattice.objects(ModelWithConstraints.self).count == 2)
+
+        // Bulk upsert: all share the same compound key → last one wins
+        let bulk = (0..<3).map { i in
+            let m = ModelWithConstraints()
+            m.name = "Bulk\(i)"
+            m.age = 30
+            m.date = date
+            m.email = "alice@test.com"
+            return m
+        }
+        lattice.add(contentsOf: bulk)
+
+        // Still 2 rows total (alice's key upserted, bob's untouched)
+        #expect(lattice.objects(ModelWithConstraints.self).count == 2)
+        let aliceRow = lattice.objects(ModelWithConstraints.self).first(where: { $0.email == "alice@test.com" })
+        #expect(aliceRow?.name == "Bulk2")
+        #expect(aliceRow?.globalId == originalGlobalId)
+    }
+
     @Test func testNestedSchemaDiscoveryForList() throws {
         let lattice = try testLattice(path: path, PersonWithDogs.self)
         let person = PersonWithDogs()
