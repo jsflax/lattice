@@ -185,7 +185,8 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
     }
     
     public var startIndex: Int { 0 }
-    
+    public var count: Int { endIndex }
+
     public var endIndex: Int {
         // Live count from C++
         var count = 0

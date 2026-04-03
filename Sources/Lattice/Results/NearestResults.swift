@@ -420,18 +420,95 @@ public struct TableNearestResults<T: Model>: NearestResults {
     }
 
     public var startIndex: Int { 0 }
+    public var count: Int { endIndex }
 
     public var endIndex: Int {
-        // For proximity queries, we need to execute the query to get actual count
-        // This is necessary because WHERE clauses can filter results below the limit
         let (vectors, geos, texts) = flattenProximity(proximity)
         let vectorLimit = vectors.map(\.k).min() ?? Int.max
         let geoLimit = geos.map(\.limit).min() ?? Int.max
         let textLimit = texts.map(\.limit).min() ?? Int.max
         let maxLimit = Swift.min(vectorLimit, Swift.min(geoLimit, textLimit))
 
-        // Execute snapshot to get actual count (capped at maxLimit)
-        return Swift.min(snapshot(limit: Int64(maxLimit), offset: nil).count, maxLimit)
+        let tableName = std.string(T.entityName)
+
+        var cxxBounds = lattice.BoundsConstraintVector()
+        if let bounds = boundsConstraint {
+            var bc = lattice.bounds_constraint()
+            bc.column = std.string(bounds.propertyName)
+            bc.min_lat = bounds.minLat
+            bc.max_lat = bounds.maxLat
+            bc.min_lon = bounds.minLon
+            bc.max_lon = bounds.maxLon
+            cxxBounds.push_back(bc)
+        }
+
+        var cxxVectors = lattice.VectorConstraintVector()
+        for vc in vectors {
+            var cxxVc = lattice.vector_constraint()
+            cxxVc.column = std.string(vc.propertyName)
+            var byteVec = lattice.ByteVector()
+            for byte in vc.queryVector { byteVec.push_back(byte) }
+            cxxVc.query_vector = byteVec
+            cxxVc.k = Int32(vc.k)
+            cxxVc.metric = vc.metric.rawValue
+            cxxVectors.push_back(cxxVc)
+        }
+
+        var cxxGeos = lattice.GeoConstraintVector()
+        for gc in geos {
+            var cxxGc = lattice.geo_constraint()
+            cxxGc.column = std.string(gc.propertyName)
+            cxxGc.center_lat = gc.centerLat
+            cxxGc.center_lon = gc.centerLon
+            cxxGc.radius_meters = gc.radiusMeters
+            cxxGeos.push_back(cxxGc)
+        }
+
+        var cxxTexts = lattice.TextConstraintVector()
+        for tc in texts {
+            var cxxTc = lattice.text_constraint()
+            cxxTc.column = std.string(tc.propertyName)
+            cxxTc.search_text = std.string(tc.searchText)
+            cxxTc.limit = Int32(tc.limit)
+            cxxTexts.push_back(cxxTc)
+        }
+
+        let whereClause: lattice.OptionalString = if let whereStatement {
+            lattice.string_to_optional(std.string(whereStatement.predicate))
+        } else { .init() }
+
+        var cxxSort = lattice.sort_descriptor()
+        if let sort = sortStatement {
+            switch sort.descriptor {
+            case .keyPath(let propName):
+                cxxSort.type = .property
+                cxxSort.column = std.string(propName)
+            case .geoDistance:
+                cxxSort.type = .geo_distance
+                cxxSort.column = std.string(geos.first?.propertyName ?? "")
+            case .vectorDistance:
+                cxxSort.type = .vector_distance
+                cxxSort.column = std.string(vectors.first?.propertyName ?? "")
+            case .textRank:
+                cxxSort.type = .text_rank
+                cxxSort.column = std.string(texts.first?.propertyName ?? "")
+            }
+            cxxSort.ascending = (sort.order == .forward)
+        }
+
+        let groupByOpt: lattice.OptionalString = if let groupByColumn {
+            lattice.string_to_optional(std.string(groupByColumn))
+        } else { .init() }
+        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
+            lattice.string_to_optional(std.string(distinctByColumn))
+        } else { .init() }
+
+        let count = Int(_lattice.cxxLattice.combinedNearestQueryCount(
+            table: tableName, bounds: cxxBounds, vectors: cxxVectors,
+            geos: cxxGeos, texts: cxxTexts, where: whereClause,
+            sort: cxxSort, limit: Int64(maxLimit),
+            groupBy: groupByOpt, distinctBy: distinctByOpt))
+        return Swift.min(count, maxLimit)
     }
 
     public func index(after i: Int) -> Int {
@@ -853,18 +930,97 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
     }
 
     public var startIndex: Int { 0 }
+    public var count: Int { endIndex }
 
     public var endIndex: Int {
-        // For proximity queries, we need to execute the query to get actual count
-        // This is necessary because WHERE clauses can filter results below the limit
         let (vectors, geos, texts) = flattenProximity(proximity)
         let vectorLimit = vectors.map(\.k).min() ?? Int.max
         let geoLimit = geos.map(\.limit).min() ?? Int.max
         let textLimit = texts.map(\.limit).min() ?? Int.max
         let maxLimit = Swift.min(vectorLimit, Swift.min(geoLimit, textLimit))
 
-        // Execute snapshot to get actual count (capped at maxLimit)
-        return Swift.min(snapshot(limit: Int64(maxLimit), offset: nil).count, maxLimit)
+        var cxxBounds = lattice.BoundsConstraintVector()
+        if let bounds = boundsConstraint {
+            var bc = lattice.bounds_constraint()
+            bc.column = std.string(bounds.propertyName)
+            bc.min_lat = bounds.minLat
+            bc.max_lat = bounds.maxLat
+            bc.min_lon = bounds.minLon
+            bc.max_lon = bounds.maxLon
+            cxxBounds.push_back(bc)
+        }
+
+        var cxxVectors = lattice.VectorConstraintVector()
+        for vc in vectors {
+            var cxxVc = lattice.vector_constraint()
+            cxxVc.column = std.string(vc.propertyName)
+            var byteVec = lattice.ByteVector()
+            for byte in vc.queryVector { byteVec.push_back(byte) }
+            cxxVc.query_vector = byteVec
+            cxxVc.k = Int32(vc.k)
+            cxxVc.metric = vc.metric.rawValue
+            cxxVectors.push_back(cxxVc)
+        }
+
+        var cxxGeos = lattice.GeoConstraintVector()
+        for gc in geos {
+            var cxxGc = lattice.geo_constraint()
+            cxxGc.column = std.string(gc.propertyName)
+            cxxGc.center_lat = gc.centerLat
+            cxxGc.center_lon = gc.centerLon
+            cxxGc.radius_meters = gc.radiusMeters
+            cxxGeos.push_back(cxxGc)
+        }
+
+        var cxxTexts = lattice.TextConstraintVector()
+        for tc in texts {
+            var cxxTc = lattice.text_constraint()
+            cxxTc.column = std.string(tc.propertyName)
+            cxxTc.search_text = std.string(tc.searchText)
+            cxxTc.limit = Int32(tc.limit)
+            cxxTexts.push_back(cxxTc)
+        }
+
+        let whereClause: lattice.OptionalString = if let whereStatement {
+            lattice.string_to_optional(std.string(whereStatement.predicate))
+        } else { .init() }
+
+        var cxxSort = lattice.sort_descriptor()
+        if let sort = sortStatement {
+            switch sort.descriptor {
+            case .keyPath(let propName):
+                cxxSort.type = .property
+                cxxSort.column = std.string(propName)
+            case .geoDistance:
+                cxxSort.type = .geo_distance
+                cxxSort.column = std.string(geos.first?.propertyName ?? "")
+            case .vectorDistance:
+                cxxSort.type = .vector_distance
+                cxxSort.column = std.string(vectors.first?.propertyName ?? "")
+            case .textRank:
+                cxxSort.type = .text_rank
+                cxxSort.column = std.string(texts.first?.propertyName ?? "")
+            }
+            cxxSort.ascending = (sort.order == .forward)
+        }
+
+        let groupByOpt: lattice.OptionalString = if let groupByColumn {
+            lattice.string_to_optional(std.string(groupByColumn))
+        } else { .init() }
+        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
+            lattice.string_to_optional(std.string(distinctByColumn))
+        } else { .init() }
+
+        // Sum counts across all model types
+        var total = 0
+        for type in repeat (each M).self {
+            total += Int(_lattice.cxxLattice.combinedNearestQueryCount(
+                table: std.string(type.entityName), bounds: cxxBounds,
+                vectors: cxxVectors, geos: cxxGeos, texts: cxxTexts,
+                where: whereClause, sort: cxxSort, limit: Int64(maxLimit),
+                groupBy: groupByOpt, distinctBy: distinctByOpt))
+        }
+        return Swift.min(total, maxLimit)
     }
 
     public func index(after i: Int) -> Int {

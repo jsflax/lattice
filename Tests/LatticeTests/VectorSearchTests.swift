@@ -746,6 +746,70 @@ class Vec0LockStormTests: BaseTest {
         #expect(total == 60, "Should have 10 initial + 50 rapid adds = 60 documents, got \(total)")
     }
 
+    /// Perf test: .count on nearest results should not materialize Swift objects.
+    /// With 5000 128-dim vectors and k=1000, the old path allocates 1000
+    /// _NearestMatch<T> objects just to discard them; the fast path reads
+    /// only the C++ vector size.
+    @Test(.timeLimit(.minutes(2)))
+    func test_NearestCountPerformance() async throws {
+        let lattice = try testLattice(Document.self)
+
+        // Insert 5000 documents with 128-dim random embeddings
+        let dims = 128
+        let docCount = 5000
+        for i in 0..<docCount {
+            let embedding = (0..<dims).map { _ in Float.random(in: -1...1) }
+            lattice.add(Document(title: "doc-\(i)", embedding: embedding))
+        }
+
+        let k = 1000
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+
+        let nearest = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: k)
+
+        // Warm up — first query may trigger vec0 reconciliation
+        _ = nearest.count
+
+        // Measure .count (endIndex) — this is the hot path we're optimizing
+        let countIterations = 20
+        let countStart = ContinuousClock.now
+        for _ in 0..<countIterations {
+            _ = nearest.count
+        }
+        let countElapsed = ContinuousClock.now - countStart
+        let countAvgMs = Double(countElapsed.components.attoseconds) / 1e15 / Double(countIterations)
+            + Double(countElapsed.components.seconds) * 1000.0 / Double(countIterations)
+
+        // Measure endIndex directly to see if .count calls it more than once
+        let endIndexIterations = 20
+        let endIndexStart = ContinuousClock.now
+        for _ in 0..<endIndexIterations {
+            _ = nearest.endIndex
+        }
+        let endIndexElapsed = ContinuousClock.now - endIndexStart
+        let endIndexAvgMs = Double(endIndexElapsed.components.attoseconds) / 1e15 / Double(endIndexIterations)
+            + Double(endIndexElapsed.components.seconds) * 1000.0 / Double(endIndexIterations)
+        print("endIndex direct avg:      \(String(format: "%.2f", endIndexAvgMs)) ms")
+
+        // Measure snapshot().count for comparison — this always materializes objects
+        let snapshotStart = ContinuousClock.now
+        for _ in 0..<countIterations {
+            _ = nearest.snapshot().count
+        }
+        let snapshotElapsed = ContinuousClock.now - snapshotStart
+        let snapshotAvgMs = Double(snapshotElapsed.components.attoseconds) / 1e15 / Double(countIterations)
+            + Double(snapshotElapsed.components.seconds) * 1000.0 / Double(countIterations)
+
+        print("NearestResults.count avg: \(String(format: "%.2f", countAvgMs)) ms (k=\(k), docs=\(docCount), dims=\(dims))")
+        print("snapshot().count avg:     \(String(format: "%.2f", snapshotAvgMs)) ms")
+        print("Speedup:                  \(String(format: "%.1f", snapshotAvgMs / countAvgMs))x")
+
+        // .count should be meaningfully faster than snapshot().count
+        // After the fix, expect at least 2x speedup since it skips object materialization
+        #expect(nearest.count == k)
+    }
+
     /// Bulk delete + re-add with embeddings (simulates memory consolidation).
     /// Each remove triggers DELETE on vec0, each add triggers INSERT trigger
     /// which does DELETE+INSERT. Interleaved nearest() queries must not fail.

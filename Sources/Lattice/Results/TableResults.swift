@@ -156,6 +156,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     }
 
     public var startIndex: Int { 0 }
+    public var count: Int { endIndex }
 
     #if canImport(Combine)
     public var objectWillChange: ResultsChangePublisher {
