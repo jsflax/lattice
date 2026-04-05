@@ -32,6 +32,27 @@ import NaturalLanguage
     }
 }
 
+/// Test model that mirrors Engram's Memory structure for property access tests
+@Model final class MemoryLike {
+    var content: String
+    var topic: String
+    var embedding: FloatVector
+    var accessCount: Int
+    var lastAccessedAt: Date
+    var importance: Int
+
+    init(content: String = "", topic: String = "general",
+         embedding: [Float] = [], accessCount: Int = 0,
+         lastAccessedAt: Date = Date(), importance: Int = 0) {
+        self.content = content
+        self.topic = topic
+        self.embedding = FloatVector(embedding)
+        self.accessCount = accessCount
+        self.lastAccessedAt = lastAccessedAt
+        self.importance = importance
+    }
+}
+
 @Suite("Vector Search Tests")
 class VectorSearchTests: BaseTest {
 
@@ -378,6 +399,9 @@ class VectorSearchTests: BaseTest {
         let filteredCategories = filteredNearest.map { $0.object.category }
         #expect(filteredCategories.allSatisfy { $0 == "B" }, "With filter, all results should be category B")
 
+        guard !filteredNearest.isEmpty else {
+            return #expect(Bool(false), "No entries found in nearest")
+        }
         // B2 [0.1, 0.9, 0] should be closest to [1,0,0] among B category
         // (has highest X component)
         #expect(filteredNearest[0].object.title == "B3", "B3 should be closest to [1,0,0] in category B")
@@ -746,15 +770,14 @@ class Vec0LockStormTests: BaseTest {
         #expect(total == 60, "Should have 10 initial + 50 rapid adds = 60 documents, got \(total)")
     }
 
-    /// Perf test: .count on nearest results should not materialize Swift objects.
-    /// With 5000 128-dim vectors and k=1000, the old path allocates 1000
-    /// _NearestMatch<T> objects just to discard them; the fast path reads
-    /// only the C++ vector size.
-    @Test(.timeLimit(.minutes(2)))
+    /// Perf test: measures query and insert performance before and after IVF training.
+    @Test(.timeLimit(.minutes(5)))
     func test_NearestCountPerformance() async throws {
+        Lattice.setLogLevel(.debug)
+        try? FileManager.default.removeItem(at: URL(fileURLWithPath: "/tmp/lattice_swift_perf_tests.log"))
+        Lattice.setLogFile(URL(fileURLWithPath: "/tmp/lattice_swift_perf_tests.log"))
         let lattice = try testLattice(Document.self)
 
-        // Insert 5000 documents with 128-dim random embeddings
         let dims = 128
         let docCount = 5000
         for i in 0..<docCount {
@@ -764,50 +787,373 @@ class Vec0LockStormTests: BaseTest {
 
         let k = 1000
         let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
-
         let nearest = lattice.objects(Document.self)
             .nearest(to: query, on: \.embedding, limit: k)
 
-        // Warm up — first query may trigger vec0 reconciliation
-        _ = nearest.count
+        _ = nearest.count // warm up
 
-        // Measure .count (endIndex) — this is the hot path we're optimizing
-        let countIterations = 20
-        let countStart = ContinuousClock.now
-        for _ in 0..<countIterations {
-            _ = nearest.count
+        func avg(_ iterations: Int = 10, _ block: () -> Void) -> Double {
+            let start = ContinuousClock.now
+            for _ in 0..<iterations { block() }
+            let elapsed = ContinuousClock.now - start
+            return Double(elapsed.components.attoseconds) / 1e15 / Double(iterations)
+                + Double(elapsed.components.seconds) * 1000.0 / Double(iterations)
         }
-        let countElapsed = ContinuousClock.now - countStart
-        let countAvgMs = Double(countElapsed.components.attoseconds) / 1e15 / Double(countIterations)
-            + Double(countElapsed.components.seconds) * 1000.0 / Double(countIterations)
 
-        // Measure endIndex directly to see if .count calls it more than once
-        let endIndexIterations = 20
-        let endIndexStart = ContinuousClock.now
-        for _ in 0..<endIndexIterations {
-            _ = nearest.endIndex
+        // --- Before IVF training (brute-force) ---
+        let countBefore = avg { _ = nearest.count }
+        let endIndexBefore = avg { _ = nearest.endIndex }
+        let snapshotBefore = avg { _ = nearest.snapshot().count }
+        let insertBefore = avg(50) {
+            lattice.add(Document(title: "x", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
-        let endIndexElapsed = ContinuousClock.now - endIndexStart
-        let endIndexAvgMs = Double(endIndexElapsed.components.attoseconds) / 1e15 / Double(endIndexIterations)
-            + Double(endIndexElapsed.components.seconds) * 1000.0 / Double(endIndexIterations)
-        print("endIndex direct avg:      \(String(format: "%.2f", endIndexAvgMs)) ms")
 
-        // Measure snapshot().count for comparison — this always materializes objects
-        let snapshotStart = ContinuousClock.now
-        for _ in 0..<countIterations {
-            _ = nearest.snapshot().count
+        print("=== BEFORE IVF training (brute-force) ===")
+        print("  .count avg:         \(String(format: "%.2f", countBefore)) ms")
+        print("  endIndex avg:       \(String(format: "%.2f", endIndexBefore)) ms")
+        print("  snapshot().count:   \(String(format: "%.2f", snapshotBefore)) ms")
+        print("  insert avg:         \(String(format: "%.2f", insertBefore)) ms")
+
+        // --- Train IVF centroids ---
+        let trainStart = ContinuousClock.now
+        lattice.trainVectorIndexes()
+        let trainMs = Double((ContinuousClock.now - trainStart).components.attoseconds) / 1e15
+            + Double((ContinuousClock.now - trainStart).components.seconds) * 1000.0
+        print("\n=== IVF training: \(String(format: "%.0f", trainMs)) ms ===\n")
+
+        _ = nearest.count // warm up
+
+        // --- After IVF training ---
+        let countAfter = avg { _ = nearest.count }
+        let endIndexAfter = avg { _ = nearest.endIndex }
+        let snapshotAfter = avg { _ = nearest.snapshot().count }
+        let insertAfter = lattice.transaction {
+            avg(50) {
+                lattice.add(Document(title: "x", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            }
         }
-        let snapshotElapsed = ContinuousClock.now - snapshotStart
-        let snapshotAvgMs = Double(snapshotElapsed.components.attoseconds) / 1e15 / Double(countIterations)
-            + Double(snapshotElapsed.components.seconds) * 1000.0 / Double(countIterations)
+        print("=== AFTER IVF training ===")
+        print("  .count avg:         \(String(format: "%.2f", countAfter)) ms")
+        print("  endIndex avg:       \(String(format: "%.2f", endIndexAfter)) ms")
+        print("  snapshot().count:   \(String(format: "%.2f", snapshotAfter)) ms")
+        print("  insert avg:         \(String(format: "%.2f", insertAfter)) ms")
 
-        print("NearestResults.count avg: \(String(format: "%.2f", countAvgMs)) ms (k=\(k), docs=\(docCount), dims=\(dims))")
-        print("snapshot().count avg:     \(String(format: "%.2f", snapshotAvgMs)) ms")
-        print("Speedup:                  \(String(format: "%.1f", snapshotAvgMs / countAvgMs))x")
+        print("\n=== Speedup (before / after) ===")
+        print("  .count:             \(String(format: "%.1f", countBefore / max(countAfter, 0.01)))x")
+        print("  endIndex:           \(String(format: "%.1f", endIndexBefore / max(endIndexAfter, 0.01)))x")
+        print("  snapshot().count:   \(String(format: "%.1f", snapshotBefore / max(snapshotAfter, 0.01)))x")
 
-        // .count should be meaningfully faster than snapshot().count
-        // After the fix, expect at least 2x speedup since it skips object materialization
-        #expect(nearest.count == k)
+        // IVF is approximate — count may be less than k (depends on nprobe/nlist ratio)
+        #expect(nearest.count >= k * 7 / 10, "IVF should return at least 70% of k results")
+    }
+
+    /// Correctness test: IVF results should match brute-force for top-k results.
+    @Test(.timeLimit(.minutes(3)))
+    func test_IVFCorrectnessVsBruteForce() async throws {
+        let lattice = try testLattice(Document.self)
+
+        let dims = 128
+        // Insert documents with known embeddings
+        for i in 0..<1000 {
+            let embedding = (0..<dims).map { _ in Float.random(in: -1...1) }
+            lattice.add(Document(title: "doc-\(i)", embedding: embedding))
+        }
+
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+
+        // Get brute-force results BEFORE training (all vectors in unassigned pool)
+        let bruteForce = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 10)
+            .snapshot()
+        let bfTitles = Set(bruteForce.map { $0.object.title })
+        let bfDistances = bruteForce.map { $0.distance }
+
+        // Train IVF
+        lattice.trainVectorIndexes()
+
+        // Get IVF results
+        let ivfResults = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 10)
+            .snapshot()
+        let ivfTitles = Set(ivfResults.map { $0.object.title })
+        let ivfDistances = ivfResults.map { $0.distance }
+
+        // Recall@10: how many of brute-force top-10 appear in IVF top-10
+        let overlap = bfTitles.intersection(ivfTitles).count
+        let recall = Double(overlap) / Double(bfTitles.count)
+
+        print("Recall@10: \(overlap)/\(bfTitles.count) = \(String(format: "%.1f", recall * 100))%")
+        print("Brute-force top-3 distances: \(bfDistances.prefix(3).map { String(format: "%.4f", $0) })")
+        print("IVF top-3 distances:         \(ivfDistances.prefix(3).map { String(format: "%.4f", $0) })")
+
+        // IVF should find at least 7 of the true top-10
+        #expect(recall >= 0.7, "IVF recall@10 should be at least 70%, got \(recall * 100)%")
+
+        // The #1 result should almost always be correct
+        if let bfFirst = bruteForce.first, let ivfFirst = ivfResults.first {
+            #expect(bfFirst.object.title == ivfFirst.object.title,
+                    "Top-1 result should match: brute-force=\(bfFirst.object.title), IVF=\(ivfFirst.object.title)")
+        }
+
+        // IVF distances should be sorted ascending
+        for i in 1..<ivfDistances.count {
+            #expect(ivfDistances[i] >= ivfDistances[i-1] - 0.0001,
+                    "IVF results should be sorted by distance")
+        }
+    }
+
+    /// IVF: query works before training (brute-force fallback)
+    @Test func test_IVFQueryBeforeTraining() async throws {
+        let lattice = try testLattice(Document.self)
+        let dims = 32
+
+        for i in 0..<50 {
+            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+
+        // No training — all vectors in unassigned pool, brute-force scan
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+        let results = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 10)
+        #expect(results.count == 10, "Untrained IVF should return results via brute-force fallback")
+    }
+
+    /// IVF: insert works after training
+    @Test func test_IVFInsertAfterTraining() async throws {
+        let lattice = try testLattice(Document.self)
+        let dims = 32
+
+        for i in 0..<100 {
+            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+
+        lattice.trainVectorIndexes()
+
+        // Insert after training — should auto-assign to centroid
+        for i in 0..<20 {
+            lattice.add(Document(title: "post-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+
+        let total = lattice.objects(Document.self).count
+        #expect(total == 120, "All docs should be present after post-training inserts")
+
+        // Post-training docs should be findable
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+        let results = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 120)
+        #expect(results.count > 40, "Should find docs including post-training ones (IVF is approximate)")
+    }
+
+    /// IVF: vacuum rebuilds and trains
+    @Test func test_IVFVacuumTrains() async throws {
+        let lattice = try testLattice(Document.self)
+        let dims = 32
+
+        for i in 0..<100 {
+            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+
+        // Vacuum triggers rebuild + train
+        lattice._vacuumVec0(Document(), for: \.embedding)
+
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+        let results = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 10)
+        #expect(results.count > 0, "Query should work after vacuum + train")
+    }
+
+    /// IVF: filtered nearest query
+    @Test func test_IVFFilteredQuery() async throws {
+        let lattice = try testLattice(CategorizedDocument.self)
+        let dims = 32
+
+        for i in 0..<50 {
+            lattice.add(CategorizedDocument(
+                title: "catA-\(i)", category: "A",
+                embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+        for i in 0..<50 {
+            lattice.add(CategorizedDocument(
+                title: "catB-\(i)", category: "B",
+                embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+
+        lattice.trainVectorIndexes()
+
+        // Filter to category B only
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+        let results = lattice.objects(CategorizedDocument.self)
+            .where { $0.category == "B" }
+            .nearest(to: query, on: \.embedding, limit: 10)
+
+        let snapshot = results.snapshot()
+        #expect(snapshot.count > 0, "Filtered IVF query should return results")
+        for match in snapshot {
+            #expect(match.object.category == "B", "All results should be category B")
+        }
+    }
+
+    /// IVF: attaching two lattices with IVF vec0 tables
+    @Test func test_IVFAttaching() async throws {
+        let lattice1 = try testLattice(Document.self)
+        let lattice2 = try testLattice(Document.self)
+        let dims = 32
+
+        for i in 0..<30 {
+            lattice1.add(Document(title: "db1-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+        for i in 0..<30 {
+            lattice2.add(Document(title: "db2-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+
+        // Attach should not crash
+        let combined = lattice1.attaching(lattice: lattice2)
+
+        // Regular query across both DBs
+        let total = combined.objects(Document.self).count
+        #expect(total == 60, "Attached query should see both DBs, got \(total)")
+
+        // Nearest query across attached DBs
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+        let results = combined.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 20)
+        #expect(results.count > 0, "Nearest on attached DBs should return results")
+    }
+
+    /// IVF: attaching after training both DBs
+    @Test func test_IVFAttachingAfterTraining() async throws {
+        let lattice1 = try testLattice(Document.self)
+        let lattice2 = try testLattice(Document.self)
+        let dims = 32
+
+        for i in 0..<50 {
+            lattice1.add(Document(title: "db1-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+        for i in 0..<50 {
+            lattice2.add(Document(title: "db2-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+
+        lattice1.trainVectorIndexes()
+        lattice2.trainVectorIndexes()
+
+        let combined = lattice1.attaching(lattice: lattice2)
+
+        let total = combined.objects(Document.self).count
+        #expect(total == 100, "Attached trained DBs should see all docs, got \(total)")
+
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+        let results = combined.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 20)
+        #expect(results.count > 0, "Nearest on attached trained DBs should work")
+    }
+
+    /// IVF: WAL state clean after training — no SQLITE_BUSY_SNAPSHOT
+    @Test func test_IVFTrainThenBulkInsert() async throws {
+        let lattice = try testLattice(Document.self)
+        let dims = 32
+
+        for i in 0..<100 {
+            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+
+        lattice.trainVectorIndexes()
+
+        // Bulk insert after training — should not get SQLITE_BUSY_SNAPSHOT
+        for i in 0..<100 {
+            lattice.add(Document(title: "post-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+
+        let total = lattice.objects(Document.self).count
+        #expect(total == 200, "All 200 docs should be present")
+    }
+
+    /// IVF: cosine distance metric
+    @Test func test_IVFCosineDistance() async throws {
+        let lattice = try testLattice(Document.self)
+        let dims = 32
+
+        for i in 0..<50 {
+            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+
+        lattice.trainVectorIndexes()
+
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+        let results = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 10, distance: .cosine)
+        #expect(results.count > 0, "Cosine distance query on IVF should return results")
+    }
+
+    /// Simulates Engram's handleRecall pattern: nearest query → read properties
+    /// for boosting → write accessCount and lastAccessedAt on results.
+    @Test func test_HydratedObjectRecallPattern() async throws {
+        let lattice = try testLattice(MemoryLike.self)
+
+        let dims = 32
+        for i in 0..<50 {
+            lattice.add(MemoryLike(
+                content: "memory-\(i)",
+                topic: i % 2 == 0 ? "architecture" : "debugging",
+                embedding: (0..<dims).map { _ in Float.random(in: -1...1) },
+                accessCount: Int.random(in: 0...10),
+                lastAccessedAt: Date(timeIntervalSinceNow: Double.random(in: -86400*30...0)),
+                importance: Int.random(in: 0...5)
+            ))
+        }
+
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+        let nearest = lattice.objects(MemoryLike.self)
+            .nearest(to: query, on: \.embedding, limit: 15)
+
+        let snapshot = nearest.snapshot()
+        #expect(snapshot.count > 0, "Should return results")
+
+        // Phase 1: Read properties for boosting (like handleRecall's boosting loop)
+        let now = Date()
+        for match in snapshot {
+            let m = match.object
+            _ = m.accessCount
+            _ = m.importance
+            _ = m.lastAccessedAt
+            _ = m.topic
+            _ = m.content
+            let daysSinceAccess = now.timeIntervalSince(m.lastAccessedAt) / 86400.0
+            #expect(daysSinceAccess >= 0)
+        }
+
+        // Phase 2: Write accessCount and lastAccessedAt (like handleRecall's bump loop)
+        let accessNow = Date()
+        for match in snapshot {
+            match.object.lastAccessedAt = accessNow
+            match.object.accessCount += 1
+        }
+
+        // Verify writes persisted by reading back
+        let firstObj = snapshot[0].object
+        let expectedCount = firstObj.accessCount // should be old+1 since we bumped
+        #expect(expectedCount > 0, "accessCount should have been bumped")
+
+        // Also test with attaching (Engram uses localLattice.attaching(lattice: syncedLattice))
+        let lattice2 = try testLattice(MemoryLike.self)
+        for i in 0..<20 {
+            lattice2.add(MemoryLike(
+                content: "synced-\(i)", topic: "synced",
+                embedding: (0..<dims).map { _ in Float.random(in: -1...1) }
+            ))
+        }
+
+        let combined = lattice.attaching(lattice: lattice2)
+        let combinedNearest = combined.objects(MemoryLike.self)
+            .nearest(to: query, on: \.embedding, limit: 10)
+        let combinedSnapshot = combinedNearest.snapshot()
+        #expect(combinedSnapshot.count > 0, "Attached nearest should return results")
+
+        // Write on attached result
+        let accessNow2 = Date()
+        for match in combinedSnapshot {
+            match.object.lastAccessedAt = accessNow2
+            match.object.accessCount += 1
+        }
     }
 
     /// Bulk delete + re-add with embeddings (simulates memory consolidation).

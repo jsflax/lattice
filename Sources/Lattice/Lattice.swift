@@ -592,6 +592,25 @@ public struct Lattice {
     private var isSyncDisabled = false
     internal var logger = Logger.db
 
+    /// Wait for background IVF vector index training to complete.
+    /// Training starts automatically on open. Queries work during training
+    /// (brute-force fallback), so this is only needed for benchmarks/tests.
+    public func waitForVectorIndexTraining() async {
+        await Task.detached { [cxxLattice] in
+            cxxLattice.waitForVec0Training()
+        }.value
+    }
+
+    /// Train IVF vector indexes synchronously. Call after bulk inserts to
+    /// activate IVF search. Opens a separate DB connection for training.
+    public func trainVectorIndexes() {
+        cxxLattice.trainUntrainedVec0Tables()
+    }
+
+    /// Background task that trains IVF indexes on open. Await this in tests
+    /// to ensure IVF is active before measuring performance.
+    public internal(set) var vectorIndexTrainingTask: Task<Void, Never>?
+
     let cxxLatticeRef: lattice.swift_lattice_ref
     var cxxLattice: lattice.swift_lattice {
         cxxLatticeRef.get()
