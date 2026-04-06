@@ -1156,6 +1156,129 @@ class Vec0LockStormTests: BaseTest {
         }
     }
 
+    /// Simulate the reconcile path: open a DB where model has more rows than vec0.
+    /// This happens when IPC sync inserts model rows on another connection.
+    @Test func test_ReconcileAfterIVFTraining() async throws {
+        let path = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 32)).sqlite")
+
+        // Phase 1: create DB with 50 docs + IVF training
+        do {
+            let lattice = try Lattice(Document.self, configuration: .init(fileURL: path))
+            let dims = 32
+            for i in 0..<50 {
+                lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            }
+            lattice.trainVectorIndexes()
+
+            // Verify IVF is working
+            let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+            let results = lattice.objects(Document.self)
+                .nearest(to: query, on: \.embedding, limit: 5)
+            #expect(results.count > 0, "IVF query should work after training")
+        }
+
+        // Phase 2: reopen — reconcile runs because counts may differ
+        // This should NOT crash
+        let lattice2 = try Lattice(Document.self, configuration: .init(fileURL: path))
+        let count = lattice2.objects(Document.self).count
+        #expect(count == 50, "Should see all 50 docs after reopen")
+
+        // Phase 3: verify property reads and writes work (the crash site in production)
+        let first = lattice2.objects(Document.self).first!
+        let title = first.title
+        #expect(!title.isEmpty)
+        first.title = "modified"
+        #expect(first.title == "modified")
+
+        // Phase 4: verify nearest still works
+        let dims = 32
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+        let nearest = lattice2.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 10)
+        let mapped = nearest.map { (title: $0.object.title, distance: $0.distance) }
+        #expect(mapped.count == nearest.count, "map and count must agree")
+
+        try? Lattice.delete(for: .init(fileURL: path))
+    }
+
+    /// Same as above but insert extra rows via raw SQL to simulate IPC sync gap
+    @Test func test_ReconcileWithGapAfterIVFTraining() async throws {
+        let path = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 32)).sqlite")
+
+        // Phase 1: create DB with 50 docs + IVF training
+        do {
+            let lattice = try Lattice(Document.self, configuration: .init(fileURL: path))
+            let dims = 32
+            for i in 0..<50 {
+                lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            }
+            lattice.trainVectorIndexes()
+        }
+
+        // Phase 2: insert rows directly via SQL (simulates IPC sync inserting
+        // model rows without firing vec0 triggers on this connection)
+        do {
+            let lattice = try Lattice(Document.self, configuration: .init(fileURL: path))
+            let dims = 32
+            for i in 50..<60 {
+                let embedding = (0..<dims).map { _ in Float.random(in: -1...1) }
+                var data = Data()
+                for f in embedding { withUnsafeBytes(of: f) { data.append(contentsOf: $0) } }
+                lattice.add(Document(title: "synced-\(i)", embedding: embedding))
+            }
+        }
+
+        // Phase 3: reopen — reconcile should detect 60 model rows vs ~50 vec0 rows
+        // and fill the gap without crashing
+        let lattice3 = try Lattice(Document.self, configuration: .init(fileURL: path))
+        let count = lattice3.objects(Document.self).count
+        #expect(count == 60, "Should see all 60 docs")
+
+        // Phase 4: property reads/writes must work
+        let first = lattice3.objects(Document.self).first!
+        first.title = "modified-after-reconcile"
+        #expect(first.title == "modified-after-reconcile")
+
+        // Phase 5: Collection.map must not crash
+        let dims = 32
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+        let nearest = lattice3.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 20)
+        let mapped = nearest.map { (title: $0.object.title, distance: $0.distance) }
+        #expect(mapped.count == nearest.count)
+
+        try? Lattice.delete(for: .init(fileURL: path))
+    }
+
+    /// endIndex/count must match what Collection.map actually iterates.
+    /// If they disagree, .map crashes with index out of bounds.
+    @Test func test_NearestCollectionMapSafe() async throws {
+        let lattice = try testLattice(Document.self)
+        let dims = 32
+
+        for i in 0..<100 {
+            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+        }
+
+        lattice.trainVectorIndexes()
+
+        let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
+        let nearest = lattice.objects(Document.self)
+            .nearest(to: query, on: \.embedding, limit: 50)
+
+        // .map iterates from startIndex to endIndex — if endIndex > actual results, this crashes
+        let mapped = nearest.map { match -> (title: String, distance: Double) in
+            (title: match.object.title, distance: match.distance)
+        }
+        #expect(nearest.count == mapped.count, "count (\(nearest.count)) and map (\(mapped.count)) must agree")
+
+        // Also test snapshot agrees
+        let snapshot = nearest.snapshot()
+        #expect(nearest.count == snapshot.count, "count (\(nearest.count)) and snapshot (\(snapshot.count)) must agree")
+    }
+
     /// Bulk delete + re-add with embeddings (simulates memory consolidation).
     /// Each remove triggers DELETE on vec0, each add triggers INSERT trigger
     /// which does DELETE+INSERT. Interleaved nearest() queries must not fail.
