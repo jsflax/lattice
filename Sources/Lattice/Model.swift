@@ -234,7 +234,7 @@ public struct _ModelObserver {
     }
 }
 
-public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, CxxManaged, LatticeIsolated, LinkListable {
+public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, CxxManaged, LatticeIsolated, LinkListable, UnionProperty {
     init(isolation: isolated (any Actor)?)
 //    var lattice: Lattice? { get set }
     static var entityName: String { get }
@@ -440,7 +440,8 @@ extension Model {
                                              is_vector: false, is_geo_bounds: true,
                                              is_full_text: false,
                                              is_indexed: false,
-                                             is_unique: false, column_name: .init())
+                                             is_unique: false, column_name: .init(),
+                                                     is_union: false, union_desc: .init())
         }
 
         for (name, property) in primitiveProperties {
@@ -462,7 +463,8 @@ extension Model {
                                              is_full_text: isFullText,
                                              is_indexed: isIndexed,
                                              is_unique: false,
-                                             column_name: .init())
+                                             column_name: .init(),
+                                             is_union: false, union_desc: .init())
         }
 
         for (name, property) in linkProperties {
@@ -474,7 +476,8 @@ extension Model {
                                              nullable: true, is_vector: isVector, is_geo_bounds: false,
                                              is_full_text: false,
                                              is_indexed: false,
-                                             is_unique: false, column_name: .init())
+                                             is_unique: false, column_name: .init(),
+                                                     is_union: false, union_desc: .init())
         }
 
         let virtualListProperties: [(String, any VirtualListProperty.Type)] = filteredProperties.compactMap {
@@ -492,7 +495,8 @@ extension Model {
                                              nullable: true, is_vector: false, is_geo_bounds: false,
                                              is_full_text: false,
                                              is_indexed: false,
-                                             is_unique: false, column_name: .init())
+                                             is_unique: false, column_name: .init(),
+                                                     is_union: false, union_desc: .init())
         }
 
         let virtualLinkProperties: [(String, VirtualLinkMarker.Type)] = filteredProperties.compactMap {
@@ -510,7 +514,61 @@ extension Model {
                                              nullable: true, is_vector: false, is_geo_bounds: false,
                                              is_full_text: false,
                                              is_indexed: false,
-                                             is_unique: false, column_name: .init())
+                                             is_unique: false, column_name: .init(),
+                                                     is_union: false, union_desc: .init())
+        }
+
+        // Union properties — detected by LatticeUnion conformance
+        let unionProperties: [(String, any LatticeUnion.Type)] = filteredProperties.compactMap {
+            if let unionType = $0.1 as? (any LatticeUnion.Type) {
+                return ($0.0, unionType)
+            }
+            return nil
+        }
+
+        for (name, property) in unionProperties {
+            // Build the C++ union_descriptor from Swift metadata
+            var udesc = LatticeSwiftCppBridge.lattice.union_descriptor()
+            udesc.union_table_name = std.string(property.unionTableName)
+            for caseDesc in property.unionCases {
+                var uc = LatticeSwiftCppBridge.lattice.union_case()
+                uc.case_name = std.string(caseDesc.name)
+                for field in caseDesc.fields {
+                    var ucv = LatticeSwiftCppBridge.lattice.union_case_value()
+                    ucv.param_name = std.string(field.label)
+
+                    // Determine column type from the field's actual type
+                    if let linkType = field.type as? any LinkProperty.Type {
+                        ucv.type = .text
+                        ucv.is_link = true
+                        ucv.link_target = std.string(linkType.modelType.entityName)
+                    } else if let primitiveType = field.type as? any PrimitiveProperty.Type {
+                        ucv.type = switch primitiveType.anyPropertyKind {
+                        case .int, .int64: .integer
+                        case .float, .double, .date: .real
+                        case .data: .blob
+                        case .string, .null: .text
+                        }
+                        ucv.is_link = false
+                    } else {
+                        ucv.type = .text
+                        ucv.is_link = false
+                    }
+                    ucv.link_target = ucv.is_link ? ucv.link_target : std.string("")
+                    uc.values.push_back(ucv)
+                }
+                udesc.cases.push_back(uc)
+            }
+
+            schema[std.string(name)] = .init(name: std.string(name), type: .text,
+                                             kind: .union_type,
+                                             target_table: std.string(property.unionTableName),
+                                             link_table: .init(),
+                                             nullable: true, is_vector: false, is_geo_bounds: false,
+                                             is_full_text: false,
+                                             is_indexed: false,
+                                             is_unique: false, column_name: .init(),
+                                             is_union: true, union_desc: udesc)
         }
 
         return schema
@@ -540,6 +598,25 @@ public func _defaultCxxLatticeObject<M>(_ model: M.Type) -> CxxDynamicObject whe
     CxxDynamicObject(CxxLatticeObject(std.string(M.entityName), M.cxxPropertyDescriptor()))
 }
 
+// MARK: - UnionProperty conformance (links stored as globalId TEXT + link_ref)
+
+extension Model {
+    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Self {
+        guard let linkRef = uv.getLinkRef(std.string(name)) else {
+            return Self(isolation: nil)
+        }
+        let model = Self(isolation: nil)
+        model._dynamicObject._ref = linkRef
+        return model
+    }
+
+    public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Self) {
+        let gid = value.globalId?.uuidString.lowercased() ?? ""
+        uv.setString(std.string(name), std.string(gid))
+        uv.setLinkRef(std.string(name), value._dynamicObject._ref)
+    }
+}
+
 extension Model {
     public var debugDescription: String {
         String(_dynamicObject._ref.debug_description())
@@ -561,6 +638,10 @@ public macro Model() = #externalMacro(module: "LatticeMacros",
 @attached(extension, conformances: LatticeEnum, names: arbitrary)
 public macro LatticeEnum() = #externalMacro(module: "LatticeMacros",
                                             type: "EnumMacro")
+
+@attached(extension, conformances: LatticeUnion, names: arbitrary)
+public macro Union() = #externalMacro(module: "LatticeMacros",
+                                      type: "UnionMacro")
 
 @attached(member, conformances: EmbeddedModel, names: arbitrary)
 public macro EmbeddedModel() = #externalMacro(module: "LatticeMacros",

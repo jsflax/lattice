@@ -995,6 +995,162 @@ class EnumMacro: ExtensionMacro {
     }
 }
 
+class UnionMacro: ExtensionMacro {
+    struct CaseInfo {
+        let name: String
+        struct Field {
+            let label: String   // empty for unlabeled single values
+            let typeName: String
+        }
+        let fields: [Field]
+    }
+
+    static func expansion(of node: AttributeSyntax, attachedTo declaration: some DeclGroupSyntax,
+                           providingExtensionsOf type: some TypeSyntaxProtocol,
+                           conformingTo protocols: [TypeSyntax],
+                           in context: some MacroExpansionContext) throws -> [ExtensionDeclSyntax] {
+        guard let enumDecl = declaration.as(EnumDeclSyntax.self) else {
+            throw MacroError.message("@Union can only be applied to enums")
+        }
+
+        // Gather all cases
+        var cases: [CaseInfo] = []
+        for member in enumDecl.memberBlock.members {
+            guard let caseDecl = member.decl.as(EnumCaseDeclSyntax.self) else { continue }
+            for element in caseDecl.elements {
+                let caseName = element.name.text
+                var fields: [CaseInfo.Field] = []
+                if let params = element.parameterClause?.parameters {
+                    for param in params {
+                        let typeStr = param.type.trimmedDescription
+                        // v1 validation: reject unsupported types
+                        if typeStr.hasPrefix("List<") || typeStr.hasPrefix("[") ||
+                           typeStr.hasPrefix("Vector<") {
+                            throw MacroError.message("@Union cases cannot contain List, Array, or Vector types (case '\(caseName)')")
+                        }
+                        let label = param.firstName?.text ?? ""
+                        fields.append(.init(label: label, typeName: typeStr))
+                    }
+                }
+                cases.append(.init(name: caseName, fields: fields))
+            }
+        }
+
+        guard !cases.isEmpty else {
+            throw MacroError.message("@Union requires at least one case")
+        }
+
+        let typeName = type.trimmedDescription
+        let tableName = "_\(typeName)"
+
+        // Generate defaultValue from first case
+        let firstCase = cases[0]
+        let defaultExpr: String
+        if firstCase.fields.isEmpty {
+            defaultExpr = ".\(firstCase.name)"
+        } else {
+            let args = firstCase.fields.map { field in
+                if field.label.isEmpty {
+                    return ".defaultValue"
+                } else {
+                    return "\(field.label): .defaultValue"
+                }
+            }.joined(separator: ", ")
+            defaultExpr = ".\(firstCase.name)(\(args))"
+        }
+
+        // Generate unionCases
+        let casesArray = cases.map { c in
+            let fieldsArray = c.fields.map { f in
+                "(label: \"\(f.label)\", type: \(f.typeName).self)"
+            }.joined(separator: ", ")
+            return "UnionCaseDescriptor(name: \"\(c.name)\", fields: [\(fieldsArray)])"
+        }.joined(separator: ",\n                ")
+
+        // Generate _toCxxUnionValue
+        var encodeCases: [String] = []
+        for c in cases {
+            if c.fields.isEmpty {
+                encodeCases.append("""
+                    case .\(c.name):
+                        uv.case_name = std.string("\(c.name)")
+                """)
+            } else {
+                let bindings = c.fields.enumerated().map { i, f in
+                    f.label.isEmpty ? "let _\(i)" : "let \(f.label)"
+                }.joined(separator: ", ")
+                var setters: [String] = []
+                for (i, f) in c.fields.enumerated() {
+                    let varName = f.label.isEmpty ? "_\(i)" : f.label
+                    let key = f.label.isEmpty ? "_\(i)" : f.label
+                    setters.append("                    \(f.typeName).setField(on: &uv, named: \"\(key)\", \(varName))")
+                }
+                encodeCases.append("""
+                    case .\(c.name)(\(bindings)):
+                        uv.case_name = std.string("\(c.name)")
+                \(setters.joined(separator: "\n"))
+                """)
+            }
+        }
+
+        // Generate _fromCxxUnionValue
+        var decodeCases: [String] = []
+        for c in cases {
+            if c.fields.isEmpty {
+                decodeCases.append("""
+                        case "\(c.name)": return .\(c.name)
+                """)
+            } else {
+                let args = c.fields.enumerated().map { i, f in
+                    let key = f.label.isEmpty ? "_\(i)" : f.label
+                    let argLabel = f.label.isEmpty ? "" : "\(f.label): "
+                    return "\(argLabel)\(f.typeName).getField(from: value, named: \"\(key)\", lattice: lattice)"
+                }.joined(separator: ",\n                        ")
+                decodeCases.append("""
+                        case "\(c.name)": return .\(c.name)(
+                            \(args))
+                """)
+            }
+        }
+
+        return [
+            ExtensionDeclSyntax(
+                extendedType: type,
+                inheritanceClause: .init(inheritedTypes: .init(arrayLiteral:
+                    InheritedTypeSyntax(type: TypeSyntax("LatticeUnion"))
+                )),
+                memberBlock: """
+                {
+                    public static var unionTableName: String { "\(raw: tableName)" }
+
+                    public static var unionCases: [UnionCaseDescriptor] {
+                        [\(raw: casesArray)]
+                    }
+
+                    public static var defaultValue: Self { \(raw: defaultExpr) }
+
+                    public func _toCxxUnionValue() -> lattice.union_value {
+                        var uv = lattice.union_value()
+                        switch self {
+                \(raw: encodeCases.joined(separator: "\n"))
+                        }
+                        return uv
+                    }
+
+                    public static func _fromCxxUnionValue(_ value: lattice.union_value, lattice: Lattice?) -> Self {
+                        let caseName = String(value.case_name)
+                        switch caseName {
+                \(raw: decodeCases.joined(separator: "\n"))
+                        default: return .defaultValue
+                        }
+                    }
+                }
+                """
+            )
+        ]
+    }
+}
+
 class EmbeddedModelMacro: MemberMacro {
     static func expansion(of node: AttributeSyntax, providingMembersOf declaration: some DeclGroupSyntax, in context: some MacroExpansionContext) throws -> [DeclSyntax] {
         []
@@ -1035,7 +1191,7 @@ struct LatticeMacrosPlugin: CompilerPlugin {
     let providingMacros: [Macro.Type] = [
         ModelMacro.self, TransientMacro.self, PropertyMacro.self,
 //        LatticeMemberMacro.self,
-        UniqueMacro.self, CodableMacro.self, EnumMacro.self, EmbeddedModelMacro.self,
+        UniqueMacro.self, CodableMacro.self, EnumMacro.self, UnionMacro.self, EmbeddedModelMacro.self,
         VirtualModelMacro.self, FullTextMacro.self, IndexedMacro.self,
         VirtualLinkPropertyMacro.self, CodingKeyMacro.self, CodableIgnoredMacro.self
     ]

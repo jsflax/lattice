@@ -17,7 +17,7 @@ extension RawRepresentable where Self.RawValue: CxxListManaged, Self.RawValue: P
     public static var defaultValue: Self { .init(rawValue: RawValue.defaultValue)! }
 }
 
-public protocol LatticeEnum: RawRepresentable, PrimitiveProperty, CxxListManaged where RawValue: SchemaProperty, RawValue: CxxListManaged {
+public protocol LatticeEnum: RawRepresentable, PrimitiveProperty, CxxListManaged, UnionProperty where RawValue: SchemaProperty, RawValue: CxxListManaged {
 }
 
 extension LatticeEnum {
@@ -38,6 +38,19 @@ extension LatticeEnum {
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
         Self.RawValue.setField(on: &storage, named: name, value.rawValue)
+    }
+}
+
+// MARK: - UnionProperty conformance for LatticeEnum (stored as raw value)
+
+extension LatticeEnum where Self: UnionProperty, RawValue: UnionPrimitiveProperty {
+    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Self {
+        let raw = RawValue.getField(from: uv, named: name, lattice: lattice)
+        return Self(rawValue: raw) ?? Self.defaultValue
+    }
+
+    public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Self) {
+        RawValue.setField(on: &uv, named: name, value.rawValue)
     }
 }
 

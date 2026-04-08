@@ -9,7 +9,7 @@ public protocol DefaultInitializable {
 public typealias CxxManagedStringList = lattice.ManagedStringList
 public typealias CxxManagedString = lattice.ManagedString
 
-public protocol EmbeddedModel: Codable, PrimitiveProperty, CxxListManaged, DefaultInitializable where CxxManagedListType == CxxManagedStringList {
+public protocol EmbeddedModel: Codable, PrimitiveProperty, CxxListManaged, DefaultInitializable, UnionProperty where CxxManagedListType == CxxManagedStringList {
 }
 
 extension EmbeddedModel {
@@ -35,6 +35,23 @@ extension EmbeddedModel {
     }
 
     public static var anyPropertyKind: AnyProperty.Kind { .string }
+}
+
+// MARK: - UnionProperty conformance for EmbeddedModel (stored as JSON TEXT)
+
+extension EmbeddedModel where Self: UnionProperty {
+    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Self {
+        let json = String(uv.getString(std.string(name)))
+        if !json.isEmpty, let data = json.data(using: .utf8) {
+            return try! JSONDecoder().decode(Self.self, from: data)
+        }
+        return Self.init()
+    }
+
+    public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Self) {
+        let json = String(data: try! JSONEncoder().encode(value), encoding: .utf8)!
+        uv.setString(std.string(name), std.string(json))
+    }
 }
 
 #if DEBUG

@@ -1,6 +1,6 @@
 import Foundation
 
-extension ClosedRange: EmbeddedModel, Codable, DefaultInitializable, CxxListManaged, CxxManaged, PrimitiveProperty, SchemaProperty, PersistableProperty where Bound: Numeric, Bound: CxxManaged, Bound: DefaultInitializable, Bound: Codable {
+extension ClosedRange: EmbeddedModel, Codable, DefaultInitializable, CxxListManaged, CxxManaged, PrimitiveProperty, SchemaProperty, PersistableProperty, UnionProperty where Bound: Numeric, Bound: CxxManaged, Bound: DefaultInitializable, Bound: Codable {
     private enum CodingKeys: String, CodingKey {
         case upperBound, lowerBound
     }
