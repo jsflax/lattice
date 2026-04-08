@@ -168,11 +168,11 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
     if let accessorBlock = binding.accessorBlock {
         switch accessorBlock.accessors {
         case .accessors(let accessors):
-            // Only treat as computed if it has a get/set/didSet/willSet with a body
-            // Skip if it's just access level modifiers like private(set)
+            // Only treat as computed if it has a get/set with a body.
+            // didSet/willSet are property observers on stored properties — NOT computed.
             let hasComputedAccessor = accessors.contains(where: { accessor in
                 let specifier = accessor.accessorSpecifier.text
-                return (specifier == "get" || specifier == "set" || specifier == "didSet" || specifier == "willSet")
+                return (specifier == "get" || specifier == "set")
                     && accessor.body != nil
             })
             if hasComputedAccessor {
@@ -616,10 +616,10 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                         break
                     }
 
-                    // Otherwise check if it's computed
+                    // Otherwise check if it's computed (get/set only, not didSet/willSet observers)
                     let hasComputedAccessor = accessors.contains(where: { accessor in
                         let specifier = accessor.accessorSpecifier.text
-                        return (specifier == "get" || specifier == "set" || specifier == "didSet" || specifier == "willSet")
+                        return (specifier == "get" || specifier == "set")
                             && accessor.body != nil
                     })
                     if hasComputedAccessor {

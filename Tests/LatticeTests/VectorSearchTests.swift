@@ -1327,4 +1327,64 @@ class Vec0LockStormTests: BaseTest {
         let total = lattice.objects(Document.self).count
         #expect(total == 50, "Should have 25 remaining + 25 new = 50 documents, got \(total)")
     }
+
+    /// Reproduces crash: objects hydrated from an attached (UNION ALL) lattice
+    /// carry schema-qualified table names (e.g. "main.Document"). Writing to
+    /// the embedding property on such an object calls ensure_vec0_table with
+    /// "_main.Document_embedding_vec" which fails with "unknown database _main".
+    /// This is the root cause of the Engram MCP SIGTRAP during update tool calls
+    /// when the server uses attaching() for synced projects.
+    @Test func test_attachedObject_embeddingWrite_doesNotCrash() async throws {
+        let localPath = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 32)).sqlite")
+        let syncedPath = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 32)).sqlite")
+
+        let logPath = FileManager.default.temporaryDirectory
+            .appending(path: "attached-vec0-crash.log")
+        Lattice.setLogLevel(.debug)
+        Lattice.setLogFile(logPath)
+
+        let local = try Lattice(Document.self, configuration: .init(fileURL: localPath))
+        let synced = try Lattice(Document.self, configuration: .init(fileURL: syncedPath))
+
+        // Insert docs in both DBs
+        local.add(Document(title: "local-1", embedding: [1.0, 0.0, 0.0]))
+        local.add(Document(title: "local-2", embedding: [0.0, 1.0, 0.0]))
+        synced.add(Document(title: "synced-1", embedding: [0.0, 0.0, 1.0]))
+
+        // Create attached view (UNION ALL) — same as Engram's readLattice()
+        let combined = local.attaching(lattice: synced)
+
+        // Query through the combined view — objects get schema-qualified table names
+        let results = combined.objects(Document.self)
+            .nearest(to: FloatVector([1.0, 0.0, 0.0]), on: \.embedding, limit: 3)
+
+        #expect(results.count > 0, "Should find results from combined view")
+
+        // Write to the embedding property on a result object.
+        // Crashes with SIGTRAP if table_name_ is schema-qualified.
+        let doc = combined.objects(Document.self)
+            .where { $0.title == "local-1" }.first!
+        doc.embedding = FloatVector([0.5, 0.5, 0.0])
+        doc.title = "updated"
+
+        let updated = local.objects(Document.self)
+            .where { $0.title == "updated" }
+        #expect(updated.count == 1, "Updated doc should be queryable")
+
+        // Dump the lattice log so we can see what ensure_vec0_table received
+        if let log = try? String(contentsOf: logPath, encoding: .utf8) {
+            print("=== LATTICE LOG ===")
+            // Print just the last 50 lines to see the crash context
+            let lines = log.components(separatedBy: "\n")
+            for line in lines.suffix(50) {
+                print(line)
+            }
+            print("=== END LOG ===")
+        }
+
+        try? Lattice.delete(for: .init(fileURL: localPath))
+        try? Lattice.delete(for: .init(fileURL: syncedPath))
+    }
 }

@@ -1763,29 +1763,12 @@ extension Lattice {
     /// Direct log output to a file instead of stderr.
     /// Pass nil to revert to stderr. Caller owns the FILE* lifetime.
     public static func setLogFile(_ fileURL: URL) {
-        // Ensure the file exists before trying to open a handle for it
-        if !FileManager.default.fileExists(atPath: fileURL.path) {
-            FileManager.default.createFile(atPath: fileURL.path, contents: nil, attributes: nil)
-        } else {
-            try? FileManager.default.removeItem(atPath: fileURL.path)
-            FileManager.default.createFile(atPath: fileURL.path, contents: nil, attributes: nil)
+        let path = fileURL.path(percentEncoded: false)
+        guard let cFilePointer = fopen(path, "w") else {
+            print("Failed to open log file: \(path)")
+            return
         }
-        
-        guard let fileHandle = try? FileHandle(forWritingTo: fileURL) else {
-            return print("Failed to fdopen file descriptor")
-        }
-
-        // 2. Get the file descriptor
-        let fileDescriptor = fileHandle.fileDescriptor
-
-        // 3. Use fdopen to get a C FILE pointer (UnsafeMutablePointer<FILE>)
-        //    Specify the mode, e.g., "w" for writing.
-        if let cFilePointer = fdopen(fileDescriptor, "w") {
-            // You now have a FILE* and can use C standard library functions like fwrite or fprintf
-            lattice.set_log_file(cFilePointer)
-            print("Log file path: \(fileURL.path)")
-        } else {
-            print("Failed to fdopen file descriptor")
-        }
+        lattice.set_log_file(cFilePointer)
+        print("Log file path: \(path)")
     }
 }
