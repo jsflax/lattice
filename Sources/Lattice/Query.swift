@@ -102,6 +102,13 @@ public struct Query<T>: Sendable {
     private var node: QueryNode
     private var rootEntityName: String?
 
+    // Union query support: tracks which union fields were accessed during tracing
+    public class _UnionAccessTracker: @unchecked Sendable {
+        public var fields: [(name: String, type: any LatticeUnion.Type)] = []
+    }
+    public var _unionAccessTracker = _UnionAccessTracker()
+    public nonisolated(unsafe) var _unionOverrides: [String: Any] = [:]
+
     /**
      The `Query` struct works by compounding `QueryNode`s together in a tree structure.
      Each part of a query expression will be represented by one of the below static methods.
@@ -293,6 +300,16 @@ public struct Query<T>: Sendable {
         .init(appendKeyPath(_name(for: member), options: []), isAuditing: isAuditing)
     }
 
+    /// Union field access — returns the macro-generated query enum.
+    public subscript<V: LatticeUnion>(dynamicMember member: KeyPath<T, V>) -> V.QueryEnum where T: Model {
+        let name = _name(for: member)
+        if let override = _unionOverrides[name] as? V.QueryEnum {
+            return override
+        }
+        _unionAccessTracker.fields.append((name: name, type: V.self))
+        return V.QueryEnum()
+    }
+
     /// For virtual queries
     package func virtualMember<V>(_ keyPath: String, withType: V.Type) -> Query<V> {
         .init(appendKeyPath(keyPath, options: []), isAuditing: isAuditing)
@@ -410,6 +427,32 @@ extension Query where T: _QueryNumeric {
     /// :nodoc:
     public static func <= (_ lhs: Query, _ rhs: Query) -> Query<Bool> {
         .init(.comparison(operator: .lessThanEqual, lhs.node, rhs.node, options: []))
+    }
+}
+
+// MARK: Union query factories
+
+extension Query {
+    /// Raw column name reference. Used by @Union macro-generated query enums.
+    public static func _column(_ name: String) -> Query<T> {
+        .init(.keyPath([name], options: []))
+    }
+}
+
+extension Query where T == Bool {
+    /// Union subquery: parentCol IN (SELECT globalId FROM unionTable WHERE clause).
+    public static func _unionSubquery(parentKeyPath: [String], unionTable: String, whereClause: String) -> Query<Bool> {
+        .init(.comparison(operator: .in,
+            .keyPath(parentKeyPath, options: []),
+            .select("globalId", from: unionTable, where: whereClause),
+            options: []))
+    }
+
+    /// SQL CASE WHEN for union switch queries.
+    public static func _caseWhen(whens: [(condition: Query<Bool>, result: Query<Bool>)], elseResult: Query<Bool>) -> Query<Bool> {
+        .init(.caseWhen(
+            whens: whens.map { ($0.condition.node, $0.result.node) },
+            elseResult: elseResult.node))
     }
 }
 
@@ -847,6 +890,8 @@ private indirect enum QueryNode: @unchecked Sendable {
     case geoWithin(_ keyPath: QueryNode, _ value: QueryNode)
     case jsonArrayLength(_ keyPath: QueryNode)
     case select(_ keyPath: String, from: String, where: String? = nil)
+    /// SQL CASE WHEN expression for union switch queries.
+    case caseWhen(whens: [(condition: QueryNode, result: QueryNode)], elseResult: QueryNode)
 }
 
 private enum CollectionSubscript {
@@ -1045,6 +1090,18 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
             } else {
                 formatStr.append("(SELECT \(keyPath) FROM \(tableName))")
             }
+        case .caseWhen(let whens, let elseResult):
+            formatStr.append("CASE ")
+            for (condition, result) in whens {
+                formatStr.append("WHEN ")
+                build(condition)
+                formatStr.append(" THEN ")
+                build(result)
+                formatStr.append(" ")
+            }
+            formatStr.append("ELSE ")
+            build(elseResult)
+            formatStr.append(" END")
         case .embeddedKeyPath(var kp, var isAnyProperty, options: let options):
             if isNewNode {
                 buildBool(node)
@@ -1224,6 +1281,8 @@ private struct SubqueryRewriter {
             return .jsonArrayLength(rewrite(keyPath))
         case .select:
             fatalError()
+        case .caseWhen:
+            return node
         }
     }
 

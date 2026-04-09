@@ -47,6 +47,9 @@ internal protocol _QueryProtocol {
     
 }
 
+enum Blah<T> {
+    
+}
 @dynamicMemberLookup
 public protocol _Query<T> {
     init()

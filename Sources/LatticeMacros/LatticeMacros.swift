@@ -1000,9 +1000,9 @@ class UnionMacro: ExtensionMacro {
         let name: String
         struct Field {
             let label: String   // empty for unlabeled single values
-            let typeName: String
+            var typeName: String
         }
-        let fields: [Field]
+        var fields: [Field]
     }
 
     static func expansion(of node: AttributeSyntax, attachedTo declaration: some DeclGroupSyntax,
@@ -1040,8 +1040,10 @@ class UnionMacro: ExtensionMacro {
             throw MacroError.message("@Union requires at least one case")
         }
 
-        let typeName = type.trimmedDescription
-        let tableName = "_\(typeName)"
+        let fullTypeName = type.trimmedDescription
+        let simpleTypeName = fullTypeName.split(separator: ".").last.map(String.init) ?? fullTypeName
+        let tableName = "_\(simpleTypeName)"
+
 
         // Generate defaultValue from first case
         let firstCase = cases[0]
@@ -1113,6 +1115,47 @@ class UnionMacro: ExtensionMacro {
             }
         }
 
+        // Generate query enum cases
+        var queryEnumCases: [String] = []
+        for c in cases {
+            if c.fields.isEmpty {
+                // Bare case — include in query enum without associated values
+                queryEnumCases.append("case \(c.name)")
+            } else if c.fields.count == 1 && c.fields[0].label.isEmpty {
+                // Single unlabeled: case dog(Query<Type>)
+                queryEnumCases.append("case \(c.name)(Query<\(c.fields[0].typeName)>)")
+            } else {
+                // Multi/labeled: case note(name: Query<String>, date: Query<Int>)
+                let params = c.fields.map { f in
+                    "\(f.label): Query<\(f.typeName)>"
+                }.joined(separator: ", ")
+                queryEnumCases.append("case \(c.name)(\(params))")
+            }
+        }
+        queryEnumCases.append("case _empty")
+
+        // Generate _makeQueryVariants
+        var variantEntries: [String] = []
+        for c in cases {
+            if c.fields.isEmpty { continue }
+            if c.fields.count == 1 && c.fields[0].label.isEmpty {
+                // Single unlabeled: column = caseName
+                variantEntries.append("""
+                            ("\(c.name)", .\(c.name)(._column( "\(c.name)")))
+                """)
+            } else {
+                let args = c.fields.map { f in
+                    let colName = "\(c.name)__\(f.label)"
+                    return "\(f.label): ._column(\"\(colName)\")"
+                }.joined(separator: ", ")
+                variantEntries.append("""
+                            ("\(c.name)", .\(c.name)(\(args)))
+                """)
+            }
+        }
+
+        let queryEnumName = "\(simpleTypeName)_Query"
+
         return [
             ExtensionDeclSyntax(
                 extendedType: type,
@@ -1128,6 +1171,20 @@ class UnionMacro: ExtensionMacro {
                     }
 
                     public static var defaultValue: Self { \(raw: defaultExpr) }
+
+                    public enum \(raw: queryEnumName): _LatticeUnionQueryEnum {
+                        \(raw: queryEnumCases.joined(separator: "\n            "))
+
+                        public init() { self = ._empty }
+                    }
+
+                    public typealias QueryEnum = \(raw: queryEnumName)
+
+                    public static func _makeQueryVariants(parentKeyPath: [String]) -> [(caseName: String, variant: \(raw: queryEnumName))] {
+                        [
+                \(raw: variantEntries.joined(separator: ",\n"))
+                        ]
+                    }
 
                     public func _toCxxUnionValue() -> lattice.union_value {
                         var uv = lattice.union_value()

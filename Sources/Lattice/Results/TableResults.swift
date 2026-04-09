@@ -138,11 +138,53 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     }
 
     public func `where`(_ query: ((Query<Element>) -> Query<Bool>)) -> TableResults<Element> {
-        let newWhere = query(Query())
+        let q = Query<Element>()
+        let firstResult = query(q)
+
+        // No union fields accessed — normal path
+        guard !q._unionAccessTracker.fields.isEmpty else {
+            let combined: Query<Bool>? = if let existing = whereStatement {
+                existing && firstResult
+            } else {
+                firstResult
+            }
+            return TableResults(_lattice, whereStatement: combined, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
+        }
+
+        // Union path: build a SQL CASE WHEN from variant runs.
+        // First run result is the ELSE (default/fallthrough).
+        // Each variant run is a WHEN condition THEN predicate.
+        var result: Query<Bool> = firstResult
+        for (fieldName, unionType) in q._unionAccessTracker.fields {
+            let variants = unionType._makeQueryVariants(parentKeyPath: [fieldName])
+            var whens: [(condition: Query<Bool>, result: Query<Bool>)] = []
+
+            for (caseName, variant) in variants {
+                var q2 = Query<Element>()
+                q2._unionOverrides[fieldName] = variant
+                let variantResult = query(q2)
+
+                let condition = Query<Bool>._unionSubquery(
+                    parentKeyPath: [fieldName],
+                    unionTable: unionType.unionTableName,
+                    whereClause: "\"case\" = '\(caseName)'")
+                // Wrap the variant's predicate in a subquery so union columns resolve
+                // against the union table (parent columns resolve via correlated subquery)
+                let thenSQL = variantResult._constructPredicate().0
+                let wrappedResult = Query<Bool>._unionSubquery(
+                    parentKeyPath: [fieldName],
+                    unionTable: unionType.unionTableName,
+                    whereClause: "\"case\" = '\(caseName)' AND (\(thenSQL))")
+                whens.append((condition: condition, result: wrappedResult))
+            }
+
+            result = Query<Bool>._caseWhen(whens: whens, elseResult: firstResult)
+        }
+
         let combined: Query<Bool>? = if let existing = whereStatement {
-            existing && newWhere
+            existing && result
         } else {
-            newWhere
+            result
         }
         return TableResults(_lattice, whereStatement: combined, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
