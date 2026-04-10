@@ -44,8 +44,8 @@ extension LatticeEnum {
 // MARK: - UnionProperty conformance for LatticeEnum (stored as raw value)
 
 extension LatticeEnum where Self: UnionProperty, RawValue: UnionPrimitiveProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Self {
-        let raw = RawValue.getField(from: uv, named: name, lattice: lattice)
+    public static func getField(from uv: lattice.union_value, named name: String) -> Self {
+        let raw = RawValue.getField(from: uv, named: name)
         return Self(rawValue: raw) ?? Self.defaultValue
     }
 

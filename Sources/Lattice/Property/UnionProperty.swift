@@ -5,7 +5,7 @@ import LatticeSwiftModule
 // MARK: - UnionProperty (base) — any type that can appear as a union case value
 
 public protocol UnionProperty {
-    static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Self
+    static func getField(from uv: lattice.union_value, named name: String) -> Self
     static func setField(on uv: inout lattice.union_value, named name: String, _ value: Self)
 }
 
@@ -14,7 +14,7 @@ public protocol UnionProperty {
 public protocol UnionPrimitiveProperty: UnionProperty {}
 
 extension String: UnionPrimitiveProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> String {
+    public static func getField(from uv: lattice.union_value, named name: String) -> String {
         String(uv.getString(std.string(name)))
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: String) {
@@ -23,7 +23,7 @@ extension String: UnionPrimitiveProperty {
 }
 
 extension Int: UnionPrimitiveProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Int {
+    public static func getField(from uv: lattice.union_value, named name: String) -> Int {
         Int(uv.getInt(std.string(name)))
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Int) {
@@ -32,7 +32,7 @@ extension Int: UnionPrimitiveProperty {
 }
 
 extension Int64: UnionPrimitiveProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Int64 {
+    public static func getField(from uv: lattice.union_value, named name: String) -> Int64 {
         uv.getInt(std.string(name))
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Int64) {
@@ -41,7 +41,7 @@ extension Int64: UnionPrimitiveProperty {
 }
 
 extension Double: UnionPrimitiveProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Double {
+    public static func getField(from uv: lattice.union_value, named name: String) -> Double {
         uv.getDouble(std.string(name))
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Double) {
@@ -50,7 +50,7 @@ extension Double: UnionPrimitiveProperty {
 }
 
 extension Float: UnionPrimitiveProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Float {
+    public static func getField(from uv: lattice.union_value, named name: String) -> Float {
         Float(uv.getDouble(std.string(name)))
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Float) {
@@ -59,7 +59,7 @@ extension Float: UnionPrimitiveProperty {
 }
 
 extension Bool: UnionPrimitiveProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Bool {
+    public static func getField(from uv: lattice.union_value, named name: String) -> Bool {
         uv.getInt(std.string(name)) != 0
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Bool) {
@@ -68,7 +68,7 @@ extension Bool: UnionPrimitiveProperty {
 }
 
 extension Date: UnionPrimitiveProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Date {
+    public static func getField(from uv: lattice.union_value, named name: String) -> Date {
         Date(timeIntervalSinceReferenceDate: uv.getDouble(std.string(name)))
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Date) {
@@ -77,7 +77,7 @@ extension Date: UnionPrimitiveProperty {
 }
 
 extension UUID: UnionPrimitiveProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> UUID {
+    public static func getField(from uv: lattice.union_value, named name: String) -> UUID {
         UUID(uuidString: String(uv.getString(std.string(name)))) ?? UUID()
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: UUID) {
@@ -86,7 +86,7 @@ extension UUID: UnionPrimitiveProperty {
 }
 
 extension URL: UnionPrimitiveProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> URL {
+    public static func getField(from uv: lattice.union_value, named name: String) -> URL {
         URL(string: String(uv.getString(std.string(name)))) ?? URL(filePath: "")
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: URL) {
@@ -95,7 +95,7 @@ extension URL: UnionPrimitiveProperty {
 }
 
 extension Data: UnionPrimitiveProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Data {
+    public static func getField(from uv: lattice.union_value, named name: String) -> Data {
         Data(uv.getBlob(std.string(name)))
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Data) {
@@ -108,11 +108,11 @@ extension Data: UnionPrimitiveProperty {
 // MARK: - Optional conformance — same pattern as Optional: SchemaProperty
 
 extension Optional: UnionProperty where Wrapped: UnionProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Self {
+    public static func getField(from uv: lattice.union_value, named name: String) -> Self {
         guard uv.hasField(std.string(name)) else {
             return nil
         }
-        return Wrapped.getField(from: uv, named: name, lattice: lattice)
+        return Wrapped.getField(from: uv, named: name)
     }
 
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Self) {
@@ -161,7 +161,7 @@ public protocol LatticeUnion: SchemaProperty, CxxManaged {
     func _toCxxUnionValue() -> lattice.union_value
 
     /// Decode a C++ union_value, resolving links via the Lattice instance.
-    static func _fromCxxUnionValue(_ value: lattice.union_value, lattice: Lattice?) -> Self
+    static func _fromCxxUnionValue(_ value: lattice.union_value) -> Self
 }
 
 /// Marker protocol for macro-generated query enums. Requires a default init (returns ._empty).
@@ -177,8 +177,7 @@ extension LatticeUnion {
         if String(uv.case_name).isEmpty {
             return Self.defaultValue
         }
-        let latticeInstance = storage._ref.lattice.map { Lattice(ref: $0) }
-        return Self._fromCxxUnionValue(uv, lattice: latticeInstance)
+        return Self._fromCxxUnionValue(uv)
     }
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {

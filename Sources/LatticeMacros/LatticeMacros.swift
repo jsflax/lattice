@@ -1106,7 +1106,7 @@ class UnionMacro: ExtensionMacro {
                 let args = c.fields.enumerated().map { i, f in
                     let key = f.label.isEmpty ? "_\(i)" : f.label
                     let argLabel = f.label.isEmpty ? "" : "\(f.label): "
-                    return "\(argLabel)\(f.typeName).getField(from: value, named: \"\(key)\", lattice: lattice)"
+                    return "\(argLabel)\(f.typeName).getField(from: value, named: \"\(key)\")"
                 }.joined(separator: ",\n                        ")
                 decodeCases.append("""
                         case "\(c.name)": return .\(c.name)(
@@ -1194,7 +1194,7 @@ class UnionMacro: ExtensionMacro {
                         return uv
                     }
 
-                    public static func _fromCxxUnionValue(_ value: lattice.union_value, lattice: Lattice?) -> Self {
+                    public static func _fromCxxUnionValue(_ value: lattice.union_value) -> Self {
                         let caseName = String(value.case_name)
                         switch caseName {
                 \(raw: decodeCases.joined(separator: "\n"))

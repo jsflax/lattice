@@ -601,7 +601,7 @@ public func _defaultCxxLatticeObject<M>(_ model: M.Type) -> CxxDynamicObject whe
 // MARK: - UnionProperty conformance (links stored as globalId TEXT + link_ref)
 
 extension Model {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Self {
+    public static func getField(from uv: lattice.union_value, named name: String) -> Self {
         guard let linkRef = uv.getLinkRef(std.string(name)) else {
             return Self(isolation: nil)
         }

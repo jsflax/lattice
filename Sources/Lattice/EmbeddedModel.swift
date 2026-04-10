@@ -40,7 +40,7 @@ extension EmbeddedModel {
 // MARK: - UnionProperty conformance for EmbeddedModel (stored as JSON TEXT)
 
 extension EmbeddedModel where Self: UnionProperty {
-    public static func getField(from uv: lattice.union_value, named name: String, lattice: Lattice?) -> Self {
+    public static func getField(from uv: lattice.union_value, named name: String) -> Self {
         let json = String(uv.getString(std.string(name)))
         if !json.isEmpty, let data = json.data(using: .utf8) {
             return try! JSONDecoder().decode(Self.self, from: data)
