@@ -18,6 +18,14 @@ enum ConstraintV2 {
     }
 }
 
+// V2b: @Unique with allowsUpsert
+enum ConstraintV2Upsert {
+    @Model final class Item {
+        @Unique(allowsUpsert: true) var name: String = ""
+        var category: String = ""
+    }
+}
+
 class ConstraintEvolutionTests: BaseTest {
 
     @Test func test_addUniqueConstraint_onSubsequentOpen() async throws {
@@ -96,6 +104,36 @@ class ConstraintEvolutionTests: BaseTest {
         do {
             let lattice = try Lattice(ConstraintV2.Item.self, configuration: .init(fileURL: dbPath))
             #expect(lattice.objects(ConstraintV2.Item.self).count == 1)
+        }
+
+        try? Lattice.delete(for: .init(fileURL: dbPath))
+    }
+
+    @Test func test_addAllowsUpsert_afterUniqueAlreadySet() async throws {
+        let dbPath = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 32)).sqlite")
+
+        // V2: open with @Unique (no upsert), insert data
+        try autoreleasepool {
+            let lattice = try Lattice(ConstraintV2.Item.self, configuration: .init(fileURL: dbPath))
+            let item1 = ConstraintV2.Item(); item1.name = "alpha"; item1.category = "original"
+            lattice.add(item1)
+            #expect(lattice.objects(ConstraintV2.Item.self).count == 1)
+            lattice.close()
+        }
+
+        // V2b: reopen with @Unique(allowsUpsert: true), insert duplicate name
+        do {
+            let lattice = try Lattice(ConstraintV2Upsert.Item.self, configuration: .init(fileURL: dbPath))
+            #expect(lattice.objects(ConstraintV2Upsert.Item.self).count == 1)
+
+            // Duplicate name should upsert (replace), not crash
+            let dup = ConstraintV2Upsert.Item(); dup.name = "alpha"; dup.category = "updated"
+            lattice.add(dup)
+
+            let items = lattice.objects(ConstraintV2Upsert.Item.self)
+            #expect(items.count == 1)
+            #expect(items.first?.category == "updated")
         }
 
         try? Lattice.delete(for: .init(fileURL: dbPath))
