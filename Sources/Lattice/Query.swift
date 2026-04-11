@@ -1076,6 +1076,8 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
                 formatStr.append("'\(escapeSQLString(str))'")
             } else if let uuid = v as? UUID {
                 formatStr.append("'\(uuid.uuidString.lowercased())'")
+            } else if let url = v as? URL {
+                formatStr.append("'\(escapeSQLString(url.absoluteString))'")
             } else {
                 formatStr.append("\(v)")
             }
