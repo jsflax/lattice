@@ -113,9 +113,8 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
 //            throw MacroError.message(attribute.debugDescription)
             memberView.attributeKey = attribute.attributeName.as(IdentifierTypeSyntax.self)!.name.text
             if memberView.attributeKey == "Unique" {
+                var constraint = Constraint(columns: [memberView.name], allowsUpsert: false)
                 if let arguments = attribute.arguments?.as(LabeledExprListSyntax.self) {
-                    var constraint = Constraint(columns: [memberView.name], allowsUpsert: false)
-                    
                     arguments.forEach {
                         if $0.label?.text == "compoundedWith" {
                             $0.expression.as(KeyPathExprSyntax.self).map {
@@ -125,7 +124,7 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
                             $0.expression.as(KeyPathExprSyntax.self).map {
                                 constraint.columns.append("\($0.components.first!.component)")
                             }
-                            
+
                         } else if $0.label?.text == "allowsUpsert" {
 
                             // named boolean argument
@@ -134,8 +133,8 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
                             }
                         }
                     }
-                    memberView.constraint = constraint
                 }
+                memberView.constraint = constraint
             } else if memberView.attributeKey == "Property" {
                 if let arguments = attribute.arguments?.as(LabeledExprListSyntax.self) {
                     arguments.forEach {
