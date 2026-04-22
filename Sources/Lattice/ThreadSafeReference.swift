@@ -10,7 +10,7 @@ public protocol LatticeIsolated {
 }
 
 public struct ModelThreadSafeReference<NonSendable: Model>: SendableReference, Equatable {
-    private let key: Int64?
+    fileprivate let key: Int64?
     public init(_ model: NonSendable) {
         self.key = model.primaryKey
     }
@@ -44,6 +44,22 @@ public struct ModelThreadSafeReference<NonSendable: Model>: SendableReference, E
 extension Model {
     public var sendableReference: ModelThreadSafeReference<Self> {
         .init(self)
+    }
+}
+
+extension Collection {
+    /// Batch-resolve references in a single `SELECT ... WHERE id IN (...)` query.
+    /// Input order is preserved; missing rows are skipped.
+    public func resolve<T: Model>(on lattice: Lattice) -> [T]
+    where Element == ModelThreadSafeReference<T> {
+        let keys = self.compactMap(\.key)
+        guard !keys.isEmpty else { return [] }
+        let optKeys: [Int64?] = keys.map { $0 }
+        let fetched = lattice.objects(T.self).where { $0.primaryKey.in(optKeys) }.snapshot()
+        let byKey: [Int64: T] = Dictionary(uniqueKeysWithValues: fetched.compactMap { obj in
+            obj.primaryKey.map { ($0, obj) }
+        })
+        return self.compactMap { $0.key.flatMap { byKey[$0] } }
     }
 }
 

@@ -275,7 +275,7 @@ extension Model {
     public init(_ refType: CxxDynamicObjectRef) {
         self.init(dynamicObject: refType)
     }
-    public static func _makeLinkList(from storage: inout ModelStorage, named name: String) -> ModelLinkListRef<Self> {
+    public static func _makeLinkList(from storage: borrowing ModelStorage, named name: String) -> ModelLinkListRef<Self> {
         ModelLinkListRef(_ref: storage._ref.getLinkList(named: std.string(name)))
     }
     
@@ -360,7 +360,7 @@ extension Model {
         ModelInstanceRegistry.shared.deregister(self, tableName: Self.entityName)
     }
 
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Self {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
         let model = Self(isolation: #isolation)
         model._dynamicObject._ref = storage._ref.getObject(named: std.string(name))
         return model

@@ -26,6 +26,32 @@ enum ConstraintV2Upsert {
     }
 }
 
+// Bulk-insert reproducer: compound unique with allowsUpsert
+enum ConstraintCompoundUpsert {
+    @Model final class Candle {
+        @Unique(compoundedWith: \Self.symbol, \.interval, allowsUpsert: true)
+        var date: Double = 0
+        var symbol: String = ""
+        var interval: String = "1d"
+        var close: Double = 0
+    }
+}
+
+// Shape-match TraderKit's LatticeCandle so we can open the user's actual DB.
+// TraderKit declares LatticeCandle as @Model class LatticeCandle: Candle (protocol).
+// Column types: date REAL, open/high/low/close/volume REAL, symbol TEXT, interval TEXT.
+@Model public final class LatticeCandle {
+    public var open: Float = 0
+    public var high: Float = 0
+    public var low: Float = 0
+    public var close: Float = 0
+    public var volume: Float = 0
+    public var symbol: String = ""
+    public var interval: String = "oneDay"
+    @Unique(compoundedWith: \Self.symbol, \.interval, allowsUpsert: true)
+    public var date: Date = Date(timeIntervalSinceReferenceDate: 0)
+}
+
 class ConstraintEvolutionTests: BaseTest {
 
     @Test func test_addUniqueConstraint_onSubsequentOpen() async throws {
@@ -137,5 +163,126 @@ class ConstraintEvolutionTests: BaseTest {
         }
 
         try? Lattice.delete(for: .init(fileURL: dbPath))
+    }
+
+    @Test func test_inspect_constraint() async throws {
+        print("CONSTRAINTS:", ConstraintCompoundUpsert.Candle.constraints)
+    }
+
+    @Test func test_repro_userDb_bulkUpsert() async throws {
+        let dbURL = URL(fileURLWithPath: "/tmp/trader_repro.sqlite")
+        guard FileManager.default.fileExists(atPath: dbURL.path) else {
+            print("SKIP: user DB copy not present")
+            return
+        }
+        print("LatticeCandle.constraints:", LatticeCandle.constraints)
+
+        // DB is at schema v2 (TraderKit uses traderMigrations [2: ...]).
+        // Provide a no-op migration at v2 so our binary advertises target_version=2 and opens the DB.
+        let noopMigration = Migration((from: LatticeCandle.self, to: LatticeCandle.self), blocks: { _, _ in })
+        let lattice = try Lattice(LatticeCandle.self, configuration: .init(fileURL: dbURL, migration: [2: noopMigration]))
+
+        // Pick an existing (symbol, interval, date) triple from the DB and try to insert a duplicate.
+        let sample = lattice.objects(LatticeCandle.self).where { $0.symbol == "NVDA" && $0.interval == "oneDay" }.snapshot().prefix(3)
+        #expect(sample.count > 0)
+
+        let dups: [LatticeCandle] = sample.map { existing in
+            let c = LatticeCandle()
+            c.date = existing.date
+            c.symbol = existing.symbol
+            c.interval = existing.interval
+            c.open = existing.open + 1
+            c.high = existing.high + 1
+            c.low = existing.low + 1
+            c.close = existing.close + 1
+            c.volume = existing.volume
+            return c
+        }
+
+        lattice.transaction {
+            lattice.add(contentsOf: dups)
+        }
+
+        print("Bulk upsert attempted on \(dups.count) rows — no throw")
+
+        // Larger mixed batch: duplicates across different symbols + some brand-new (date, symbol) combos.
+        let nvdaSample = lattice.objects(LatticeCandle.self).where { $0.symbol == "NVDA" && $0.interval == "oneDay" }.snapshot().prefix(10)
+        let aaplSample = lattice.objects(LatticeCandle.self).where { $0.symbol == "AAPL" && $0.interval == "oneDay" }.snapshot().prefix(10)
+        var mixed: [LatticeCandle] = []
+        for existing in nvdaSample + aaplSample {
+            let c = LatticeCandle()
+            c.date = existing.date
+            c.symbol = existing.symbol
+            c.interval = existing.interval
+            c.close = existing.close + 10
+            c.open = existing.open
+            c.high = existing.high
+            c.low = existing.low
+            c.volume = existing.volume
+            mixed.append(c)
+        }
+        // New-novel rows
+        let faraway = Date(timeIntervalSinceReferenceDate: 999_999_999)
+        for sym in ["NVDA", "AAPL", "TSLA", "ZZZ_NEW_SYMBOL"] {
+            let c = LatticeCandle()
+            c.date = faraway
+            c.symbol = sym
+            c.interval = "oneDay"
+            c.close = 1.0
+            mixed.append(c)
+        }
+
+        lattice.transaction {
+            lattice.add(contentsOf: mixed)
+        }
+        print("Mixed bulk upsert: \(mixed.count) rows — no throw")
+
+        // Internal duplicates within the same batch — two candles with same (date, symbol, interval).
+        let dupDate = Date(timeIntervalSinceReferenceDate: 888_888_888)
+        let internalDups: [LatticeCandle] = (0..<3).map { i in
+            let c = LatticeCandle()
+            c.date = dupDate
+            c.symbol = "INTERNAL_DUP_TEST"
+            c.interval = "oneDay"
+            c.close = Float(100 + i)
+            return c
+        }
+        lattice.transaction {
+            lattice.add(contentsOf: internalDups)
+        }
+        print("Internal dup bulk upsert: \(internalDups.count) rows — no throw")
+    }
+
+    @Test func test_bulkInsert_compoundUnique_allowsUpsert() async throws {
+        let lattice = try testLattice(ConstraintCompoundUpsert.Candle.self)
+        typealias Candle = ConstraintCompoundUpsert.Candle
+
+        // First batch
+        let batch1: [Candle] = (0..<5).map { i in
+            let c = Candle()
+            c.date = Double(i)
+            c.symbol = "NVDA"
+            c.interval = "1d"
+            c.close = Double(100 + i)
+            return c
+        }
+        lattice.add(contentsOf: batch1)
+        #expect(lattice.objects(Candle.self).count == 5)
+
+        // Second batch with overlapping (date, symbol, interval) — should upsert
+        let batch2: [Candle] = (3..<8).map { i in
+            let c = Candle()
+            c.date = Double(i)
+            c.symbol = "NVDA"
+            c.interval = "1d"
+            c.close = Double(200 + i)
+            return c
+        }
+        lattice.add(contentsOf: batch2)
+
+        let all = lattice.objects(Candle.self)
+        #expect(all.count == 8)  // 0,1,2 from batch1; 3,4 upserted; 5,6,7 new
+        let day3 = all.where { $0.date == 3 }.first
+        #expect(day3?.close == 203)  // upserted to batch2 value
     }
 }

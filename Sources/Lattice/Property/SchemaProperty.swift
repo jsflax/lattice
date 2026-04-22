@@ -28,8 +28,8 @@ extension LatticeEnum {
     }
     public static var anyPropertyKind: AnyProperty.Kind { RawValue.anyPropertyKind }
 
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Self {
-        let rawValue = RawValue.getField(from: &storage, named: name)
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
+        let rawValue = RawValue.getField(from: storage, named: name)
         guard let result = Self(rawValue: rawValue) else {
             return Self.defaultValue
         }
@@ -60,14 +60,14 @@ public protocol CustomPersistableProperty<BaseProperty>: CxxManaged where BasePr
     init(_ base: BaseProperty)
     var base: BaseProperty { get }
 
-    static func getField(from storage: inout ModelStorage, named name: String) -> Self
+    static func getField(from storage: borrowing ModelStorage, named name: String) -> Self
     static func setField(on storage: inout ModelStorage, named name: String, _ value: Self)
 }
 
 extension CustomPersistableProperty {
 
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Self {
-        Self.init(BaseProperty.getField(from: &storage, named: name))
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
+        Self.init(BaseProperty.getField(from: storage, named: name))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
         BaseProperty.setField(on: &storage, named: name, value.base)

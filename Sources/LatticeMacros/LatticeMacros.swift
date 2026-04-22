@@ -377,7 +377,7 @@ class PropertyMacro: AccessorMacro, MemberMacro {
             get {
                 _lastKeyPathUsed = "\(raw: property.mappedName ?? property.name)"
                 _$observationRegistrar.access(self, keyPath: \\.\(id.identifier))
-                return \(raw: property.type).getField(from: &_dynamicObject, named: "\(raw: property.mappedName ?? property.name)")
+                return \(raw: property.type).getField(from: _dynamicObject, named: "\(raw: property.mappedName ?? property.name)")
             }
             set {
                 _$observationRegistrar.withMutation(of: self, keyPath: \\.\(id.identifier)) {

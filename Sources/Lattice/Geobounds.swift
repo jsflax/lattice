@@ -116,7 +116,7 @@ extension MKCoordinateRegion: CxxManaged, GeoboundsProperty, LinkListable {
         .init()
     }
 
-    public static func _makeLinkList(from storage: inout ModelStorage, named name: String) -> GeoBoundsLinkListRef<MKCoordinateRegion> {
+    public static func _makeLinkList(from storage: borrowing ModelStorage, named name: String) -> GeoBoundsLinkListRef<MKCoordinateRegion> {
         GeoBoundsLinkListRef(
             _ref: storage._ref.getGeoBoundsList(named: std.string(name)),
             fromRef: { MKCoordinateRegion($0) },
@@ -136,7 +136,7 @@ extension MKCoordinateRegion: CxxManaged, GeoboundsProperty, LinkListable {
         self.init(center: center, span: span)
     }
 
-    public static func getField(from storage: inout ModelStorage, named name: String) -> MKCoordinateRegion {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> MKCoordinateRegion {
         let bounds = storage._ref.getGeoBounds(named: std.string(name))
         let center = CLLocationCoordinate2D(latitude: bounds.center_lat(), longitude: bounds.center_lon())
         let span = MKCoordinateSpan(latitudeDelta: bounds.lat_span(), longitudeDelta: bounds.lon_span())
@@ -178,7 +178,7 @@ public struct CLLocationCoordinate2DCompat: EmbeddedModel {
 }
 
 extension CLLocationCoordinate2D: CxxManaged, GeoboundsProperty, LinkListable {
-    public static func _makeLinkList(from storage: inout ModelStorage, named name: String) -> GeoBoundsLinkListRef<CLLocationCoordinate2D> {
+    public static func _makeLinkList(from storage: borrowing ModelStorage, named name: String) -> GeoBoundsLinkListRef<CLLocationCoordinate2D> {
         GeoBoundsLinkListRef(
             _ref: storage._ref.getGeoBoundsList(named: std.string(name)),
             fromRef: { CLLocationCoordinate2D($0) },
@@ -211,7 +211,7 @@ extension CLLocationCoordinate2D: CxxManaged, GeoboundsProperty, LinkListable {
         }
     }
     
-    public static func getField(from storage: inout ModelStorage, named name: String) -> CLLocationCoordinate2D {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> CLLocationCoordinate2D {
         let bounds = storage._ref.getGeoBounds(named: std.string(name))
         return CLLocationCoordinate2D(latitude: bounds.center_lat(), longitude: bounds.center_lon())
     }

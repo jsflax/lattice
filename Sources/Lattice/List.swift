@@ -30,7 +30,7 @@ public protocol LinkListRef<Element> {
 public protocol LinkListable: SchemaProperty {
     associatedtype ListRef: LinkListRef
 
-    static func _makeLinkList(from storage: inout ModelStorage, named name: String) -> ListRef
+    static func _makeLinkList(from storage: borrowing ModelStorage, named name: String) -> ListRef
 }
 
 // MARK: - ModelLinkListRef (wraps C++ link_list_ref)
@@ -107,8 +107,8 @@ public struct List<Element>: MutableCollection, BidirectionalCollection, SchemaP
         // TODO: Implement proper conversion to C++ managed link list
         return CxxManagedSpecialization.SwiftType.init()
     }
-    public static func getField(from storage: inout ModelStorage, named name: String) -> List<Element> {
-        let listRef = Element._makeLinkList(from: &storage, named: name)
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> List<Element> {
+        let listRef = Element._makeLinkList(from: storage, named: name)
         return List(linkListRef: listRef)
     }
 

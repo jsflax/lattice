@@ -172,7 +172,7 @@ public protocol _LatticeUnionQueryEnum {
 extension LatticeUnion {
     public static var anyPropertyKind: AnyProperty.Kind { .string }
 
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Self {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
         let uv = storage._ref.getUnion(named: std.string(name))
         if String(uv.case_name).isEmpty {
             return Self.defaultValue

@@ -45,7 +45,7 @@ public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
         return CxxManagedSpecialization.SwiftType.init()
     }
 
-    public static func getField(from storage: inout ModelStorage, named name: String) -> VirtualList<Element> {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> VirtualList<Element> {
         let ref = storage._ref.getLinkList(named: std.string(name))
         return VirtualList(linkListRef: ref!)
     }

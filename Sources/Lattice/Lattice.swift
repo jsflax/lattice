@@ -714,6 +714,8 @@ public struct Lattice {
             cxxSchemas.push_back(entry)
         }
 
+        var error = lattice.cxx_error()
+        
         if let migration = configuration.migration {
             // Find the target version from migration dict (highest key)
             let targetVersion = migration.keys.max() ?? 1
@@ -751,9 +753,14 @@ public struct Lattice {
                 Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).release()
             })
 
-            self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: swiftConfig, schemas: cxxSchemas)
+            self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: swiftConfig,
+                                                                  schemas: cxxSchemas,
+                                                                  error: &error)
         } else {
-            self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(), schemas: cxxSchemas)
+            self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(), schemas: cxxSchemas, error: &error)
+        }
+        guard error.msg.empty() else {
+            throw error
         }
         let key = CacheKey(self.cxxLatticeRef)
         let latticeInstance = self
@@ -904,7 +911,11 @@ public struct Lattice {
             fatalError()
         }
         let ref = object._dynamicObject._ref
-        cxxLattice.add(ref)
+        var cxxError = lattice.cxx_error()
+        cxxLattice.add(ref, &cxxError)
+        guard cxxError.msg.empty() else {
+            fatalError(String(cxxError.msg))
+        }
         object._dynamicObject._ref = ref
         // Register for cross-instance observation now that the object has a primaryKey
         object._registerIfNeeded()
@@ -1771,4 +1782,8 @@ extension Lattice {
         lattice.set_log_file(cFilePointer)
         print("Log file path: \(path)")
     }
+}
+
+extension lattice.cxx_error: Error {
+    
 }

@@ -166,6 +166,37 @@ class ResultsTests: BaseTest {
         
         #expect(lattice.objects(Person.self).count == 2)
     }
+
+    @Test
+    func test_BatchResolveSendableReferences() async throws {
+        let lattice = try testLattice(Person.self, Dog.self)
+        var people: [Person] = []
+        for i in 0..<5 {
+            let p = Person()
+            p.age = i
+            lattice.add(p)
+            people.append(p)
+        }
+
+        let refs = people.map(\.sendableReference)
+        let configuration = lattice.configuration
+        try await Task { [refs] in
+            let resolved: [Person] = refs.resolve(
+                on: try Lattice(Person.self, Dog.self, configuration: configuration))
+            #expect(resolved.count == 5)
+            // Input order preserved
+            #expect(resolved.map(\.age) == [0, 1, 2, 3, 4])
+        }.value
+
+        // Missing refs are skipped; subset resolves correctly
+        let subset = [refs[3], refs[1], refs[4]]
+        let resolvedSubset: [Person] = subset.resolve(on: lattice)
+        #expect(resolvedSubset.map(\.age) == [3, 1, 4])
+
+        // Empty input returns empty
+        let empty: [ModelThreadSafeReference<Person>] = []
+        #expect(empty.resolve(on: lattice).isEmpty)
+    }
 }
 
 // MARK: - Subquery IN models

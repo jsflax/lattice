@@ -139,7 +139,7 @@ extension Vector: CxxManaged where Element: VectorElement {
         return Vector(fromData: Data(blob))
     }
     
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Vector<Element> {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Vector<Element> {
         Vector(fromData: Data(storage._ref.getData(named: std.string(name))))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Vector<Element>) {

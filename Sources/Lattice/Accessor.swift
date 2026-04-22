@@ -50,7 +50,7 @@ public protocol CxxObject {
 public protocol CxxManaged {
 //    associatedtype CxxManagedSpecialization: CxxManagedType
 
-    static func getField(from storage: inout ModelStorage, named name: String) -> Self
+    static func getField(from storage: borrowing ModelStorage, named name: String) -> Self
     static func setField(on storage: inout ModelStorage, named name: String, _ value: Self)
 }
 
@@ -104,7 +104,7 @@ extension String: CxxListManaged {
     public static func getManagedOptional(from object: lattice.ManagedModel, name: std.string) -> CxxManagedSpecialization.OptionalType {
         object.get_managed_field(name)
     }
-    public static func getField(from storage: inout ModelStorage, named name: String) -> String {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> String {
         String(storage._ref.getString(named: std.string(name)))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: String) {
@@ -120,7 +120,7 @@ extension Int: CxxListManaged, DefaultInitializable {
     public static func fromCxxValue(_ value: lattice.int64_t) -> Int { Int(value) }
     public func toCxxValue() -> lattice.int64_t { Int64(self) }
 
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Self {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
         Int(storage._ref.getInt(named: std.string(name)))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Int) {
@@ -157,7 +157,7 @@ extension Double: CxxListManaged {
     public static func getManagedList(from object: lattice.ManagedModel, name: std.string) -> CxxManagedListType {
         object.get_managed_field(name)
     }
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Double {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Double {
         storage._ref.getDouble(named: std.string(name))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Double) {
@@ -187,7 +187,7 @@ extension Bool: CxxListManaged {
     public static func getManagedOptional(from object: lattice.ManagedModel, name: std.string) -> CxxManagedSpecialization.OptionalType {
         object.get_managed_field(name)
     }
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Bool {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Bool {
         storage._ref.getBool(named: std.string(name))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Bool) {
@@ -218,7 +218,7 @@ extension Float: CxxListManaged {
         object.get_managed_field(name)
     }
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Float {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Float {
         storage._ref.getFloat(named: std.string(name))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Float) {
@@ -250,7 +250,7 @@ extension Int64: CxxListManaged {
         object.get_managed_field(name)
     }
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Int64 {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Int64 {
         Int64(storage._ref.getInt(named: std.string(name)))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Int64) {
@@ -305,7 +305,7 @@ extension Date: CxxListManaged {
         let timestamp = object.get_double(name)
         return Date(timeIntervalSince1970: timestamp)
     }
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Date {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Date {
         // Stored as ISO8601 string or timestamp
 //        let str = String(storage._ref.getString(named: std.string(name)))
 //        if let date = ISO8601DateFormatter().date(from: str) {
@@ -363,7 +363,7 @@ extension UUID: CxxListManaged {
         object.get_managed_field(name)
     }
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
-    public static func getField(from storage: inout ModelStorage, named name: String) -> UUID {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> UUID {
         UUID(uuidString: String(storage._ref.getString(named: std.string(name)))) ?? UUID()
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: UUID) {
@@ -381,7 +381,7 @@ extension Data: CxxManaged {
         CxxManagedSpecialization.SwiftType(self)
     }
     
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Data {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Data {
         Data(storage._ref.getData(named: std.string(name)))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Data) {
@@ -499,11 +499,11 @@ extension lattice.ManagedOptionalBool: OptionalProtocol {
 extension Optional: CxxManaged where Wrapped: CxxManaged {
 //    public typealias CxxManagedSpecialization = Wrapped.CxxManagedSpecialization.OptionalType
 
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Optional<Wrapped> {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Optional<Wrapped> {
         guard storage._ref.hasValue(named: std.string(name)) else {
             return nil
         }
-        return Wrapped.getField(from: &storage, named: name)
+        return Wrapped.getField(from: storage, named: name)
     }
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Optional<Wrapped>) {
@@ -531,7 +531,7 @@ extension Array: CxxManaged where Element: CxxListManaged, Element: Codable {
 
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
     
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Array<Element> {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Array<Element> {
         guard let data = String(storage._ref.getString(named: std.string(name))).data(using: .utf8) else {
             return []
         }
@@ -569,7 +569,7 @@ extension Set: CxxManaged where Element: CxxListManaged, Element: Codable {
     }
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
     
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Set<Element> {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Set<Element> {
         guard let data = String(storage._ref.getString(named: std.string(name))).data(using: .utf8) else {
             return []
         }
@@ -620,7 +620,7 @@ extension Dictionary: CxxManaged where Key: RawRepresentable, Value: Codable, Ke
         return dict
     }
 
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Dictionary<Key, Value> {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Dictionary<Key, Value> {
         let str = String(storage._ref.getString(named: std.string(name)))
         guard let data = str.data(using: .utf8),
               let dict = try? JSONDecoder().decode([Key: Value].self, from: data) else {
@@ -675,7 +675,7 @@ extension Dictionary: CxxManaged where Key: RawRepresentable, Value: Codable, Ke
         get {
             let nameStr = object[keyPath: storageKeyPath].name
             object._lastKeyPathUsed = nameStr
-            return Value.getField(from: &object._dynamicObject, named: nameStr)
+            return Value.getField(from: object._dynamicObject, named: nameStr)
         }
         set {
             Value.setField(on: &object._dynamicObject, named: object[keyPath: storageKeyPath].name, newValue)

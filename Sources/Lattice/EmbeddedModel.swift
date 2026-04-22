@@ -17,7 +17,7 @@ extension EmbeddedModel {
         fatalError()
     }
     
-    public static func getField(from storage: inout ModelStorage, named name: String) -> Self {
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
         let jsonStr = String(storage._ref.getString(named: std.string(name)))
         if jsonStr.isEmpty {
             fatalError()

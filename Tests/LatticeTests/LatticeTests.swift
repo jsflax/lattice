@@ -2257,4 +2257,12 @@ class LatticeTests: BaseTest {
         #expect(lattice.count(Person.self) == 1)
         #expect(lattice.object(Person.self, primaryKey: p.primaryKey!)?.name == "After Vacuum")
     }
+    
+    @Test func test_InitThrows() async {
+        do {
+            try Lattice(Person.self, configuration: .init(fileURL: .init(filePath: "")))
+        } catch {
+            
+        }
+    }
 }
