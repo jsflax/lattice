@@ -44,18 +44,37 @@ struct AuthResponse: Codable {
 
 @main
 struct NotesApp: App {
+    #if os(macOS)
     private final class Delegate: NSObject, NSApplicationDelegate {
         func applicationDidFinishLaunching(_ notification: Notification) {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
         }
     }
-    
+
     @NSApplicationDelegateAdaptor(Delegate.self) private var appDelegate
-    
+    #endif
+
+    static let dbURL = FileManager.default.temporaryDirectory.appendingPathComponent("notes.sqlite")
+
+    @State private var lattice: Lattice
+
+    init() {
+        _lattice = State(initialValue: try! Lattice(Note.self, configuration: .init(fileURL: Self.dbURL)))
+    }
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(onSync: { token, serverUrl in
+                let wsUrl = serverUrl
+                    .replacingOccurrences(of: "https://", with: "wss://")
+                    .replacingOccurrences(of: "http://", with: "ws://") + "/sync"
+                var config = Lattice.Configuration(fileURL: Self.dbURL)
+                config.authorizationToken = token
+                config.wssEndpoint = URL(string: wsUrl)
+                lattice = try! Lattice(Note.self, configuration: config)
+            })
+            .environment(\.lattice, lattice)
         }
     }
 }
@@ -63,10 +82,11 @@ struct NotesApp: App {
 // MARK: - Content View
 
 struct ContentView: View {
-    @State private var lattice: Lattice?
+    var onSync: (String, String) -> Void  // (token, serverUrl)
+    @Environment(\.lattice) private var lattice
     @State private var noteText = ""
-    @State private var notes: [Note] = []
-    @State private var observerToken: Any?
+    @LatticeQuery<Note>(sort: \Note.createdAt, order: .reverse)
+    private var notes
 
     // Sync state
     @State private var syncExpanded = false
@@ -78,13 +98,6 @@ struct ContentView: View {
     @State private var isConnected = false
     @State private var authError: String?
     @State private var isLoading = false
-
-    private var dbPath: String {
-        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let appDir = url.appendingPathComponent("NotesApp", isDirectory: true)
-        try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-        return FileManager.default.temporaryDirectory.appendingPathComponent("notes.sqlite").path
-    }
 
     var body: some View {
         ZStack {
@@ -156,87 +169,27 @@ struct ContentView: View {
             }
             .padding(20)
         }
+        #if os(macOS)
         .frame(minWidth: 400, minHeight: 600)
-        .task {
-            await initializeLattice()
-        }
-    }
-
-    @MainActor
-    private func initializeLattice() async {
-        guard lattice == nil else { return }
-        let config = Lattice.Configuration(fileURL: URL(fileURLWithPath: dbPath))
-        lattice = try? Lattice(Note.self, configuration: config)
-        refreshNotes()
-        setupObserver()
-    }
-
-    private func setupObserver() {
-        guard let lattice else { return }
-        let results = lattice.objects(Note.self)
-        observerToken = results.observe { _ in
-            Task { @MainActor in
-                refreshNotes()
-            }
-        }
-    }
-
-    @MainActor
-    private func refreshNotes() {
-        guard let lattice else { return }
-        notes = lattice.objects(Note.self)
-            .sortedBy(SortDescriptor(\Note.createdAt, order: .reverse))
-            .map { $0 }
+        #endif
     }
 
     @MainActor
     private func addNote() {
         guard !noteText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        guard let lattice else { return }
-
         let note = Note(text: noteText, createdAt: Date())
         lattice.add(note)
         noteText = ""
-        refreshNotes()
     }
 
     @MainActor
     private func deleteNote(_ note: Note) {
-        guard let lattice else { return }
         lattice.delete(note)
-        refreshNotes()
-    }
-
-    @MainActor
-    private func reconnectWithSync(token: String) {
-        // Close existing connection
-        lattice = nil
-
-        // Reconnect with sync enabled
-        let wsUrl = serverUrl
-            .replacingOccurrences(of: "https://", with: "wss://")
-            .replacingOccurrences(of: "http://", with: "ws://") + "/sync"
-
-        let config = Lattice.Configuration(
-            fileURL: URL(fileURLWithPath: dbPath),
-            authorizationToken: token,
-            wssEndpoint: URL(string: wsUrl)
-        )
-        lattice = try? Lattice(Note.self, configuration: config)
-
-        if lattice != nil {
-            authToken = token
-            isConnected = true
-            syncStatus = "Connected"
-            refreshNotes()
-            setupObserver()
-        } else {
-            authError = "Failed to connect to sync server"
-        }
     }
 
     @MainActor
     private func authenticate(isLogin: Bool) async {
+        print("[Auth] authenticate called, isLogin=\(isLogin), serverUrl=\(serverUrl), email=\(email)")
         isLoading = true
         authError = nil
 
@@ -266,7 +219,10 @@ struct ContentView: View {
             let authResponse = try JSONDecoder().decode(AuthResponse.self, from: data)
 
             if let token = authResponse.token {
-                reconnectWithSync(token: token)
+                onSync(token, serverUrl)
+                authToken = token
+                isConnected = true
+                syncStatus = "Connected"
             } else if let error = authResponse.error {
                 authError = error
             } else if httpResponse.statusCode >= 400 {
@@ -297,30 +253,29 @@ struct SyncPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header (always visible)
-            Button(action: { withAnimation { expanded.toggle() } }) {
-                HStack {
-                    // Status dot
-                    Circle()
-                        .fill(isConnected ? LatticeColors.success : LatticeColors.textMuted)
-                        .frame(width: 8, height: 8)
+            HStack {
+                // Status dot
+                Circle()
+                    .fill(isConnected ? LatticeColors.success : LatticeColors.textMuted)
+                    .frame(width: 8, height: 8)
 
-                    Text("Server Sync")
-                        .foregroundColor(LatticeColors.text)
-                        .font(.system(size: 14, weight: .medium))
+                Text("Server Sync")
+                    .foregroundColor(LatticeColors.text)
+                    .font(.system(size: 14, weight: .medium))
 
-                    Text("(\(syncStatus))")
-                        .foregroundColor(LatticeColors.textMuted)
-                        .font(.system(size: 12))
+                Text("(\(syncStatus))")
+                    .foregroundColor(LatticeColors.textMuted)
+                    .font(.system(size: 12))
 
-                    Spacer()
+                Spacer()
 
-                    Text(expanded ? "-" : "+")
+                Text(expanded ? "-" : "+")
                         .foregroundColor(LatticeColors.accent)
                         .font(.system(size: 18, weight: .bold))
-                }
-                .padding(12)
             }
-            .buttonStyle(.plain)
+            .padding(12)
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation { expanded.toggle() } }
 
             // Expandable content
             if expanded {
@@ -429,7 +384,7 @@ struct SyncPanel: View {
 // MARK: - Note Card
 
 struct NoteCard: View {
-    let note: Note
+    @Bindable var note: Note
     let onDelete: () -> Void
 
     private var formattedDate: String {
@@ -440,7 +395,7 @@ struct NoteCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(note.text)
+            TextField("note", text: $note.text)
                 .foregroundColor(LatticeColors.text)
                 .font(.system(size: 14))
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -467,5 +422,5 @@ struct NoteCard: View {
 }
 
 #Preview {
-    ContentView()
+    ContentView(onSync: { _, _ in })
 }

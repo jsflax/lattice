@@ -255,7 +255,20 @@ public struct Query<T>: Sendable {
     }
     /// :nodoc:
     public static func != (_ lhs: Query, _ rhs: T) -> Query<Bool> {
-        .init(.comparison(operator: .notEqual, lhs.node, .constant(rhs), options: []))
+        if let rhs = rhs as? any LatticeEnum {
+            return .init(.comparison(operator: .notEqual, lhs.node, .constant(rhs.rawValue), options: []))
+        }
+        return .init(.comparison(operator: .notEqual, lhs.node, .constant(rhs), options: []))
+    }
+    public static func != (_ lhs: Self, _ rhs: T?) -> Query<Bool> {
+        if let rhs = rhs as? any LatticeEnum {
+            return .init(.comparison(operator: .notEqual, lhs.node, .constant(rhs.rawValue), options: []))
+        }
+        return .init(.comparison(operator: .notEqual, lhs.node, .constant(rhs), options: []))
+    }
+    /// :nodoc:
+    public static func != (_ lhs: Query, _ rhs: T) -> Query<Bool> where T: LatticeEnum {
+        .init(.comparison(operator: .notEqual, lhs.node, .constant(rhs.rawValue), options: []))
     }
     /// :nodoc:
     public static func != (_ lhs: Query, _ rhs: Query) -> Query<Bool> {
@@ -266,9 +279,15 @@ public struct Query<T>: Sendable {
 
     /// Checks if the value is present in the collection.
     public func `in`<U: Sequence>(_ collection: U) -> Query<Bool> where U.Element == T {
-        .init(.comparison(operator: .in, node, .constant(collection), options: []))
+        if U.Element.self is any LatticeEnum.Type {
+            return .init(.comparison(operator: .in, node, .constant(collection.map { ($0 as! any LatticeEnum).rawValue }), options: []))
+        }
+        return .init(.comparison(operator: .in, node, .constant(collection), options: []))
     }
     public func `in`<U: Collection>(_ collection: U) -> Query<Bool> where U.Element == T {
+        if U.Element.self is any LatticeEnum.Type {
+            return .init(.comparison(operator: .in, node, .constant(collection.map { ($0 as! any LatticeEnum).rawValue }), options: []))
+        }
         return .init(.comparison(operator: .in, node, .constant(Array(collection)), options: []))
     }
     public func `in`<U: Collection>(_ collection: U) -> Query<Bool> where U.Element == UUID, T == UUID {
@@ -1070,6 +1089,8 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
             }
             if v is NSNull {
                 formatStr.append("NULL")
+            } else if let enumVal = v as? any LatticeEnum {
+                formatValue(enumVal.rawValue)
             } else if let date = v as? Date {
                 formatStr.append("\(date.timeIntervalSince1970)")
             } else if let str = v as? String {
