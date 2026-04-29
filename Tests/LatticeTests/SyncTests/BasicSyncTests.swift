@@ -583,7 +583,6 @@ actor SyncTests {
         #expect(lattice2.objects(SyncEmbeddedObject.self).first?.metadata?.detail == "updated", "Updated embedded field should sync")
     }
 
-    /// Test that sync works bidirectionally — both clients can write and receive.
     /// test_BasicSync only tests lattice1→lattice2. This tests lattice2→lattice1 as well.
     @Test(.timeLimit(.minutes(1))) func test_BidirectionalSync() async throws {
         let lattice = localLattice1!

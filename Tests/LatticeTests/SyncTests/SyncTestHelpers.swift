@@ -52,6 +52,7 @@ final class AtomicOnce: @unchecked Sendable {
     }
 }
 
+
 @Model class SyncVectorObject {
     var label: String
     var embedding: FloatVector

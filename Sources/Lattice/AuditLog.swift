@@ -1,7 +1,23 @@
 import Foundation
 
-// Assuming your model macro handles persistence, mapping, etc.
-@Model @Codable
+// `@Codable` is intentionally NOT applied here.
+//
+// The macro auto-synthesises `init(from:)` / `encode(to:)` using
+// Foundation's default `UUID: Codable`, which round-trips UUIDs via
+// `.uuidString` — UPPERCASE in Swift's standard form. That contradicts
+// the storage invariant Lattice maintains everywhere else (lowercase
+// globalIds in SQLite — see Model.swift `setField`, Accessor.swift
+// `setUUID`, `bind_managed`'s lowercase pass, `generate_global_id`'s
+// std::hex output). Sync replay tunnels audit-log entries through
+// JSONEncoder twice (once on the relay's encode, once on the peer's
+// `toCxxJSONBytes` re-encode), so the UPPERCASE string flows onto the
+// wire and ends up as the row's `globalId` column on the receiver —
+// which then mismatches against the (still lowercase) `lhs`/`rhs`
+// columns of every link table queried via `@Relation`. Symptom:
+// peers' `vote.question` resolves correctly but `q.votes` returns 0.
+// Manual Codable below mirrors what the macro would have generated
+// but encodes the two UUID fields as `.uuidString.lowercased()`.
+@Model
 public class AuditLog: CustomStringConvertible {
     @LatticeEnum public enum Operation: String, Codable, Sendable, CustomStringConvertible {
         case insert = "INSERT", update = "UPDATE", delete = "DELETE"
@@ -35,6 +51,67 @@ public class AuditLog: CustomStringConvertible {
     public package(set) var isFromRemote: Bool
     /// Whether or not this event has been synchronized
     public package(set) var isSynchronized: Bool = false
+
+    /// `required` is needed because the class is non-final and
+    /// Codable's `init(from:)` is a protocol requirement on `Self` —
+    /// satisfying that on a non-final class can't be done from an
+    /// extension, hence the in-class declaration. Decodes the two
+    /// UUID fields case-insensitively so historical audit logs that
+    /// stored UPPERCASE globalIds (pre-canonicalisation fix) still
+    /// parse cleanly; new writes always emit lowercase via
+    /// `encode(to:)` in the extension below.
+    public required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let gidStr = try container.decodeIfPresent(String.self, forKey: .__globalId) {
+            self.__globalId = UUID(uuidString: gidStr)
+        }
+        self.tableName = try container.decode(String.self, forKey: .tableName)
+        self.operation = try container.decode(Operation.self, forKey: .operation)
+        self.rowId = try container.decode(Int64.self, forKey: .rowId)
+        if let rowGidStr = try container.decodeIfPresent(String.self, forKey: .globalRowId) {
+            self.globalRowId = UUID(uuidString: rowGidStr)
+        }
+        self.changedFields = try container.decode([String: AnyProperty].self, forKey: .changedFields)
+        self.changedFieldsNames = try container.decodeIfPresent([String?].self, forKey: .changedFieldsNames)
+        self.timestamp = try container.decode(Date.self, forKey: .timestamp)
+        self.isFromRemote = try container.decode(Bool.self, forKey: .isFromRemote)
+        self.isSynchronized = try container.decode(Bool.self, forKey: .isSynchronized)
+    }
+}
+
+extension AuditLog: Codable {
+    public enum CodingKeys: String, CodingKey {
+        case tableName
+        case operation
+        case rowId
+        case globalRowId
+        case changedFields
+        case changedFieldsNames
+        case timestamp
+        case isFromRemote
+        case isSynchronized
+        case __globalId = "globalId"
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        // Both UUID fields encode as lowercase `.uuidString` so the
+        // case stored in SQLite is preserved verbatim across every
+        // wire hop (alice's relay encode → peer's `toCxxJSONBytes`
+        // re-encode for C++ apply). Foundation's default UUID
+        // Codable would emit UPPERCASE — see the comment on the type
+        // above for why that breaks `@Relation` link-table joins.
+        try container.encodeIfPresent(__globalId?.uuidString.lowercased(), forKey: .__globalId)
+        try container.encode(tableName, forKey: .tableName)
+        try container.encode(operation, forKey: .operation)
+        try container.encode(rowId, forKey: .rowId)
+        try container.encodeIfPresent(globalRowId?.uuidString.lowercased(), forKey: .globalRowId)
+        try container.encode(changedFields, forKey: .changedFields)
+        try container.encodeIfPresent(changedFieldsNames, forKey: .changedFieldsNames)
+        try container.encode(timestamp, forKey: .timestamp)
+        try container.encode(isFromRemote, forKey: .isFromRemote)
+        try container.encode(isSynchronized, forKey: .isSynchronized)
+    }
 }
 
 extension AuditLog {

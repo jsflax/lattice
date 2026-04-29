@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/vapor/jwt-kit.git",
       "state" : {
-        "revision" : "aa60a211797306bfb05b752ad7b4bf9f0b50d898",
-        "version" : "5.4.0"
+        "revision" : "94a8b96d0ab5aae91324b68f100e3670cd908b51",
+        "version" : "5.4.1"
       }
     },
     {
@@ -79,7 +79,7 @@
       "location" : "https://github.com/jsflax/LatticeCore.git",
       "state" : {
         "branch" : "main",
-        "revision" : "24e190fb47a433b69bfffbba1e858b4755a02bf0"
+        "revision" : "b05a32a96dc722fb38b02f6e0fb75645f25c8164"
       }
     },
     {

@@ -349,13 +349,13 @@ public struct ResultsChangePublisher: Publisher {
                 fatalError("Cannot use @Relation on an instance that is not yet inserted into the database")
             }
             let link = instance[keyPath: storageKeyPath].link
-            
+
             return TableResults(lattice, whereStatement: {
                 $0[dynamicMember: link].primaryKey == primaryKey
             })
         }
         set {
-            
+
         }
     }
     
