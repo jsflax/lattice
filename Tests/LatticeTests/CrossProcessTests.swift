@@ -633,4 +633,104 @@ struct CrossProcessTests {
         let reloaded = lattice.objects(TestPersonWithPets.self).where { $0.label == "PetOwner" }.first
         #expect(reloaded?.pets.count == 1, "Expected 1 pet after cross-process append, got \(reloaded?.pets.count ?? 0)")
     }
+
+    /// Regression: when a transaction in another process inserts N rows of
+    /// the same model type, the parent's `changeStream` must fire once per
+    /// AuditLog row — not once per batch.
+    ///
+    /// `handle_cross_process_notification` builds a `changes` vector
+    /// containing one entry per new AuditLog row (plus the corresponding
+    /// model-table change), then calls `notify_changes_batched`. Until this
+    /// test's fix, that function deduplicated AuditLog observer fires per
+    /// batch via `seen_audit_observers`, so a 3-row transaction produced
+    /// ONE changeStream yield instead of three. Downstream consumers that
+    /// relay AuditLog rows over the wire (e.g. ClaudeCodeIRC's
+    /// RoomSyncServer) silently dropped rows 2..N — they stayed in the
+    /// audit table with `isSynchronized = 0` forever.
+    ///
+    /// Surfaced by an Apr 30 2026 smoke test: a multi-question
+    /// AskUserQuestion (3 rows in one shim transaction) only ever delivered
+    /// Q1 to the peer.
+    @Test(.timeLimit(.minutes(1)))
+    func multiRowTransactionFiresAuditObserverOncePerRow() async throws {
+        // ── Child path: insert 3 Person rows in a single transaction ──
+        if ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] != nil {
+            let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"]!
+            let op = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_OP"] ?? ""
+            guard op == "multi_row_transaction" else { return }
+
+            let fileURL = URL(fileURLWithPath: childDBPath)
+            let lattice = try Lattice(
+                for: [Person.self, Dog.self],
+                configuration: .init(fileURL: fileURL)
+            )
+            // Single transaction, three inserts. Without `transaction { }`
+            // each `add` would commit separately — yielding 3 cross-process
+            // notifications, each with 1 audit row, which sidesteps the
+            // dedup bug (it only triggers for batches of >1 audit row).
+            lattice.transaction {
+                for i in 0..<3 {
+                    let p = Person()
+                    p.name = "MultiRow_\(i)"
+                    p.age = i
+                    lattice.add(p)
+                }
+            }
+            return
+        }
+
+        // ── Parent path ─────────────────────────────────────────────
+        let dbName = "xproc_multirow_\(UUID().uuidString).sqlite"
+        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let dbPath = fileURL.path(percentEncoded: false)
+
+        let lattice = try Lattice(
+            for: [Person.self, Dog.self],
+            configuration: .init(fileURL: fileURL)
+        )
+        defer { try? Lattice.delete(for: .init(fileURL: fileURL)) }
+
+        guard let (execURL, childArgs) = childProcessConfig(
+            filter: "multiRowTransactionFiresAuditObserverOncePerRow"
+        ) else {
+            Issue.record("Could not determine child process configuration")
+            return
+        }
+
+        // Mirror `crossProcessObservation`: register the AuditLog observer
+        // inside the AsyncStream builder, then spawn the child synchronously
+        // within the same closure so the observer is live before the
+        // cross-process notification fires.
+        var cancellable: AnyCancellable?
+        var personInserts = 0
+        let stream = AsyncStream<Void> { yielder in
+            cancellable = lattice.observe { (entries: [AuditLog]) in
+                for entry in entries
+                    where entry.tableName == "Person" && entry.operation == .insert {
+                    personInserts += 1
+                    yielder.yield()
+                }
+                if personInserts >= 3 { yielder.finish() }
+            }
+            spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "multi_row_transaction")
+        }
+
+        for await _ in stream {
+            if personInserts >= 3 { break }
+        }
+        cancellable?.cancel()
+
+        #expect(
+            personInserts == 3,
+            "AuditLog observer should fire once per Person INSERT row in a 3-row transaction (got \(personInserts))"
+        )
+
+        // Sanity: the rows did land on disk — bug is in the observer
+        // pipeline, not the write path.
+        let landed0 = lattice.objects(Person.self).where { $0.name == "MultiRow_0" }
+        let landed1 = lattice.objects(Person.self).where { $0.name == "MultiRow_1" }
+        let landed2 = lattice.objects(Person.self).where { $0.name == "MultiRow_2" }
+        #expect(landed0.count == 1 && landed1.count == 1 && landed2.count == 1,
+                "All 3 rows should have been written to the shared DB file")
+    }
 }
