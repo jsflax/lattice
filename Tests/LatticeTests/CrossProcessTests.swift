@@ -59,6 +59,19 @@ class CrossProcessChildRunner: XCTestCase {
                 lattice.add(dog)
                 owner.pets.append(dog as any Animal)
             }
+        case "multi_row_transaction":
+            let lattice = try Lattice(
+                for: [Person.self, Dog.self],
+                configuration: .init(fileURL: fileURL)
+            )
+            lattice.transaction {
+                for i in 0..<3 {
+                    let p = Person()
+                    p.name = "MultiRow_\(i)"
+                    p.age = i
+                    lattice.add(p)
+                }
+            }
         default:
             let lattice = try Lattice(
                 for: [Person.self, Dog.self],
@@ -710,7 +723,9 @@ struct CrossProcessTests {
                     personInserts += 1
                     yielder.yield()
                 }
-                if personInserts >= 3 { yielder.finish() }
+                if personInserts >= 3 {
+                    yielder.finish()
+                }
             }
             spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "multi_row_transaction")
         }

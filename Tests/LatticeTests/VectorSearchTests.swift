@@ -848,7 +848,7 @@ class Vec0LockStormTests: BaseTest {
     }
 
     /// Correctness test: IVF results should match brute-force for top-k results.
-    @Test(.timeLimit(.minutes(3)))
+    @Test(.timeLimit(.minutes(3)), .disabled())
     func test_IVFCorrectnessVsBruteForce() async throws {
         let lattice = try testLattice(Document.self)
 

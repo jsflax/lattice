@@ -1037,6 +1037,8 @@ class LatticeTests: BaseTest {
         
         person.dog = nil
         #expect(person.dog == nil)
+        
+        #expect(person.dog?.name == nil)
     }
     
     @Test func test_LinkList() async throws {

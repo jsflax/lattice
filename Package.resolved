@@ -79,7 +79,7 @@
       "location" : "https://github.com/jsflax/LatticeCore.git",
       "state" : {
         "branch" : "main",
-        "revision" : "dfe464831d8158e406f8a3b36b0f3532679a5481"
+        "revision" : "64a89a479eb97547dbf65f020c2afeb1c59cccfb"
       }
     },
     {
@@ -168,8 +168,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-certificates.git",
       "state" : {
-        "revision" : "5aa1c0d1bc204908df47c2075bdbb39573d05e8d",
-        "version" : "1.19.0"
+        "revision" : "bde8ca32a096825dfce37467137c903418c1893d",
+        "version" : "1.19.1"
       }
     },
     {

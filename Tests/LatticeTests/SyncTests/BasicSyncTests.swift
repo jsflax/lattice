@@ -216,7 +216,171 @@ actor SyncTests {
         try await task?.value
         #expect(lattice2.objects(SimpleSyncObject.self).count == 0)
     }
-    
+
+    /// Cross-lattice cascade for `Optional<Model>` links. Mirrors
+    /// `ChatMessage.author: Member?` in ClaudeCodeIRC: lattice1 deletes
+    /// the linked-to row, lattice2 must observe the link as nil — not
+    /// dangling. The local-side cleanup is covered by
+    /// `CascadeLinkCleanupTests`; this verifies the same invariant
+    /// survives sync replay on the receiving lattice.
+    @Test(.timeLimit(.minutes(1)))
+    func test_DeletingLinkedChild_OptionalGoesToNilOnPeer() async throws {
+        let lattice = localLattice1!
+        let lattice2 = localLattice2!
+        await sockets.waitForCount(2)
+
+        // Phase 1: insert parent + child, link them, wait for the
+        // SyncParent INSERT to land on lattice2 (the parent is the last
+        // write — by then the child + link rows have already arrived).
+        let localLattice2Configuration = self.localLattice2Configuration
+        var task: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let l2 = try await Lattice(SyncParent.self, SyncChild.self, configuration: localLattice2Configuration)
+                let changeStream = l2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let resolved = changes.compactMap { $0.resolve(on: l2) }
+                    if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SyncParent" }) {
+                        return
+                    }
+                }
+            }
+        }
+
+        let child = SyncChild(name: "alice")
+        lattice.add(child)
+        let parent = SyncParent(name: "room")
+        lattice.add(parent)
+        parent.favorite = child
+
+        try await task?.value
+
+        // Sanity: lattice2 sees the link live.
+        let l2ParentBefore = lattice2.objects(SyncParent.self).first { $0.name == "room" }
+        #expect(l2ParentBefore != nil)
+        #expect(l2ParentBefore?.favorite?.name == "alice")
+
+        // Capture the link table name from lattice1's audit log so the
+        // wait + assertion aren't brittle against macro naming.
+        let linkTableName = lattice.objects(AuditLog.self)
+            .where { $0.operation == .insert }
+            .compactMap { audit -> String? in
+                let t = audit.tableName
+                return (t != "SyncParent" && t != "SyncChild") ? t : nil
+            }
+            .first { $0.contains("favorite") }
+        #expect(linkTableName != nil,
+                "No favorite-link audit row found on the originating lattice — the link INSERT trigger didn't fire.")
+        guard let linkTable = linkTableName else { return }
+
+        // Phase 2: delete the child on lattice1, wait for the
+        // link-table DELETE audit (the cascade signal) to apply on
+        // lattice2. That's the change that flips `parent.favorite` to
+        // nil; gating on it removes any race with the SyncChild DELETE
+        // arriving before the cascade audit.
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let l2 = try await Lattice(SyncParent.self, SyncChild.self, configuration: localLattice2Configuration)
+                let changeStream = l2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let resolved = changes.compactMap { $0.resolve(on: l2) }
+                    if resolved.contains(where: { $0.operation == .delete && $0.tableName == linkTable }) {
+                        return
+                    }
+                }
+            }
+        }
+        lattice.delete(child)
+        try await task?.value
+
+        // Phase 3: the actual crash site in ClaudeCodeIRC was reading
+        // `m.author?.nick` after the linked Member was deleted. The
+        // Optional link's `getField` only checks `hasValue` (column
+        // non-null) — if the link table on the peer still references a
+        // missing row, we either SIGSEGV in `dynamic_object::get_object`
+        // or get a non-nil ghost wrapper.
+        let l2ParentAfter = lattice2.objects(SyncParent.self).first { $0.name == "room" }
+        #expect(l2ParentAfter != nil)
+        #expect(l2ParentAfter?.favorite == nil,
+                "Expected parent.favorite to be nil on the receiving lattice after the linked SyncChild was deleted on the originating lattice. A non-nil value here means the cascade audit didn't replay over sync and the link is dangling.")
+    }
+
+    /// Wire-level companion to the test above: the link-table DELETE
+    /// audit row must end up on lattice2. If it doesn't, the peer can
+    /// never clean up its link table on its own — explains the
+    /// orphaned `_Session_Member_host` rows seen in ClaudeCodeIRC after
+    /// host `/leave`.
+    @Test(.timeLimit(.minutes(1)))
+    func test_LinkTableDeleteAudit_RidesOverSync() async throws {
+        let lattice = localLattice1!
+        let lattice2 = localLattice2!
+        await sockets.waitForCount(2)
+
+        let localLattice2Configuration = self.localLattice2Configuration
+        var task: Task<Void, any Error>?
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let l2 = try await Lattice(SyncParent.self, SyncChild.self, configuration: localLattice2Configuration)
+                let changeStream = l2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let resolved = changes.compactMap { $0.resolve(on: l2) }
+                    if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SyncParent" }) {
+                        return
+                    }
+                }
+            }
+        }
+
+        let child = SyncChild(name: "alice")
+        lattice.add(child)
+        let parent = SyncParent(name: "room")
+        lattice.add(parent)
+        parent.favorite = child
+        try await task?.value
+
+        // Capture the link table name from lattice1's audit log so the
+        // assertion isn't brittle against macro naming.
+        let linkTableName = lattice.objects(AuditLog.self)
+            .where { $0.operation == .insert }
+            .compactMap { audit -> String? in
+                let t = audit.tableName
+                return (t != "SyncParent" && t != "SyncChild") ? t : nil
+            }
+            .first { $0.contains("favorite") }
+        #expect(linkTableName != nil,
+                "No favorite-link audit row found on the originating lattice — the link INSERT trigger didn't fire as expected.")
+        guard let linkTable = linkTableName else { return }
+
+        // Wait for the link-table DELETE itself on lattice2 (not the
+        // SyncChild DELETE — the link cascade can land separately, and
+        // that's exactly the audit row we're asserting on).
+        await withCheckedContinuation { continuation in
+            task = Task.detached {
+                let l2 = try await Lattice(SyncParent.self, SyncChild.self, configuration: localLattice2Configuration)
+                let changeStream = l2.changeStream
+                continuation.resume()
+                for await changes in changeStream {
+                    let resolved = changes.compactMap { $0.resolve(on: l2) }
+                    if resolved.contains(where: { $0.operation == .delete && $0.tableName == linkTable }) {
+                        return
+                    }
+                }
+            }
+        }
+        lattice.delete(child)
+        try await task?.value
+
+        let l2LinkDeletes = lattice2.objects(AuditLog.self)
+            .where { $0.tableName == linkTable }
+            .where { $0.operation == .delete }
+            .count
+        #expect(l2LinkDeletes >= 1,
+                "lattice2 should have received an AuditLog DELETE for \(linkTable). Without it the link table on the peer keeps a row pointing at a SyncChild that no longer exists. count=\(l2LinkDeletes)")
+    }
+
 //    @available(macOS 15.0, *)
 //    @Test(.timeLimit(.minutes(3))) func test_BigSync() async throws {
 //        let lattice = localLattice1!

@@ -1208,7 +1208,8 @@ public struct Lattice {
                 let tableName = std.string(AuditLog.entityName)
                 var previousPending = 0
 
-                let context = TableObserverContext { _, _, _ in
+                let context = TableObserverContext { _ in
+                    // Batch contents are irrelevant — re-read pending count.
                     let pending = queryLattice.count(AuditLog.self, where: { $0.isSynchronized == false })
                     let diff = previousPending - pending
                     let acked = max(0, diff)
@@ -1225,15 +1226,8 @@ public struct Lattice {
                 let observerId = cxx.add_table_observer(
                     tableName,
                     contextPtr,
-                    { (contextPtr, operation, rowId, globalRowId) in
-                        guard let contextPtr else { return }
-                        let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
-                        context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
-                    },
-                    { ptr in
-                        guard let ptr else { return }
-                        Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
-                    }
+                    Lattice._tableObserverTrampoline,
+                    Lattice._tableObserverDestroy
                 )
 
                 continuation.onTermination = { _ in
@@ -1304,13 +1298,61 @@ public struct Lattice {
         }
     }
 
-    /// Context class to bridge Swift closures to C callbacks
-    private final class TableObserverContext {
-        let callback: (String, Int64, String) -> Void
+    /// One row's worth of metadata from a batched observer fire. Mirrors
+    /// the C++ `change_event` tuple. Materialized once in the Swift
+    /// trampoline from the parallel arrays the C bridge hands us.
+    struct TableChange: Sendable {
+        let operation: String
+        let rowId: Int64
+        let globalRowId: String
+    }
 
-        init(callback: @escaping (String, Int64, String) -> Void) {
+    /// Context class to bridge Swift closures to C callbacks. The
+    /// callback fires once per WAL flush with the batch of rows from
+    /// that flush — a 3-row transaction is one fire of 3 entries, not
+    /// 3 fires of 1. Single-row events are the degenerate case
+    /// (count=1).
+    private final class TableObserverContext {
+        let callback: ([TableChange]) -> Void
+
+        init(callback: @escaping ([TableChange]) -> Void) {
             self.callback = callback
         }
+    }
+
+    /// C trampoline shared by every Swift `add_table_observer`
+    /// registration site. Unpacks the parallel C arrays once into
+    /// `[TableChange]` and hands them to the Swift closure.
+    ///
+    /// Lifetime: the C++ bridge guarantees the array pointers are valid
+    /// for the duration of this call (they reference vectors held on
+    /// the dispatch stack); we copy the strings into Swift `String`s
+    /// here so the resulting `TableChange` values are safe to capture
+    /// by the consumer.
+    private static let _tableObserverTrampoline:
+        @convention(c) (UnsafeMutableRawPointer?,
+                        UnsafePointer<UnsafePointer<CChar>?>?,
+                        UnsafePointer<Int64>?,
+                        UnsafePointer<UnsafePointer<CChar>?>?,
+                        Int) -> Void = { contextPtr, ops, rowIds, gids, count in
+        guard let contextPtr, count > 0,
+              let ops, let rowIds, let gids else { return }
+        let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr)
+            .takeUnretainedValue()
+        var changes: [TableChange] = []
+        changes.reserveCapacity(count)
+        for i in 0..<count {
+            let op = ops[i].map { String(cString: $0) } ?? ""
+            let gid = gids[i].map { String(cString: $0) } ?? ""
+            changes.append(TableChange(operation: op, rowId: rowIds[i], globalRowId: gid))
+        }
+        context.callback(changes)
+    }
+
+    private static let _tableObserverDestroy:
+        @convention(c) (UnsafeMutableRawPointer?) -> Void = { ptr in
+        guard let ptr else { return }
+        Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
     }
 
     /// Context class for sync progress C callback bridge
@@ -1386,32 +1428,40 @@ public struct Lattice {
     public func observe(_ block: @escaping ([AuditLog]) -> ()) -> AnyCancellable {
         let tableName = std.string(AuditLog.entityName)
 
-        // Create context that holds the Swift closure
-        let context = TableObserverContext { [self] operation, rowId, globalRowId in
-//            guard let self else { return }
-            // Fetch the audit log entry
-            if let auditLog = self.object(AuditLog.self, primaryKey: rowId) {
-                block([auditLog])
+        // Create context that holds the Swift closure. The C++ side
+        // delivers batches per WAL flush; this public Swift API has
+        // historically fired the block ONCE PER ROW with a one-element
+        // array (the `[AuditLog]` shape was a misnomer — always
+        // length 1). Preserve that contract by fanning the batch out
+        // here: walk each change in commit order, resolve its
+        // AuditLog row, fire `block([auditLog])` per row. Consumers
+        // (e.g. CrossProcessTests c556cd2) that count callback fires
+        // see the same N firings the per-row implementation gave.
+        let context = TableObserverContext { [self] changes in
+            // TEMP DIAGNOSTIC: write batch shape to a known file so we
+            // can compare CLI vs Xcode runs.
+            if let h = FileHandle(forWritingAtPath: "/tmp/lattice-observe-trace.log") {
+                let line = "\(Date().timeIntervalSince1970): observe([AuditLog]) batch.size=\(changes.count): \(changes.map { "(\($0.operation),\($0.rowId))" }.joined(separator: ","))\n"
+                try? h.seekToEnd()
+                h.write(Data(line.utf8))
+                try? h.close()
+            }
+            for change in changes {
+                if let auditLog = self.object(AuditLog.self, primaryKey: change.rowId) {
+                    block([auditLog])
+                }
             }
         }
 
-        // Prevent context from being deallocated
+        // Prevent context from being deallocated.
+        // shared_ptr<void> in C++ ensures context lives through in-flight callbacks.
         let contextPtr = Unmanaged.passRetained(context).toOpaque()
 
-        // Register observer with C++ using C function pointer.
-        // shared_ptr<void> in C++ ensures context lives through in-flight callbacks.
         let observerId = cxxLattice.add_table_observer(
             tableName,
             contextPtr,
-            { (contextPtr, operation, rowId, globalRowId) in
-                guard let contextPtr else { return }
-                let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
-                context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
-            },
-            { ptr in
-                guard let ptr else { return }
-                Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
-            }
+            Lattice._tableObserverTrampoline,
+            Lattice._tableObserverDestroy
         )
 
         // Create cancellable token — context release handled by C++ shared_ptr destroy
@@ -1442,13 +1492,26 @@ public struct Lattice {
             queryConfig.authorizationToken = nil
             let queryLattice = try! Lattice(for: modelTypes, configuration: queryConfig)
 
-            let context = TableObserverContext { operation, rowId, globalRowId in
-                log.debug("changeStream: op=\(operation) auditPK=\(rowId) globalId=\(globalRowId)")
-                if let auditLog = queryLattice.object(AuditLog.self, primaryKey: rowId) {
-                    log.debug("changeStream yield: table=\(auditLog.tableName) modelOp=\(auditLog.operation) modelRowId=\(auditLog.rowId)")
-                    stream.yield([auditLog.sendableReference])
-                } else {
-                    log.warning("changeStream: no AuditLog for pk=\(rowId)")
+            let context = TableObserverContext { changes in
+                // One yield per WAL flush, with all refs from this
+                // batch. Wire-relay consumers (e.g. ClaudeCodeIRC's
+                // RoomSyncServer.broadcastEntries) ship one frame per
+                // yield — so a cascade delete (parent + N link-table
+                // DELETEs from one transaction) reaches the peer as
+                // one frame and applies atomically. See the
+                // notify_changes_batched comment in LatticeCore for
+                // the full rationale.
+                let refs: [any SendableReference<AuditLog>] = changes.compactMap { c in
+                    guard let auditLog = queryLattice.object(AuditLog.self, primaryKey: c.rowId) else {
+                        log.warning("changeStream: no AuditLog for pk=\(c.rowId)")
+                        return nil
+                    }
+                    log.debug("changeStream entry: table=\(auditLog.tableName) modelOp=\(auditLog.operation) modelRowId=\(auditLog.rowId)")
+                    return auditLog.sendableReference
+                }
+                if !refs.isEmpty {
+                    log.debug("changeStream yield: count=\(refs.count)")
+                    stream.yield(refs)
                 }
             }
 
@@ -1457,15 +1520,8 @@ public struct Lattice {
             let observerId = cxxLattice.add_table_observer(
                 tableName,
                 contextPtr,
-                { (contextPtr, operation, rowId, globalRowId) in
-                    guard let contextPtr else { return }
-                    let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
-                    context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
-                },
-                { ptr in
-                    guard let ptr else { return }
-                    Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
-                }
+                Lattice._tableObserverTrampoline,
+                Lattice._tableObserverDestroy
             )
 
             stream.onTermination = { _ in
@@ -1493,7 +1549,11 @@ public struct Lattice {
         // ensure_tables()) per callback, which races with teardown under load.
         let ref = self.sendableReference
 
-        let context = TableObserverContext { operation, rowId, globalRowId in
+        let context = TableObserverContext { changes in
+            // Walk the batch and dispatch one CollectionChange per row,
+            // preserving input commit order. Same per-row semantics as
+            // the legacy callback — just delivered in one fire instead
+            // of N.
             Task.detached {
                 guard let self = ref.resolve() else {
                     return
@@ -1508,53 +1568,57 @@ public struct Lattice {
                     }
                 }
 
-                switch operation {
-                case "INSERT":
-                    if let `where` {
-                        let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                        let auditResults = TableResults<AuditLog>(self).where({
-                            $0.rowId == rowId && convertedQuery && $0.operation == .insert
-                        })
-                        if let _ = auditResults.first {
-                            await dispatch(.insert(rowId))
+                for entry in changes {
+                    let operation = entry.operation
+                    let rowId = entry.rowId
+                    switch operation {
+                    case "INSERT":
+                        if let `where` {
+                            let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
+                            let auditResults = TableResults<AuditLog>(self).where({
+                                $0.rowId == rowId && convertedQuery && $0.operation == .insert
+                            })
+                            if let _ = auditResults.first {
+                                await dispatch(.insert(rowId))
+                            }
+                        } else {
+                            if self.object(modelType, primaryKey: rowId) != nil {
+                                await dispatch(.insert(rowId))
+                            }
                         }
-                    } else {
-                        if self.object(modelType, primaryKey: rowId) != nil {
-                            await dispatch(.insert(rowId))
-                        }
-                    }
-                case "DELETE":
-                    if let `where` {
-                        let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                        let auditResults = TableResults<AuditLog>(self).where({
-                            $0.rowId == rowId && convertedQuery && $0.operation == .delete
-                        })
-                        if let _ = auditResults.first {
+                    case "DELETE":
+                        if let `where` {
+                            let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
+                            let auditResults = TableResults<AuditLog>(self).where({
+                                $0.rowId == rowId && convertedQuery && $0.operation == .delete
+                            })
+                            if let _ = auditResults.first {
+                                await dispatch(.delete(rowId))
+                            }
+                        } else {
                             await dispatch(.delete(rowId))
                         }
-                    } else {
-                        await dispatch(.delete(rowId))
-                    }
-                case "UPDATE":
-                    if rowId == 0 {
-                        // Broadcast: internal table (link/list) change resolved to parent UPDATE.
-                        // No specific row — fire unconditionally for all table-level observers.
-                        await dispatch(.update(rowId))
-                    } else if let `where` {
-                        let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                        let auditResults = TableResults<AuditLog>(self).where({
-                            $0.rowId == rowId && convertedQuery && $0.operation == .update
-                        })
-                        if let _ = auditResults.first {
+                    case "UPDATE":
+                        if rowId == 0 {
+                            // Broadcast: internal table (link/list) change resolved to parent UPDATE.
+                            // No specific row — fire unconditionally for all table-level observers.
                             await dispatch(.update(rowId))
+                        } else if let `where` {
+                            let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
+                            let auditResults = TableResults<AuditLog>(self).where({
+                                $0.rowId == rowId && convertedQuery && $0.operation == .update
+                            })
+                            if let _ = auditResults.first {
+                                await dispatch(.update(rowId))
+                            }
+                        } else {
+                            if self.object(modelType, primaryKey: rowId) != nil {
+                                await dispatch(.update(rowId))
+                            }
                         }
-                    } else {
-                        if self.object(modelType, primaryKey: rowId) != nil {
-                            await dispatch(.update(rowId))
-                        }
+                    default:
+                        break
                     }
-                default:
-                    break
                 }
             }
         }
@@ -1564,15 +1628,8 @@ public struct Lattice {
         let observerId = cxxLattice.add_table_observer(
             tableName,
             contextPtr,
-            { (contextPtr, operation, rowId, globalRowId) in
-                guard let contextPtr else { return }
-                let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
-                context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
-            },
-            { ptr in
-                guard let ptr else { return }
-                Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
-            }
+            Lattice._tableObserverTrampoline,
+            Lattice._tableObserverDestroy
         )
 
         let token = TableObservationToken(cxxLattice: cxxLattice, tableName: tableName, observerId: observerId)
@@ -1592,16 +1649,19 @@ public struct Lattice {
     static func observeLinkTable(_ linkTableName: String, cxxLattice: lattice.swift_lattice, block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
         let tableName = std.string(linkTableName)
 
-        let context = TableObserverContext { operation, rowId, _ in
-            switch operation {
-            case "INSERT":
-                block(.insert(rowId))
-            case "DELETE":
-                block(.delete(rowId))
-            case "UPDATE":
-                block(.update(rowId))
-            default:
-                break
+        let context = TableObserverContext { changes in
+            // Walk batch synchronously, fire block per row in commit order.
+            for entry in changes {
+                switch entry.operation {
+                case "INSERT":
+                    block(.insert(entry.rowId))
+                case "DELETE":
+                    block(.delete(entry.rowId))
+                case "UPDATE":
+                    block(.update(entry.rowId))
+                default:
+                    break
+                }
             }
         }
 
@@ -1610,15 +1670,8 @@ public struct Lattice {
         let observerId = cxxLattice.add_table_observer(
             tableName,
             contextPtr,
-            { (contextPtr, operation, rowId, globalRowId) in
-                guard let contextPtr else { return }
-                let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr).takeUnretainedValue()
-                context.callback(String(cString: operation!), rowId, String(cString: globalRowId!))
-            },
-            { ptr in
-                guard let ptr else { return }
-                Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
-            }
+            Lattice._tableObserverTrampoline,
+            Lattice._tableObserverDestroy
         )
 
         let token = TableObservationToken(cxxLattice: cxxLattice, tableName: tableName, observerId: observerId)

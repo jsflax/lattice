@@ -128,6 +128,87 @@ class CascadeLinkCleanupTests: BaseTest {
                 "Expected one AuditLog DELETE for _CascadeRoom_CascadeUser_owner after deleting the linked User; without it, peers can't sync the link removal. count=\(linkDeletes.count)")
     }
 
+    /// Cascade audit framing: when `lattice.delete(target)` cascades to
+    /// link tables, the parent DELETE and every dependent link-table
+    /// DELETE must surface in the same `changeStream` yield. Relays
+    /// that re-frame audit rows by tailing changeStream (e.g.
+    /// ClaudeCodeIRC's `RoomSyncServer.broadcastEntries`) ship one
+    /// frame per yield; if the cascade is split across yields, the
+    /// peer applies the parent DELETE in a separate transaction from
+    /// the link DELETE, opening a window where reading the link from
+    /// the peer hits a non-null FK pointing at a row that's gone —
+    /// SIGSEGV in `dynamic_object::get_object`.
+    @Test func cascadeAudits_arriveInSingleChangeStreamYield() async throws {
+        struct DeleteAudit: Sendable { let table: String }
+        struct YieldBatch: Sendable { let index: Int; let deletes: [DeleteAudit] }
+
+        let lattice = try testLattice(
+            CascadeRoom.self, CascadeUser.self, CascadePost.self)
+
+        let user = CascadeUser()
+        user.nick = "alice"
+        lattice.add(user)
+
+        let room = CascadeRoom()
+        room.code = "r1"
+        lattice.add(room)
+        room.owner = user
+
+        let post = CascadePost()
+        post.text = "hi"
+        lattice.add(post)
+        post.author = user
+
+        let latticeRef = lattice.sendableReference
+        let observation: Task<[YieldBatch], Never> = Task.detached {
+            guard let l = latticeRef.resolve() else { return [] }
+            var batches: [YieldBatch] = []
+            var idx = 0
+            for await refs in l.changeStream {
+                let resolved = refs.compactMap { $0.resolve(on: l) }
+                let deletes = resolved
+                    .filter { $0.operation == .delete }
+                    .map { DeleteAudit(table: $0.tableName) }
+                if !deletes.isEmpty {
+                    batches.append(YieldBatch(index: idx, deletes: deletes))
+                    idx += 1
+                }
+                let tables = batches.flatMap { $0.deletes }.map { $0.table }
+                let hasUserDelete = tables.contains("CascadeUser")
+                let hasLinkDelete = tables.contains { $0.hasPrefix("_") && $0.contains("CascadeUser") }
+                if hasUserDelete && hasLinkDelete { return batches }
+            }
+            return batches
+        }
+        // Yield so the observer is wired before the triggering write.
+        await Task.yield()
+
+        lattice.delete(user)
+
+        let batches = await observation.value
+
+        for batch in batches {
+            let summary = batch.deletes.map { $0.table }.joined(separator: ",")
+            print("[cascade-yield \(batch.index)] \(summary)")
+        }
+
+        let allDeletes = batches.flatMap { $0.deletes }
+        let userCount = allDeletes.filter { $0.table == "CascadeUser" }.count
+        let roomLinkCount = allDeletes.filter { $0.table == "_CascadeRoom_CascadeUser_owner" }.count
+        let postLinkCount = allDeletes.filter { $0.table == "_CascadePost_CascadeUser_author" }.count
+        #expect(userCount == 1, "Expected one User DELETE; got \(userCount)")
+        #expect(roomLinkCount == 1, "Expected one CascadeRoom link DELETE; got \(roomLinkCount)")
+        #expect(postLinkCount == 1, "Expected one CascadePost link DELETE; got \(postLinkCount)")
+
+        let userYield = batches.first { $0.deletes.contains { $0.table == "CascadeUser" } }?.index
+        let roomYield = batches.first { $0.deletes.contains { $0.table == "_CascadeRoom_CascadeUser_owner" } }?.index
+        let postYield = batches.first { $0.deletes.contains { $0.table == "_CascadePost_CascadeUser_author" } }?.index
+        #expect(userYield == roomYield,
+                "User DELETE landed in yield \(userYield ?? -1); CascadeRoom link DELETE landed in yield \(roomYield ?? -1). A relay that ships one frame per yield will fragment the cascade and any reader on the peer can observe a dangling link between frames.")
+        #expect(userYield == postYield,
+                "User DELETE landed in yield \(userYield ?? -1); CascadePost link DELETE landed in yield \(postYield ?? -1). Same fragmentation risk as above.")
+    }
+
     /// Multiple inbound links to the same target — every backreference
     /// must be cleared, not just the first.
     @Test func multipleInboundLinks_allCleaned() throws {

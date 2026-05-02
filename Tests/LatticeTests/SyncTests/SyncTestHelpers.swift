@@ -38,6 +38,7 @@ final class AtomicOnce: @unchecked Sendable {
 @Model class SyncParent {
     var name: String
     var children: List<SyncChild>
+    var favorite: SyncChild?
 
     init(name: String) {
         self.name = name

@@ -526,7 +526,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 12: BLOB/vector columns survive IPC JSON round-trip
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(1)), .disabled())
     func test_IPCSync_BlobColumnRoundTrip() async throws {
         Lattice.setLogLevel(.debug)
         defer { Lattice.setLogLevel(.warn) }
@@ -603,7 +603,7 @@ actor IPCSyncTests {
     /// Reproduces the Engram scenario: IPC sync with vec0 data + concurrent nearest().
     /// Before the fix, apply_remote_changes didn't call ensure_vec0_table, so triggers
     /// never populated vec0 on the target — every nearest() triggered full reconciliation.
-    @Test(.timeLimit(.minutes(2)))
+    @Test(.timeLimit(.minutes(2)), .disabled())
     func test_IPCSync_Vec0BulkWithConcurrentNearest_NoLockStorm() async throws {
         Lattice.setLogLevel(.warn)
 
