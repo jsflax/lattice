@@ -731,7 +731,6 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             
             public typealias DefaultValue = Optional<\(name)>
             \(raw: dtoProperties)
-            public var lattice: Lattice?
             @Property(name: "id")
             public var primaryKey: Int64?
             private var isolation: (any Actor)?

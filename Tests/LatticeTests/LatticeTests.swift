@@ -143,6 +143,11 @@ struct Embedded: EmbeddedModel {
     var email: String
 }
 
+@Model class UpsertModel {
+    @Unique(allowsUpsert: true)
+    var name: String
+}
+
 //@Model class ParentWithChildren {
 //    var name: String
 //    @Relation(link: \Child.parent)
@@ -2266,5 +2271,20 @@ class LatticeTests: BaseTest {
         } catch {
             
         }
+    }
+    
+    @Test func test_UpsertReturnsValidObjects() throws {
+        let lattice = try testLattice(UpsertModel.self)
+        let m1 = UpsertModel()
+        m1.name = "m1"
+        let m2 = UpsertModel()
+        m2.name = "m1"
+        
+        lattice.add(m1)
+        #expect(m1.name == "m1")
+        #expect(m1.lattice != nil)
+        lattice.add(m2)
+        #expect(m2.name == "m1")
+        #expect(m2.lattice != nil)
     }
 }
