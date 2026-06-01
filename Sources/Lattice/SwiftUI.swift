@@ -66,8 +66,22 @@ private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "Frame
         private var cancellable: AnyCancellable?
 
         @MainActor func updateWrappedValue(lattice: Lattice) {
-            guard self.lattice == nil else { return
+            // Rebind when the environment `\.lattice` changes identity (e.g. a hotel
+            // switch, or a re-login after the previous handle was closed/deleted).
+            // Identity is the shared C++ ref pointer hash: a reopened DB for the same
+            // path gets a fresh `impl_` because `close()` evicts the cache, so this
+            // reliably detects the swap. (The previous bind-once guard kept observing
+            // the stale — possibly closed — handle forever.)
+            if let current = self.lattice,
+               current.cxxLatticeRef.hash_value() == lattice.cxxLatticeRef.hash_value() {
+                return  // same handle — keep the existing observation
             }
+
+            // Tear down the old observation before re-observing the new handle,
+            // otherwise the stale-handle token leaks and double-fires.
+            tokens.forEach { $0.cancel() }
+            tokens.removeAll()
+
             self.lattice = lattice
 
             lattice.objects().where(predicate).observe { _ in

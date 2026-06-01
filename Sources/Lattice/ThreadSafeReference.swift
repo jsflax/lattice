@@ -187,7 +187,16 @@ public struct LatticeThreadSafeReference: Sendable {
     }
     
     public func resolve(isolation: isolated (any Actor)? = #isolation) -> Lattice? {
-        try? Lattice(for: self.modelTypes, configuration: configuration)
+        // Don't resurrect a deleted database. If the backing file was removed
+        // (e.g. by `Lattice.delete` during a logout wipe), an in-flight observe
+        // trampoline that re-resolves must bail rather than reopen — reopening
+        // would recreate an empty `.sqlite` on disk and fire a spurious empty
+        // snapshot. For in-memory configs there is no file to check.
+        if !configuration.isStoredInMemoryOnly,
+           !FileManager.default.fileExists(atPath: configuration.fileURL.path(percentEncoded: false)) {
+            return nil
+        }
+        return try? Lattice(for: self.modelTypes, configuration: configuration)
     }
 }
 
