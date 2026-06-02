@@ -56,6 +56,26 @@ final class CloseGuardTests: BaseTest {
         #expect(lattice.objects(Person.self).count == 0)
     }
 
+    /// Exact shape of the StaffSettingsView crash: `query.first?.prop` on a
+    /// deleted lattice. `.first` → Collection.endIndex → cxxLattice.count, which
+    /// threw an unhandled C++ exception before the guard.
+    @Test func test_FirstAndCountAfterDelete_NoThrow() throws {
+        let path = "\(String.random(length: 32)).sqlite"
+        let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory.appending(path: path))
+        let lattice = try Lattice(Person.self, configuration: config)
+        seed(lattice, ["Alice"])
+        let results = lattice.objects(Person.self)
+        #expect(results.first != nil)
+
+        try Lattice.delete(for: config)
+
+        // Each of these went through count()/endIndex and crashed before the fix.
+        #expect(results.endIndex == 0)
+        #expect(results.first == nil)
+        #expect(results.first?.name == nil)
+        #expect(lattice.objects(Person.self).first?.name == nil)
+    }
+
     @Test func test_ReadsAfterDelete_ReturnEmpty_NoCrash() throws {
         let path = "\(String.random(length: 32)).sqlite"
         let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory.appending(path: path))
