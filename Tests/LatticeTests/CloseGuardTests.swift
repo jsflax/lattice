@@ -35,6 +35,27 @@ final class CloseGuardTests: BaseTest {
         #expect(iterated == 0)
     }
 
+    /// The real-world shape of the staff bug: materialize objects + hold a live
+    /// results handle, delete the lattice out from under them (as logout does),
+    /// then keep using all of it. Must not crash.
+    @Test func test_UseObjectsFromDeletedLattice_NoCrash() throws {
+        let path = "\(String.random(length: 32)).sqlite"
+        let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory.appending(path: path))
+        let lattice = try Lattice(Person.self, configuration: config)
+        seed(lattice, ["Alice", "Bob", "Carol"])
+
+        let results = lattice.objects(Person.self)   // live handle, held across delete
+        let people = results.snapshot()               // materialized objects, held across delete
+        #expect(people.count == 3)
+
+        try Lattice.delete(for: config)               // delete while lattice/results/people are alive
+
+        // Use everything from the deleted lattice — must not crash.
+        for p in people { _ = p.name; _ = p.age }
+        #expect(results.snapshot().isEmpty)
+        #expect(lattice.objects(Person.self).count == 0)
+    }
+
     @Test func test_ReadsAfterDelete_ReturnEmpty_NoCrash() throws {
         let path = "\(String.random(length: 32)).sqlite"
         let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory.appending(path: path))
