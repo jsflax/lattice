@@ -229,6 +229,10 @@ public struct Migration : MigrationProtocol, @unchecked Sendable {
         type.init(dynamicObject: value)
     }
     
+    // Variadic (parameter-pack) registration — iOS 17+ (variadic generics).
+    // iOS 15 uses `init()` + the pack-free `.add(from:to:)` builder below, which
+    // is available on all deployment targets and is the portable migration API.
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public init<each M1: Model, each M2: Model>
     (_ fromTos: repeat (from: (each M1).Type, to: (each M2).Type),
     blocks: repeat @escaping (each M1, each M2) -> ()) {
@@ -238,11 +242,31 @@ public struct Migration : MigrationProtocol, @unchecked Sendable {
                 to: fromTo.to.cxxPropertyDescriptor(),
             )
             typeErasedBlocks[fromTo.to.entityName] = { t1, t2 in
-                
+
                 block(Self.unsafeTypeCast(fromTo.from, value: t1),
                       Self.unsafeTypeCast(fromTo.to, value: t2))
             }
         }
+    }
+
+    /// Creates an empty migration. Chain `.add(from:to:)` to register per-pair
+    /// transforms. Works on all deployment targets.
+    public init() {}
+
+    /// Registers a migration transform for one `From` → `To` pair, returning the
+    /// migration for chaining. Pack-free equivalent of the variadic initializer:
+    /// `Migration().add(from: V1.self, to: V2.self) { old, new in … }`.
+    public func add<From: Model, To: Model>(from: From.Type, to: To.Type, _ block: @escaping (From, To) -> ()) -> Self {
+        var copy = self
+        copy.schemas[to.entityName] = (
+            from: from.cxxPropertyDescriptor(),
+            to: to.cxxPropertyDescriptor()
+        )
+        copy.typeErasedBlocks[to.entityName] = { t1, t2 in
+            block(Self.unsafeTypeCast(from, value: t1),
+                  Self.unsafeTypeCast(to, value: t2))
+        }
+        return copy
     }
     
     internal func _sendRow(entityName: String, _ oldValue: CxxDynamicObjectRef, _ newValue: CxxDynamicObjectRef) {

@@ -234,7 +234,11 @@ public struct _ModelObserver {
     }
 }
 
-public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, CxxManaged, LatticeIsolated, LinkListable, UnionProperty {
+// NOTE: `Observable` (iOS 17) is intentionally NOT a refinement here — that
+// would force an iOS-17 floor on every model. The @Model macro instead adds
+// `Observable` conformance per-model behind `@available(iOS 17, *)`. Below iOS 17
+// models still drive SwiftUI via `ObservableObject` (Combine).
+public protocol Model: AnyObject, ObservableObject, Hashable, Identifiable, SchemaProperty, CxxManaged, LatticeIsolated, LinkListable, UnionProperty {
     init(isolation: isolated (any Actor)?)
 //    var lattice: Lattice? { get set }
     static var entityName: String { get }
@@ -244,6 +248,7 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     @available(*, deprecated, renamed: "globalId")
     var __globalId: UUID? { get }
 
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     var _$observationRegistrar: Observation.ObservationRegistrar { get }
     func _objectWillChange_send()
     func _triggerObservers_send(keyPath: String)
@@ -630,7 +635,7 @@ func _name<T>(for keyPath: PartialKeyPath<T>) -> String where T: Model {
 }
 
 @attached(member, names: arbitrary)
-@attached(extension, conformances: Model, names: arbitrary)
+@attached(extension, conformances: Model, Observable, names: arbitrary)
 @attached(memberAttribute)
 public macro Model() = #externalMacro(module: "LatticeMacros",
                                       type: "ModelMacro")

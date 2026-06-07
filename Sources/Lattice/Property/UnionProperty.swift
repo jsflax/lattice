@@ -87,7 +87,7 @@ extension UUID: UnionPrimitiveProperty {
 
 extension URL: UnionPrimitiveProperty {
     public static func getField(from uv: lattice.union_value, named name: String) -> URL {
-        URL(string: String(uv.getString(std.string(name)))) ?? URL(filePath: "")
+        URL(string: String(uv.getString(std.string(name)))) ?? URL(fileURLWithPath: "")
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: URL) {
         uv.setString(std.string(name), std.string(value.absoluteString))

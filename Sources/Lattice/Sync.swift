@@ -186,7 +186,7 @@ extension Lattice {
     /// Use `snapshot(limit:offset:)` to paginate without loading all entries into memory.
     public func eventsAfter(globalId: UUID?) -> TableResults<AuditLog> {
         var results = objects(AuditLog.self)
-            .sortedBy(.init(\.primaryKey, order: .forward))
+            .sortedBy(\.primaryKey, order: .forward)
         if let globalId {
             let checkpointId = objects(AuditLog.self)
                 .where { $0.globalId == globalId }

@@ -376,12 +376,19 @@ class PropertyMacro: AccessorMacro, MemberMacro {
             """
             get {
                 _lastKeyPathUsed = "\(raw: property.mappedName ?? property.name)"
-                _$observationRegistrar.access(self, keyPath: \\.\(id.identifier))
+                if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
+                    _$observationRegistrar.access(self, keyPath: \\.\(id.identifier))
+                }
                 return \(raw: property.type).getField(from: _dynamicObject, named: "\(raw: property.mappedName ?? property.name)")
             }
             set {
-                _$observationRegistrar.withMutation(of: self, keyPath: \\.\(id.identifier)) {
+                if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
+                    _$observationRegistrar.withMutation(of: self, keyPath: \\.\(id.identifier)) {
+                        \(raw: property.type).setField(on: &_dynamicObject, named: "\(raw: property.mappedName ?? property.name)", newValue)
+                    }
+                } else {
                     \(raw: property.type).setField(on: &_dynamicObject, named: "\(raw: property.mappedName ?? property.name)", newValue)
+                    _objectWillChange.send()
                 }
                 _notifyOtherInstances(propertyName: "\(raw: property.name)")
             }
@@ -404,12 +411,19 @@ class VirtualLinkPropertyMacro: AccessorMacro {
             """
             get {
                 _lastKeyPathUsed = "\(raw: name)"
-                _$observationRegistrar.access(self, keyPath: \\.\(id.identifier))
+                if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
+                    _$observationRegistrar.access(self, keyPath: \\.\(id.identifier))
+                }
                 return _getVirtualLink(from: &_dynamicObject, named: "\(raw: name)")
             }
             set {
-                _$observationRegistrar.withMutation(of: self, keyPath: \\.\(id.identifier)) {
+                if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
+                    _$observationRegistrar.withMutation(of: self, keyPath: \\.\(id.identifier)) {
+                        _setVirtualLink(on: &_dynamicObject, named: "\(raw: name)", newValue)
+                    }
+                } else {
                     _setVirtualLink(on: &_dynamicObject, named: "\(raw: name)", newValue)
+                    _objectWillChange.send()
                 }
                 _notifyOtherInstances(propertyName: "\(raw: property.name)")
             }
@@ -756,15 +770,24 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             public var globalId: UUID? { __globalId }
             
             public var _instanceObservers: [_ModelObserver] = []
-            public let _$observationRegistrar = Observation.ObservationRegistrar()
+            public var _$observationRegistrarBox: Any? = nil
+            @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
+            public var _$observationRegistrar: Observation.ObservationRegistrar {
+                if let r = _$observationRegistrarBox as? Observation.ObservationRegistrar { return r }
+                let r = Observation.ObservationRegistrar()
+                _$observationRegistrarBox = r
+                return r
+            }
             public var _lastKeyPathUsed: String?
             
+            @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
             internal nonisolated func access<_M>(
                 keyPath: KeyPath<\(name), _M>
             ) {
               _$observationRegistrar.access(self, keyPath: keyPath)
             }
 
+            @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
             internal nonisolated func withMutation<_M, _MR>(
               keyPath: KeyPath<\(name), _M>,
               _ mutation: () throws -> _MR
@@ -781,8 +804,10 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                     \(raw: allowedMembers.map {
                         """
                         case "\($0.mappedName ?? $0.name)":
-                            _$observationRegistrar.willSet(self, keyPath: \\\(name).\($0.name))
-                            _$observationRegistrar.didSet(self, keyPath: \\\(name).\($0.name))
+                            if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
+                                _$observationRegistrar.willSet(self, keyPath: \\\(name).\($0.name))
+                                _$observationRegistrar.didSet(self, keyPath: \\\(name).\($0.name))
+                            }
                         """
                     }.joined(separator: "\n\t\t"))
                     default: break
@@ -955,7 +980,17 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                         }
                     }
                     """
-                )
+                ),
+                // Observation.Observable conformance is iOS 17+. Adding it
+                // per-model behind @available keeps the Model protocol (and thus
+                // iOS 15 builds) free of the Observable refinement, while
+                // preserving SwiftUI Observation/@Bindable support on iOS 17+.
+                DeclSyntax(
+                    """
+                    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
+                    extension \(type.trimmed): Observation.Observable {}
+                    """
+                ).cast(ExtensionDeclSyntax.self)
             ]
         }
 }

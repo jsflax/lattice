@@ -386,13 +386,24 @@ public struct TableNearestResults<T: Model>: NearestResults {
 
     // MARK: - Results Protocol Conformance
 
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self {
+        // Gated to iOS 17 (SortDescriptor.keyPath); callers on older OSes use sortedBy(_:order:).
+        _sorted(by: sortDescriptor.keyPath!, order: sortDescriptor.order)
+    }
+
+    /// Key-path based sort, available on all deployment targets.
+    public func sortedBy<V>(_ keyPath: KeyPath<Element, V>, order: SortOrder = .forward) -> Self {
+        _sorted(by: keyPath, order: order)
+    }
+
+    private func _sorted(by keyPath: PartialKeyPath<Element>, order: SortOrder) -> Self {
         let t = T.init(isolation: #isolation)
-        _ = _NearestMatch.init(object: t, distance: 0)[keyPath: sortDescriptor.keyPath!]
+        _ = _NearestMatch.init(object: t, distance: 0)[keyPath: keyPath]
         return .init(lattice: self._lattice,
                      whereStatement: whereStatement,
                      sortStatement: .init(descriptor: .keyPath(t._lastKeyPathUsed!),
-                                          order: sortDescriptor.order),
+                                          order: order),
                      boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
@@ -784,6 +795,9 @@ public struct TableNearestResults<T: Model>: NearestResults {
     }
 }
 
+// Parameter-pack polymorphic nearest results. Gated to iOS 17 (variadic
+// generics); iOS 15 uses `_VirtualNearestResultsCompat` (NearestResultsCompat.swift).
+@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
 package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
     public typealias Element = _NearestMatch<T>
     public typealias QueryType = Query<_NearestMatch<T>>
@@ -886,17 +900,28 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
 
     // MARK: - Results Protocol Conformance
 
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self {
+        // Gated to iOS 17 (SortDescriptor.keyPath); callers on older OSes use sortedBy(_:order:).
+        _sorted(by: sortDescriptor.keyPath!, order: sortDescriptor.order)
+    }
+
+    /// Key-path based sort, available on all deployment targets.
+    public func sortedBy<V>(_ keyPath: KeyPath<Element, V>, order: SortOrder = .forward) -> Self {
+        _sorted(by: keyPath, order: order)
+    }
+
+    private func _sorted(by keyPath: PartialKeyPath<Element>, order: SortOrder) -> Self {
         let object = firstType.init(isolation: #isolation) as! T
         let match = _NearestMatch(object: object as! T, distance: 0)
-        _ = match[keyPath: sortDescriptor.keyPath!]
-        guard let keyPath = (object as! any Model)._lastKeyPathUsed else {
+        _ = match[keyPath: keyPath]
+        guard let column = (object as! any Model)._lastKeyPathUsed else {
             preconditionFailure()
         }
         return .init(lattice: self._lattice,
                      whereStatement: whereStatement,
-                     sortStatement: .init(descriptor: .keyPath(keyPath),
-                                          order: sortDescriptor.order),
+                     sortStatement: .init(descriptor: .keyPath(column),
+                                          order: order),
                      boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 

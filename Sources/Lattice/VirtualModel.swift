@@ -121,11 +121,15 @@ public protocol VirtualQuery<VT>: _Query {
     subscript<V>(dynamicMember member: KeyPath<VT, V>) -> Query<V> { get }
 }
 
+// Parameter-pack query DSL for polymorphic models. Gated to iOS 17 because of
+// the variadic generics; iOS 15 uses `_VirtualQueryCompat` below, which stores
+// the model types in an array instead of a pack.
+@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
 @dynamicMemberLookup
 public struct _VirtualQuery<each M: Model, VT> : VirtualQuery {
     public typealias T = VT
     public init() {}
-    
+
     private func query<T>(_ type: T.Type) -> Query<T>{
         Query<T>()
     }
@@ -142,7 +146,38 @@ public struct _VirtualQuery<each M: Model, VT> : VirtualQuery {
         }
         fatalError()
     }
-    
+
+    public subscript<V>(dynamicMember member: KeyPath<VT, V>) -> Query<V> {
+        query(member: member)
+    }
+}
+
+// Non-pack equivalent of `_VirtualQuery` for the iOS 15 path. The model types
+// are carried as a runtime array; `query(member:)` only ever needs a
+// representative type (the pack version returns on its first iteration), so
+// `modelTypes.first` suffices. Must be built via `init(modelTypes:)` from the
+// enclosing compat results — the bare `_Query.init()` requirement yields an
+// empty query that cannot resolve a key path.
+@dynamicMemberLookup
+public struct _VirtualQueryCompat<VT>: VirtualQuery {
+    public typealias T = VT
+    let modelTypes: [any Model.Type]
+    public init() { self.modelTypes = [] }
+    init(modelTypes: [any Model.Type]) { self.modelTypes = modelTypes }
+
+    private func query<V>(member: KeyPath<VT, V>) -> Query<V> {
+        guard let t = modelTypes.first else { fatalError() }
+        let inst = t.init(isolation: #isolation)
+        guard let virtualInst = inst as? VT else {
+            preconditionFailure()
+        }
+        _ = virtualInst[keyPath: member]
+        let keyPath = inst._lastKeyPathUsed ?? "id"
+        // virtualMember is a fresh Query<V> builder keyed on the column string;
+        // the receiver's type parameter is irrelevant, so any Query instance works.
+        return Query<VT>().virtualMember(keyPath, withType: V.self)
+    }
+
     public subscript<V>(dynamicMember member: KeyPath<VT, V>) -> Query<V> {
         query(member: member)
     }

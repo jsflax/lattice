@@ -13,7 +13,14 @@ public protocol Results<Element>: Sequence, RandomAccessCollection where SubSequ
     associatedtype UnderlyingElement
 
     func `where`(_ query: (QueryType) -> Query<Bool>) -> Self
+    /// Sort by a `Foundation.SortDescriptor`. Requires iOS 17 because
+    /// `SortDescriptor.keyPath` — the only way to recover the sort column — is
+    /// iOS 17+. On older deployment targets use `sortedBy(_:order:)` with a key
+    /// path, which carries the column directly.
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self
+    /// Sort by a key path. Available on all deployment targets.
+    func sortedBy<V>(_ keyPath: KeyPath<Element, V>, order: SortOrder) -> Self
     func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self
     func distinct<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> Self
     func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable

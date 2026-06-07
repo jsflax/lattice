@@ -16,6 +16,19 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     internal var _sortDescriptor: SortDescriptor<Element>? {
         sortStatement as? SortDescriptor<Element>
     }
+    /// The resolved ORDER BY column + direction, without touching
+    /// `SortDescriptor.keyPath` (iOS 17+) except behind an availability guard.
+    /// `sortedBy(_:order:)` stores a `KeyPathSort` so this resolves on any OS.
+    internal var _sortColumn: (name: String, order: SortOrder)? {
+        if let ks = sortStatement as? KeyPathSort<Element> {
+            return (ks.column, ks.order)
+        }
+        if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *),
+           let sd = sortStatement as? SortDescriptor<Element>, let kp = sd.keyPath {
+            return (_name(for: kp), sd.order)
+        }
+        return nil
+    }
     internal let boundsConstraint: BoundsConstraint?
     internal let groupByColumn: String?
     internal let distinctByColumn: String?
@@ -36,8 +49,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         } else {
             .init()
         }
-        let orderBy: lattice.OptionalString = if let sd = _sortDescriptor, let keyPath = sd.keyPath {
-            lattice.string_to_optional(std.string("\(_name(for: keyPath)) \(sd.order == .forward ? "ASC" : "DESC")"))
+        let orderBy: lattice.OptionalString = if let sc = _sortColumn {
+            lattice.string_to_optional(std.string("\(sc.name) \(sc.order == .forward ? "ASC" : "DESC")"))
         } else {
             .init()
         }
@@ -75,8 +88,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             .init()
         }
 
-        let orderBy: lattice.OptionalString = if let sd = _sortDescriptor, let kp = sd.keyPath {
-            lattice.string_to_optional(std.string("\(_name(for: kp)) \(sd.order == .forward ? "ASC" : "DESC")"))
+        let orderBy: lattice.OptionalString = if let sc = _sortColumn {
+            lattice.string_to_optional(std.string("\(sc.name) \(sc.order == .forward ? "ASC" : "DESC")"))
         } else {
             .init()
         }
@@ -133,8 +146,22 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         self.distinctByColumn = nil
     }
 
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> TableResults<Element> {
         return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
+    }
+
+    /// Key-path based sort, available on all deployment targets (unlike the
+    /// `SortDescriptor` overload, whose `keyPath` is iOS 17+). Resolves the
+    /// column at call time and stores it as a `KeyPathSort`.
+    public func sortedBy<V>(_ keyPath: KeyPath<Element, V>, order: SortOrder = .forward) -> TableResults<Element> {
+        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: KeyPathSort<Element>(column: _name(for: keyPath), order: order), boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
+    }
+
+    /// Applies a pre-resolved `KeyPathSort` (used by `@LatticeQuery`, which
+    /// resolves the column from a key path up front so it works on iOS 15).
+    internal func _sorted(by comparator: KeyPathSort<Element>) -> TableResults<Element> {
+        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: comparator, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func `where`(_ query: ((Query<Element>) -> Query<Bool>)) -> TableResults<Element> {
@@ -290,8 +317,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: _sortDescriptor.map {
-                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            sortStatement: _sortColumn.map {
+                RawNearestSortDescriptor(descriptor: .keyPath($0.name), order: $0.order)
             },
             boundsConstraint: boundsConstraint,
             proximity: .vector(constraint),
@@ -348,8 +375,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: _sortDescriptor.map {
-                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            sortStatement: _sortColumn.map {
+                RawNearestSortDescriptor(descriptor: .keyPath($0.name), order: $0.order)
             },
             boundsConstraint: boundsConstraint,
             proximity: .geo(constraint),
@@ -377,8 +404,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: _sortDescriptor.map {
-                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            sortStatement: _sortColumn.map {
+                RawNearestSortDescriptor(descriptor: .keyPath($0.name), order: $0.order)
             },
             boundsConstraint: boundsConstraint,
             proximity: .text(constraint),
@@ -404,8 +431,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: _sortDescriptor.map {
-                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            sortStatement: _sortColumn.map {
+                RawNearestSortDescriptor(descriptor: .keyPath($0.name), order: $0.order)
             },
             boundsConstraint: boundsConstraint,
             proximity: .text(constraint),

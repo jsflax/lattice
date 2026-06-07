@@ -15,6 +15,10 @@ public protocol VirtualResults<Element> : Results where UnderlyingElement == Ele
     func _addType<M: Model>(_ type: M.Type) -> any VirtualResults<Element>
 }
 
+// Parameter-pack polymorphic results. Gated to iOS 17 (variadic generics).
+// iOS 15 uses `_VirtualResultsCompat` (VirtualResultsCompat.swift), which stores
+// the model types in an array instead of a pack.
+@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
 public final class _VirtualResults<each M: Model, Element>: VirtualResults, ObservableObject, @unchecked Sendable {
     public typealias UnderlyingElement = Element
     public typealias Models = (repeat each M)
@@ -24,6 +28,19 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
     internal let sortStatement: (any SortComparator)?
     internal var _sortDescriptor: SortDescriptor<Element>? {
         sortStatement as? SortDescriptor<Element>
+    }
+    /// Resolved ORDER BY column + direction without touching the iOS-17-only
+    /// `SortDescriptor.keyPath` except behind an availability guard.
+    /// `sortedBy(_:order:)` stores a `KeyPathSort` so this resolves on any OS.
+    internal var _sortColumn: (name: String, order: SortOrder)? {
+        if let ks = sortStatement as? KeyPathSort<Element> {
+            return (ks.column, ks.order)
+        }
+        if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *),
+           let sd = sortStatement as? SortDescriptor<Element>, let kp = sd.keyPath {
+            return (nameForKeyPath(kp), sd.order)
+        }
+        return nil
     }
     internal let boundsConstraint: BoundsConstraint?
     internal let groupByColumn: String?
@@ -79,16 +96,8 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
         } else {
             .init()
         }
-        let orderBy: lattice.OptionalString = if let sd = _sortDescriptor, let keyPath = sd.keyPath {
-            {
-                let inst = firstType.init(isolation: #isolation)
-                guard let virtualInst = inst as? Element else {
-                    preconditionFailure()
-                }
-                _ = virtualInst[keyPath: keyPath]
-                let keyPath = inst._lastKeyPathUsed ?? "id"
-                return lattice.string_to_optional(std.string("\(keyPath) \(sd.order == .forward ? "ASC" : "DESC")"))
-            }()
+        let orderBy: lattice.OptionalString = if let sc = _sortColumn {
+            lattice.string_to_optional(std.string("\(sc.name) \(sc.order == .forward ? "ASC" : "DESC")"))
         } else {
             .init()
         }
@@ -148,8 +157,15 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
         fatalError()
     }
 
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> _VirtualResults<repeat each M, Element> {
         return _VirtualResults(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
+    }
+
+    /// Key-path based sort, available on all deployment targets (the
+    /// `SortDescriptor` overload's `keyPath` is iOS 17+).
+    public func sortedBy<V>(_ keyPath: KeyPath<Element, V>, order: SortOrder = .forward) -> _VirtualResults<repeat each M, Element> {
+        return _VirtualResults(_lattice, whereStatement: whereStatement, sortStatement: KeyPathSort<Element>(column: nameForKeyPath(keyPath), order: order), boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> _VirtualResults<repeat each M, Element> {
@@ -243,8 +259,8 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
         return _VirtualNearestResults<repeat each M, Element>(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: _sortDescriptor.map {
-                RawNearestSortDescriptor(descriptor: .keyPath(nameForKeyPath($0.keyPath!)),
+            sortStatement: _sortColumn.map {
+                RawNearestSortDescriptor(descriptor: .keyPath($0.name),
                                          order: $0.order)
             },
             boundsConstraint: boundsConstraint,
@@ -316,8 +332,8 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
         return _VirtualNearestResults<repeat each M, Element>(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: _sortDescriptor.map {
-                RawNearestSortDescriptor(descriptor: .keyPath(nameForKeyPath($0.keyPath!)),
+            sortStatement: _sortColumn.map {
+                RawNearestSortDescriptor(descriptor: .keyPath($0.name),
                                          order: $0.order)
             },
             boundsConstraint: boundsConstraint,
@@ -363,8 +379,8 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
         return _VirtualNearestResults<repeat each M, Element>(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: _sortDescriptor.map {
-                RawNearestSortDescriptor(descriptor: .keyPath(nameForKeyPath($0.keyPath!)),
+            sortStatement: _sortColumn.map {
+                RawNearestSortDescriptor(descriptor: .keyPath($0.name),
                                          order: $0.order)
             },
             boundsConstraint: boundsConstraint,

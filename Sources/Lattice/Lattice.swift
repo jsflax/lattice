@@ -59,11 +59,9 @@ extension Model {
     }
 }
 
-final class LatticeExecutor: SerialExecutor {
-    func enqueue(_ job: consuming ExecutorJob) {
-        job.runSynchronously(on: self.asUnownedSerialExecutor())
-    }
-}
+// NOTE: a `LatticeExecutor: SerialExecutor` used to live here. It was unused
+// (zero references) and `SerialExecutor`/`ExecutorJob` are iOS 17+, so it was
+// removed to support the iOS 15 deployment floor.
 
 extension UnsafeMutablePointer: @unchecked @retroactive Sendable {
 }
@@ -615,6 +613,18 @@ public struct Lattice {
     var cxxLattice: lattice.swift_lattice {
         cxxLatticeRef.get()
     }
+
+    /// The boxed db backend. On iOS 16.4+/macOS the C++-interop `CxxBackend`;
+    /// iOS 15 will use the pure-C `CBackend` (Phase 3). Phase 2 migrates the
+    /// `cxxLattice.*` call sites onto this neutral surface; once that is complete
+    /// `cxxLatticeRef` is replaced by a stored `any LatticeBackend`.
+    var backend: any LatticeBackend {
+        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *) {
+            return CxxBackend(cxxLatticeRef)
+        } else {
+            fatalError("iOS < 16.4 requires the C backend (Phase 3, not yet wired)")
+        }
+    }
     internal var isolation: (any Actor)?
 
     internal init(isolation: isolated (any Actor)? = #isolation,
@@ -686,6 +696,12 @@ public struct Lattice {
         // Discover all linked types from the provided schema
         let allTypes = Self.discoverAllTypes(from: schema)
         self.modelTypes = allTypes
+
+        // Record the registered model types for polymorphic/virtual queries.
+        // Set here (the designated init) so BOTH the array `init(for:)` and the
+        // variadic `init<each M>` paths populate it — previously only the
+        // variadic path did, leaving virtual queries broken via `init(for:)`.
+        self.schema = SchemaCompat(modelTypes: schema)
 
         // Register all model types in the global registry for VirtualList type resolution
         for type in allTypes {
@@ -824,6 +840,10 @@ public struct Lattice {
     ///   - modelTypes: The model types to register
     ///   - configuration: Database configuration
     ///   - migration: Block called when schema changes are detected
+    // Variadic (parameter-pack) convenience init — iOS 17+ (variadic generics).
+    // For unbounded arity on iOS 17+. iOS 15 uses the fixed-arity overloads below
+    // or `init(for: [Model.Type])`.
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public init<each M: Model>(isolation: isolated (any Actor)? = #isolation,
                                _ modelTypes: repeat (each M).Type,
                                configuration: Configuration = defaultConfiguration) throws {
@@ -832,7 +852,29 @@ public struct Lattice {
             types.append(type)
         }
         try self.init(for: types, configuration: configuration)
-        self.schema = Schema(repeat each modelTypes)
+        // schema is already set by the designated init (as a SchemaCompat).
+    }
+
+    // Fixed-arity convenience inits (no parameter packs) — available on all
+    // deployment targets. They forward to `init(for:)`; for more types than
+    // these cover, use `init(for: [Model.Type])`.
+    public init<A: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a], configuration: configuration)
+    }
+    public init<A: Model, B: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a, b], configuration: configuration)
+    }
+    public init<A: Model, B: Model, C: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a, b, c], configuration: configuration)
+    }
+    public init<A: Model, B: Model, C: Model, D: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a, b, c, d], configuration: configuration)
+    }
+    public init<A: Model, B: Model, C: Model, D: Model, E: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, _ e: E.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a, b, c, d, e], configuration: configuration)
+    }
+    public init<A: Model, B: Model, C: Model, D: Model, E: Model, F: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, _ e: E.Type, _ f: F.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a, b, c, d, e, f], configuration: configuration)
     }
 
     enum Error: Swift.Error {
@@ -1722,45 +1764,69 @@ public struct Lattice {
 
 typealias LatticeCxx = lattice
 
+// The schema carries the registered model types so polymorphic/virtual queries
+// (`objects(SomeVirtualModel.self)`) can discover which concrete types conform.
+// It exposes the type list as a plain array (`modelTypeList`) so it works the
+// same with or without parameter packs; `merge` combines two type lists. The
+// previous pack-based `merge<each V>` requirement was removed (it forced an
+// iOS 17 floor on the whole protocol).
 protocol _Schema {
+    var modelTypeList: [any Model.Type] { get }
     func merge(typeErased: _Schema) -> _Schema
-    func merge<each V: Model>(other: Schema<repeat each V>) -> _Schema
     func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> VirtualResults<T>
 }
 
+extension _Schema {
+    fileprivate func _generateVirtualResults<T>(matching modelTypes: [any Model.Type], _ type: T.Type, on lattice: Lattice) -> any VirtualResults<T> {
+        var matchingTypes: [any Model.Type] = []
+        for modelType in modelTypes {
+            if modelType.init(isolation: #isolation) is T {
+                matchingTypes.append(modelType)
+            }
+        }
+        return _buildVirtualResults(from: matchingTypes, proto: type, lattice: lattice)
+    }
+}
+
+// Array-backed schema — no parameter packs, so it works on every deployment
+// target. This is what `Lattice` stores; both the array and variadic inits build
+// it. (The pack `Schema<each M>` below is gated and effectively vestigial now.)
+struct SchemaCompat: _Schema {
+    let modelTypes: [any Model.Type]
+    var modelTypeList: [any Model.Type] { modelTypes }
+    func merge(typeErased: any _Schema) -> any _Schema {
+        SchemaCompat(modelTypes: modelTypes + typeErased.modelTypeList)
+    }
+    func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> any VirtualResults<T> {
+        _generateVirtualResults(matching: modelTypes, type, on: lattice)
+    }
+}
+
+@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
 package struct Schema<each M: Model>: _Schema {
     let modelTypes: (repeat (each M).Type)
     package init(_ modelTypes: repeat (each M).Type) {
         self.modelTypes = (repeat each modelTypes)
     }
-    
-    func addType<T: Model>(_ type: T.Type) -> _Schema {
-        Schema<repeat each M, T>(repeat each self.modelTypes, type)
+
+    var modelTypeList: [any Model.Type] {
+        var a: [any Model.Type] = []
+        for t in repeat (each M).self { a.append(t) }
+        return a
     }
-    
+
     func merge(typeErased: any _Schema) -> any _Schema {
-        typeErased.merge(other: self)
+        SchemaCompat(modelTypes: modelTypeList + typeErased.modelTypeList)
     }
-    
-    func merge<each V: Model>(other: Schema<repeat each V>) -> _Schema {
-        Schema<repeat (each M), repeat each V>.init(repeat each self.modelTypes, repeat each other.modelTypes)
-    }
-    
+
     package func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> any VirtualResults<T> {
-        // Collect matching types in the variadic loop (no existential box needed)
-        var matchingTypes: [any Model.Type] = []
-        for modelType in repeat each modelTypes {
-            if modelType.init(isolation: #isolation) is T {
-                matchingTypes.append(modelType)
-            }
-        }
-        // Build VirtualResults outside variadic context using existential opening
-        return _buildVirtualResults(from: matchingTypes, proto: type, lattice: lattice)
+        _generateVirtualResults(matching: modelTypeList, type, on: lattice)
     }
 }
 
 // Build VirtualResults outside of variadic generic context to avoid IRGen crash on Linux.
 // Uses existential opening on `any Model.Type` instead of pack element archetypes.
+@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
 private func _makeInitialVirtualResults<M: Model, T>(
     _ modelType: M.Type, proto: T.Type, lattice: Lattice
 ) -> any VirtualResults<T> {
@@ -1771,11 +1837,17 @@ private func _buildVirtualResults<T>(
     from types: [any Model.Type], proto: T.Type, lattice: Lattice
 ) -> any VirtualResults<T> {
     guard let first = types.first else { fatalError("No types conform to \(T.self)") }
-    var result = _makeInitialVirtualResults(first, proto: proto, lattice: lattice)
-    for remaining in types.dropFirst() {
-        result = result._addType(remaining)
+    // iOS 17+: build the parameter-pack `_VirtualResults` (grown one type at a
+    // time). iOS 15: build the array-backed `_VirtualResultsCompat` directly.
+    if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
+        var result = _makeInitialVirtualResults(first, proto: proto, lattice: lattice)
+        for remaining in types.dropFirst() {
+            result = result._addType(remaining)
+        }
+        return result
+    } else {
+        return _VirtualResultsCompat<T>(modelTypes: types, proto: proto, lattice: lattice)
     }
-    return result
 }
 
 extension Array where Element == any Model.Type {
