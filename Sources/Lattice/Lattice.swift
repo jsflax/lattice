@@ -80,11 +80,9 @@ extension lattice.swift_lattice_ref: Hashable, Equatable, @unchecked @retroactiv
 }
 
 public struct Lattice {
-    #if canImport(os)
-    private static let synchronizersLock = OSAllocatedUnfairLock<Void>()
-    #else
+    // UnfairLock back-deploys (os_unfair_lock, iOS 10+); OSAllocatedUnfairLock
+    // would force an iOS-16 floor. Same primitive underneath.
     private static let synchronizersLock = UnfairLock(initialState: ())
-    #endif
     
     public struct SyncConfiguration {
         
@@ -656,11 +654,7 @@ public struct Lattice {
         }
     }
     
-    #if canImport(os)
-    private static let cacheLock = OSAllocatedUnfairLock<Void>()
-    #else
     private static let cacheLock = UnfairLock(initialState: ())
-    #endif
 
     /// Cache key that uses the underlying impl_ pointer hash for stable identity
     private struct CacheKey: Hashable {

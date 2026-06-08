@@ -132,8 +132,52 @@ public func autoreleasepool<Result>(_ body: () throws -> Result) rethrows -> Res
 #endif
 
 // MARK: - OSAllocatedUnfairLock Replacement
+//
+// A back-deployable unfair lock exposing the OSAllocatedUnfairLock surface
+// (`withLock` / `withLockUnchecked`). It exists on ALL platforms so the call
+// sites never have to `#if`-select between OSAllocatedUnfairLock and a fallback.
+//
+// On Apple it wraps `os_unfair_lock` — available since iOS 10, i.e. the exact
+// primitive `OSAllocatedUnfairLock` is built on — so there is zero behavior
+// change versus the old modern path, but it back-deploys below the iOS-16 floor
+// of `OSAllocatedUnfairLock` itself. On Linux it falls back to `NSLock`.
 
-#if !canImport(os)
+#if canImport(os)
+import os
+
+public final class UnfairLock<State>: @unchecked Sendable {
+    private let _lock: os_unfair_lock_t
+    private var _state: State
+
+    public init(initialState: State) {
+        self._lock = .allocate(capacity: 1)
+        self._lock.initialize(to: os_unfair_lock())
+        self._state = initialState
+    }
+
+    deinit {
+        _lock.deinitialize(count: 1)
+        _lock.deallocate()
+    }
+
+    public func withLockUnchecked<R>(_ body: (inout State) throws -> R) rethrows -> R {
+        os_unfair_lock_lock(_lock)
+        defer { os_unfair_lock_unlock(_lock) }
+        return try body(&_state)
+    }
+
+    public func withLockUnchecked<R>(_ body: () throws -> R) rethrows -> R {
+        os_unfair_lock_lock(_lock)
+        defer { os_unfair_lock_unlock(_lock) }
+        return try body()
+    }
+
+    public func withLock<R: Sendable>(_ body: (inout State) throws -> R) rethrows -> R {
+        try withLockUnchecked(body)
+    }
+}
+
+#else
 
 public final class UnfairLock<State>: @unchecked Sendable {
     private let _lock = NSLock()
