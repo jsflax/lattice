@@ -38,7 +38,11 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         weak var instance: (any Model)?
         let objectIdentifier: ObjectIdentifier
         var cxxObserverId: UInt64?
-        var cxxLatticeRef: lattice.swift_lattice_ref?
+        // Neutral backend (not the C++ swift_lattice_ref — an iOS-16.4 foreign
+        // reference type can't be a stored property below 16.4). The C++
+        // object-observer removal downcasts via asCxxLatticeRef under an
+        // availability guard; iOS 15 routes through the C backend (Phase 3).
+        var latticeBackend: (any LatticeBackend)?
         init(_ model: any Model) {
             self.instance = model
             self.objectIdentifier = ObjectIdentifier(model)
@@ -56,7 +60,12 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     /// Register a model instance for cross-instance and cross-process observation
     func register(_ model: any Model, tableName: String) {
         guard let primaryKey = model.primaryKey else { return }
-        guard let latticeRef = model._dynamicObject._ref.lattice?.asCxxLatticeRef else { return }
+        guard let latticeBackend = model._dynamicObject._ref.lattice else { return }
+        // Cross-process object observation uses the C++ object-observer API
+        // (16.4+ foreign-reference types). iOS 15 will register through the C
+        // backend (Phase 3); until then registration is a no-op there.
+        guard #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *),
+              let latticeRef = latticeBackend.asCxxLatticeRef else { return }
         let dbPath = String(latticeRef.path())
         let key = InstanceKey(databasePath: dbPath, tableName: tableName, primaryKey: primaryKey)
         var ref = WeakModelRef(model)
@@ -101,7 +110,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
             }
         )
         ref.cxxObserverId = observerId
-        ref.cxxLatticeRef = latticeRef
+        ref.latticeBackend = latticeBackend
         lock.lock()
         registeredKeys[objectId] = key
         var refs = instances.removeValue(forKey: key) ?? []
@@ -172,7 +181,9 @@ final class ModelInstanceRegistry: @unchecked Sendable {
 
         for ref in removedRefs {
             if let observerId = ref.cxxObserverId,
-               let latticeRef = ref.cxxLatticeRef {
+               let latticeBackend = ref.latticeBackend,
+               #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *),
+               let latticeRef = latticeBackend.asCxxLatticeRef {
                 latticeRef.get().remove_object_observer(std.string(tableName), key.primaryKey, observerId)
             }
         }
