@@ -128,20 +128,23 @@ public enum DistanceMetric: Int32, Sendable {
 }
 
 public final class Cursor<Element>: IteratorProtocol {
-    private let results: any Results<Element>
+    // Captures the concrete results' snapshot rather than storing
+    // `any Results<Element>` (a parameterized existential — an iOS-16 runtime
+    // floor). The closure pins the concrete type at construction.
+    private let _snapshot: (_ limit: Int64, _ offset: Int64) -> [Element]
     private let batchSize: Int64 = 100
     private var batch: [Element] = []
     private var batchStart: Int64 = 0
     private var indexInBatch: Int = 0
 
     package init(_ results: some Results<Element>) {
-        self.results = results
+        self._snapshot = { limit, offset in results.snapshot(limit: limit, offset: offset) }
     }
 
     public func next() -> Element? {
         // Fetch in batches to avoid O(n²) OFFSET penalty
         if indexInBatch >= batch.count {
-            batch = results.snapshot(limit: batchSize, offset: batchStart)
+            batch = _snapshot(batchSize, batchStart)
             batchStart += Int64(batch.count)
             indexInBatch = 0
         }
@@ -154,23 +157,30 @@ public final class Cursor<Element>: IteratorProtocol {
 public struct Slice<Element>: RandomAccessCollection, Sequence {
     public var startIndex: Int
     public var endIndex: Int
-    private let results: any Results<Element>
+    // Snapshot closure, not a stored `any Results<Element>` (iOS-16 floor).
+    private let _snapshot: (_ limit: Int64, _ offset: Int64) -> [Element]
     public typealias Index = Int
 
     fileprivate init(results: some Results<Element>, startIndex: Int, endIndex: Int) {
         self.startIndex = startIndex
         self.endIndex = endIndex
-        self.results = results
+        self._snapshot = { limit, offset in results.snapshot(limit: limit, offset: offset) }
+    }
+
+    private init(snapshot: @escaping (_ limit: Int64, _ offset: Int64) -> [Element], startIndex: Int, endIndex: Int) {
+        self.startIndex = startIndex
+        self.endIndex = endIndex
+        self._snapshot = snapshot
     }
 
     public subscript(bounds: Range<Int>) -> Self {
-        .init(results: results, startIndex: bounds.lowerBound, endIndex: bounds.upperBound)
+        .init(snapshot: _snapshot, startIndex: bounds.lowerBound, endIndex: bounds.upperBound)
     }
 
     public subscript(position: Int) -> Element {
         get {
             // Fetch single element at position (live)
-            let objects = results.snapshot(limit: 1, offset: Int64(position))
+            let objects = _snapshot(1, Int64(position))
             guard let obj = objects.first else {
                 fatalError("Index out of bounds: \(position)")
             }
@@ -191,10 +201,10 @@ public struct Slice<Element>: RandomAccessCollection, Sequence {
         private var elements: [Element]
         private var index: Int = 0
 
-        fileprivate init(results: some Results<Element>, start: Int, end: Int) {
+        fileprivate init(snapshot: (_ limit: Int64, _ offset: Int64) -> [Element], start: Int, end: Int) {
             let count = end - start
             if count > 0 {
-                self.elements = results.snapshot(limit: Int64(count), offset: Int64(start))
+                self.elements = snapshot(Int64(count), Int64(start))
             } else {
                 self.elements = []
             }
@@ -208,7 +218,7 @@ public struct Slice<Element>: RandomAccessCollection, Sequence {
     }
 
     public func makeIterator() -> Iterator {
-        Iterator(results: results, start: startIndex, end: endIndex)
+        Iterator(snapshot: _snapshot, start: startIndex, end: endIndex)
     }
 }
 
