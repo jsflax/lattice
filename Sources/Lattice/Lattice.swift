@@ -1332,8 +1332,8 @@ public struct Lattice {
         }
     }
 
-    public var changeStream: AsyncStream<[any SendableReference<AuditLog>]> {
-        AsyncStream<[any SendableReference<AuditLog>]> { [backend, modelTypes, configuration] stream in
+    public var changeStream: AsyncStream<[AnySendableReference<AuditLog>]> {
+        AsyncStream<[AnySendableReference<AuditLog>]> { [backend, modelTypes, configuration] stream in
             let log = Logger.sync
 
             // Create a single Lattice for all queries instead of one per notification.
@@ -1361,13 +1361,13 @@ public struct Lattice {
                 // one frame and applies atomically. See the
                 // notify_changes_batched comment in LatticeCore for
                 // the full rationale.
-                let refs: [any SendableReference<AuditLog>] = changes.compactMap { c in
+                let refs: [AnySendableReference<AuditLog>] = changes.compactMap { c in
                     guard let auditLog = queryLattice.value.object(AuditLog.self, primaryKey: c.rowId) else {
                         log.warning("changeStream: no AuditLog for pk=\(c.rowId)")
                         return nil
                     }
                     log.debug("changeStream entry: table=\(auditLog.tableName) modelOp=\(auditLog.operation) modelRowId=\(auditLog.rowId)")
-                    return auditLog.sendableReference
+                    return AnySendableReference(auditLog.sendableReference)
                 }
                 if !refs.isEmpty {
                     log.debug("changeStream yield: count=\(refs.count)")

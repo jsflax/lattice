@@ -2,8 +2,26 @@ import Foundation
 
 public protocol SendableReference<NonSendable>: Sendable {
     associatedtype NonSendable
-    
+
     func resolve(on lattice: Lattice) -> NonSendable?
+}
+
+/// Concrete type-eraser for `SendableReference`. Replaces `any
+/// SendableReference<T>` (a parameterized existential — an iOS-16 runtime
+/// floor) at the few sites that need a heterogeneous/erased reference (e.g.
+/// `Lattice.changeStream`'s `[…]` element). `SendableReference` has a single
+/// requirement, so the eraser is just a captured `@Sendable (Lattice) -> T?`
+/// closure.
+public struct AnySendableReference<NonSendable>: SendableReference {
+    private let _resolve: @Sendable (Lattice) -> NonSendable?
+
+    public init<R: SendableReference>(_ reference: R) where R.NonSendable == NonSendable {
+        self._resolve = { reference.resolve(on: $0) }
+    }
+
+    public func resolve(on lattice: Lattice) -> NonSendable? {
+        _resolve(lattice)
+    }
 }
 
 public protocol LatticeIsolated {
