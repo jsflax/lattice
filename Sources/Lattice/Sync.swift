@@ -110,7 +110,11 @@ extension AuditLog {
 // ============================================================================
 
 public enum ServerSentEvent: Codable {
-    case auditLog(any Sequence<AuditLog>)
+    // Concrete [AuditLog] rather than `any Sequence<AuditLog>`: the latter is a
+    // parameterized existential (iOS-16 runtime floor), and the payload is always
+    // materialized to an array on decode/encode anyway. Callers passing a lazy
+    // sequence (e.g. a Results Slice) wrap it with `Array(...)`.
+    case auditLog([AuditLog])
     case ack([UUID])
 
     private enum CodingKeys: String, CodingKey {
@@ -139,7 +143,7 @@ public enum ServerSentEvent: Codable {
         switch self {
         case .auditLog(let logs):
             try container.encode("auditLog", forKey: .kind)
-            try container.encode(Array(logs), forKey: .auditLog)
+            try container.encode(logs, forKey: .auditLog)
         case .ack(let ids):
             try container.encode("ack", forKey: .kind)
             try container.encode(ids, forKey: .ack)

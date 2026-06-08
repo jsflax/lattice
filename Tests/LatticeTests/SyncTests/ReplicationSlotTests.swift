@@ -281,7 +281,7 @@ actor ReplicationSlotTests {
         #expect(events.count >= 5, "Should have at least 5 audit log entries")
 
         // Encode to JSON (same as ServerSentEvent.auditLog does)
-        let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(events))
+        let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(Array(events)))
 
         // Parse the JSON and check that globalId fields are not null
         let json = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
