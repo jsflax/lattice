@@ -46,11 +46,7 @@ public struct ModelLinkListRef<T: Model>: @unchecked Sendable, LinkListRef {
     }
 
     public static func new() -> Self {
-        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *) {
-            return Self(_ref: CxxObjectListBackend(.create()))
-        } else {
-            fatalError("iOS < 16.4 requires the C backend (Phase 3, not yet wired)")
-        }
+        Self(_ref: BackendFactory.makeEmptyObjectList())
     }
 
     public func get(at position: Int) -> T {

@@ -19,11 +19,7 @@ public struct ModelStorage: @unchecked Sendable {
     @inlinable public init(_ref: any ObjectBackend) { self._ref = _ref }
 
     public static func _default<M: Model>(_ type: M.Type) -> ModelStorage {
-        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *) {
-            return ModelStorage(_ref: CxxObjectBackend(CxxDynamicObjectRef.wrap(_defaultCxxLatticeObject(type))!))
-        } else {
-            fatalError("iOS < 16.4 requires the C backend (Phase 3, not yet wired)")
-        }
+        ModelStorage(_ref: BackendFactory.makeDefaultObject(for: type))
     }
 }
 

@@ -788,6 +788,12 @@ public struct Lattice {
         guard error.msg.empty() else {
             throw error
         }
+        // PHASE 3c SEAM — the remaining db-handle backend selection. Unlike the
+        // object/list selections (now in BackendFactory), creation here is
+        // entangled with the Cxx schema-vector build above (`cxxSchemas`), which
+        // only neutralizes in Phase 3c. When that lands, the whole create block
+        // moves behind `if #available { swift_lattice_ref.create… } else {
+        // c_lattice_create… }` and this becomes the one db-handle `else`.
         self.backend = CxxBackend(createdRef)
         let key = CacheKey(self.backend)
         let latticeInstance = self

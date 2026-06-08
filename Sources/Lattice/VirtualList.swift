@@ -72,7 +72,7 @@ public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
     }
 
     public init() {
-        self.linkListRef = CxxObjectListBackend(.create())
+        self.linkListRef = BackendFactory.makeEmptyObjectList()
     }
 
     init(linkListRef: any ObjectListBackend) {
