@@ -12,23 +12,20 @@ extension LatticeBackend {
     /// The underlying C++ `swift_lattice_ref`, when this is the C++ backend
     /// (nil on the future C backend). Used by the still-C++-only paths (the
     /// cross-process object-observer registration, `attach`, etc.) that have no
-    /// neutral surface yet.
+    /// neutral surface yet. Gated 16.4 because the return type is a foreign
+    /// reference type; the iOS-15 (CBackend) path never calls this.
+    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
     var asCxxLatticeRef: lattice.swift_lattice_ref? {
-        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *) {
-            return (self as? CxxBackend)?.ref
-        }
-        return nil
+        return (self as? CxxBackend)?.ref
     }
 }
 
 extension ObjectBackend {
     /// The underlying C++ `dynamic_object_ref`, when this is the C++ backend.
     /// Used by the deferred (geo/union/managed) accessors that stay C++-only.
+    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
     var asCxxObjectRef: CxxDynamicObjectRef? {
-        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *) {
-            return (self as? CxxObjectBackend)?.ref
-        }
-        return nil
+        return (self as? CxxObjectBackend)?.ref
     }
 }
 

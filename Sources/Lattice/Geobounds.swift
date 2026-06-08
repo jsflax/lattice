@@ -7,6 +7,12 @@ public protocol GeoboundsProperty: LatticeSchemaProperty {
 
 // MARK: - GeoBoundsLinkListRef (wraps C++ geo_bounds_list_ref)
 
+// Spatial/geo features are modern-only (see GeoBoundsListBackend note in
+// Backend.swift): this ref stores a 16.4 foreign-reference type directly and is
+// gated wholesale. A gated type may still satisfy the (ungated) LinkListRef
+// requirements — instances simply cannot exist below 16.4, so the geo `List`
+// specializations are modern-only until a C geo path lands (Phase 3+).
+@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 public struct GeoBoundsLinkListRef<T>: @unchecked Sendable, LinkListRef {
     var _ref: lattice.geo_bounds_list_ref
     private let _fromRef: (lattice.geo_bounds_ref) -> T
@@ -57,8 +63,8 @@ public struct GeoBoundsLinkListRef<T>: @unchecked Sendable, LinkListRef {
         String(_ref.linkTableName)
     }
 
-    public var latticeRef: lattice.swift_lattice_ref? {
-        _ref.lattice
+    public var latticeBackend: (any LatticeBackend)? {
+        _ref.lattice.map { CxxBackend($0) }
     }
 }
 
@@ -107,6 +113,7 @@ extension Optional: GeoboundsProperty where Wrapped: GeoboundsProperty {
 #if canImport(MapKit)
 import MapKit
 
+@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 extension MKCoordinateRegion: CxxManaged, GeoboundsProperty, LinkListable {
     public static var anyPropertyKind: AnyProperty.Kind {
         .int
@@ -177,6 +184,7 @@ public struct CLLocationCoordinate2DCompat: EmbeddedModel {
     public init() {}
 }
 
+@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 extension CLLocationCoordinate2D: CxxManaged, GeoboundsProperty, LinkListable {
     public static func _makeLinkList(from storage: borrowing ModelStorage, named name: String) -> GeoBoundsLinkListRef<CLLocationCoordinate2D> {
         GeoBoundsLinkListRef(

@@ -24,7 +24,10 @@ public protocol LinkListRef<Element> {
     func indicesWhere(_ query: String) -> [Int]
 
     var linkTableName: String { get }
-    var latticeRef: lattice.swift_lattice_ref? { get }
+    /// The owning db handle as a neutral backend (nil when unmanaged). Replaces
+    /// the former `lattice.swift_lattice_ref?` so the protocol carries no
+    /// foreign-reference type into the iOS-15 floor.
+    var latticeBackend: (any LatticeBackend)? { get }
 }
 
 public protocol LinkListable: SchemaProperty {
@@ -86,8 +89,8 @@ public struct ModelLinkListRef<T: Model>: @unchecked Sendable, LinkListRef {
         _ref.linkTableName
     }
 
-    public var latticeRef: lattice.swift_lattice_ref? {
-        _ref.lattice?.asCxxLatticeRef
+    public var latticeBackend: (any LatticeBackend)? {
+        _ref.lattice
     }
 }
 
@@ -233,10 +236,10 @@ public struct List<Element>: MutableCollection, BidirectionalCollection, SchemaP
     /// Does NOT fire for child property changes — only link table mutations.
     public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
         let linkTableName = linkListRef.linkTableName
-        guard !linkTableName.isEmpty, let latticeRef = linkListRef.latticeRef else {
+        guard !linkTableName.isEmpty, let latticeBackend = linkListRef.latticeBackend else {
             return AnyCancellable {}
         }
-        return Lattice.observeLinkTable(linkTableName, backend: CxxBackend(latticeRef), block: observer)
+        return Lattice.observeLinkTable(linkTableName, backend: latticeBackend, block: observer)
     }
     #endif
 }
