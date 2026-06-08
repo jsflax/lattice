@@ -85,27 +85,13 @@ public final class _VirtualResultsCompat<Element>: VirtualResults, ObservableObj
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
         var objects: [Element] = []
 
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-        let orderBy: lattice.OptionalString = if let sc = _sortColumn {
-            lattice.string_to_optional(std.string("\(sc.name) \(sc.order == .forward ? "ASC" : "DESC")"))
-        } else {
-            .init()
-        }
-        let limitOpt: lattice.OptionalInt64 = if let limit { lattice.int64_to_optional(limit) } else { .init() }
-        let offsetOpt: lattice.OptionalInt64 = if let offset { lattice.int64_to_optional(offset) } else { .init() }
+        let orderBy: String? = _sortColumn.map { "\($0.name) \($0.order == .forward ? "ASC" : "DESC")" }
+        let cxxResults = _lattice.backend.unionObjects(tables: self.tableNames, where: whereStatement?.predicate, orderBy: orderBy, limit: limit, offset: offset)
 
-        let cxxResults = _lattice.cxxLattice.union_objects(self.tableNames.reduce(into: lattice.StringVector(), { $0.push_back(std.string($1)) }), whereClause, orderBy, limitOpt, offsetOpt)
-
-        for i in 0..<cxxResults.size() {
-            let cxxObject = cxxResults[i]
+        for row in cxxResults {
             for type in modelTypes {
-                if type.entityName == String(cxxObject.instance_schema().table_name) {
-                    let object = type.init(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(cxxObject).make_shared()))
-                    objects.append(object as! Element)
+                if type.entityName == row.tableName {
+                    objects.append(type.init(dynamicObject: row) as! Element)
                     break
                 }
             }
@@ -159,13 +145,7 @@ public final class _VirtualResultsCompat<Element>: VirtualResults, ObservableObj
     public var endIndex: Int {
         var count = 0
         for type in modelTypes {
-            let tableName = std.string(type.entityName)
-            let whereClause: lattice.OptionalString = if let whereStatement {
-                lattice.string_to_optional(std.string(whereStatement.predicate))
-            } else {
-                .init()
-            }
-            count += Int(_lattice.cxxLattice.count(tableName, whereClause))
+            count += Int(_lattice.backend.count(table: type.entityName, where: whereStatement?.predicate))
         }
         return count
     }

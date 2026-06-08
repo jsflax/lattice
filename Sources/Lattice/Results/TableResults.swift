@@ -43,89 +43,13 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             return snapshotWithBounds(bounds, limit: limit, offset: offset)
         }
 
-        let tableName = std.string(Element.entityName)
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-        let orderBy: lattice.OptionalString = if let sc = _sortColumn {
-            lattice.string_to_optional(std.string("\(sc.name) \(sc.order == .forward ? "ASC" : "DESC")"))
-        } else {
-            .init()
-        }
-        let limitOpt: lattice.OptionalInt64 = if let limit { lattice.int64_to_optional(limit) } else { .init() }
-        let offsetOpt: lattice.OptionalInt64 = if let offset { lattice.int64_to_optional(offset) } else { .init() }
-        let groupByOpt: lattice.OptionalString = if let groupByColumn {
-            lattice.string_to_optional(std.string(groupByColumn))
-        } else {
-            .init()
-        }
-        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
-            lattice.string_to_optional(std.string(distinctByColumn))
-        } else {
-            .init()
-        }
-
-        let cxxResults = _lattice.cxxLattice.objects(tableName, whereClause, orderBy, limitOpt, offsetOpt, groupByOpt, distinctByOpt)
-
-        var objects: [Element] = []
-        objects.reserveCapacity(cxxResults.size())
-
-        for i in 0..<cxxResults.size() {
-            let cxxObject = cxxResults[i]
-            let object = Element(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(cxxObject).make_shared()))
-            objects.append(object)
-        }
-
-        return objects
+        let orderBy: String? = _sortColumn.map { "\($0.name) \($0.order == .forward ? "ASC" : "DESC")" }
+        return _lattice.backend.objects(table: Element.entityName, where: whereStatement?.predicate, orderBy: orderBy, limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn).map { Element(dynamicObject: $0) }
     }
 
     private func snapshotWithBounds(_ bounds: BoundsConstraint, limit: Int64?, offset: Int64?) -> [Element] {
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-
-        let orderBy: lattice.OptionalString = if let sc = _sortColumn {
-            lattice.string_to_optional(std.string("\(sc.name) \(sc.order == .forward ? "ASC" : "DESC")"))
-        } else {
-            .init()
-        }
-
-        let limitOpt: lattice.OptionalInt64 = if let limit { lattice.int64_to_optional(limit) } else { .init() }
-        let offsetOpt: lattice.OptionalInt64 = if let offset { lattice.int64_to_optional(offset) } else { .init() }
-        let groupByOpt: lattice.OptionalString = if let groupByColumn {
-            lattice.string_to_optional(std.string(groupByColumn))
-        } else {
-            .init()
-        }
-
-        let cxxResults = _lattice.cxxLattice.objectsWithinBBox(
-            table: std.string(Element.entityName),
-            geoColumn: std.string(bounds.propertyName),
-            minLat: bounds.minLat,
-            maxLat: bounds.maxLat,
-            minLon: bounds.minLon,
-            maxLon: bounds.maxLon,
-            where: whereClause,
-            orderBy: orderBy,
-            limit: limitOpt,
-            offset: offsetOpt,
-            groupBy: groupByOpt
-        )
-
-        var results: [Element] = []
-        results.reserveCapacity(cxxResults.size())
-
-        for i in 0..<cxxResults.size() {
-            let cxxObject = cxxResults[i]
-            let object = Element(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(cxxObject).make_shared()))
-            results.append(object)
-        }
-
-        return results
+        let orderBy: String? = _sortColumn.map { "\($0.name) \($0.order == .forward ? "ASC" : "DESC")" }
+        return _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: whereStatement?.predicate, orderBy: orderBy, limit: limit, offset: offset, groupBy: groupByColumn).map { Element(dynamicObject: $0) }
     }
 
     init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: (any SortComparator)? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil, distinctByColumn: String? = nil) {
@@ -238,39 +162,10 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
 
     public var endIndex: Int {
-
-        let tableName = std.string(Element.entityName)
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-        let groupByOpt: lattice.OptionalString = if let groupByColumn {
-            lattice.string_to_optional(std.string(groupByColumn))
-        } else {
-            .init()
-        }
-        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
-            lattice.string_to_optional(std.string(distinctByColumn))
-        } else {
-            .init()
-        }
-
-        // If we have a bounds constraint, use the spatial count method
         if let bounds = boundsConstraint {
-            return Int(_lattice.cxxLattice.countWithinBBox(
-                table: tableName,
-                geoColumn: std.string(bounds.propertyName),
-                minLat: bounds.minLat,
-                maxLat: bounds.maxLat,
-                minLon: bounds.minLon,
-                maxLon: bounds.maxLon,
-                where: whereClause
-            ))
+            return Int(_lattice.backend.countWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: whereStatement?.predicate))
         }
-
-        // Live count from C++
-        return Int(_lattice.cxxLattice.count(tableName, whereClause, groupByOpt, distinctByOpt))
+        return Int(_lattice.backend.count(table: Element.entityName, where: whereStatement?.predicate, groupBy: groupByColumn, distinctBy: distinctByColumn))
     }
 
     public func index(after i: Int) -> Int {
