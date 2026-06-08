@@ -73,7 +73,7 @@ private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "Frame
             // reliably detects the swap. (The previous bind-once guard kept observing
             // the stale — possibly closed — handle forever.)
             if let current = self.lattice,
-               current.cxxLatticeRef.hash_value() == lattice.cxxLatticeRef.hash_value() {
+               current.backend.identityHash == lattice.backend.identityHash {
                 return  // same handle — keep the existing observation
             }
 

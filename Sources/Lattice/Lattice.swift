@@ -594,36 +594,41 @@ public struct Lattice {
     /// Training starts automatically on open. Queries work during training
     /// (brute-force fallback), so this is only needed for benchmarks/tests.
     public func waitForVectorIndexTraining() async {
-        await Task.detached { [cxxLattice] in
-            cxxLattice.waitForVec0Training()
+        await Task.detached { [backend] in
+            backend.waitForVec0Training()
         }.value
     }
 
     /// Train IVF vector indexes synchronously. Call after bulk inserts to
     /// activate IVF search. Opens a separate DB connection for training.
     public func trainVectorIndexes() {
-        cxxLattice.trainUntrainedVec0Tables()
+        backend.trainUntrainedVec0Tables()
     }
 
     /// Background task that trains IVF indexes on open. Await this in tests
     /// to ensure IVF is active before measuring performance.
     public internal(set) var vectorIndexTrainingTask: Task<Void, Never>?
 
-    let cxxLatticeRef: lattice.swift_lattice_ref
+    /// The boxed db backend (the single stored db handle). On iOS 16.4+/macOS the
+    /// C++-interop `CxxBackend`; iOS 15 will use the pure-C `CBackend` (Phase 3).
+    /// All neutral ORM operations route through this; the residual still-C++-only
+    /// paths (table/object observers, sync callbacks, attach) reach the underlying
+    /// foreign-reference type through the gated `cxxLattice` accessor below.
+    let backend: any LatticeBackend
+
+    /// The underlying C++ `swift_lattice`, for the still-C++-only call sites that
+    /// have no neutral backend surface yet. Gated 16.4 (the future C backend
+    /// returns nil from `asCxxLatticeRef`); on iOS 15 these call sites must route
+    /// through CBackend instead (Phase 3 residual gating).
+    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
     var cxxLattice: lattice.swift_lattice {
-        cxxLatticeRef.get()
+        backend.asCxxLatticeRef!.get()
     }
 
-    /// The boxed db backend. On iOS 16.4+/macOS the C++-interop `CxxBackend`;
-    /// iOS 15 will use the pure-C `CBackend` (Phase 3). Phase 2 migrates the
-    /// `cxxLattice.*` call sites onto this neutral surface; once that is complete
-    /// `cxxLatticeRef` is replaced by a stored `any LatticeBackend`.
-    var backend: any LatticeBackend {
-        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *) {
-            return CxxBackend(cxxLatticeRef)
-        } else {
-            fatalError("iOS < 16.4 requires the C backend (Phase 3, not yet wired)")
-        }
+    /// The underlying C++ `swift_lattice_ref`. Same gating/caveat as `cxxLattice`.
+    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
+    var cxxLatticeRef: lattice.swift_lattice_ref {
+        backend.asCxxLatticeRef!
     }
     internal var isolation: (any Actor)?
 
@@ -663,6 +668,10 @@ public struct Lattice {
 
         init(_ ref: lattice.swift_lattice_ref) {
             self.implHash = ref.hash_value()
+        }
+
+        init(_ backend: any LatticeBackend) {
+            self.implHash = backend.identityHash
         }
 
         func hash(into hasher: inout Hasher) {
@@ -731,7 +740,8 @@ public struct Lattice {
         }
 
         var error = lattice.cxx_error()
-        
+        let createdRef: lattice.swift_lattice_ref
+
         if let migration = configuration.migration {
             // Find the target version from migration dict (highest key)
             let targetVersion = migration.keys.max() ?? 1
@@ -769,16 +779,17 @@ public struct Lattice {
                 Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).release()
             })
 
-            self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: swiftConfig,
-                                                                  schemas: cxxSchemas,
-                                                                  error: &error)
+            createdRef = lattice.swift_lattice_ref.create(swiftConfig: swiftConfig,
+                                                          schemas: cxxSchemas,
+                                                          error: &error)
         } else {
-            self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(), schemas: cxxSchemas, error: &error)
+            createdRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(), schemas: cxxSchemas, error: &error)
         }
         guard error.msg.empty() else {
             throw error
         }
-        let key = CacheKey(self.cxxLatticeRef)
+        self.backend = CxxBackend(createdRef)
+        let key = CacheKey(self.backend)
         let latticeInstance = self
         Self.cacheLock.withLockUnchecked { Self.cache[key] = latticeInstance }
     }
@@ -899,7 +910,7 @@ public struct Lattice {
         let filePath = fileURL.path(percentEncoded: false)
         cacheLock.withLockUnchecked {
             for (key, value) in cache where value.configuration.fileURL.path(percentEncoded: false) == filePath {
-                value.cxxLattice.close()
+                value.backend.close()
                 cache.removeValue(forKey: key)
             }
         }
@@ -1029,13 +1040,13 @@ public struct Lattice {
     /// - Parameter staleThresholdSeconds: If > 0, evict slots inactive for this long.
     @discardableResult
     public func compactHistory(staleThresholdSeconds: Int64 = 0) -> Int64 {
-        cxxLattice.safe_compact_audit_log(staleThresholdSeconds)
+        backend.safeCompactAuditLog(staleThresholdSeconds: staleThresholdSeconds)
     }
 
     /// Backdate all replication slots' last_active_at by the given number of seconds.
     /// Test-only: enables deterministic stale-slot eviction without wall-clock sleeps.
     public func backdateReplicationSlots(seconds: Int64) {
-        cxxLattice.backdate_replication_slots(seconds)
+        backend.backdateReplicationSlots(seconds: seconds)
     }
 
     /// Nuclear compaction: deletes ALL history, regenerates snapshots, resets slots.
@@ -1043,14 +1054,14 @@ public struct Lattice {
     /// - Returns: Number of snapshot entries created.
     @discardableResult
     public func forceCompactHistory() -> Int64 {
-        cxxLattice.force_compact_audit_log()
+        backend.forceCompactAuditLog()
     }
 
     /// Flushes WAL contents to the main database file and truncates the WAL.
     /// Called automatically on deinitialization but can be invoked explicitly
     /// to ensure durability or reduce WAL file size.
     public func checkpoint() {
-        cxxLattice.checkpoint()
+        backend.checkpoint()
     }
 
     /// Drop and rebuild the vec0 index, purging orphan entries that bloat chunk storage.
@@ -1060,7 +1071,7 @@ public struct Lattice {
         let t = T.init(isolation: #isolation)
         _ = t[keyPath: keyPath]
         let column = t._lastKeyPathUsed
-        return Int64(cxxLattice.vacuum_vec0(std.string(tableName), std.string(column)))
+        return backend.vacuumVec0(table: tableName, column: column ?? "")
     }
 
     /// Rebuilds the database file, reclaiming disk space from deleted rows
@@ -1070,18 +1081,18 @@ public struct Lattice {
     /// - Important: Requires exclusive database access. Will throw if another
     ///   process has the database open. Do not call during active queries.
     public func vacuum() {
-        cxxLattice.vacuum()
+        backend.vacuum()
     }
 
     /// Whether the sync WebSocket connection is currently active.
     public var isSyncConnected: Bool {
-        cxxLattice.is_sync_connected()
+        backend.isSyncConnected()
     }
 
     /// Explicitly close all database connections and tear down the synchronizer.
     /// If a sibling instance exists for the same database, it will inherit sync responsibility.
     public func close() {
-        cxxLattice.close()
+        backend.close()
     }
 
     // MARK: Sync Progress
@@ -1112,7 +1123,7 @@ public struct Lattice {
     /// Otherwise, it observes AuditLog changes via Darwin notifications and derives
     /// progress from the count of unsynchronized entries.
     public func onSyncProgress(_ handler: @escaping @Sendable (SyncProgress) -> Void) {
-        if cxxLattice.is_sync_agent() {
+        if backend.isSyncAgent() {
             // In-process path: register callback on synchronizer atomics
             let context = SyncProgressContext(handler)
             let contextPtr = Unmanaged.passRetained(context).toOpaque()
@@ -1288,8 +1299,8 @@ public struct Lattice {
     }
 
     public func count<T>(_ modelType: T.Type, where: ((Query<T>) -> Query<Bool>)? = nil) -> Int where T: Model {
-        let whereClause: lattice.OptionalString = `where`.map { lattice.string_to_optional( std.string($0(Query<T>()).predicate)) } ?? lattice.OptionalString()
-        return Int(cxxLattice.count(std.string(T.entityName), whereClause))
+        let whereClause: String? = `where`.map { $0(Query<T>()).predicate }
+        return Int(backend.count(table: T.entityName, where: whereClause))
     }
     
     /// Holds observation state and cancels on deinit
@@ -1700,11 +1711,11 @@ public struct Lattice {
 
     public func beginTransaction(isolation: isolated (any Actor)? = #isolation) {
         // Start the transaction.
-        cxxLattice.begin_transaction()
+        backend.beginTransaction()
     }
     
     public func commitTransaction(isolation: isolated (any Actor)? = #isolation) {
-        cxxLattice.commit()
+        backend.commit()
     }
     
     public func transaction<T>(isolation: isolated (any Actor)? = #isolation,
