@@ -354,13 +354,21 @@ public struct ResultsChangePublisher: Publisher {
 #endif
 
 @propertyWrapper public struct Relation<EnclosingType: Model, Element: Model> {
-    public typealias Value = Results<Element>
-    
+    // Concrete `TableResults<Element>`, not the protocol `Results<Element>`. The
+    // property-wrapper enclosing-instance subscript takes a
+    // `ReferenceWritableKeyPath<EnclosingType, Value>` — and a KeyPath whose Value
+    // is a parameterized existential (`any Results<Element>`) is an iOS-16 runtime
+    // floor (only KeyPath/array/generic-arg positions trip it; a bare property of
+    // that type is fine). The getter only ever builds a TableResults, so pinning
+    // Value to the concrete type keeps @Relation usable on iOS 15. Declare
+    // relations as `@Relation(...) var foo: TableResults<Child>`.
+    public typealias Value = TableResults<Element>
+
     public static subscript(
         _enclosingInstance instance: EnclosingType,
-        wrapped wrappedKeyPath: ReferenceWritableKeyPath<EnclosingType, any Value>,
+        wrapped wrappedKeyPath: ReferenceWritableKeyPath<EnclosingType, Value>,
         storage storageKeyPath: ReferenceWritableKeyPath<EnclosingType, Self>
-    ) -> any Value {
+    ) -> Value {
         get {
             guard let lattice = instance.lattice, let primaryKey = instance.primaryKey else {
                 fatalError("Cannot use @Relation on an instance that is not yet inserted into the database")
@@ -375,10 +383,10 @@ public struct ResultsChangePublisher: Publisher {
 
         }
     }
-    
+
     @available(*, unavailable,
                 message: "@Relation can only be applied to models")
-    public var wrappedValue: any Value {
+    public var wrappedValue: Value {
         get { fatalError() }
         set { fatalError() }
     }
