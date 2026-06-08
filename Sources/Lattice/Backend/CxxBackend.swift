@@ -311,11 +311,119 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         l.remove_table_observer(std.string(table), observerId)
     }
 
-    // ---- Remaining (C trampolines — observer/sync callbacks) ----
-    private func TODO(_ what: String) -> Never { fatalError("CxxBackend.\(what) not yet implemented") }
-    func addTableObserver(table: String, _ callback: @escaping @Sendable ([TableChangeEvent]) -> Void) -> UInt64 { TODO("addTableObserver") }
-    func setOnSyncProgress(_ callback: (@Sendable (Int64, Int64, Int64, Int64) -> Void)?) { TODO("setOnSyncProgress") }
-    func setOnSyncError(_ callback: (@Sendable (String) -> Void)?) { TODO("setOnSyncError") }
-    func setOnSyncStateChange(_ callback: (@Sendable (Bool) -> Void)?) { TODO("setOnSyncStateChange") }
-    func setOnXprocIdle(_ callback: (@Sendable () -> Void)?) { TODO("setOnXprocIdle") }
+    func pendingSyncEntryCount() -> Int64 { Int64(l.pending_sync_entry_count()) }
+
+    // ---- C trampolines: observer / sync callbacks ----
+    // Each registers a retained boxed Swift closure as the C++ `void* ctx`, a
+    // @convention(c) thunk that unpacks it, and a destroy thunk that releases it.
+    // Passing nil clears the handler (mirrors the C++ nullptr branch).
+
+    func addTableObserver(table: String, _ callback: @escaping @Sendable ([TableChangeEvent]) -> Void) -> UInt64 {
+        let box = _CxxClosureBox(callback)
+        let ptr = Unmanaged.passRetained(box).toOpaque()
+        return l.add_table_observer(
+            std.string(table),
+            ptr,
+            { ctx, ops, rowIds, gids, count in
+                guard let ctx, count > 0, let ops, let rowIds, let gids else { return }
+                let box = Unmanaged<_CxxClosureBox<@Sendable ([TableChangeEvent]) -> Void>>.fromOpaque(ctx).takeUnretainedValue()
+                var events: [TableChangeEvent] = []
+                events.reserveCapacity(count)
+                for i in 0..<count {
+                    let op = ops[i].map { String(cString: $0) } ?? ""
+                    let gid = gids[i].map { String(cString: $0) } ?? ""
+                    events.append(TableChangeEvent(operation: op, rowId: rowIds[i], globalRowId: gid))
+                }
+                box.fn(events)
+            },
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable ([TableChangeEvent]) -> Void>>.fromOpaque(ctx).release()
+            }
+        )
+    }
+
+    func setOnSyncProgress(_ callback: (@Sendable (Int64, Int64, Int64, Int64) -> Void)?) {
+        guard let callback else { l.set_on_sync_progress(nil, nil, nil); return }
+        let box = _CxxClosureBox(callback)
+        let ptr = Unmanaged.passRetained(box).toOpaque()
+        l.set_on_sync_progress(
+            ptr,
+            { ctx, pending, total, acked, received in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable (Int64, Int64, Int64, Int64) -> Void>>.fromOpaque(ctx).takeUnretainedValue()
+                    .fn(Int64(pending), Int64(total), Int64(acked), Int64(received))
+            },
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable (Int64, Int64, Int64, Int64) -> Void>>.fromOpaque(ctx).release()
+            }
+        )
+    }
+
+    func setOnSyncError(_ callback: (@Sendable (String) -> Void)?) {
+        guard let callback else { l.set_on_sync_error(nil, nil, nil); return }
+        let box = _CxxClosureBox(callback)
+        let ptr = Unmanaged.passRetained(box).toOpaque()
+        l.set_on_sync_error(
+            ptr,
+            { ctx, errorPtr, len in
+                guard let ctx, let errorPtr else { return }
+                let error = String(
+                    bytesNoCopy: UnsafeMutableRawPointer(mutating: errorPtr),
+                    length: Int(len),
+                    encoding: .utf8,
+                    freeWhenDone: false
+                ) ?? "unknown error"
+                Unmanaged<_CxxClosureBox<@Sendable (String) -> Void>>.fromOpaque(ctx).takeUnretainedValue().fn(error)
+            },
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable (String) -> Void>>.fromOpaque(ctx).release()
+            }
+        )
+    }
+
+    func setOnSyncStateChange(_ callback: (@Sendable (Bool) -> Void)?) {
+        guard let callback else { l.set_on_sync_state_change(nil, nil, nil); return }
+        let box = _CxxClosureBox(callback)
+        let ptr = Unmanaged.passRetained(box).toOpaque()
+        l.set_on_sync_state_change(
+            ptr,
+            { ctx, connected in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable (Bool) -> Void>>.fromOpaque(ctx).takeUnretainedValue().fn(connected)
+            },
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable (Bool) -> Void>>.fromOpaque(ctx).release()
+            }
+        )
+    }
+
+    func setOnXprocIdle(_ callback: (@Sendable () -> Void)?) {
+        guard let callback else { l.set_on_xproc_idle(nil, nil, nil); return }
+        let box = _CxxClosureBox(callback)
+        let ptr = Unmanaged.passRetained(box).toOpaque()
+        l.set_on_xproc_idle(
+            ptr,
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable () -> Void>>.fromOpaque(ctx).takeUnretainedValue().fn()
+            },
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable () -> Void>>.fromOpaque(ctx).release()
+            }
+        )
+    }
+}
+
+/// Retained box holding a Swift closure across the C `void* ctx` boundary.
+/// `@unchecked Sendable`: the wrapped closure is itself `@Sendable`; the box is
+/// just transport.
+@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
+private final class _CxxClosureBox<F>: @unchecked Sendable {
+    let fn: F
+    init(_ fn: F) { self.fn = fn }
 }

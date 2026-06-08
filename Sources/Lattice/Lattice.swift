@@ -1125,25 +1125,14 @@ public struct Lattice {
     public func onSyncProgress(_ handler: @escaping @Sendable (SyncProgress) -> Void) {
         if backend.isSyncAgent() {
             // In-process path: register callback on synchronizer atomics
-            let context = SyncProgressContext(handler)
-            let contextPtr = Unmanaged.passRetained(context).toOpaque()
-            cxxLattice.set_on_sync_progress(
-                contextPtr,
-                { ctx, pending, total, acked, received in
-                    guard let ctx else { return }
-                    let context = Unmanaged<SyncProgressContext>.fromOpaque(ctx).takeUnretainedValue()
-                    context.callback(SyncProgress(
-                        pendingUpload: Int(pending),
-                        totalUpload: Int(total),
-                        acked: Int(acked),
-                        received: Int(received)
-                    ))
-                },
-                { ctx in
-                    guard let ctx else { return }
-                    Unmanaged<SyncProgressContext>.fromOpaque(ctx).release()
-                }
-            )
+            backend.setOnSyncProgress { pending, total, acked, received in
+                handler(SyncProgress(
+                    pendingUpload: Int(pending),
+                    totalUpload: Int(total),
+                    acked: Int(acked),
+                    received: Int(received)
+                ))
+            }
         } else {
             // Cross-process path: observe AuditLog changes and derive progress
             // from the count of unsynchronized entries.
@@ -1153,42 +1142,12 @@ public struct Lattice {
 
     /// Register a callback for sync errors (connection failures, protocol errors, etc.).
     public func onSyncError(_ handler: @escaping @Sendable (String) -> Void) {
-        let context = SyncErrorContext(handler)
-        let contextPtr = Unmanaged.passRetained(context).toOpaque()
-        cxxLattice.set_on_sync_error(
-            contextPtr,
-            { ctx, errorPtr, len in
-                guard let ctx, let errorPtr else { return }
-                let error = String(
-                    bytesNoCopy: UnsafeMutableRawPointer(mutating: errorPtr),
-                    length: Int(len),
-                    encoding: .utf8,
-                    freeWhenDone: false
-                ) ?? "unknown error"
-                Unmanaged<SyncErrorContext>.fromOpaque(ctx).takeUnretainedValue().callback(error)
-            },
-            { ctx in
-                guard let ctx else { return }
-                Unmanaged<SyncErrorContext>.fromOpaque(ctx).release()
-            }
-        )
+        backend.setOnSyncError(handler)
     }
 
     /// Register a callback for sync connection state changes.
     public func onSyncStateChange(_ handler: @escaping @Sendable (Bool) -> Void) {
-        let context = SyncStateContext(handler)
-        let contextPtr = Unmanaged.passRetained(context).toOpaque()
-        cxxLattice.set_on_sync_state_change(
-            contextPtr,
-            { ctx, connected in
-                guard let ctx else { return }
-                Unmanaged<SyncStateContext>.fromOpaque(ctx).takeUnretainedValue().callback(connected)
-            },
-            { ctx in
-                guard let ctx else { return }
-                Unmanaged<SyncStateContext>.fromOpaque(ctx).release()
-            }
-        )
+        backend.setOnSyncStateChange(handler)
     }
 
     /// AsyncStream of sync progress updates. Yields on every progress change
@@ -1199,47 +1158,38 @@ public struct Lattice {
     /// Transparently works cross-process via AuditLog observation when
     /// this process is not the sync agent.
     public var syncProgressStream: AsyncStream<SyncProgress> {
-        let cxx = cxxLattice
-        let isSyncAgent = cxx.is_sync_agent()
+        let backend = self.backend
+        let isSyncAgent = backend.isSyncAgent()
         let modelTypes = self.modelTypes
         let configuration = self.configuration
         return AsyncStream { continuation in
             if isSyncAgent {
                 // In-process path
-                let context = SyncProgressContext { progress in
-                    continuation.yield(progress)
+                backend.setOnSyncProgress { pending, total, acked, received in
+                    continuation.yield(SyncProgress(
+                        pendingUpload: Int(pending),
+                        totalUpload: Int(total),
+                        acked: Int(acked),
+                        received: Int(received)
+                    ))
                 }
-                let contextPtr = Unmanaged.passRetained(context).toOpaque()
-                cxx.set_on_sync_progress(
-                    contextPtr,
-                    { ctx, pending, total, acked, received in
-                        guard let ctx else { return }
-                        let context = Unmanaged<SyncProgressContext>.fromOpaque(ctx).takeUnretainedValue()
-                        context.callback(SyncProgress(
-                            pendingUpload: Int(pending),
-                            totalUpload: Int(total),
-                            acked: Int(acked),
-                            received: Int(received)
-                        ))
-                    },
-                    { ctx in
-                        guard let ctx else { return }
-                        Unmanaged<SyncProgressContext>.fromOpaque(ctx).release()
-                    }
-                )
 
                 continuation.onTermination = { _ in
-                    cxx.set_on_sync_progress(nil, nil, nil)
+                    backend.setOnSyncProgress(nil)
                 }
             } else {
-                // Cross-process path: observe AuditLog changes via Darwin notifications
-                let queryLattice = try! Lattice(for: modelTypes, configuration: configuration)
-                let tableName = std.string(AuditLog.entityName)
-                var previousPending = 0
+                // Cross-process path: observe AuditLog changes via Darwin notifications.
+                // queryLattice is only touched from the serial observer callback;
+                // wrap it for capture by the @Sendable observer closure.
+                let queryLattice = UncheckedSendable(try! Lattice(for: modelTypes, configuration: configuration))
+                // nonisolated(unsafe): mutated only from the serial AuditLog
+                // observer callback (no concurrent access), captured by the
+                // @Sendable observer closure.
+                nonisolated(unsafe) var previousPending = 0
 
-                let context = TableObserverContext { _ in
+                let observerId = backend.addTableObserver(table: AuditLog.entityName) { _ in
                     // Batch contents are irrelevant — re-read pending count.
-                    let pending = queryLattice.count(AuditLog.self, where: { $0.isSynchronized == false })
+                    let pending = queryLattice.value.count(AuditLog.self, where: { $0.isSynchronized == false })
                     let diff = previousPending - pending
                     let acked = max(0, diff)
                     previousPending = pending
@@ -1250,17 +1200,9 @@ public struct Lattice {
                         received: 0
                     ))
                 }
-                let contextPtr = Unmanaged.passRetained(context).toOpaque()
-
-                let observerId = cxx.add_table_observer(
-                    tableName,
-                    contextPtr,
-                    Lattice._tableObserverTrampoline,
-                    Lattice._tableObserverDestroy
-                )
 
                 continuation.onTermination = { _ in
-                    cxx.remove_table_observer(tableName, observerId)
+                    backend.removeTableObserver(table: AuditLog.entityName, observerId: observerId)
                 }
             }
         }
@@ -1412,15 +1354,10 @@ public struct Lattice {
         // the first call (previousPending is mutated but only from the serial
         // xproc callback — no concurrent access).
         nonisolated(unsafe) var previousPending = 0
-        let cxx = cxxLattice
+        let backend = self.backend
 
-        class XprocIdleContext {
-            let callback: () -> Void
-            init(_ callback: @escaping () -> Void) { self.callback = callback }
-        }
-
-        let context = XprocIdleContext { [cxx] in
-            let pending = Int(cxx.pending_sync_entry_count())
+        backend.setOnXprocIdle {
+            let pending = Int(backend.pendingSyncEntryCount())
             let diff = previousPending - pending
             let acked = max(0, diff)
             previousPending = pending
@@ -1431,19 +1368,6 @@ public struct Lattice {
                 received: 0
             ))
         }
-        let contextPtr = Unmanaged.passRetained(context).toOpaque()
-
-        cxxLattice.set_on_xproc_idle(
-            contextPtr,
-            { ctx in
-                guard let ctx else { return }
-                Unmanaged<XprocIdleContext>.fromOpaque(ctx).takeUnretainedValue().callback()
-            },
-            { ctx in
-                guard let ctx else { return }
-                Unmanaged<XprocIdleContext>.fromOpaque(ctx).release()
-            }
-        )
     }
 
     public func observe(_ block: @escaping ([AuditLog]) -> ()) -> AnyCancellable {

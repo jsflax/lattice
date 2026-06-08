@@ -367,6 +367,9 @@ public protocol LatticeBackend: AnyObject, Sendable {
     // Sync status
     func isSyncAgent() -> Bool
     func isSyncConnected() -> Bool
+    /// Count of AuditLog entries not yet synchronized — used by the cross-process
+    /// progress derivations (xproc-idle / AuditLog-observer fallbacks).
+    func pendingSyncEntryCount() -> Int64
 
     // Sync data flow
     func receiveSyncData(_ data: Data) -> [String]   // acked global ids
