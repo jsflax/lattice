@@ -1283,18 +1283,10 @@ public struct Lattice {
     /// Pass `nil` to clear the filter and sync everything.
     public func updateSyncFilter(_ filter: SyncFilter?) {
         if let filter {
-            var filterEntries = lattice.SyncFilterVector()
-            for (tableName, whereClause) in filter.entries {
-                var entry = lattice.sync_filter_entry()
-                entry.table_name = std.string(tableName)
-                if let whereClause {
-                    entry.where_clause = lattice.string_to_optional(std.string(whereClause))
-                }
-                filterEntries.push_back(entry)
-            }
-            cxxLattice.update_sync_filter(filterEntries)
+            let params = filter.entries.map { SyncFilterParam(tableName: $0.key, whereClause: $0.value) }
+            backend.updateSyncFilter(params)
         } else {
-            cxxLattice.clear_sync_filter()
+            backend.clearSyncFilter()
         }
     }
 
@@ -1727,7 +1719,7 @@ public struct Lattice {
     }
     
     public mutating func attach(lattice: Lattice) {
-        cxxLattice.attach(lattice.cxxLattice)
+        backend.attach(lattice.backend)
         schema = schema?.merge(typeErased: lattice.schema!)
     }
     

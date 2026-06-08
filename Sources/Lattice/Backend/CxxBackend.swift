@@ -275,14 +275,45 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         return Int64(l.combinedNearestQueryCount(table: std.string(table), bounds: cb, vectors: cv, geos: cg, texts: ct, where: optStr(whereClause), sort: cs, limit: limit, groupBy: optStr(groupBy), distinctBy: optStr(distinctBy)))
     }
 
-    // ---- Remaining (C trampolines — observer/sync callbacks + attach) ----
+    // Attach another lattice's underlying handle (cloud-relay / multi-db).
+    func attach(_ other: any LatticeBackend) {
+        guard let otherRef = other.asCxxLatticeRef else {
+            fatalError("CxxBackend.attach requires a C++ backend on both sides")
+        }
+        l.attach(otherRef.get())
+    }
+
+    // Sync data ingestion — returns the affected globalId strings; the caller
+    // parses them into UUIDs and checks `lastReceiveError()`.
+    func receiveSyncData(_ data: Data) -> [String] {
+        l.receive_sync_data(data.toCxxValue()).map { String($0) }
+    }
+    func lastReceiveError() -> String? {
+        let e = l.last_receive_error()
+        return e.__convertToBool() ? String(e.pointee) : nil
+    }
+
+    // Sync filter — translate the neutral [SyncFilterParam] to the C++ vector.
+    func updateSyncFilter(_ filter: [SyncFilterParam]) {
+        var entries = lattice.SyncFilterVector()
+        for f in filter {
+            var entry = lattice.sync_filter_entry()
+            entry.table_name = std.string(f.tableName)
+            if let whereClause = f.whereClause {
+                entry.where_clause = lattice.string_to_optional(std.string(whereClause))
+            }
+            entries.push_back(entry)
+        }
+        l.update_sync_filter(entries)
+    }
+
+    func removeTableObserver(table: String, observerId: UInt64) {
+        l.remove_table_observer(std.string(table), observerId)
+    }
+
+    // ---- Remaining (C trampolines — observer/sync callbacks) ----
     private func TODO(_ what: String) -> Never { fatalError("CxxBackend.\(what) not yet implemented") }
-    func attach(_ other: any LatticeBackend) { TODO("attach") }
-    func receiveSyncData(_ data: Data) -> [String] { TODO("receiveSyncData") }
-    func lastReceiveError() -> String? { TODO("lastReceiveError") }
-    func updateSyncFilter(_ filter: [SyncFilterParam]) { TODO("updateSyncFilter") }
     func addTableObserver(table: String, _ callback: @escaping @Sendable ([TableChangeEvent]) -> Void) -> UInt64 { TODO("addTableObserver") }
-    func removeTableObserver(table: String, observerId: UInt64) { TODO("removeTableObserver") }
     func setOnSyncProgress(_ callback: (@Sendable (Int64, Int64, Int64, Int64) -> Void)?) { TODO("setOnSyncProgress") }
     func setOnSyncError(_ callback: (@Sendable (String) -> Void)?) { TODO("setOnSyncError") }
     func setOnSyncStateChange(_ callback: (@Sendable (Bool) -> Void)?) { TODO("setOnSyncStateChange") }

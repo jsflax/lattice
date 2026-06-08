@@ -172,12 +172,11 @@ struct UncheckedSendable<T>: @unchecked Sendable {
 
 extension Lattice {
     public func receive(_ data: Data) throws -> [UUID] {
-        let result = cxxLattice.receive_sync_data(data.toCxxValue()).compactMap {
-            UUID(uuidString: String($0))
+        let result = backend.receiveSyncData(data).compactMap {
+            UUID(uuidString: $0)
         }
-        let lastError = cxxLattice.last_receive_error()
-        if lastError.__convertToBool() {
-            throw LatticeError.syncReceiveFailed(String(lastError.pointee))
+        if let lastError = backend.lastReceiveError() {
+            throw LatticeError.syncReceiveFailed(lastError)
         }
         return result
     }
