@@ -894,6 +894,15 @@ public struct Lattice {
         try self.init(for: [a, b, c, d, e, f], configuration: configuration)
     }
 
+    /// Open with no model types (e.g. a SwiftUI environment placeholder). This
+    /// non-variadic overload is available on ALL deployment targets — without it,
+    /// the zero-argument `Lattice(configuration:)` call binds to the variadic
+    /// `init<each M>` (empty pack), which is iOS 17+ (parameter packs).
+    public init(isolation: isolated (any Actor)? = #isolation,
+                configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [], configuration: configuration)
+    }
+
     enum Error: Swift.Error {
         case databaseError(String)
     }
