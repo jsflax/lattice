@@ -222,12 +222,61 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func isSyncConnected() -> Bool { l.is_sync_connected() }
     func clearSyncFilter() { l.clear_sync_filter() }
 
-    // ---- Remaining (next Phase-2 sub-tasks): constraint translation + C trampolines ----
+    // Spatial (R*Tree)
+    func objectsWithinBBox(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?) -> [any ObjectBackend] {
+        let res = l.objectsWithinBBox(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause), orderBy: optStr(orderBy), limit: optInt(limit), offset: optInt(offset), groupBy: optStr(groupBy))
+        var out: [any ObjectBackend] = []
+        out.reserveCapacity(res.size())
+        for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
+        return out
+    }
+    func countWithinBBox(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?) -> Int64 {
+        Int64(l.countWithinBBox(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause)))
+    }
+
+    // Composite proximity — translate the neutral *Param structs to C++ constraint vectors.
+    private func buildNearestCxx(_ bounds: [BoundsConstraintParam], _ vectors: [VectorConstraintParam], _ geos: [GeoConstraintParam], _ texts: [TextConstraintParam], _ sort: SortDescriptorParam) -> (lattice.BoundsConstraintVector, lattice.VectorConstraintVector, lattice.GeoConstraintVector, lattice.TextConstraintVector, lattice.sort_descriptor) {
+        var cb = lattice.BoundsConstraintVector()
+        for b in bounds { var x = lattice.bounds_constraint(); x.column = std.string(b.column); x.min_lat = b.minLat; x.max_lat = b.maxLat; x.min_lon = b.minLon; x.max_lon = b.maxLon; cb.push_back(x) }
+        var cv = lattice.VectorConstraintVector()
+        for v in vectors { var x = lattice.vector_constraint(); x.column = std.string(v.column); var bv = CxxByteVector(); for byte in v.queryVector { bv.push_back(byte) }; x.query_vector = bv; x.k = v.k; x.metric = v.metric; cv.push_back(x) }
+        var cg = lattice.GeoConstraintVector()
+        for g in geos { var x = lattice.geo_constraint(); x.column = std.string(g.column); x.center_lat = g.centerLat; x.center_lon = g.centerLon; x.radius_meters = g.radiusMeters; cg.push_back(x) }
+        var ct = lattice.TextConstraintVector()
+        for t in texts { var x = lattice.text_constraint(); x.column = std.string(t.column); x.search_text = std.string(t.searchText); x.limit = t.limit; ct.push_back(x) }
+        var cs = lattice.sort_descriptor()
+        switch sort.kind {
+        case .geoDistance: cs.type = .geo_distance
+        case .vectorDistance: cs.type = .vector_distance
+        case .property: cs.type = .property
+        case .textRank: cs.type = .text_rank
+        case .none: break
+        }
+        cs.column = std.string(sort.column)
+        cs.ascending = sort.ascending
+        return (cb, cv, cg, ct, cs)
+    }
+    func combinedNearestQuery(table: String, bounds: [BoundsConstraintParam], vectors: [VectorConstraintParam], geos: [GeoConstraintParam], texts: [TextConstraintParam], where whereClause: String?, sort: SortDescriptorParam, limit: Int64, groupBy: String?, distinctBy: String?) -> [NearestRow] {
+        let (cb, cv, cg, ct, cs) = buildNearestCxx(bounds, vectors, geos, texts, sort)
+        let res = l.combinedNearestQuery(table: std.string(table), bounds: cb, vectors: cv, geos: cg, texts: ct, where: optStr(whereClause), sort: cs, limit: limit, groupBy: optStr(groupBy), distinctBy: optStr(distinctBy))
+        var out: [NearestRow] = []
+        out.reserveCapacity(res.size())
+        for i in 0..<res.size() {
+            let r = res[i]
+            let obj = CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(r.object).make_shared()))
+            var d: [DistanceEntry] = []
+            for j in 0..<r.distances.size() { let e = r.distances[j]; d.append(DistanceEntry(column: String(e.column), distance: e.distance)) }
+            out.append(NearestRow(object: obj, distances: d))
+        }
+        return out
+    }
+    func combinedNearestQueryCount(table: String, bounds: [BoundsConstraintParam], vectors: [VectorConstraintParam], geos: [GeoConstraintParam], texts: [TextConstraintParam], where whereClause: String?, sort: SortDescriptorParam, limit: Int64, groupBy: String?, distinctBy: String?) -> Int64 {
+        let (cb, cv, cg, ct, cs) = buildNearestCxx(bounds, vectors, geos, texts, sort)
+        return Int64(l.combinedNearestQueryCount(table: std.string(table), bounds: cb, vectors: cv, geos: cg, texts: ct, where: optStr(whereClause), sort: cs, limit: limit, groupBy: optStr(groupBy), distinctBy: optStr(distinctBy)))
+    }
+
+    // ---- Remaining (C trampolines — observer/sync callbacks + attach) ----
     private func TODO(_ what: String) -> Never { fatalError("CxxBackend.\(what) not yet implemented") }
-    func objectsWithinBBox(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?) -> [any ObjectBackend] { TODO("objectsWithinBBox") }
-    func countWithinBBox(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?) -> Int64 { TODO("countWithinBBox") }
-    func combinedNearestQuery(table: String, bounds: [BoundsConstraintParam], vectors: [VectorConstraintParam], geos: [GeoConstraintParam], texts: [TextConstraintParam], where whereClause: String?, sort: SortDescriptorParam, limit: Int64, groupBy: String?, distinctBy: String?) -> [NearestRow] { TODO("combinedNearestQuery") }
-    func combinedNearestQueryCount(table: String, bounds: [BoundsConstraintParam], vectors: [VectorConstraintParam], geos: [GeoConstraintParam], texts: [TextConstraintParam], where whereClause: String?, sort: SortDescriptorParam, limit: Int64, groupBy: String?, distinctBy: String?) -> Int64 { TODO("combinedNearestQueryCount") }
     func attach(_ other: any LatticeBackend) { TODO("attach") }
     func receiveSyncData(_ data: Data) -> [String] { TODO("receiveSyncData") }
     func lastReceiveError() -> String? { TODO("lastReceiveError") }
