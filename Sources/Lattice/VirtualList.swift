@@ -139,7 +139,7 @@ public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
         guard !linkTableName.isEmpty, let latticeRef = linkListRef.lattice else {
             return AnyCancellable {}
         }
-        return Lattice.observeLinkTable(linkTableName, cxxLattice: latticeRef.asCxxLatticeRef!.get(), block: observer)
+        return Lattice.observeLinkTable(linkTableName, backend: latticeRef, block: observer)
     }
     #endif
 }

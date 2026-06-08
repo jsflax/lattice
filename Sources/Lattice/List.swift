@@ -236,7 +236,7 @@ public struct List<Element>: MutableCollection, BidirectionalCollection, SchemaP
         guard !linkTableName.isEmpty, let latticeRef = linkListRef.latticeRef else {
             return AnyCancellable {}
         }
-        return Lattice.observeLinkTable(linkTableName, cxxLattice: latticeRef.get(), block: observer)
+        return Lattice.observeLinkTable(linkTableName, backend: CxxBackend(latticeRef), block: observer)
     }
     #endif
 }
