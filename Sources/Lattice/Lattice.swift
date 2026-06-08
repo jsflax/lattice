@@ -67,13 +67,17 @@ extension UnsafeMutablePointer: @unchecked @retroactive Sendable {
 }
 extension UnsafeMutableRawPointer: @unchecked @retroactive Sendable {
 }
+// These extend the C++ foreign-reference types, which are iOS 16.4+; gate the
+// extensions so the iOS-15 target (where the C backend stands in) compiles.
+@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 extension lattice.swift_lattice: @unchecked @retroactive Sendable {
 }
+@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 extension lattice.swift_lattice_ref: Hashable, Equatable, @unchecked @retroactive Sendable {
     public var hashValue: Int {
         Int(self.hash_value())
     }
-    
+
     public static func ==(_ lhs: Self, _ rhs: Self) -> Bool {
         lhs.hashValue == rhs.hashValue
     }
@@ -630,6 +634,7 @@ public struct Lattice {
     }
     internal var isolation: (any Actor)?
 
+    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
     internal init(isolation: isolated (any Actor)? = #isolation,
                   ref: lattice.swift_lattice_ref) {
         self = Self.cacheLock.withLockUnchecked {
@@ -660,6 +665,7 @@ public struct Lattice {
     private struct CacheKey: Hashable {
         let implHash: Int64
 
+        @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
         init(_ ref: lattice.swift_lattice_ref) {
             self.implHash = ref.hash_value()
         }
