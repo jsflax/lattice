@@ -952,13 +952,7 @@ public struct Lattice {
         guard object.lattice == nil else {
             fatalError()
         }
-        let ref = object._dynamicObject._ref
-        var cxxError = lattice.cxx_error()
-        cxxLattice.add(ref, &cxxError)
-        guard cxxError.msg.empty() else {
-            fatalError(String(cxxError.msg))
-        }
-        object._dynamicObject._ref = ref
+        do { try backend.add(object._dynamicObject._ref) } catch { fatalError("\(error)") }
         // Register for cross-instance observation now that the object has a primaryKey
         object._registerIfNeeded()
     }
@@ -967,20 +961,12 @@ public struct Lattice {
         guard object.lattice == nil else {
             fatalError()
         }
-        let ref = object._dynamicObject._ref
-        cxxLattice.add_preserving_global_id(ref, std.string(globalId.uuidString))
-        object._dynamicObject._ref = ref
+        backend.addPreservingGlobalId(object._dynamicObject._ref, globalId: globalId)
         object._registerIfNeeded()
     }
     
     public func add<S: Sequence>(contentsOf newElements: S) where S.Element: Model {
-        // Bulk insert via C++
-        var cxxObjects = lattice.DynamicObjectRefPtrVector()
-        for element in newElements {
-            lattice.push_dynamic_object_ref(&cxxObjects, element._dynamicObject._ref)
-        }
-
-        cxxLattice.add_bulk(&cxxObjects)
+        backend.addBulk(newElements.map { $0._dynamicObject._ref })
     }
 
     // MARK: Add/Delete for VirtualModel (existential)
@@ -990,9 +976,7 @@ public struct Lattice {
             fatalError("VirtualModel type must also conform to Model")
         }
         guard model.lattice == nil else { fatalError() }
-        let ref = model._dynamicObject._ref
-        cxxLattice.add(ref)
-        model._dynamicObject._ref = ref
+        try? backend.add(model._dynamicObject._ref)
         model._registerIfNeeded()
     }
 
@@ -1000,7 +984,7 @@ public struct Lattice {
         guard let model = object as? any Model else {
             fatalError("VirtualModel type must also conform to Model")
         }
-        return cxxLattice.remove(model._dynamicObject._ref)
+        return backend.remove(model._dynamicObject._ref)
     }
 
     func beginObserving<T: Model>(_ object: T) {
@@ -1009,19 +993,11 @@ public struct Lattice {
     }
     
     public func object<T>(_ type: T.Type = T.self, primaryKey: Int64) -> T? where T: Model {
-        let object = cxxLattice.object(primaryKey, std.string(type.entityName))
-        if object.hasValue {
-            return T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(object.pointee).make_shared()))
-        }
-        return nil
+        return backend.object(primaryKey: primaryKey, table: type.entityName).map { T(dynamicObject: $0) }
     }
     
     public func object<T>(_ type: T.Type = T.self, globalId: UUID) -> T? where T: Model {
-        let globalIdString = globalId.uuidString.lowercased()
-        if let object = cxxLattice.object_by_global_id(std.string(globalIdString), std.string(type.entityName)).value {
-            return T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(object.pointee).make_shared()))
-        }
-        return nil
+        return backend.objectByGlobalId(globalId.uuidString.lowercased(), table: type.entityName).map { T(dynamicObject: $0) }
     }
     
     public func objects<T>(_ type: T.Type = T.self) -> TableResults<T> where T: Model {
@@ -1032,14 +1008,14 @@ public struct Lattice {
     @discardableResult public func delete<T: Model>(_ object: consuming T) -> Bool {
 //        defer { object._dynamicObject = T.defaultCxxLatticeObject }
 //        var dynamicObject = consume object._dynamicObject
-        return cxxLattice.remove(object._dynamicObject._ref)
+        return backend.remove(object._dynamicObject._ref)
         
     }
     
     @discardableResult public func delete<T: Model>(_ modelType: T.Type = T.self,
                                                     where: ((Query<T>) -> Query<Bool>)? = nil) -> Bool {
-        let whereClause: lattice.OptionalString = `where`.map { lattice.string_to_optional(std.string($0(Query<T>()).predicate)) } ?? .init()
-        return cxxLattice.delete_where(std.string(T.entityName), whereClause)
+        let whereClause: String? = `where`.map { $0(Query<T>()).predicate }
+        return backend.deleteWhere(table: T.entityName, where: whereClause)
     }
     
     public func deleteHistory() {

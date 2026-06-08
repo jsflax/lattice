@@ -33,7 +33,7 @@ public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
                                      RandomAccessCollection, SchemaProperty,
                                      VirtualListProperty, CxxManaged {
 
-    var linkListRef: lattice.link_list_ref
+    var linkListRef: any ObjectListBackend
 
     public typealias CxxManagedSpecialization = lattice.ManagedLinkList
 
@@ -46,8 +46,7 @@ public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
     }
 
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> VirtualList<Element> {
-        let ref = storage._ref.getLinkList(named: std.string(name))
-        return VirtualList(linkListRef: ref!)
+        return VirtualList(linkListRef: storage._ref.getLinkList(named: name))
     }
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: VirtualList<Element>) {
@@ -73,17 +72,17 @@ public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
     }
 
     public init() {
-        self.linkListRef = .create()
+        self.linkListRef = CxxObjectListBackend(.create())
     }
 
-    init(linkListRef: lattice.link_list_ref) {
+    init(linkListRef: any ObjectListBackend) {
         self.linkListRef = linkListRef
     }
 
     public var startIndex: Int { 0 }
 
     public var endIndex: Int {
-        linkListRef.size()
+        linkListRef.size
     }
 
     public func index(after i: Int) -> Int { i + 1 }
@@ -91,9 +90,8 @@ public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
 
     public subscript(position: Int) -> Element {
         get {
-            let proxy = linkListRef[position]
-            let ref = proxy.objectRef!
-            let tableName = String(ref.getTableName())
+            let ref = linkListRef.object(at: position)!
+            let tableName = ref.tableName
             guard let modelType = ModelTypeRegistry.shared.resolve(tableName) else {
                 fatalError("Unknown model type for table: \(tableName). Ensure all conforming types are registered with Lattice.")
             }
@@ -102,8 +100,7 @@ public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
         }
         set {
             guard let model = newValue as? any Model else { return }
-            var proxy = linkListRef[position]
-            proxy.assign(model._dynamicObject._ref)
+            linkListRef.setObject(at: position, model._dynamicObject._ref)
         }
     }
 
@@ -120,14 +117,13 @@ public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
 
     public func remove(_ element: Element) {
         guard let model = element as? any Model else { return }
-        let opt = linkListRef.findIndex(model._dynamicObject._ref)
-        guard opt.hasValue else { return }
-        linkListRef.erase(Int(opt.pointee))
+        guard let idx = linkListRef.findIndex(of: model._dynamicObject._ref) else { return }
+        linkListRef.erase(at: idx)
     }
 
     public mutating func remove(at position: Int) -> Element {
         let element = self[position]
-        linkListRef.erase(position)
+        linkListRef.erase(at: position)
         return element
     }
 
@@ -143,7 +139,7 @@ public struct VirtualList<Element>: MutableCollection, BidirectionalCollection,
         guard !linkTableName.isEmpty, let latticeRef = linkListRef.lattice else {
             return AnyCancellable {}
         }
-        return Lattice.observeLinkTable(linkTableName, cxxLattice: latticeRef.get(), block: observer)
+        return Lattice.observeLinkTable(linkTableName, cxxLattice: latticeRef.asCxxLatticeRef!.get(), block: observer)
     }
     #endif
 }

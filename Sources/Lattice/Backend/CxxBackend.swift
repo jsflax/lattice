@@ -8,6 +8,30 @@ import CxxStdlib
 // never have to write `lattice.X` in a method body.
 private typealias CxxByteVector = lattice.ByteVector
 
+extension LatticeBackend {
+    /// The underlying C++ `swift_lattice_ref`, when this is the C++ backend
+    /// (nil on the future C backend). Used by the still-C++-only paths (the
+    /// cross-process object-observer registration, `attach`, etc.) that have no
+    /// neutral surface yet.
+    var asCxxLatticeRef: lattice.swift_lattice_ref? {
+        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *) {
+            return (self as? CxxBackend)?.ref
+        }
+        return nil
+    }
+}
+
+extension ObjectBackend {
+    /// The underlying C++ `dynamic_object_ref`, when this is the C++ backend.
+    /// Used by the deferred (geo/union/managed) accessors that stay C++-only.
+    var asCxxObjectRef: CxxDynamicObjectRef? {
+        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *) {
+            return (self as? CxxObjectBackend)?.ref
+        }
+        return nil
+    }
+}
+
 // Phase 2 — the C++ conformers of the backend protocols. These wrap the existing
 // SWIFT_SHARED_REFERENCE foreign-reference types and translate the neutral
 // (Swift-native) protocol surface to/from std.string / lattice.* at the boundary.

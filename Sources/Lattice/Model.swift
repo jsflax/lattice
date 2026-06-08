@@ -56,7 +56,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     /// Register a model instance for cross-instance and cross-process observation
     func register(_ model: any Model, tableName: String) {
         guard let primaryKey = model.primaryKey else { return }
-        guard let latticeRef = model._dynamicObject._ref.lattice else { return }
+        guard let latticeRef = model._dynamicObject._ref.lattice?.asCxxLatticeRef else { return }
         let dbPath = String(latticeRef.path())
         let key = InstanceKey(databasePath: dbPath, tableName: tableName, primaryKey: primaryKey)
         var ref = WeakModelRef(model)
@@ -268,7 +268,7 @@ public protocol Model: AnyObject, ObservableObject, Hashable, Identifiable, Sche
 
 extension Model {
     package init(isolation: isolated (any Actor)? = #isolation,
-                 dynamicObject: CxxDynamicObjectRef) {
+                 dynamicObject: any ObjectBackend) {
         self.init(isolation: isolation)
         self._dynamicObject._ref = dynamicObject
         // Register for cross-instance observation if this object has a primaryKey
@@ -277,14 +277,22 @@ extension Model {
         }
     }
     
-    public init(_ refType: CxxDynamicObjectRef) {
+    public init(_ refType: any ObjectBackend) {
         self.init(dynamicObject: refType)
     }
+
+    // Boxing overload: query/list hydration still produces a C++ dynamic_object_ref;
+    // this wraps it in a CxxObjectBackend. Gated 16.4 (the FRT floor). The iOS-15
+    // path will hydrate through the backend's neutral [any ObjectBackend] returns.
+    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
+    public init(dynamicObject refType: CxxDynamicObjectRef) {
+        self.init(dynamicObject: CxxObjectBackend(refType) as any ObjectBackend)
+    }
     public static func _makeLinkList(from storage: borrowing ModelStorage, named name: String) -> ModelLinkListRef<Self> {
-        ModelLinkListRef(_ref: storage._ref.getLinkList(named: std.string(name)))
+        ModelLinkListRef(_ref: storage._ref.getLinkList(named: name))
     }
     
-    public var asRefType: CxxDynamicObjectRef { self._dynamicObject._ref }
+    public var asRefType: any ObjectBackend { self._dynamicObject._ref }
     
     public static var defaultValue: Self {
         .init(isolation: #isolation)
@@ -295,7 +303,7 @@ extension Model {
     public static var indexedProperties: Set<String> { [] }
 
     public var lattice: Lattice? {
-        _dynamicObject._ref.lattice.map { Lattice.init(ref: $0) }
+        _dynamicObject._ref.lattice?.asCxxLatticeRef.map { Lattice.init(ref: $0) }
     }
 
     /// Fire all instance-level observers whose property filter matches (or have no filter).
@@ -367,12 +375,12 @@ extension Model {
 
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
         let model = Self(isolation: #isolation)
-        model._dynamicObject._ref = storage._ref.getObject(named: std.string(name))
+        model._dynamicObject._ref = storage._ref.getObject(named: name)
         return model
     }
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
-        storage._ref.setObject(named: std.string(name), value._dynamicObject._ref)
+        storage._ref.setObject(named: name, value._dynamicObject._ref)
     }
 
     #if canImport(Combine)
@@ -611,20 +619,22 @@ extension Model {
             return Self(isolation: nil)
         }
         let model = Self(isolation: nil)
-        model._dynamicObject._ref = linkRef
+        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *) {
+            model._dynamicObject._ref = CxxObjectBackend(linkRef)
+        }
         return model
     }
 
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Self) {
         let gid = value.globalId?.uuidString.lowercased() ?? ""
         uv.setString(std.string(name), std.string(gid))
-        uv.setLinkRef(std.string(name), value._dynamicObject._ref)
+        uv.setLinkRef(std.string(name), value._dynamicObject._ref.asCxxObjectRef!)
     }
 }
 
 extension Model {
     public var debugDescription: String {
-        String(_dynamicObject._ref.debug_description())
+        _dynamicObject._ref.debugDescription()
     }
 }
 

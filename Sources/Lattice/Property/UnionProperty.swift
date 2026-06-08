@@ -173,7 +173,7 @@ extension LatticeUnion {
     public static var anyPropertyKind: AnyProperty.Kind { .string }
 
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
-        let uv = storage._ref.getUnion(named: std.string(name))
+        let uv = storage._ref.asCxxObjectRef!.getUnion(named: std.string(name))
         if String(uv.case_name).isEmpty {
             return Self.defaultValue
         }
@@ -182,6 +182,6 @@ extension LatticeUnion {
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
         let uv = value._toCxxUnionValue()
-        storage._ref.setUnion(named: std.string(name), uv)
+        storage._ref.asCxxObjectRef!.setUnion(named: std.string(name), uv)
     }
 }

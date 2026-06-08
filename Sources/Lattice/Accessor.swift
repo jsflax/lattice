@@ -14,12 +14,16 @@ public protocol StaticInt32 {
 // MARK: - ModelStorage (hides CxxDynamicObjectRef from macro-generated code)
 
 public struct ModelStorage: @unchecked Sendable {
-    public var _ref: CxxDynamicObjectRef
+    public var _ref: any ObjectBackend
 
-    @inlinable public init(_ref: CxxDynamicObjectRef) { self._ref = _ref }
+    @inlinable public init(_ref: any ObjectBackend) { self._ref = _ref }
 
     public static func _default<M: Model>(_ type: M.Type) -> ModelStorage {
-        ModelStorage(_ref: CxxDynamicObjectRef.wrap(_defaultCxxLatticeObject(type))!)
+        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *) {
+            return ModelStorage(_ref: CxxObjectBackend(CxxDynamicObjectRef.wrap(_defaultCxxLatticeObject(type))!))
+        } else {
+            fatalError("iOS < 16.4 requires the C backend (Phase 3, not yet wired)")
+        }
     }
 }
 
@@ -105,10 +109,10 @@ extension String: CxxListManaged {
         object.get_managed_field(name)
     }
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> String {
-        String(storage._ref.getString(named: std.string(name)))
+        storage._ref.getString(named: name)
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: String) {
-        storage._ref.setString(named: std.string(name), std.string(value))
+        storage._ref.setString(named: name, value)
     }
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
 }
@@ -121,10 +125,10 @@ extension Int: CxxListManaged, DefaultInitializable {
     public func toCxxValue() -> lattice.int64_t { Int64(self) }
 
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
-        Int(storage._ref.getInt(named: std.string(name)))
+        Int(storage._ref.getInt(named: name))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Int) {
-        storage._ref.setInt(named: std.string(name), Int64(value))
+        storage._ref.setInt(named: name, Int64(value))
     }
     public static func getUnmanaged(from object: lattice.swift_dynamic_object, name: std.string) -> Int {
         Int(object.get_int(name))
@@ -158,10 +162,10 @@ extension Double: CxxListManaged {
         object.get_managed_field(name)
     }
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Double {
-        storage._ref.getDouble(named: std.string(name))
+        storage._ref.getDouble(named: name)
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Double) {
-        storage._ref.setDouble(named: std.string(name), value)
+        storage._ref.setDouble(named: name, value)
     }
 }
 
@@ -188,10 +192,10 @@ extension Bool: CxxListManaged {
         object.get_managed_field(name)
     }
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Bool {
-        storage._ref.getBool(named: std.string(name))
+        storage._ref.getBool(named: name)
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Bool) {
-        storage._ref.setBool(named: std.string(name), value)
+        storage._ref.setBool(named: name, value)
     }
 }
 
@@ -219,10 +223,10 @@ extension Float: CxxListManaged {
     }
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Float {
-        storage._ref.getFloat(named: std.string(name))
+        storage._ref.getFloat(named: name)
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Float) {
-        storage._ref.setFloat(named: std.string(name), value)
+        storage._ref.setFloat(named: name, value)
     }
 }
 
@@ -251,10 +255,10 @@ extension Int64: CxxListManaged {
     }
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Int64 {
-        Int64(storage._ref.getInt(named: std.string(name)))
+        Int64(storage._ref.getInt(named: name))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Int64) {
-        storage._ref.setInt(named: std.string(name), value)
+        storage._ref.setInt(named: name, value)
     }
 }
 
@@ -307,16 +311,16 @@ extension Date: CxxListManaged {
     }
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Date {
         // Stored as ISO8601 string or timestamp
-//        let str = String(storage._ref.getString(named: std.string(name)))
+//        let str = storage._ref.getString(named: name)
 //        if let date = ISO8601DateFormatter().date(from: str) {
 //            return date
 //        }
         // Try as timestamp
-        let timestamp = storage._ref.getDouble(named: std.string(name))
+        let timestamp = storage._ref.getDouble(named: name)
         return Date(timeIntervalSince1970: timestamp)
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Date) {
-        storage._ref.setDouble(named: std.string(name), value.timeIntervalSince1970)
+        storage._ref.setDouble(named: name, value.timeIntervalSince1970)
     }
     
     public func setUnmanaged(to object: inout lattice.swift_dynamic_object, name: std.string) {
@@ -364,10 +368,10 @@ extension UUID: CxxListManaged {
     }
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> UUID {
-        UUID(uuidString: String(storage._ref.getString(named: std.string(name)))) ?? UUID()
+        UUID(uuidString: storage._ref.getString(named: name)) ?? UUID()
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: UUID) {
-        storage._ref.setString(named: std.string(name), std.string(value.uuidString.lowercased()))
+        storage._ref.setString(named: name, value.uuidString.lowercased())
     }
 }
 
@@ -382,10 +386,10 @@ extension Data: CxxManaged {
     }
     
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Data {
-        Data(storage._ref.getData(named: std.string(name)))
+        storage._ref.getData(named: name)
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Data) {
-        storage._ref.setData(named: std.string(name), value.reduce(into: lattice.ByteVector(), { $0.push_back($1) }))
+        storage._ref.setData(named: name, value)
     }
     public func setUnmanaged(to object: inout lattice.swift_dynamic_object, name: std.string) {
         var vec = lattice.ByteVector()
@@ -500,7 +504,7 @@ extension Optional: CxxManaged where Wrapped: CxxManaged {
 //    public typealias CxxManagedSpecialization = Wrapped.CxxManagedSpecialization.OptionalType
 
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Optional<Wrapped> {
-        guard storage._ref.hasValue(named: std.string(name)) else {
+        guard storage._ref.hasValue(named: name) else {
             return nil
         }
         return Wrapped.getField(from: storage, named: name)
@@ -510,7 +514,7 @@ extension Optional: CxxManaged where Wrapped: CxxManaged {
         if let value {
             Wrapped.setField(on: &storage, named: name, value)
         } else {
-            storage._ref.setNil(named: std.string(name))
+            storage._ref.setNull(named: name)
         }
     }
 }
@@ -532,7 +536,7 @@ extension Array: CxxManaged where Element: CxxListManaged, Element: Codable {
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
     
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Array<Element> {
-        guard let data = String(storage._ref.getString(named: std.string(name))).data(using: .utf8) else {
+        guard let data = storage._ref.getString(named: name).data(using: .utf8) else {
             return []
         }
         do {
@@ -543,8 +547,8 @@ extension Array: CxxManaged where Element: CxxListManaged, Element: Codable {
     }
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Array<Element>) {
-        try! storage._ref.setString(named: std.string(name),
-                              std.string(String(data: JSONEncoder().encode(value), encoding: .utf8)!))
+        try! storage._ref.setString(named: name,
+                              String(data: JSONEncoder().encode(value), encoding: .utf8)!)
     }
 }
 
@@ -570,7 +574,7 @@ extension Set: CxxManaged where Element: CxxListManaged, Element: Codable {
     public func setManaged(_ managed: CxxManagedSpecialization, lattice: Lattice) {}
     
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Set<Element> {
-        guard let data = String(storage._ref.getString(named: std.string(name))).data(using: .utf8) else {
+        guard let data = storage._ref.getString(named: name).data(using: .utf8) else {
             return []
         }
         do {
@@ -581,8 +585,8 @@ extension Set: CxxManaged where Element: CxxListManaged, Element: Codable {
     }
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Set<Element>) {
-        try! storage._ref.setString(named: std.string(name),
-                              std.string(String(data: JSONEncoder().encode(value), encoding: .utf8)!))
+        try! storage._ref.setString(named: name,
+                              String(data: JSONEncoder().encode(value), encoding: .utf8)!)
     }
 }
 
@@ -621,7 +625,7 @@ extension Dictionary: CxxManaged where Key: RawRepresentable, Value: Codable, Ke
     }
 
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Dictionary<Key, Value> {
-        let str = String(storage._ref.getString(named: std.string(name)))
+        let str = storage._ref.getString(named: name)
         guard let data = str.data(using: .utf8),
               let dict = try? JSONDecoder().decode([Key: Value].self, from: data) else {
             return [:]
@@ -631,10 +635,10 @@ extension Dictionary: CxxManaged where Key: RawRepresentable, Value: Codable, Ke
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Dictionary<Key, Value>) {
         guard let data = try? JSONEncoder().encode(value),
               let json = String(data: data, encoding: .utf8) else {
-            storage._ref.setString(named: std.string(name), std.string("{}"))
+            storage._ref.setString(named: name, "{}")
             return
         }
-        storage._ref.setString(named: std.string(name), std.string(json))
+        storage._ref.setString(named: name, json)
     }
     
     public static func getManaged(from object: lattice.ManagedModel, name: std.string) -> CxxManagedSpecialization {

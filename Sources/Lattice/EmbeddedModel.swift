@@ -18,7 +18,7 @@ extension EmbeddedModel {
     }
     
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
-        let jsonStr = String(storage._ref.getString(named: std.string(name)))
+        let jsonStr = storage._ref.getString(named: name)
         if jsonStr.isEmpty {
             fatalError()
         }
@@ -27,7 +27,7 @@ extension EmbeddedModel {
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
         let jsonStr = String(data: try! JSONEncoder().encode(value), encoding: .utf8)!
-        storage._ref.setString(named: std.string(name), std.string(jsonStr))
+        storage._ref.setString(named: name, jsonStr)
     }
 
     public static var defaultValue: Self {

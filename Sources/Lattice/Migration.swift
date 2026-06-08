@@ -203,13 +203,13 @@ public final class DynamicObject {
 
     public subscript<T>(dynamicMember keyPath: String) -> T where T: CxxManaged {
         get {
-            var storage = ModelStorage(_ref: dynamicObject)
+            var storage = ModelStorage(_ref: CxxObjectBackend(dynamicObject))
             return T.getField(from: storage, named: keyPath)
         }
         set {
-            var storage = ModelStorage(_ref: dynamicObject)
+            var storage = ModelStorage(_ref: CxxObjectBackend(dynamicObject))
             T.setField(on: &storage, named: keyPath, newValue)
-            dynamicObject = storage._ref
+            dynamicObject = storage._ref.asCxxObjectRef!
         }
     }
 }
