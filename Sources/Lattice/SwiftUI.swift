@@ -156,16 +156,18 @@ extension EnvironmentValues {
 
 import SwiftUI
 
+// Preview-only scaffolding — DEBUG-only so the shipping module carries neither
+// the test model nor the view. @Bindable and the 2-parameter onChange(of:_:)
+// are iOS 17+, so the view carries the full availability quadruple.
+#if DEBUG
+
 @Model
 final class Person: @unchecked Sendable {
     var name: String
     var age: Int
 }
 
-
-// Preview-only scaffolding. @Bindable and the 2-parameter onChange(of:_:) are
-// iOS 17+, so this is gated; it is not part of the shipping API.
-@available(iOS 17, macOS 14, *)
+@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
 struct TestView: View {
     @Bindable var person: Person
 
@@ -201,10 +203,11 @@ struct TestView: View {
         }
         return person
     }()
-    if #available(iOS 17, macOS 14, *) {
+    if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
         TestView(person: lattice.object(primaryKey: person.primaryKey!)!)
     } else {
         Text("Preview requires iOS 17+")
     }
 }
+#endif  // DEBUG
 #endif

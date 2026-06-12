@@ -52,7 +52,6 @@ enum Blah<T> {
 }
 @dynamicMemberLookup
 public protocol _Query<T> {
-    init()
     associatedtype T
 //    subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> { get }
 //    subscript<V>(dynamicMember member: KeyPath<T, V>) -> Query<V> where Self.T: Model { get }
@@ -167,14 +166,12 @@ public struct _VirtualQuery<each M: Model, VT> : VirtualQuery {
 // Non-pack equivalent of `_VirtualQuery` for the iOS 15 path. The model types
 // are carried as a runtime array; `query(member:)` only ever needs a
 // representative type (the pack version returns on its first iteration), so
-// `modelTypes.first` suffices. Must be built via `init(modelTypes:)` from the
-// enclosing compat results — the bare `_Query.init()` requirement yields an
-// empty query that cannot resolve a key path.
+// `modelTypes.first` suffices. Built via `init(modelTypes:)` from the
+// enclosing compat results.
 @dynamicMemberLookup
 public struct _VirtualQueryCompat<VT>: VirtualQuery {
     public typealias T = VT
     let modelTypes: [any Model.Type]
-    public init() { self.modelTypes = [] }
     init(modelTypes: [any Model.Type]) { self.modelTypes = modelTypes }
 
     private func query<V>(member: KeyPath<VT, V>) -> Query<V> {

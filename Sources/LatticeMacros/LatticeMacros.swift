@@ -382,13 +382,17 @@ class PropertyMacro: AccessorMacro, MemberMacro {
                 return \(raw: property.type).getField(from: _dynamicObject, named: "\(raw: property.mappedName ?? property.name)")
             }
             set {
+                // ObservableObject contract: objectWillChange fires BEFORE the
+                // mutation, on every OS (Observation handles 17+ SwiftUI
+                // tracking; the unconditional send keeps direct Combine
+                // subscribers working identically across OS versions).
+                _objectWillChange.send()
                 if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
                     _$observationRegistrar.withMutation(of: self, keyPath: \\.\(id.identifier)) {
                         \(raw: property.type).setField(on: &_dynamicObject, named: "\(raw: property.mappedName ?? property.name)", newValue)
                     }
                 } else {
                     \(raw: property.type).setField(on: &_dynamicObject, named: "\(raw: property.mappedName ?? property.name)", newValue)
-                    _objectWillChange.send()
                 }
                 _notifyOtherInstances(propertyName: "\(raw: property.name)")
             }
@@ -417,13 +421,15 @@ class VirtualLinkPropertyMacro: AccessorMacro {
                 return _getVirtualLink(from: &_dynamicObject, named: "\(raw: name)")
             }
             set {
+                // See PropertyMacro's setter: willChange before the mutation,
+                // unconditionally, for one Combine contract across OS versions.
+                _objectWillChange.send()
                 if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
                     _$observationRegistrar.withMutation(of: self, keyPath: \\.\(id.identifier)) {
                         _setVirtualLink(on: &_dynamicObject, named: "\(raw: name)", newValue)
                     }
                 } else {
                     _setVirtualLink(on: &_dynamicObject, named: "\(raw: name)", newValue)
-                    _objectWillChange.send()
                 }
                 _notifyOtherInstances(propertyName: "\(raw: property.name)")
             }
@@ -459,6 +465,9 @@ class CodableMacro: ExtensionMacro, MemberMacro {
             }
 
             public required init(from decoder: Decoder) throws {
+                if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
+                    _$observationRegistrarBox = Observation.ObservationRegistrar()
+                }
                 let container = try decoder.container(keyedBy: CodingKeys.self)
                 self.__globalId = try container.decodeIfPresent(UUID.self, forKey: .__globalId)
                 \(raw: members.map { member in
@@ -758,8 +767,9 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             
             public required init(isolation: isolated (any Actor)? = #isolation) {
                 self.isolation = isolation
-                // self._dynamicObject = _defaultCxxLatticeObject(\(name.trimmed).self)
-                
+                if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
+                    _$observationRegistrarBox = Observation.ObservationRegistrar()
+                }
             }
             private struct __GlobalIdName: StaticString { static var string: String { "globalId" } }
             private struct __GlobalIdKey: StaticInt32 { static var int32: Int32 { 1 } }
@@ -770,7 +780,11 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
             public var globalId: UUID? { __globalId }
             
             public var _instanceObservers: [_ModelObserver] = []
-            public var _$observationRegistrarBox: Any? = nil
+            // Untyped box for the iOS-17 ObservationRegistrar (a stored property
+            // of a 17-only type can't exist at the iOS-15 floor). Eagerly filled
+            // in the generated inits so the getter is a pure read; the lazy
+            // fallback only covers exotic init paths.
+            private var _$observationRegistrarBox: Any? = nil
             @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
             public var _$observationRegistrar: Observation.ObservationRegistrar {
                 if let r = _$observationRegistrarBox as? Observation.ObservationRegistrar { return r }
@@ -1249,30 +1263,20 @@ class EmbeddedModelMacro: MemberMacro {
 
 class VirtualModelMacro: ExtensionMacro {
     static func expansion(of node: AttributeSyntax, attachedTo declaration: some DeclGroupSyntax, providingExtensionsOf type: some TypeSyntaxProtocol, conformingTo protocols: [TypeSyntax], in context: some MacroExpansionContext) throws -> [ExtensionDeclSyntax] {
-        guard let protocolDecl = declaration.as(ProtocolDeclSyntax.self) else {
+        guard declaration.is(ProtocolDeclSyntax.self) else {
             throw MacroError.message("Expected a protocol declaration")
         }
-        return [
-            ExtensionDeclSyntax(
-                extendedType: TypeSyntax(stringLiteral: "_Query"),
-                memberBlock: """
-                {
-                    typealias M = Self.T
-                    public subscript<V>(dynamicMember member: KeyPath<Self.T, V>) -> Query<V> where Self.T == any \(protocolDecl.name) {
-                        // not the best hack to get around witness tables
-                        if let self = self as? Query<T> {
-                            return self[dynamicMember: member]
-                        } else if let self = self as? any VirtualQuery<T> {
-                            return self[dynamicMember: member]
-                        }
-                        else {
-                            fatalError()
-                        }
-                    }
-                }
-                """
-            )
-        ]
+        // Intentionally emits nothing. The macro used to emit an
+        // `extension _Query` with a per-protocol dynamicMember subscript, but
+        // SE-0402 extension macros attach their extensions to the ANNOTATED
+        // type — the emission became `extension <Protocol> { … Self.T … }`,
+        // which never compiled for any consumer. The generic `_Query`
+        // dynamicMember subscripts in VirtualModel.swift (routing through the
+        // `_virtualMember` witness, iOS-15-safe) already provide the intended
+        // behavior for every `VirtualModel`-conforming protocol, annotated or
+        // not. The attribute is kept as a harmless marker for source
+        // compatibility.
+        return []
     }
 }
 

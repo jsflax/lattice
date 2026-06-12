@@ -19,7 +19,7 @@ public struct ModelStorage: @unchecked Sendable {
     @inlinable public init(_ref: any ObjectBackend) { self._ref = _ref }
 
     public static func _default<M: Model>(_ type: M.Type) -> ModelStorage {
-        ModelStorage(_ref: BackendFactory.makeDefaultObject(for: type))
+        ModelStorage(_ref: CxxObjectBackend(_requireRef(CxxDynamicObjectRef.wrap(_defaultCxxLatticeObject(type)))))
     }
 }
 
@@ -292,7 +292,8 @@ extension Date: CxxListManaged {
     }
     
     public func toCxxValue() -> lattice.ManagedTimestamp.SwiftType {
-        lattice.ManagedTimestamp.SwiftType.init(.init(.seconds(self.timeIntervalSince1970)))
+        // Avoid Swift `Duration` (iOS 16+); build the timestamp in C++ instead.
+        lattice.timestamp_from_seconds(self.timeIntervalSince1970)
     }
 
     public static func getUnmanaged(from object: lattice.swift_dynamic_object, name: std.string) -> Date {

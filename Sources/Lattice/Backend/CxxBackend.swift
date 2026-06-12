@@ -8,13 +8,65 @@ import CxxStdlib
 // never have to write `lattice.X` in a method body.
 private typealias CxxByteVector = lattice.ByteVector
 
+// MARK: - FRT/value import-gap helpers
+//
+// A C++ `dynamic_object_ref` returned from a factory/getter imports as an
+// OPTIONAL foreign-reference class on iOS 16.4+ (the FRT path) but as a
+// NON-OPTIONAL value type on iOS 15 (the #if value-type path). These two
+// helpers let one shared Swift call site handle both: a non-optional value
+// promotes to `.some`, so the same code compiles and behaves correctly on each
+// deployment target. `isValid` (always present on both) distinguishes a real
+// ref from the empty/absent ref the value path returns instead of null.
+
+/// Unwrap a ref that is guaranteed present (e.g. a fresh `wrap`/`create`).
+/// The `isValid` precondition gives the value path the same fail-fast behavior
+/// the FRT path gets from `!` on a nil pointer (an invalid value-path ref
+/// would otherwise flow on to a null-shared_ptr deref).
+@inline(__always) func _requireRef(_ r: CxxDynamicObjectRef?) -> CxxDynamicObjectRef {
+    let v = r!
+    precondition(v.isValid(), "expected a valid dynamic_object_ref")
+    return v
+}
+
+/// Geo analog of `_requireRef` (FRT-optional vs value-non-optional gap).
+@inline(__always) func _requireGeoRef(_ r: lattice.geo_bounds_ref?) -> lattice.geo_bounds_ref {
+    let v = r!
+    precondition(v.isValid(), "expected a valid geo_bounds_ref")
+    return v
+}
+
+/// Normalize a nullable ref to a Swift optional: nil when absent (FRT null) or
+/// empty (value-path `isValid()==false`).
+@inline(__always) func _optRef(_ r: CxxDynamicObjectRef?) -> CxxDynamicObjectRef? {
+    guard let r, r.isValid() else { return nil }
+    return r
+}
+
+/// Same normalization for the db ref: `swift_lattice_ref` imports as an optional
+/// FRT on 16.4+ but as a non-optional value (empty when absent) on iOS 15. A
+/// non-optional argument promotes to `.some`, so one call site
+/// (`_optLatticeRef(...).map { CxxBackend($0) }`) compiles and behaves on both.
+@inline(__always) func _optLatticeRef(_ r: lattice.swift_lattice_ref?) -> lattice.swift_lattice_ref? {
+    guard let r, r.isValid() else { return nil }
+    return r
+}
+
+/// Unwrap a db ref that is guaranteed present (e.g. a fresh `create`). On the FRT
+/// path the factory returns an optional reference; on the value path it returns a
+/// non-optional value that promotes to `.some`, so `!` is valid on both. The
+/// `isValid` precondition restores fail-fast on the value path (where an empty
+/// ref would otherwise pass `!` and null-deref later).
+@inline(__always) func _requireLatticeRef(_ r: lattice.swift_lattice_ref?) -> lattice.swift_lattice_ref {
+    let v = r!
+    precondition(v.isValid(), "expected a valid swift_lattice_ref")
+    return v
+}
+
 extension LatticeBackend {
-    /// The underlying C++ `swift_lattice_ref`, when this is the C++ backend
-    /// (nil on the future C backend). Used by the still-C++-only paths (the
-    /// cross-process object-observer registration, `attach`, etc.) that have no
-    /// neutral surface yet. Gated 16.4 because the return type is a foreign
-    /// reference type; the iOS-15 (CBackend) path never calls this.
-    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
+    /// The underlying C++ `swift_lattice_ref`. Used by the paths that drive the
+    /// C++ surface directly (object-observer registration, `attach`, nearest
+    /// queries). Available on every OS: below the FRT floor the ref is a
+    /// copyable value type over the same shared db.
     var asCxxLatticeRef: lattice.swift_lattice_ref? {
         return (self as? CxxBackend)?.ref
     }
@@ -23,35 +75,30 @@ extension LatticeBackend {
 extension ObjectBackend {
     /// The underlying C++ `dynamic_object_ref`, when this is the C++ backend.
     /// Used by the deferred (geo/union/managed) accessors that stay C++-only.
-    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
     var asCxxObjectRef: CxxDynamicObjectRef? {
         return (self as? CxxObjectBackend)?.ref
     }
 }
 
-// Phase 2 — the C++ conformers of the backend protocols. These wrap the existing
-// SWIFT_SHARED_REFERENCE foreign-reference types and translate the neutral
-// (Swift-native) protocol surface to/from std.string / lattice.* at the boundary.
-// Gated @available(iOS 16.4,*) because the foreign-reference types are iOS 16.4+;
-// iOS 15 gets the pure-C `CBackend` (Phase 3). `final class` + `@inlinable`
-// forwarding keeps the modern hot path close to direct dispatch.
-//
-// NOTE: still a work in progress — `CxxBackend` (the LatticeBackend conformer)
-// is a skeleton; the 38 db ops are filled in incrementally. The object/list
-// conformers are complete.
+// The C++ conformers of the backend protocols. They wrap the lattice handle
+// types and translate the neutral (Swift-native) protocol surface to/from
+// std.string / lattice.* at the boundary. The handles work on every OS: on
+// iOS 16.4+/macOS 13.3+ they are foreign-reference classes; below that floor
+// they compile as copyable value types over the same shared_ptr-owned state
+// (LATTICE_HAS_FRT in LatticeCore), so there is no separate iOS-15 backend.
+// `final class` + `@inlinable` forwarding keeps the hot path close to direct
+// dispatch.
 
 // MARK: - CxxObjectBackend (wraps dynamic_object_ref) — the hot path
 
-@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 final class CxxObjectBackend: ObjectBackend, @unchecked Sendable {
-    // `var` so the (mutating, on the value-type ref) C++ setters can run inside
-    // the protocol's non-mutating (class-bound) setters.
-    var ref: CxxDynamicObjectRef
+    let ref: CxxDynamicObjectRef
 
     @inlinable init(_ ref: CxxDynamicObjectRef) { self.ref = ref }
 
     var tableName: String { String(ref.getTableName()) }
-    var lattice: (any LatticeBackend)? { ref.lattice.map { CxxBackend($0) } }
+    var lattice: (any LatticeBackend)? { _optLatticeRef(ref.lattice).map { CxxBackend($0) } }
+    @inlinable var hasLattice: Bool { ref.is_managed() }
 
     @inlinable func hasValue(named name: String) -> Bool { ref.hasValue(named: std.string(name)) }
     @inlinable func setNull(named name: String) { ref.setNil(named: std.string(name)) }
@@ -93,19 +140,18 @@ final class CxxObjectBackend: ObjectBackend, @unchecked Sendable {
 
 // MARK: - CxxObjectListBackend (wraps link_list_ref)
 
-@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
-    var ref: lattice.link_list_ref
+    let ref: lattice.link_list_ref
 
     @inlinable init(_ ref: lattice.link_list_ref) { self.ref = ref }
 
     var size: Int { ref.size() }
     var linkTableName: String { String(ref.linkTableName) }
-    var lattice: (any LatticeBackend)? { ref.lattice.map { CxxBackend($0) } }
+    var lattice: (any LatticeBackend)? { _optLatticeRef(ref.lattice).map { CxxBackend($0) } }
 
     func object(at position: Int) -> (any ObjectBackend)? {
         let proxy = ref[position]
-        guard let objRef = proxy.objectRef else { return nil }
+        guard let objRef = _optRef(proxy.objectRef) else { return nil }
         return CxxObjectBackend(objRef)
     }
     func setObject(at position: Int, _ element: any ObjectBackend) {
@@ -130,12 +176,12 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
     }
 }
 
-// MARK: - CxxBackend (wraps swift_lattice_ref) — SKELETON, filled in incrementally
+// MARK: - CxxBackend (wraps swift_lattice_ref)
 
-@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 final class CxxBackend: LatticeBackend, @unchecked Sendable {
+    // The db ops are const forwarders on swift_lattice_ref, so they import
+    // non-mutating on both paths and the handle can be a `let`.
     let ref: lattice.swift_lattice_ref
-    @inlinable var l: lattice.swift_lattice { ref.get() }
 
     @inlinable init(_ ref: lattice.swift_lattice_ref) { self.ref = ref }
 
@@ -152,12 +198,12 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func add(_ object: any ObjectBackend) throws {
         guard let cxx = object as? CxxObjectBackend else { preconditionFailure("CxxBackend requires CxxObjectBackend") }
         var err = lattice.cxx_error()
-        l.add(cxx.ref, &err)
+        ref.add(cxx.ref, &err)
         if !err.msg.empty() { throw Lattice.Error.databaseError(String(err.msg)) }
     }
     func addPreservingGlobalId(_ object: any ObjectBackend, globalId: UUID) {
         guard let cxx = object as? CxxObjectBackend else { preconditionFailure() }
-        l.add_preserving_global_id(cxx.ref, std.string(globalId.uuidString))
+        ref.add_preserving_global_id(cxx.ref, std.string(globalId.uuidString))
     }
     func addBulk(_ objects: [any ObjectBackend]) {
         var vec = lattice.DynamicObjectRefPtrVector()
@@ -165,22 +211,22 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
             guard let cxx = o as? CxxObjectBackend else { preconditionFailure() }
             lattice.push_dynamic_object_ref(&vec, cxx.ref)
         }
-        l.add_bulk(&vec)
+        ref.add_bulk(&vec)
     }
     func remove(_ object: any ObjectBackend) -> Bool {
         guard let cxx = object as? CxxObjectBackend else { preconditionFailure() }
-        return l.remove(cxx.ref)
+        return ref.remove(cxx.ref)
     }
     func object(primaryKey: Int64, table: String) -> (any ObjectBackend)? {
-        let o = l.object(primaryKey, std.string(table))
+        let o = ref.object(primaryKey, std.string(table))
         return o.hasValue ? CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(o.pointee).make_shared())) : nil
     }
     func objectByGlobalId(_ globalId: String, table: String) -> (any ObjectBackend)? {
-        guard let o = l.object_by_global_id(std.string(globalId), std.string(table)).value else { return nil }
+        guard let o = ref.object_by_global_id(std.string(globalId), std.string(table)).value else { return nil }
         return CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(o.pointee).make_shared()))
     }
     func objects(table: String, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?) -> [any ObjectBackend] {
-        let res = l.objects(std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy))
+        let res = ref.objects(std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy))
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
@@ -188,47 +234,47 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
     func unionObjects(tables: [String], where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?) -> [any ObjectBackend] {
         let tableVec = tables.reduce(into: lattice.StringVector()) { $0.push_back(std.string($1)) }
-        let res = l.union_objects(tableVec, optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset))
+        let res = ref.union_objects(tableVec, optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset))
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
         return out
     }
     func count(table: String, where whereClause: String?, groupBy: String?, distinctBy: String?) -> Int64 {
-        Int64(l.count(std.string(table), optStr(whereClause), optStr(groupBy), optStr(distinctBy)))
+        Int64(ref.count(std.string(table), optStr(whereClause), optStr(groupBy), optStr(distinctBy)))
     }
     func deleteWhere(table: String, where whereClause: String?) -> Bool {
-        l.delete_where(std.string(table), optStr(whereClause))
+        ref.delete_where(std.string(table), optStr(whereClause))
     }
 
     // Maintenance
-    func trainUntrainedVec0Tables() { l.trainUntrainedVec0Tables() }
-    func waitForVec0Training() { l.waitForVec0Training() }
-    func vacuumVec0(table: String, column: String) -> Int64 { Int64(l.vacuum_vec0(std.string(table), std.string(column))) }
-    func vacuum() { l.vacuum() }
-    func safeCompactAuditLog(staleThresholdSeconds: Int64) -> Int64 { Int64(l.safe_compact_audit_log(staleThresholdSeconds)) }
-    func forceCompactAuditLog() -> Int64 { Int64(l.force_compact_audit_log()) }
-    func backdateReplicationSlots(seconds: Int64) { l.backdate_replication_slots(seconds) }
-    func checkpoint() { l.checkpoint() }
-    func beginTransaction() { l.begin_transaction() }
-    func commit() { l.commit() }
-    func close() { l.close() }
+    func trainUntrainedVec0Tables() { ref.trainUntrainedVec0Tables() }
+    func waitForVec0Training() { ref.waitForVec0Training() }
+    func vacuumVec0(table: String, column: String) -> Int64 { Int64(ref.vacuum_vec0(std.string(table), std.string(column))) }
+    func vacuum() { ref.vacuum() }
+    func safeCompactAuditLog(staleThresholdSeconds: Int64) -> Int64 { Int64(ref.safe_compact_audit_log(staleThresholdSeconds)) }
+    func forceCompactAuditLog() -> Int64 { Int64(ref.force_compact_audit_log()) }
+    func backdateReplicationSlots(seconds: Int64) { ref.backdate_replication_slots(seconds) }
+    func checkpoint() { ref.checkpoint() }
+    func beginTransaction() { ref.begin_transaction() }
+    func commit() { ref.commit() }
+    func close() { ref.close() }
 
     // Sync status
-    func isSyncAgent() -> Bool { l.is_sync_agent() }
-    func isSyncConnected() -> Bool { l.is_sync_connected() }
-    func clearSyncFilter() { l.clear_sync_filter() }
+    func isSyncAgent() -> Bool { ref.is_sync_agent() }
+    func isSyncConnected() -> Bool { ref.is_sync_connected() }
+    func clearSyncFilter() { ref.clear_sync_filter() }
 
     // Spatial (R*Tree)
     func objectsWithinBBox(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?) -> [any ObjectBackend] {
-        let res = l.objectsWithinBBox(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause), orderBy: optStr(orderBy), limit: optInt(limit), offset: optInt(offset), groupBy: optStr(groupBy))
+        let res = ref.objectsWithinBBox(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause), orderBy: optStr(orderBy), limit: optInt(limit), offset: optInt(offset), groupBy: optStr(groupBy))
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
         return out
     }
     func countWithinBBox(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?) -> Int64 {
-        Int64(l.countWithinBBox(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause)))
+        Int64(ref.countWithinBBox(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause)))
     }
 
     // Composite proximity — translate the neutral *Param structs to C++ constraint vectors.
@@ -255,7 +301,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
     func combinedNearestQuery(table: String, bounds: [BoundsConstraintParam], vectors: [VectorConstraintParam], geos: [GeoConstraintParam], texts: [TextConstraintParam], where whereClause: String?, sort: SortDescriptorParam, limit: Int64, groupBy: String?, distinctBy: String?) -> [NearestRow] {
         let (cb, cv, cg, ct, cs) = buildNearestCxx(bounds, vectors, geos, texts, sort)
-        let res = l.combinedNearestQuery(table: std.string(table), bounds: cb, vectors: cv, geos: cg, texts: ct, where: optStr(whereClause), sort: cs, limit: limit, groupBy: optStr(groupBy), distinctBy: optStr(distinctBy))
+        let res = ref.combinedNearestQuery(table: std.string(table), bounds: cb, vectors: cv, geos: cg, texts: ct, where: optStr(whereClause), sort: cs, limit: limit, groupBy: optStr(groupBy), distinctBy: optStr(distinctBy))
         var out: [NearestRow] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() {
@@ -269,7 +315,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
     func combinedNearestQueryCount(table: String, bounds: [BoundsConstraintParam], vectors: [VectorConstraintParam], geos: [GeoConstraintParam], texts: [TextConstraintParam], where whereClause: String?, sort: SortDescriptorParam, limit: Int64, groupBy: String?, distinctBy: String?) -> Int64 {
         let (cb, cv, cg, ct, cs) = buildNearestCxx(bounds, vectors, geos, texts, sort)
-        return Int64(l.combinedNearestQueryCount(table: std.string(table), bounds: cb, vectors: cv, geos: cg, texts: ct, where: optStr(whereClause), sort: cs, limit: limit, groupBy: optStr(groupBy), distinctBy: optStr(distinctBy)))
+        return Int64(ref.combinedNearestQueryCount(table: std.string(table), bounds: cb, vectors: cv, geos: cg, texts: ct, where: optStr(whereClause), sort: cs, limit: limit, groupBy: optStr(groupBy), distinctBy: optStr(distinctBy)))
     }
 
     // Attach another lattice's underlying handle (cloud-relay / multi-db).
@@ -277,38 +323,29 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         guard let otherRef = other.asCxxLatticeRef else {
             fatalError("CxxBackend.attach requires a C++ backend on both sides")
         }
-        l.attach(otherRef.get())
+        ref.attach(otherRef)
     }
 
     // Sync data ingestion — returns the affected globalId strings; the caller
     // parses them into UUIDs and checks `lastReceiveError()`.
     func receiveSyncData(_ data: Data) -> [String] {
-        l.receive_sync_data(data.toCxxValue()).map { String($0) }
+        ref.receive_sync_data(data.toCxxValue()).map { String($0) }
     }
     func lastReceiveError() -> String? {
-        let e = l.last_receive_error()
+        let e = ref.last_receive_error()
         return e.__convertToBool() ? String(e.pointee) : nil
     }
 
     // Sync filter — translate the neutral [SyncFilterParam] to the C++ vector.
     func updateSyncFilter(_ filter: [SyncFilterParam]) {
-        var entries = lattice.SyncFilterVector()
-        for f in filter {
-            var entry = lattice.sync_filter_entry()
-            entry.table_name = std.string(f.tableName)
-            if let whereClause = f.whereClause {
-                entry.where_clause = lattice.string_to_optional(std.string(whereClause))
-            }
-            entries.push_back(entry)
-        }
-        l.update_sync_filter(entries)
+        ref.update_sync_filter(_makeCxxSyncFilter(filter.map { ($0.tableName, $0.whereClause) }))
     }
 
     func removeTableObserver(table: String, observerId: UInt64) {
-        l.remove_table_observer(std.string(table), observerId)
+        ref.remove_table_observer(std.string(table), observerId)
     }
 
-    func pendingSyncEntryCount() -> Int64 { Int64(l.pending_sync_entry_count()) }
+    func pendingSyncEntryCount() -> Int64 { Int64(ref.pending_sync_entry_count()) }
 
     // ---- C trampolines: observer / sync callbacks ----
     // Each registers a retained boxed Swift closure as the C++ `void* ctx`, a
@@ -318,7 +355,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func addTableObserver(table: String, _ callback: @escaping @Sendable ([TableChangeEvent]) -> Void) -> UInt64 {
         let box = _CxxClosureBox(callback)
         let ptr = Unmanaged.passRetained(box).toOpaque()
-        return l.add_table_observer(
+        return ref.add_table_observer(
             std.string(table),
             ptr,
             { ctx, ops, rowIds, gids, count in
@@ -341,10 +378,10 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
 
     func setOnSyncProgress(_ callback: (@Sendable (Int64, Int64, Int64, Int64) -> Void)?) {
-        guard let callback else { l.set_on_sync_progress(nil, nil, nil); return }
+        guard let callback else { ref.set_on_sync_progress(nil, nil, nil); return }
         let box = _CxxClosureBox(callback)
         let ptr = Unmanaged.passRetained(box).toOpaque()
-        l.set_on_sync_progress(
+        ref.set_on_sync_progress(
             ptr,
             { ctx, pending, total, acked, received in
                 guard let ctx else { return }
@@ -359,10 +396,10 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
 
     func setOnSyncError(_ callback: (@Sendable (String) -> Void)?) {
-        guard let callback else { l.set_on_sync_error(nil, nil, nil); return }
+        guard let callback else { ref.set_on_sync_error(nil, nil, nil); return }
         let box = _CxxClosureBox(callback)
         let ptr = Unmanaged.passRetained(box).toOpaque()
-        l.set_on_sync_error(
+        ref.set_on_sync_error(
             ptr,
             { ctx, errorPtr, len in
                 guard let ctx, let errorPtr else { return }
@@ -382,10 +419,10 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
 
     func setOnSyncStateChange(_ callback: (@Sendable (Bool) -> Void)?) {
-        guard let callback else { l.set_on_sync_state_change(nil, nil, nil); return }
+        guard let callback else { ref.set_on_sync_state_change(nil, nil, nil); return }
         let box = _CxxClosureBox(callback)
         let ptr = Unmanaged.passRetained(box).toOpaque()
-        l.set_on_sync_state_change(
+        ref.set_on_sync_state_change(
             ptr,
             { ctx, connected in
                 guard let ctx else { return }
@@ -399,10 +436,10 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
 
     func setOnXprocIdle(_ callback: (@Sendable () -> Void)?) {
-        guard let callback else { l.set_on_xproc_idle(nil, nil, nil); return }
+        guard let callback else { ref.set_on_xproc_idle(nil, nil, nil); return }
         let box = _CxxClosureBox(callback)
         let ptr = Unmanaged.passRetained(box).toOpaque()
-        l.set_on_xproc_idle(
+        ref.set_on_xproc_idle(
             ptr,
             { ctx in
                 guard let ctx else { return }
@@ -419,8 +456,23 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
 /// Retained box holding a Swift closure across the C `void* ctx` boundary.
 /// `@unchecked Sendable`: the wrapped closure is itself `@Sendable`; the box is
 /// just transport.
-@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 private final class _CxxClosureBox<F>: @unchecked Sendable {
     let fn: F
     init(_ fn: F) { self.fn = fn }
+}
+
+/// Single conversion point for sync-filter entries → the C++ vector. Used by
+/// `Configuration.cxxConfiguration()` (db + per-IPC-target filters) and
+/// `CxxBackend.updateSyncFilter`, so the marshalling can't drift.
+func _makeCxxSyncFilter(_ entries: [(String, String?)]) -> lattice.SyncFilterVector {
+    var vec = lattice.SyncFilterVector()
+    for (tableName, whereClause) in entries {
+        var entry = lattice.sync_filter_entry()
+        entry.table_name = std.string(tableName)
+        if let whereClause {
+            entry.where_clause = lattice.string_to_optional(std.string(whereClause))
+        }
+        vec.push_back(entry)
+    }
+    return vec
 }

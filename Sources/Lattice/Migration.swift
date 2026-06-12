@@ -54,6 +54,12 @@ public struct TableChanges: Sendable {
 ///     }
 /// }
 /// ```
+// MigrationContext wraps the C++ `swift_migration_context_ref`, which — like
+// the rest of the *_ref handle family — is a foreign reference on iOS 16.4+
+// and a copyable value type below the floor. Its mutable state (the wrapped
+// context pointer and the queued row updates) lives behind a shared_ptr in
+// C++, so value-path copies alias the same queue and the methods import
+// non-mutating. It is never instantiated on the core CRUD path.
 public final class MigrationContext: @unchecked Sendable {
     let cxxContext: lattice.swift_migration_context_ref
 
@@ -113,85 +119,7 @@ public final class MigrationContext: @unchecked Sendable {
         cxxContext.deleteAll(table: std.string(tableName))
     }
 
-//    /// Execute raw SQL for complex migrations.
-//    public func executeSQL(_ sql: String) {
-//        cxxContext.executeSQL(std.string(sql))
-//    }
-
-    /// Query using raw SQL for reading data.
-//    public func querySQL(_ sql: String) -> [[String: ColumnValue]] {
-//        cxxContext.querySQL(std.string(sql)).map { row in
-//            var swiftRow: [String: ColumnValue] = [:]
-//            for (key, value) in row {
-//                swiftRow[String(key)] = ColumnValue(value)
-//            }
-//            return swiftRow
-//        }
-//    }
 }
-
-// MARK: - Column Value Wrapper
-
-/// A type-safe wrapper for column values during migration.
-//public struct ColumnValue: Sendable {
-//    let cxxValue: lattice.column_value_t
-//
-//    init(_ cxx: lattice.column_value_t) {
-//        self.cxxValue = cxx
-//    }
-//
-//    /// Create a null value
-//    public init() {
-//        self.cxxValue = .init()
-//    }
-//
-//    /// Create from a double
-//    public init(_ value: Double) {
-//        self.cxxValue = lattice.column_value_from_double(value)
-//    }
-//
-//    /// Create from a string
-//    public init(_ value: String) {
-//        self.cxxValue = lattice.column_value_from_string(std.string(value))
-//    }
-//
-//    /// Create from an integer
-//    public init(_ value: Int64) {
-//        self.cxxValue = lattice.column_value_from_int(value)
-//    }
-//
-//    /// Create from a boolean
-//    public init(_ value: Bool) {
-//        self.cxxValue = lattice.column_value_from_int(value ? 1 : 0)
-//    }
-//
-//    // MARK: - Value Accessors
-//
-//    /// Get as Double if this is a numeric value
-//    public var doubleValue: Double? {
-//        lattice.column_value_as_double(cxxValue)
-//    }
-//
-//    /// Get as Int64 if this is an integer value
-//    public var intValue: Int64? {
-//        lattice.column_value_as_int(cxxValue)
-//    }
-//
-//    /// Get as String if this is a text value
-//    public var stringValue: String? {
-//        lattice.column_value_as_string(cxxValue).map { String($0) }
-//    }
-//
-//    /// Get as Bool if this is a boolean value
-//    public var boolValue: Bool? {
-//        intValue.map { $0 != 0 }
-//    }
-//
-//    /// Check if this is null
-//    public var isNull: Bool {
-//        lattice.column_value_is_null(cxxValue)
-//    }
-//}
 
 @dynamicMemberLookup
 public final class DynamicObject {
@@ -294,8 +222,10 @@ extension Migration {
     /// })
     /// ```
     public static func lookup<T: Model>(_ type: T.Type, id: Int64) -> T? {
+        // `_optRef` normalizes the lookup result, which imports as a non-optional
+        // value (empty when absent) below the FRT floor.
         guard lattice.migrationLookup(table: std.string(T.entityName), primaryKey: id),
-              let ref = lattice.migrationTakeLookupResult() else {
+              let ref = _optRef(lattice.migrationTakeLookupResult()) else {
             return nil
         }
         return T(dynamicObject: ref)
@@ -305,7 +235,7 @@ extension Migration {
     /// Only valid inside a migration block. Returns nil if not found.
     public static func lookup<T: Model>(_ type: T.Type, globalId: String) -> T? {
         guard lattice.migrationLookupByGlobalId(table: std.string(T.entityName), globalId: std.string(globalId)),
-              let ref = lattice.migrationTakeLookupResult() else {
+              let ref = _optRef(lattice.migrationTakeLookupResult()) else {
             return nil
         }
         return T(dynamicObject: ref)

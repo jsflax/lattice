@@ -172,9 +172,8 @@ public protocol _LatticeUnionQueryEnum {
 extension LatticeUnion {
     public static var anyPropertyKind: AnyProperty.Kind { .string }
 
-    // Union field access marshals through the C++ union_value (no neutral
-    // surface yet — modern-only, like geo). asCxxObjectRef is gated 16.4.
-    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
+    // Union field access marshals through the C++ union_value handle surface,
+    // which works on every OS (value-converted below the FRT floor).
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
         let uv = storage._ref.asCxxObjectRef!.getUnion(named: std.string(name))
         if String(uv.case_name).isEmpty {
@@ -183,7 +182,6 @@ extension LatticeUnion {
         return Self._fromCxxUnionValue(uv)
     }
 
-    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
         let uv = value._toCxxUnionValue()
         storage._ref.asCxxObjectRef!.setUnion(named: std.string(name), uv)

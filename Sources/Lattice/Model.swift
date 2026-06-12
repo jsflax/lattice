@@ -38,10 +38,9 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         weak var instance: (any Model)?
         let objectIdentifier: ObjectIdentifier
         var cxxObserverId: UInt64?
-        // Neutral backend (not the C++ swift_lattice_ref — an iOS-16.4 foreign
-        // reference type can't be a stored property below 16.4). The C++
-        // object-observer removal downcasts via asCxxLatticeRef under an
-        // availability guard; iOS 15 routes through the C backend (Phase 3).
+        // Boxed backend handle; deregister recovers the swift_lattice_ref via
+        // asCxxLatticeRef (the handle works on every OS — value-converted
+        // below the FRT floor).
         var latticeBackend: (any LatticeBackend)?
         init(_ model: any Model) {
             self.instance = model
@@ -61,11 +60,8 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     func register(_ model: any Model, tableName: String) {
         guard let primaryKey = model.primaryKey else { return }
         guard let latticeBackend = model._dynamicObject._ref.lattice else { return }
-        // Cross-process object observation uses the C++ object-observer API
-        // (16.4+ foreign-reference types). iOS 15 will register through the C
-        // backend (Phase 3); until then registration is a no-op there.
-        guard #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *),
-              let latticeRef = latticeBackend.asCxxLatticeRef else { return }
+        // Cross-process object observation uses the C++ object-observer API.
+        guard let latticeRef = latticeBackend.asCxxLatticeRef else { return }
         let dbPath = String(latticeRef.path())
         let key = InstanceKey(databasePath: dbPath, tableName: tableName, primaryKey: primaryKey)
         var ref = WeakModelRef(model)
@@ -76,7 +72,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         let observerCtx = _ObjectObserverCtx(dbPath: dbPath, tableName: tableName, primaryKey: primaryKey)
         let observerCtxPtr = Unmanaged.passRetained(observerCtx).toOpaque()
 
-        let observerId = latticeRef.get().add_object_observer(
+        let observerId = latticeRef.add_object_observer(
             std.string(tableName),
             primaryKey,
             observerCtxPtr,
@@ -182,9 +178,8 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         for ref in removedRefs {
             if let observerId = ref.cxxObserverId,
                let latticeBackend = ref.latticeBackend,
-               #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *),
                let latticeRef = latticeBackend.asCxxLatticeRef {
-                latticeRef.get().remove_object_observer(std.string(tableName), key.primaryKey, observerId)
+                latticeRef.remove_object_observer(std.string(tableName), key.primaryKey, observerId)
             }
         }
     }
@@ -292,10 +287,8 @@ extension Model {
         self.init(dynamicObject: refType)
     }
 
-    // Boxing overload: query/list hydration still produces a C++ dynamic_object_ref;
-    // this wraps it in a CxxObjectBackend. Gated 16.4 (the FRT floor). The iOS-15
-    // path will hydrate through the backend's neutral [any ObjectBackend] returns.
-    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
+    // Boxing overload: query/list hydration produces a C++ dynamic_object_ref
+    // (FRT on 16.4+, value type below); this wraps it in a CxxObjectBackend.
     public init(dynamicObject refType: CxxDynamicObjectRef) {
         self.init(dynamicObject: CxxObjectBackend(refType) as any ObjectBackend)
     }
@@ -316,6 +309,10 @@ extension Model {
     public var lattice: Lattice? {
         _dynamicObject._ref.lattice?.asCxxLatticeRef.map { Lattice.init(ref: $0) }
     }
+
+    /// Cheap managed-check: true when the object is persisted (has an owning
+    /// db). Avoids the box→unbox→cache-lookup round trip of `lattice != nil`.
+    public var isManaged: Bool { _dynamicObject._ref.hasLattice }
 
     /// Fire all instance-level observers whose property filter matches (or have no filter).
     public func _fireObservers(propertyName: String) {
@@ -626,13 +623,11 @@ public func _defaultCxxLatticeObject<M>(_ model: M.Type) -> CxxDynamicObject whe
 
 extension Model {
     public static func getField(from uv: lattice.union_value, named name: String) -> Self {
-        guard let linkRef = uv.getLinkRef(std.string(name)) else {
+        guard let linkRef = _optRef(uv.getLinkRef(std.string(name))) else {
             return Self(isolation: nil)
         }
         let model = Self(isolation: nil)
-        if #available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *) {
-            model._dynamicObject._ref = CxxObjectBackend(linkRef)
-        }
+        model._dynamicObject._ref = CxxObjectBackend(linkRef)
         return model
     }
 

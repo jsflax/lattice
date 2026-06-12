@@ -1,12 +1,15 @@
-// LatticeCore Phase 2 — runtime-dispatched backend protocols.
+// The backend protocols — the neutral seam between the ORM and the C++ core.
 //
-// Three backend-neutral protocol existentials that box the C++ foreign-reference
-// types (iOS 16.4) on modern OSes and the future pure-C LatticeCAPI on iOS 15.
+// The conformers (CxxBackend.swift) wrap the lattice handle types, which work
+// on every OS: foreign-reference classes on iOS 16.4+/macOS 13.3+, copyable
+// value types over the same shared_ptr-owned state below that floor
+// (LATTICE_HAS_FRT in LatticeCore). There is no other backend.
 //
 // Constraints honored:
 //   * Each protocol is usable as `any` (no associated types in callable position).
 //   * Each protocol is `Sendable` (and class-bound so the Cxx conformer is a
 //     `final class` + `@inlinable` forwarding with zero extra indirection).
+//     See the Sendable CONTRACT note on ObjectBackend/ObjectListBackend.
 //   * Signatures are backend-neutral: only Swift-native types appear
 //     (String, Int64, Int32, Double, Float, Bool, Data, UUID, UInt64) — no
 //     std.* or lattice.* types leak into the protocol surface.
@@ -16,9 +19,6 @@
 //       - object's owning lattice  -> any LatticeBackend?
 //       - lattice query results    -> [any ObjectBackend]
 //       - NearestRow.object        -> any ObjectBackend
-//
-// Verified: xcrun swiftc -typecheck under -swift-version 5 AND -swift-version 6
-// (strict concurrency, even with -warnings-as-errors) -> EXIT 0.
 
 import Foundation
 
@@ -54,21 +54,7 @@ public struct SyncFilterParam: Sendable, Equatable {
     }
 }
 
-/// Neutral geo-bounds value: the 4 doubles of lattice::geo_bounds.
-/// center_lat/lon and lat/lon_span are intentionally omitted (derivable).
-public struct GeoBoundsValue: Sendable, Equatable {
-    public var minLat: Double
-    public var maxLat: Double
-    public var minLon: Double
-    public var maxLon: Double
 
-    public init(minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) {
-        self.minLat = minLat
-        self.maxLat = maxLat
-        self.minLon = minLon
-        self.maxLon = maxLon
-    }
-}
 
 // MARK: - Composite-nearest neutral param structs (replace lattice.*_constraint)
 
@@ -179,11 +165,21 @@ public struct DistanceEntry: Sendable, Equatable {
 /// non-generic getters/setters (mirroring the existing CxxObject protocol) keep
 /// the protocol existential and let the Cxx conformer be a `final class` with
 /// `@inlinable` thunks. Class-bound, so setters are non-mutating.
+///
+/// Sendable CONTRACT: `Sendable` here means "safe to TRANSPORT across
+/// isolation, not to mutate concurrently". The underlying C++ object state
+/// (dynamic_object) has no internal locking — per-object handles are
+/// thread-confined by convention, and cross-thread handoff goes through
+/// ThreadSafeReference. (The db-level LatticeBackend ops ARE internally
+/// synchronized by lattice_db.)
 public protocol ObjectBackend: AnyObject, Sendable {
 
     // Identity / metadata
     var tableName: String { get }
     var lattice: (any LatticeBackend)? { get }   // CROSS-REF; nil when unmanaged
+    /// Cheap managed-check (no backend boxing) — `lattice != nil` without
+    /// allocating the boxed handle. Used by the per-add guards.
+    var hasLattice: Bool { get }
 
     // Presence / nullability
     func hasValue(named name: String) -> Bool
@@ -218,10 +214,11 @@ public protocol ObjectBackend: AnyObject, Sendable {
 
 // MARK: - ObjectListBackend (link_list — List<Model> / VirtualList)
 
-/// Neutral link-list surface. Split from the geo-bounds list because element
-/// types differ (`any ObjectBackend` vs `GeoBoundsValue`); a single protocol
-/// would need an associated Element in callable position, which makes the write
-/// half (pushBack/setObject/findIndex) uncallable on the bare existential.
+/// Neutral link-list surface. (Geo-bounds lists stay on the C++ handle surface
+/// directly — see Geobounds.swift — so there is no geo list protocol here.)
+///
+/// Sendable CONTRACT: same as ObjectBackend — transport-only; link_list has no
+/// internal locking, so list handles are thread-confined by convention.
 public protocol ObjectListBackend: AnyObject, Sendable {
     var size: Int { get }
     var linkTableName: String { get }            // "" for unmanaged lists
@@ -236,26 +233,7 @@ public protocol ObjectListBackend: AnyObject, Sendable {
     func findWhere(_ predicate: SQLPredicate) -> [Int]
 }
 
-// MARK: - GeoBoundsListBackend (geo_bounds_list — List<MKCoordinateRegion> etc.)
 
-/// Neutral geo-bounds-list surface. Distinct element type (`GeoBoundsValue`)
-/// from ObjectListBackend, which is the concrete reason the two cannot share
-/// one existential. NOTE: spatial features are modern-only today; this protocol
-/// is defined for shape-completeness but ObjectBackend does NOT require
-/// getGeoBoundsList in Phase 2 (geo accessors stay Cxx-gated).
-public protocol GeoBoundsListBackend: AnyObject, Sendable {
-    var size: Int { get }
-    var linkTableName: String { get }
-    var lattice: (any LatticeBackend)? { get }
-
-    func bounds(at position: Int) -> GeoBoundsValue
-    func setBounds(at position: Int, _ element: GeoBoundsValue)
-    func pushBack(_ element: GeoBoundsValue)
-    func erase(at position: Int)
-    func clear()
-    func findIndex(of element: GeoBoundsValue) -> Int?
-    func findWhere(_ predicate: SQLPredicate) -> [Int]
-}
 
 // MARK: - LatticeBackend (db-level operations)
 

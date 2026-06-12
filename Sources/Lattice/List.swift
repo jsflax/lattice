@@ -46,7 +46,7 @@ public struct ModelLinkListRef<T: Model>: @unchecked Sendable, LinkListRef {
     }
 
     public static func new() -> Self {
-        Self(_ref: BackendFactory.makeEmptyObjectList())
+        Self(_ref: CxxObjectListBackend(.create()))
     }
 
     public func get(at position: Int) -> T {

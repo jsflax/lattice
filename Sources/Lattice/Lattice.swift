@@ -67,12 +67,9 @@ extension UnsafeMutablePointer: @unchecked @retroactive Sendable {
 }
 extension UnsafeMutableRawPointer: @unchecked @retroactive Sendable {
 }
-// These extend the C++ foreign-reference types, which are iOS 16.4+; gate the
-// extensions so the iOS-15 target (where the C backend stands in) compiles.
-@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
-extension lattice.swift_lattice: @unchecked @retroactive Sendable {
-}
-@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
+// The db is reached exclusively through swift_lattice_ref (a foreign reference
+// on iOS 16.4+, a copyable value type below the floor) — Swift never names the
+// underlying swift_lattice FRT.
 extension lattice.swift_lattice_ref: Hashable, Equatable, @unchecked @retroactive Sendable {
     public var hashValue: Int {
         Int(self.hash_value())
@@ -528,7 +525,7 @@ public struct Lattice {
                       authorizationToken.map { std.string($0) } ?? std.string(),
                       currentScheduler.scheduler)
             } else {
-                config = .init(std.string(self.fileURL.path(percentEncoded: false)),
+                config = .init(std.string(self.fileURL.path),
                       self.wssEndpoint.map {
                     std.string($0.absoluteString)
                 } ?? std.string(),
@@ -537,16 +534,7 @@ public struct Lattice {
             }
             config.read_only = isReadOnly
             if let syncFilter {
-                var filterEntries = lattice.SyncFilterVector()
-                for (tableName, whereClause) in syncFilter.entries {
-                    var entry = lattice.sync_filter_entry()
-                    entry.table_name = std.string(tableName)
-                    if let whereClause {
-                        entry.where_clause = lattice.string_to_optional(std.string(whereClause))
-                    }
-                    filterEntries.push_back(entry)
-                }
-                config.set_sync_filter(filterEntries)
+                config.set_sync_filter(_makeCxxSyncFilter(Array(syncFilter.entries)))
             }
             if let ipcTargets, !ipcTargets.isEmpty {
                 var targets = lattice.IPCTargetVector()
@@ -557,16 +545,7 @@ public struct Lattice {
                         ipcTarget.socket_path = lattice.string_to_optional(std.string(socketPath))
                     }
                     if let filter = target.syncFilter {
-                        var filterEntries = lattice.SyncFilterVector()
-                        for (tableName, whereClause) in filter.entries {
-                            var entry = lattice.sync_filter_entry()
-                            entry.table_name = std.string(tableName)
-                            if let whereClause {
-                                entry.where_clause = lattice.string_to_optional(std.string(whereClause))
-                            }
-                            filterEntries.push_back(entry)
-                        }
-                        ipcTarget.sync_filter = lattice.sync_filter_to_optional(filterEntries)
+                        ipcTarget.sync_filter = lattice.sync_filter_to_optional(_makeCxxSyncFilter(Array(filter.entries)))
                     }
                     targets.push_back(ipcTarget)
                 }
@@ -611,30 +590,19 @@ public struct Lattice {
     /// to ensure IVF is active before measuring performance.
     public internal(set) var vectorIndexTrainingTask: Task<Void, Never>?
 
-    /// The boxed db backend (the single stored db handle). On iOS 16.4+/macOS the
-    /// C++-interop `CxxBackend`; iOS 15 will use the pure-C `CBackend` (Phase 3).
-    /// All neutral ORM operations route through this; the residual still-C++-only
-    /// paths (table/object observers, sync callbacks, attach) reach the underlying
-    /// foreign-reference type through the gated `cxxLattice` accessor below.
+    /// The boxed db backend (the single stored db handle), a `CxxBackend` on
+    /// every OS. Neutral ORM operations route through it; the paths that drive
+    /// the C++ surface directly (observers, nearest queries, attach) use
+    /// `cxxLatticeRef` below.
     let backend: any LatticeBackend
 
-    /// The underlying C++ `swift_lattice`, for the still-C++-only call sites that
-    /// have no neutral backend surface yet. Gated 16.4 (the future C backend
-    /// returns nil from `asCxxLatticeRef`); on iOS 15 these call sites must route
-    /// through CBackend instead (Phase 3 residual gating).
-    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
-    var cxxLattice: lattice.swift_lattice {
-        backend.asCxxLatticeRef!.get()
-    }
-
-    /// The underlying C++ `swift_lattice_ref`. Same gating/caveat as `cxxLattice`.
-    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
+    /// The underlying C++ `swift_lattice_ref` — a foreign reference on
+    /// iOS 16.4+, a copyable value type over the same shared db below the floor.
     var cxxLatticeRef: lattice.swift_lattice_ref {
         backend.asCxxLatticeRef!
     }
     internal var isolation: (any Actor)?
 
-    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
     internal init(isolation: isolated (any Actor)? = #isolation,
                   ref: lattice.swift_lattice_ref) {
         self = Self.cacheLock.withLockUnchecked {
@@ -645,7 +613,7 @@ public struct Lattice {
             // Fallback: look up by path if hash lookup fails
             // This can happen when C++ creates a new impl for the same path
             let refPath = String(ref.path())
-            if let cached = Self.cache.values.first(where: { $0.configuration.fileURL.path(percentEncoded: false) == refPath }) {
+            if let cached = Self.cache.values.first(where: { $0.configuration.fileURL.path == refPath }) {
                 return cached
             }
             // Debug: print cache state
@@ -653,7 +621,7 @@ public struct Lattice {
             print("  Looking for hash: \(key.implHash), path: \(refPath)")
             print("  Cache has \(Self.cache.count) entries:")
             for (k, v) in Self.cache {
-                print("    hash: \(k.implHash), path: \(v.configuration.fileURL.path(percentEncoded: false))")
+                print("    hash: \(k.implHash), path: \(v.configuration.fileURL.path)")
             }
             preconditionFailure("Lattice not found in cache for ref with hash \(key.implHash), path: \(refPath)")
         }
@@ -665,7 +633,6 @@ public struct Lattice {
     private struct CacheKey: Hashable {
         let implHash: Int64
 
-        @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
         init(_ ref: lattice.swift_lattice_ref) {
             self.implHash = ref.hash_value()
         }
@@ -767,9 +734,11 @@ public struct Lattice {
                 let migCtx = Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).takeUnretainedValue()
                 let entityName = String(cString: tableName)
 
-                // Read old/new refs from thread-local storage (set by C++ before this callback)
-                guard let oldRef = lattice.migrationGetOldRow(),
-                      let newRef = lattice.migrationGetNewRow() else { return }
+                // Read old/new refs from thread-local storage (set by C++ before
+                // this callback). `_optRef` normalizes the value-path import
+                // (non-optional, empty when absent) to a Swift optional.
+                guard let oldRef = _optRef(lattice.migrationGetOldRow()),
+                      let newRef = _optRef(lattice.migrationGetNewRow()) else { return }
 
                 if let currentMigration = migCtx.migration[migCtx.targetVersion] {
                     currentMigration._sendRow(entityName: entityName, oldRef, newRef)
@@ -788,12 +757,9 @@ public struct Lattice {
         guard error.msg.empty() else {
             throw error
         }
-        // PHASE 3c SEAM — the remaining db-handle backend selection. Unlike the
-        // object/list selections (now in BackendFactory), creation here is
-        // entangled with the Cxx schema-vector build above (`cxxSchemas`), which
-        // only neutralizes in Phase 3c. When that lands, the whole create block
-        // moves behind `if #available { swift_lattice_ref.create… } else {
-        // c_lattice_create… }` and this becomes the one db-handle `else`.
+        // The single db-handle construction site: the swift_lattice_ref from
+        // `create` (a foreign reference on iOS 16.4+, a copyable value type
+        // below the floor) is boxed into the one stored backend.
         self.backend = CxxBackend(createdRef)
         let key = CacheKey(self.backend)
         let latticeInstance = self
@@ -823,7 +789,6 @@ public struct Lattice {
 //            types.append(type)
 //        }
 //        try self.init(for: types, configuration: configuration, migration: migration)
-//        self.schema = Schema(repeat each modelTypes)
 //    }
 
     /// Initialize Lattice with model types and a migration block.
@@ -922,9 +887,9 @@ public struct Lattice {
         // process notifier, and synchronizer. Without this, SQLite warns
         // "vnode unlinked while in use" because the connection still has the
         // file mmap'd.
-        let filePath = fileURL.path(percentEncoded: false)
+        let filePath = fileURL.path
         cacheLock.withLockUnchecked {
-            for (key, value) in cache where value.configuration.fileURL.path(percentEncoded: false) == filePath {
+            for (key, value) in cache where value.configuration.fileURL.path == filePath {
                 value.backend.close()
                 cache.removeValue(forKey: key)
             }
@@ -975,7 +940,7 @@ public struct Lattice {
     
     // MARK: Add
     public func add<T: Model>(_ object: borrowing T) {
-        guard object.lattice == nil else {
+        guard !object.isManaged else {
             fatalError()
         }
         do { try backend.add(object._dynamicObject._ref) } catch { fatalError("\(error)") }
@@ -984,7 +949,7 @@ public struct Lattice {
     }
 
     public func add<T: Model>(_ object: borrowing T, preservingGlobalId globalId: UUID) {
-        guard object.lattice == nil else {
+        guard !object.isManaged else {
             fatalError()
         }
         backend.addPreservingGlobalId(object._dynamicObject._ref, globalId: globalId)
@@ -1001,7 +966,7 @@ public struct Lattice {
         guard let model = object as? any Model else {
             fatalError("VirtualModel type must also conform to Model")
         }
-        guard model.lattice == nil else { fatalError() }
+        guard !model.isManaged else { fatalError() }
         try? backend.add(model._dynamicObject._ref)
         model._registerIfNeeded()
     }
@@ -1325,14 +1290,6 @@ public struct Lattice {
         let s = UncheckedSendable(self)
         let blk = UncheckedSendable(block)
         let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
-            // TEMP DIAGNOSTIC: write batch shape to a known file so we
-            // can compare CLI vs Xcode runs.
-            if let h = FileHandle(forWritingAtPath: "/tmp/lattice-observe-trace.log") {
-                let line = "\(Date().timeIntervalSince1970): observe([AuditLog]) batch.size=\(changes.count): \(changes.map { "(\($0.operation),\($0.rowId))" }.joined(separator: ","))\n"
-                try? h.seekToEnd()
-                h.write(Data(line.utf8))
-                try? h.close()
-            }
             for change in changes {
                 if let auditLog = s.value.object(AuditLog.self, primaryKey: change.rowId) {
                     blk.value([auditLog])
@@ -1560,9 +1517,10 @@ public struct Lattice {
         queryConfig.authorizationToken = nil
         queryConfig.syncFilter = nil
         let cxxConfig = queryConfig.cxxConfiguration()
-        let newCxxLattice = LatticeCxx.swift_lattice_ref.create(swiftConfig: cxxConfig,
-                                                                schemas: modelTypes.cxxSchema)!
-        newCxxLattice.get().attach(lattice.cxxLattice)
+        // `_requireLatticeRef` unwraps the FRT-optional / value-non-optional gap.
+        let newCxxLattice = _requireLatticeRef(LatticeCxx.swift_lattice_ref.create(swiftConfig: cxxConfig,
+                                                                schemas: modelTypes.cxxSchema))
+        newCxxLattice.attach(lattice.cxxLatticeRef)
         var newLattice = Lattice.init(ref: newCxxLattice)
         newLattice.schema = schema?.merge(typeErased: lattice.schema!)
         return newLattice
@@ -1597,7 +1555,7 @@ extension _Schema {
 
 // Array-backed schema — no parameter packs, so it works on every deployment
 // target. This is what `Lattice` stores; both the array and variadic inits build
-// it. (The pack `Schema<each M>` below is gated and effectively vestigial now.)
+// it.
 struct SchemaCompat: _Schema {
     let modelTypes: [any Model.Type]
     var modelTypeList: [any Model.Type] { modelTypes }
@@ -1609,27 +1567,6 @@ struct SchemaCompat: _Schema {
     }
 }
 
-@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
-package struct Schema<each M: Model>: _Schema {
-    let modelTypes: (repeat (each M).Type)
-    package init(_ modelTypes: repeat (each M).Type) {
-        self.modelTypes = (repeat each modelTypes)
-    }
-
-    var modelTypeList: [any Model.Type] {
-        var a: [any Model.Type] = []
-        for t in repeat (each M).self { a.append(t) }
-        return a
-    }
-
-    func merge(typeErased: any _Schema) -> any _Schema {
-        SchemaCompat(modelTypes: modelTypeList + typeErased.modelTypeList)
-    }
-
-    package func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> any VirtualResults<T> {
-        _generateVirtualResults(matching: modelTypeList, type, on: lattice)
-    }
-}
 
 // Build VirtualResults outside of variadic generic context to avoid IRGen crash on Linux.
 // Uses existential opening on `any Model.Type` instead of pack element archetypes.
@@ -1640,13 +1577,22 @@ private func _makeInitialVirtualResults<M: Model, T>(
     _VirtualResults<M, T>(types: modelType, proto: proto, lattice: lattice)
 }
 
+extension Lattice {
+    /// Test seam: forces the array-backed compat results types (the < iOS 17
+    /// path) even where `#available` would select the parameter-pack types, so
+    /// the macOS test suite can runtime-verify the compat surface (which is
+    /// otherwise dead code on every test platform). Task-local — scope it with
+    /// `Lattice.$_forceCompatPaths.withValue(true) { ... }`.
+    @TaskLocal package static var _forceCompatPaths = false
+}
+
 private func _buildVirtualResults<T>(
     from types: [any Model.Type], proto: T.Type, lattice: Lattice
 ) -> any VirtualResults<T> {
     guard let first = types.first else { fatalError("No types conform to \(T.self)") }
     // iOS 17+: build the parameter-pack `_VirtualResults` (grown one type at a
     // time). iOS 15: build the array-backed `_VirtualResultsCompat` directly.
-    if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
+    if !Lattice._forceCompatPaths, #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
         var result = _makeInitialVirtualResults(first, proto: proto, lattice: lattice)
         for remaining in types.dropFirst() {
             result = result._addType(remaining)
@@ -1706,7 +1652,7 @@ extension Lattice {
     /// Direct log output to a file instead of stderr.
     /// Pass nil to revert to stderr. Caller owns the FILE* lifetime.
     public static func setLogFile(_ fileURL: URL) {
-        let path = fileURL.path(percentEncoded: false)
+        let path = fileURL.path
         guard let cFilePointer = fopen(path, "w") else {
             print("Failed to open log file: \(path)")
             return

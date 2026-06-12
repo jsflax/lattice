@@ -7,12 +7,9 @@ public protocol GeoboundsProperty: LatticeSchemaProperty {
 
 // MARK: - GeoBoundsLinkListRef (wraps C++ geo_bounds_list_ref)
 
-// Spatial/geo features are modern-only (see GeoBoundsListBackend note in
-// Backend.swift): this ref stores a 16.4 foreign-reference type directly and is
-// gated wholesale. A gated type may still satisfy the (ungated) LinkListRef
-// requirements — instances simply cannot exist below 16.4, so the geo `List`
-// specializations are modern-only until a C geo path lands (Phase 3+).
-@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
+// The geo subsystem rides the C++ handle surface directly on every OS: the
+// stored `geo_bounds_list_ref` is a foreign reference on iOS 16.4+ and a
+// copyable value type over the same shared list below the floor.
 public struct GeoBoundsLinkListRef<T>: @unchecked Sendable, LinkListRef {
     var _ref: lattice.geo_bounds_list_ref
     private let _fromRef: (lattice.geo_bounds_ref) -> T
@@ -31,7 +28,7 @@ public struct GeoBoundsLinkListRef<T>: @unchecked Sendable, LinkListRef {
     }
 
     public func get(at position: Int) -> T {
-        _fromRef(_ref[position].objectRef!)
+        _fromRef(_requireGeoRef(_ref[position].objectRef))
     }
 
     public mutating func set(at position: Int, _ element: T) {
@@ -64,7 +61,7 @@ public struct GeoBoundsLinkListRef<T>: @unchecked Sendable, LinkListRef {
     }
 
     public var latticeBackend: (any LatticeBackend)? {
-        _ref.lattice.map { CxxBackend($0) }
+        _optLatticeRef(_ref.lattice).map { CxxBackend($0) }
     }
 }
 
@@ -113,7 +110,6 @@ extension Optional: GeoboundsProperty where Wrapped: GeoboundsProperty {
 #if canImport(MapKit)
 import MapKit
 
-@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 extension MKCoordinateRegion: CxxManaged, GeoboundsProperty, LinkListable {
     public static var anyPropertyKind: AnyProperty.Kind {
         .int
@@ -153,19 +149,8 @@ extension MKCoordinateRegion: CxxManaged, GeoboundsProperty, LinkListable {
     public static func setField(on storage: inout ModelStorage,
                                 named name: String,
                                 _ value: MKCoordinateRegion) {
-        let bbox: (minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) =
-        (minLat: value.center.latitude - value.span.latitudeDelta / 2,
-         maxLat: value.center.latitude + value.span.latitudeDelta / 2,
-         minLon: value.center.longitude - value.span.longitudeDelta / 2,
-         maxLon: value.center.longitude + value.span.longitudeDelta / 2)
+        let bbox = value.boundingBox
         storage._ref.asCxxObjectRef!.setGeoBounds(named: std.string(name), minLat: bbox.minLat, maxLat: bbox.maxLat, minLon: bbox.minLon, maxLon: bbox.maxLon)
-    }
-    
-    public var boundingBox: (minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) {
-        (minLat: center.latitude - span.latitudeDelta / 2,
-         maxLat: center.latitude + span.latitudeDelta / 2,
-         minLon: center.longitude - span.longitudeDelta / 2,
-         maxLon: center.longitude + span.longitudeDelta / 2)
     }
     
     public static func _trace<V>(keyPath: KeyPath<MKCoordinateRegion, V>) -> String {
@@ -177,6 +162,17 @@ extension MKCoordinateRegion: CxxManaged, GeoboundsProperty, LinkListable {
     }
 }
 
+// Pure arithmetic on center/span — `Results.withinBounds(of:on:)` and
+// `asRefType`/`setField` above all derive the bounding box through this.
+extension MKCoordinateRegion {
+    public var boundingBox: (minLat: Double, maxLat: Double, minLon: Double, maxLon: Double) {
+        (minLat: center.latitude - span.latitudeDelta / 2,
+         maxLat: center.latitude + span.latitudeDelta / 2,
+         minLon: center.longitude - span.longitudeDelta / 2,
+         maxLon: center.longitude + span.longitudeDelta / 2)
+    }
+}
+
 public struct CLLocationCoordinate2DCompat: EmbeddedModel {
     public let latitude: Double = 0
     public let longitude: Double = 0
@@ -184,7 +180,6 @@ public struct CLLocationCoordinate2DCompat: EmbeddedModel {
     public init() {}
 }
 
-@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 extension CLLocationCoordinate2D: CxxManaged, GeoboundsProperty, LinkListable {
     public static func _makeLinkList(from storage: borrowing ModelStorage, named name: String) -> GeoBoundsLinkListRef<CLLocationCoordinate2D> {
         GeoBoundsLinkListRef(
@@ -227,8 +222,8 @@ extension CLLocationCoordinate2D: CxxManaged, GeoboundsProperty, LinkListable {
     public static func setField(on storage: inout ModelStorage,
                                 named name: String, _ value: CLLocationCoordinate2D) {
         storage._ref.asCxxObjectRef!.setGeoBounds(named: std.string(name), minLat: value.latitude,
-                            maxLat: value.latitude, minLon: value.longitude,
-                            maxLon: value.longitude)
+                                                  maxLat: value.latitude, minLon: value.longitude,
+                                                  maxLon: value.longitude)
     }
 }
 

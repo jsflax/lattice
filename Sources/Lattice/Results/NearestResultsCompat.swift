@@ -7,9 +7,8 @@ import LatticeSwiftCppBridge
 // iOS 15 (pre-variadic-generics) equivalent of `_VirtualNearestResults<each M, T>`.
 // The model types are carried as a runtime array; the two `for type in
 // repeat (each M).self` loops (count + execution) become `for type in modelTypes`.
-// Everything else — the C++ constraint-vector building — is byte-for-byte the
-// gated pack type's logic. Bodies still call `cxxLattice` (iOS 16.4); Phase 2
-// boxes that behind the backend protocol, at which point this compiles at iOS 15.
+// Queries route through the neutral `_lattice.backend` nearest surface, which
+// works on every OS.
 package struct _VirtualNearestResultsCompat<T>: NearestResults {
     public typealias Element = _NearestMatch<T>
     public typealias QueryType = Query<_NearestMatch<T>>

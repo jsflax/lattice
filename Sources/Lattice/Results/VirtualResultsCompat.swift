@@ -11,9 +11,8 @@ import LatticeSwiftCppBridge
 // bodies are otherwise identical (they already operate on each element as
 // `any Model.Type` with dynamic dispatch).
 //
-// NOTE: bodies still call `_lattice.cxxLattice.*` (C++ interop, iOS 16.4). They
-// compile on macOS today; the iOS 15 build becomes possible once Phase 2 boxes
-// `cxxLattice` behind the backend protocol.
+// Queries route through the neutral `_lattice.backend` surface, which works on
+// every OS (the C++ handles value-convert below the FRT floor).
 public final class _VirtualResultsCompat<Element>: VirtualResults, ObservableObject, @unchecked Sendable {
     public typealias UnderlyingElement = Element
     public typealias Models = [any Model.Type]
@@ -60,8 +59,11 @@ public final class _VirtualResultsCompat<Element>: VirtualResults, ObservableObj
         self.init(lattice, modelTypes: modelTypes)
     }
 
+    // NOTE: matches the pack version's contract — `_addType` RESETS query state.
+    // It is only ever called from `_buildVirtualResults` on freshly-constructed
+    // results, growing the type list before any refinement.
     public func _addType<Q: Model>(_ type: Q.Type) -> any VirtualResults<Element> {
-        _VirtualResultsCompat<Element>(_lattice, modelTypes: modelTypes + [type], whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
+        _VirtualResultsCompat<Element>(_lattice, modelTypes: modelTypes + [type])
     }
 
     private var firstType: any Model.Type {

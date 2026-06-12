@@ -192,7 +192,7 @@ public struct LatticeThreadSafeReference: Sendable {
         // would recreate an empty `.sqlite` on disk and fire a spurious empty
         // snapshot. For in-memory configs there is no file to check.
         if !configuration.isStoredInMemoryOnly,
-           !FileManager.default.fileExists(atPath: configuration.fileURL.path(percentEncoded: false)) {
+           !FileManager.default.fileExists(atPath: configuration.fileURL.path) {
             return nil
         }
         return try? Lattice(for: self.modelTypes, configuration: configuration)
