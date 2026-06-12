@@ -2287,4 +2287,32 @@ class LatticeTests: BaseTest {
         #expect(m2.name == "m1")
         #expect(m2.lattice != nil)
     }
+    
+    @Test func test_CrossIsolationTransactionsDoNotError() async throws {
+        let lattice = try testLattice(Person.self, Dog.self)
+        let t1 = Task.detached { [tsr = lattice.sendableReference] in
+            guard let lattice = tsr.resolve() else {
+                return #expect(Bool(false))
+            }
+            
+            lattice.transaction {
+                for _ in 0..<100 {
+                    lattice.add(Person())
+                }
+            }
+        }
+        let t2 = Task.detached { [tsr = lattice.sendableReference] in
+            guard let lattice = tsr.resolve() else {
+                return #expect(Bool(false))
+            }
+            lattice.transaction {
+                for _ in 0..<100 {
+                    lattice.add(Person())
+                }
+            }
+        }
+        
+        await t1.value
+        await t2.value
+    }
 }

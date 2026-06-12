@@ -39,6 +39,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         let objectIdentifier: ObjectIdentifier
         var cxxObserverId: UInt64?
         var cxxLatticeRef: lattice.swift_lattice_ref?
+        
         init(_ model: any Model) {
             self.instance = model
             self.objectIdentifier = ObjectIdentifier(model)
@@ -200,9 +201,18 @@ final class ModelInstanceRegistry: @unchecked Sendable {
             if let excludeId = excludingInstanceId, ref.objectIdentifier == excludeId {
                 continue
             }
-            // Trigger both Combine (ObservableObject) and Observation (@Observable) systems
-            model._objectWillChange_send()
-            model._triggerObservers_send(keyPath: propertyName)
+            Task {
+                // Trigger both Combine (ObservableObject) and Observation (@Observable) systems
+                if let isolation = model.lattice?.isolation {
+                    await isolation.invoke { _ in
+                        ref.instance?._objectWillChange_send()
+                        ref.instance?._triggerObservers_send(keyPath: propertyName)
+                    }
+                } else {
+                    ref.instance?._objectWillChange_send()
+                    ref.instance?._triggerObservers_send(keyPath: propertyName)
+                }
+            }
         }
     }
 }

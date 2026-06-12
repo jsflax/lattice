@@ -42,6 +42,37 @@ enum LinkCompoundUniqueV1 {
     }
 }
 
+// Mixed scalar + link compound unique WITH allowsUpsert — mirrors TraderKit's
+// `LatticeHistoricalSignal` shape: @Unique(symbol, date, interval, trainedModel,
+// allowsUpsert: true) where `trainedModel` is a to-one link.
+enum LinkCompoundUpsert {
+    @Model final class TrainedModel {
+        var name: String = ""
+    }
+    @Model final class Row {
+        @Unique(compoundedWith: \Self.date, \Self.interval, \Self.model, allowsUpsert: true)
+        var symbol: String = ""
+        var date: Date = Date(timeIntervalSinceReferenceDate: 0)
+        var interval: String = "oneDay"
+        var model: LinkCompoundUpsert.TrainedModel?
+        // `payload` is the field that should change on a successful upsert.
+        var payload: Float = 0
+    }
+}
+
+// V1 counterpart of `LinkCompoundUpsert.Row` — NO @Unique. Used to replicate the
+// real-world scenario where the constraint (and its `model__link_gid` shadow
+// column) is added to an *existing* table via migration, then rows are inserted.
+enum LinkCompoundUpsertV1 {
+    @Model final class Row {
+        var symbol: String = ""
+        var date: Date = Date(timeIntervalSinceReferenceDate: 0)
+        var interval: String = "oneDay"
+        var model: LinkCompoundUpsert.TrainedModel?
+        var payload: Float = 0
+    }
+}
+
 class LinkCompoundUniqueTests: BaseTest {
 
     @Test func test_schemaBootsWithCompoundUniqueOnLinkFields() throws {
@@ -126,6 +157,124 @@ class LinkCompoundUniqueTests: BaseTest {
                     configuration: .init(fileURL: dbPath))
                 lattice.close()
             }
+        }
+
+        try? Lattice.delete(for: .init(fileURL: dbPath))
+    }
+
+    // A compound @Unique that mixes scalar columns with a to-one link column
+    // AND sets allowsUpsert: true. Pre-fix, *any* insert crashed
+    // ("no such column: model" — get_upsert_columns returned the raw link name
+    // instead of the `model__link_gid` shadow). The fix resolves link constraint
+    // columns to their shadow AND materializes the link's globalId into the
+    // shadow column during the row INSERT, so `ON CONFLICT (..., model__link_gid)
+    // DO UPDATE` actually fires for a link-bearing key — overwrite-in-place works.
+    @Test func test_compoundUniqueWithLink_allowsUpsert_replacesNotDuplicates() throws {
+        let lattice = try testLattice(
+            LinkCompoundUpsert.TrainedModel.self,
+            LinkCompoundUpsert.Row.self)
+
+        let m = LinkCompoundUpsert.TrainedModel(); m.name = "M"; lattice.add(m)
+        let d = Date(timeIntervalSinceReferenceDate: 1_000)
+
+        let r1 = LinkCompoundUpsert.Row()
+        r1.symbol = "NVDA"; r1.date = d; r1.interval = "oneDay"; r1.model = m; r1.payload = 1
+        lattice.add(r1)   // pre-fix: fatalError "no such column: model"
+        #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 1)
+
+        // Same (symbol, date, interval, model) → upsert: count stays 1, payload replaced.
+        let r2 = LinkCompoundUpsert.Row()
+        r2.symbol = "NVDA"; r2.date = d; r2.interval = "oneDay"; r2.model = m; r2.payload = 2
+        lattice.add(r2)
+        #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 1)
+        #expect(lattice.objects(LinkCompoundUpsert.Row.self).first?.payload == 2)
+
+        // Different model on the same scalars → distinct row.
+        let m2 = LinkCompoundUpsert.TrainedModel(); m2.name = "M2"; lattice.add(m2)
+        let r3 = LinkCompoundUpsert.Row()
+        r3.symbol = "NVDA"; r3.date = d; r3.interval = "oneDay"; r3.model = m2; r3.payload = 3
+        lattice.add(r3)
+        #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 2)
+
+        // Same model, different date → distinct row.
+        let r4 = LinkCompoundUpsert.Row()
+        r4.symbol = "NVDA"; r4.date = Date(timeIntervalSinceReferenceDate: 2_000)
+        r4.interval = "oneDay"; r4.model = m; r4.payload = 4
+        lattice.add(r4)
+        #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 3)
+
+        // Upsert the (m, d) row once more — still 3 rows, that row's payload is 5.
+        let r5 = LinkCompoundUpsert.Row()
+        r5.symbol = "NVDA"; r5.date = d; r5.interval = "oneDay"; r5.model = m; r5.payload = 5
+        lattice.add(r5)
+        #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 3)
+        #expect(Set(lattice.objects(LinkCompoundUpsert.Row.self).snapshot().map(\.payload)) == [5, 3, 4])
+    }
+
+    // Replicates the TraderKit scenario: a table that existed WITHOUT the
+    // constraint gets `@Unique(scalar..., <link>, allowsUpsert: true)` added on a
+    // later open (Phase 8a materializes the `model__link_gid` shadow column + the
+    // unique index on the existing table), and then a fresh `add` is performed.
+    // The real-world failure was `Lattice.swift:918: Failed to prepare insert:
+    // table main.LatticeHistoricalSignal has no column named trainedModel__link_gid`.
+    @Test func test_compoundUniqueWithLink_allowsUpsert_addedViaMigration_thenInsert() throws {
+        let dbPath = FileManager.default.temporaryDirectory
+            .appending(path: "\(String.random(length: 32)).sqlite")
+
+        // V1: no constraint on Row. Insert a TrainedModel + one Row.
+        try autoreleasepool {
+            let lattice = try Lattice(
+                LinkCompoundUpsert.TrainedModel.self,
+                LinkCompoundUpsertV1.Row.self,
+                configuration: .init(fileURL: dbPath))
+            let m = LinkCompoundUpsert.TrainedModel(); m.name = "M"; lattice.add(m)
+            let r = LinkCompoundUpsertV1.Row()
+            r.symbol = "NVDA"; r.date = Date(timeIntervalSinceReferenceDate: 1_000)
+            r.interval = "oneDay"; r.model = m; r.payload = 1
+            lattice.add(r)
+            #expect(lattice.objects(LinkCompoundUpsertV1.Row.self).count == 1)
+            lattice.close()
+        }
+
+        // V2: reopen with the @Unique(... <link>, allowsUpsert: true)-bearing Row.
+        // Phase 8a adds `model__link_gid` + the unique index + backfills the shadow.
+        do {
+            let lattice = try Lattice(
+                LinkCompoundUpsert.TrainedModel.self,
+                LinkCompoundUpsert.Row.self,
+                configuration: .init(fileURL: dbPath))
+            #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 1)
+            let m = lattice.objects(LinkCompoundUpsert.TrainedModel.self).first!
+
+            // Fresh INSERT into the just-migrated table — pre-fix this crashed.
+            let r2 = LinkCompoundUpsert.Row()
+            r2.symbol = "NVDA"; r2.date = Date(timeIntervalSinceReferenceDate: 2_000)
+            r2.interval = "oneDay"; r2.model = m; r2.payload = 2
+            lattice.add(r2)
+            #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 2)
+
+            // Upsert the migrated row (same (symbol, date, interval, model) as the V1 row).
+            let r3 = LinkCompoundUpsert.Row()
+            r3.symbol = "NVDA"; r3.date = Date(timeIntervalSinceReferenceDate: 1_000)
+            r3.interval = "oneDay"; r3.model = m; r3.payload = 99
+            lattice.add(r3)
+            #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 2)
+            #expect(Set(lattice.objects(LinkCompoundUpsert.Row.self).snapshot().map(\.payload)) == [99, 2])
+        }
+
+        // Reopen once more and add again — exercises the path where the shadow
+        // column already exists (Phase 8a is a no-op) and a new connection inserts.
+        do {
+            let lattice = try Lattice(
+                LinkCompoundUpsert.TrainedModel.self,
+                LinkCompoundUpsert.Row.self,
+                configuration: .init(fileURL: dbPath))
+            let m = lattice.objects(LinkCompoundUpsert.TrainedModel.self).first!
+            let r4 = LinkCompoundUpsert.Row()
+            r4.symbol = "NVDA"; r4.date = Date(timeIntervalSinceReferenceDate: 3_000)
+            r4.interval = "oneDay"; r4.model = m; r4.payload = 3
+            lattice.add(r4)
+            #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 3)
         }
 
         try? Lattice.delete(for: .init(fileURL: dbPath))

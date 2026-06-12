@@ -286,6 +286,35 @@ extension Migration {
         }
         return T(dynamicObject: ref)
     }
+
+    /// All children whose single-link `link` property points at `parent`,
+    /// hydrated from the current database state. Only valid inside a
+    /// migration block. The inverse of `lookup` — use it for FK-to-List
+    /// backfills, appending the children to the new parent row's `List`:
+    /// ```swift
+    /// Migration((from: V3.Model.self, to: Model.self), blocks: { old, new in
+    ///     let signals = Migration.children(Signal.self, of: old, via: \.model)
+    ///     for signal in signals { new.signals.append(signal) }
+    /// })
+    /// ```
+    /// `parent` is typically the OLD-schema snapshot model (e.g. `V3.Model`)
+    /// while `link` targets the CURRENT model type — only the parent's
+    /// globalId is read from it; table and property names come from the
+    /// keypath's types, which share entityName with their snapshots.
+    public static func children<C: Model, L: Model>(_ type: C.Type,
+                                                    of parent: some Model,
+                                                    via link: KeyPath<C, L?>) -> [C] {
+        guard let parentGid = parent.globalId else { return [] }
+        let count = lattice.migrationLookupBacklinks(
+            childTable: std.string(C.entityName),
+            parentTable: std.string(L.entityName),
+            linkProperty: std.string(_name(for: link)),
+            parentGlobalId: std.string(parentGid.uuidString))
+        return (0..<count).compactMap { index in
+            guard let ref = lattice.migrationTakeBacklinkResult(at: index) else { return nil }
+            return C(dynamicObject: ref)
+        }
+    }
 }
 
 /// A block that handles schema migration.

@@ -157,7 +157,7 @@ actor URLChangeSyncTests {
             let serverLattice = try Lattice(for: [SimpleSyncObject.self],
                                             configuration: self.serverConfigA)
             for await changes in serverLattice.changeStream {
-                let resolved = changes.compactMap { $0.resolve(on: serverLattice) }
+                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
                 let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
                 if touched, serverLattice.objects(SimpleSyncObject.self)
                     .first(where: { $0.value == preKickValue }) != nil { break }
@@ -185,7 +185,7 @@ actor URLChangeSyncTests {
             let serverLattice = try Lattice(for: [SimpleSyncObject.self],
                                             configuration: self.serverConfigB)
             for await changes in serverLattice.changeStream {
-                let resolved = changes.compactMap { $0.resolve(on: serverLattice) }
+                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
                 let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
                 if touched, serverLattice.objects(SimpleSyncObject.self)
                     .first(where: { $0.value == postKickValue }) != nil { break }
@@ -228,7 +228,7 @@ actor URLChangeSyncTests {
             let serverLattice = try Lattice(for: [SimpleSyncObject.self],
                                             configuration: self.serverConfigA)
             for await changes in serverLattice.changeStream {
-                let resolved = changes.compactMap { $0.resolve(on: serverLattice) }
+                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
                 let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
                 if touched, serverLattice.objects(SimpleSyncObject.self)
                     .first(where: { $0.value == 42 }) != nil { break }

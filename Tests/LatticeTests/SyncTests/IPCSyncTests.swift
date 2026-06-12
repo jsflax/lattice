@@ -114,7 +114,7 @@ actor IPCSyncTests {
                 let stream = db.changeStream
                 continuation.resume()
                 for await changes in stream {
-                    let resolved = changes.compactMap { $0.resolve(on: db) }
+                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: db) }
                     if resolved.contains(where: { $0.tableName == table && $0.operation == operation }) {
                         return
                     }

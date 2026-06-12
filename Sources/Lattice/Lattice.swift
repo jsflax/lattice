@@ -464,6 +464,12 @@ public struct Lattice {
         /// IPC sync targets for cross-process database synchronization.
         public var ipcTargets: [IPCSyncTarget]?
 
+        /// Statement-level SQLite busy timeout in milliseconds, applied to all
+        /// connections of this database. Headless/server processes can keep the
+        /// default (30s); interactive apps that write on the main thread should
+        /// set a small value (e.g. 5000) so a stuck writer can't hang the UI.
+        public var busyTimeoutMs: Int = 30_000
+
         // MARK: Equatable / Hashable (migration excluded — closures aren't comparable)
         public static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.isStoredInMemoryOnly == rhs.isStoredInMemoryOnly &&
@@ -473,7 +479,8 @@ public struct Lattice {
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
             lhs.syncFilter == rhs.syncFilter &&
-            lhs.ipcTargets == rhs.ipcTargets
+            lhs.ipcTargets == rhs.ipcTargets &&
+            lhs.busyTimeoutMs == rhs.busyTimeoutMs
         }
 
         public func hash(into hasher: inout Hasher) {
@@ -485,12 +492,13 @@ public struct Lattice {
             hasher.combine(isReadOnly)
             hasher.combine(syncFilter)
             hasher.combine(ipcTargets)
+            hasher.combine(busyTimeoutMs)
         }
 
         public init(isStoredInMemoryOnly: Bool = false, fileURL: URL? = nil,
                     authorizationToken: String? = nil, wssEndpoint: URL? = nil,
                     isReadOnly: Bool = false, migration: [Int: Migration]? = nil,
-                    syncFilter: SyncFilter? = nil) {
+                    syncFilter: SyncFilter? = nil, busyTimeoutMs: Int = 30_000) {
             self.isStoredInMemoryOnly = isStoredInMemoryOnly
             let fileURL = if isStoredInMemoryOnly {
                 URL(fileURLWithPath: ":memory:")
@@ -513,6 +521,7 @@ public struct Lattice {
             self.isReadOnly = isReadOnly
             self.migration = migration
             self.syncFilter = syncFilter
+            self.busyTimeoutMs = busyTimeoutMs
         }
 
         fileprivate func cxxConfiguration(isolation: isolated (any Actor)? = #isolation) -> lattice.swift_configuration {
@@ -536,6 +545,7 @@ public struct Lattice {
                       currentScheduler.scheduler)
             }
             config.read_only = isReadOnly
+            config.busy_timeout_ms = Int32(busyTimeoutMs)
             if let syncFilter {
                 var filterEntries = lattice.SyncFilterVector()
                 for (tableName, whereClause) in syncFilter.entries {
@@ -616,7 +626,8 @@ public struct Lattice {
         cxxLatticeRef.get()
     }
     internal var isolation: (any Actor)?
-
+    public var _isolation: (any Actor)? { isolation }
+    
     internal init(isolation: isolated (any Actor)? = #isolation,
                   ref: lattice.swift_lattice_ref) {
         self = Self.cacheLock.withLockUnchecked {
@@ -745,7 +756,12 @@ public struct Lattice {
                 guard let oldRef = lattice.migrationGetOldRow(),
                       let newRef = lattice.migrationGetNewRow() else { return }
 
-                if let currentMigration = migCtx.migration[migCtx.targetVersion] {
+                // Dispatch to the Migration for the version step the bridge is
+                // currently walking — NOT the final target. A v1→v3 walk fires
+                // v2 tables' rows first; dispatching those into migration[3]
+                // (which has no blocks for them) would preconditionFailure.
+                let stepVersion = Int(lattice.migrationGetCurrentVersion())
+                if let currentMigration = migCtx.migration[stepVersion] {
                     currentMigration._sendRow(entityName: entityName, oldRef, newRef)
                 }
             }, { rawCtx in
@@ -870,36 +886,56 @@ public struct Lattice {
     }
 
     /// Recursively discover all Model types linked from the given schema.
+    ///
+    /// Explicit registrations win: a transitively-discovered type whose
+    /// entityName is already covered is skipped. Versioned snapshot models
+    /// (e.g. `V1.Foo`) share entityNames with their current classes, and a
+    /// snapshot's link property can resolve to the CURRENT class — without
+    /// the entityName guard that pulls the current schema into a lattice
+    /// that explicitly registered the snapshot, leaving two competing
+    /// schemas for one table (wrong unique indexes, upsert prepare errors).
     private static func discoverAllTypes(from initialSchema: [any Model.Type]) -> [any Model.Type] {
         var discoveredTypes = Set<ObjectIdentifier>()
-        var typesToProcess = initialSchema
+        var coveredEntityNames = Set<String>()
         var completeSchema: [any Model.Type] = []
+        var typesToProcess: [any Model.Type] = []
 
+        func enqueueLinkedTypes(of type: any Model.Type) {
+            for (_, propertyType) in type.properties {
+                if let linkPropertyType = propertyType as? any LinkProperty.Type {
+                    typesToProcess.append(linkPropertyType.modelType)
+                }
+            }
+        }
+
+        // Explicit registrations first — they own their entityNames.
+        for type in initialSchema {
+            let typeId = ObjectIdentifier(type)
+            guard !discoveredTypes.contains(typeId) else { continue }
+            discoveredTypes.insert(typeId)
+            coveredEntityNames.insert(type.entityName)
+            completeSchema.append(type)
+        }
+        for type in completeSchema {
+            enqueueLinkedTypes(of: type)
+        }
+
+        // Transitive discovery: skip any type whose table is already covered.
+        // Versioned snapshot models (e.g. `V1.Foo`) share entityNames with
+        // their current classes, and a snapshot's link property can resolve
+        // to the CURRENT class — without this guard that pulls the current
+        // schema into a lattice that explicitly registered the snapshot,
+        // leaving two competing schemas for one table (wrong unique indexes,
+        // upsert prepare failures).
         while !typesToProcess.isEmpty {
             let currentType = typesToProcess.removeFirst()
             let typeId = ObjectIdentifier(currentType)
-
-            // Skip if already processed
-            guard !discoveredTypes.contains(typeId) else {
-                continue
-            }
-
-            // Mark as discovered and add to result
+            guard !discoveredTypes.contains(typeId),
+                  !coveredEntityNames.contains(currentType.entityName) else { continue }
             discoveredTypes.insert(typeId)
+            coveredEntityNames.insert(currentType.entityName)
             completeSchema.append(currentType)
-
-            // Find all LinkProperty types in this Model's properties
-            for (_, propertyType) in currentType.properties {
-                if let linkPropertyType = propertyType as? any LinkProperty.Type {
-                    let linkedModelType = linkPropertyType.modelType
-                    let linkedTypeId = ObjectIdentifier(linkedModelType)
-
-                    // Add to processing queue if not already discovered
-                    if !discoveredTypes.contains(linkedTypeId) {
-                        typesToProcess.append(linkedModelType)
-                    }
-                }
-            }
+            enqueueLinkedTypes(of: currentType)
         }
 
         return completeSchema
@@ -966,7 +1002,8 @@ public struct Lattice {
     func finishObserving<T: Model>(_ object: T) {
     }
     
-    public func object<T>(_ type: T.Type = T.self, primaryKey: Int64) -> T? where T: Model {
+    public func object<T>(isolation: isolated (any Actor)? = #isolation,
+                          _ type: T.Type = T.self, primaryKey: Int64) -> T? where T: Model {
         let object = cxxLattice.object(primaryKey, std.string(type.entityName))
         if object.hasValue {
             return T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(object.pointee).make_shared()))
@@ -1033,6 +1070,14 @@ public struct Lattice {
     /// to ensure durability or reduce WAL file size.
     public func checkpoint() {
         cxxLattice.checkpoint()
+    }
+
+    /// Incremental query-planner statistics refresh (`PRAGMA optimize`).
+    /// Cheap — only re-analyzes tables with missing or stale stats. Long-lived
+    /// processes should call this from maintenance paths; the automatic
+    /// close-time refresh never runs when the process is killed.
+    public func optimize() {
+        cxxLattice.optimize()
     }
 
     /// Drop and rebuild the vec0 index, purging orphan entries that bloat chunk storage.
@@ -1568,54 +1613,57 @@ public struct Lattice {
                     }
                 }
 
+                // Filtered observers fire on RESULT-SET membership, not on
+                // "did the changed fields satisfy the predicate". The old
+                // changedFields-vs-predicate check had two failure modes:
+                // (1) a member row mutating an unrelated column (e.g. a
+                // running job's progress tick — predicate is on `status`)
+                // never fired, freezing observing UI; (2) with auditing
+                // disabled (_SyncControl.disabled=1) there are NO AuditLog
+                // rows, so filtered observers never fired at all.
+                //
+                // INSERT membership is knowable (evaluate the predicate
+                // against the live row). UPDATE/DELETE membership-before-the-
+                // change is NOT knowable post-hoc (audit rows carry new
+                // values only), so a row leaving the set can only be caught
+                // by firing conservatively. Conservative fires are cheap:
+                // LatticeQuery debounces and re-fetches at most once per
+                // frame.
+                func rowMatchesNow(_ rowId: Int64) -> Bool {
+                    guard let `where` else { return true }
+                    return TableResults<T>(self)
+                        .where({ _ in `where` && Query<Bool>.primaryKeyEquals(rowId) })
+                        .first != nil
+                }
                 for entry in changes {
                     let operation = entry.operation
                     let rowId = entry.rowId
                     switch operation {
                     case "INSERT":
-                        if let `where` {
-                            let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                            let auditResults = TableResults<AuditLog>(self).where({
-                                $0.rowId == rowId && convertedQuery && $0.operation == .insert
-                            })
-                            if let _ = auditResults.first {
-                                await dispatch(.insert(rowId))
-                            }
-                        } else {
-                            if self.object(modelType, primaryKey: rowId) != nil {
-                                await dispatch(.insert(rowId))
-                            }
+                        if rowMatchesNow(rowId) {
+                            await dispatch(.insert(rowId))
                         }
                     case "DELETE":
+                        // Pre-delete membership IS knowable when auditing is
+                        // on: the audit DELETE row carries the OLD values.
+                        // Without an audit row (auditing disabled), fire
+                        // conservatively — prior state is unknowable.
                         if let `where` {
                             let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                            let auditResults = TableResults<AuditLog>(self).where({
+                            let wasMember = TableResults<AuditLog>(self).where({
                                 $0.rowId == rowId && convertedQuery && $0.operation == .delete
-                            })
-                            if let _ = auditResults.first {
+                            }).first != nil
+                            let anyAuditForRow = TableResults<AuditLog>(self).where({
+                                $0.rowId == rowId && $0.operation == .delete
+                            }).first != nil
+                            if wasMember || !anyAuditForRow {
                                 await dispatch(.delete(rowId))
                             }
                         } else {
                             await dispatch(.delete(rowId))
                         }
                     case "UPDATE":
-                        if rowId == 0 {
-                            // Broadcast: internal table (link/list) change resolved to parent UPDATE.
-                            // No specific row — fire unconditionally for all table-level observers.
-                            await dispatch(.update(rowId))
-                        } else if let `where` {
-                            let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                            let auditResults = TableResults<AuditLog>(self).where({
-                                $0.rowId == rowId && convertedQuery && $0.operation == .update
-                            })
-                            if let _ = auditResults.first {
-                                await dispatch(.update(rowId))
-                            }
-                        } else {
-                            if self.object(modelType, primaryKey: rowId) != nil {
-                                await dispatch(.update(rowId))
-                            }
-                        }
+                        await dispatch(.update(rowId))
                     default:
                         break
                     }
@@ -1682,7 +1730,11 @@ public struct Lattice {
 
     public func beginTransaction(isolation: isolated (any Actor)? = #isolation) {
         // Start the transaction.
-        cxxLattice.begin_transaction()
+        var cxxError = lattice.cxx_error()
+        cxxLattice.begin_transaction(&cxxError)
+        guard cxxError.msg.empty() else {
+            fatalError(String(cxxError.msg))
+        }
     }
     
     public func commitTransaction(isolation: isolated (any Actor)? = #isolation) {
@@ -1829,11 +1881,13 @@ extension Lattice {
     public static func setLogFile(_ fileURL: URL) {
         let path = fileURL.path(percentEncoded: false)
         guard let cFilePointer = fopen(path, "w") else {
-            print("Failed to open log file: \(path)")
+            // stderr, never stdout: stdout may be a wire protocol (MCP stdio)
+            // and any stray line corrupts the stream.
+            fputs("Failed to open log file: \(path)\n", stderr)
             return
         }
         lattice.set_log_file(cFilePointer)
-        print("Log file path: \(path)")
+        fputs("Log file path: \(path)\n", stderr)
     }
 }
 

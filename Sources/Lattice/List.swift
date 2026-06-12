@@ -82,6 +82,17 @@ public struct ModelLinkListRef<T: Model>: @unchecked Sendable, LinkListRef {
         return (0..<results.count).map { Int(results[$0]) }
     }
 
+    /// List positions matching `predicate` (nil = all), ordered by a target
+    /// column (nil = list order). Positions only — no rows are hydrated.
+    public func indices(matching predicate: String?,
+                        orderedBy column: String?,
+                        ascending: Bool) -> [Int] {
+        let results = _ref.findIndices(predicate: std.string(predicate ?? ""),
+                                       orderBy: std.string(column ?? ""),
+                                       ascending: ascending)
+        return (0..<results.count).map { Int(results[$0]) }
+    }
+
     public var linkTableName: String {
         String(_ref.linkTableName)
     }
@@ -208,7 +219,9 @@ public struct List<Element>: MutableCollection, BidirectionalCollection, SchemaP
     }
 
     public func first(where predicate: Predicate<Element>) -> Element? {
-        linkListRef.get(at: 0)
+        let query = predicate(Query<Element>()).predicate
+        guard let idx = linkListRef.indicesWhere(query).first else { return nil }
+        return linkListRef.get(at: idx)
     }
 
     public func remove(where predicate: Predicate<Element>) {
@@ -219,13 +232,19 @@ public struct List<Element>: MutableCollection, BidirectionalCollection, SchemaP
             linkListRef.remove(at: idx - i)
         }
     }
-    
-    public func snapshot() -> [Element] {
-        fatalError()
-    }
-    
-    public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> any Results<Element> {
-        fatalError()
+
+    /// Materialize elements into a stable buffer. Prefer iterating the list
+    /// (or a `where`/`sortedBy` slice) directly — elements hydrate lazily
+    /// there. Use this when you need a stable buffer, e.g. deleting elements
+    /// while iterating (deletion cascade-removes rows from the live list).
+    ///
+    /// `limit`/`offset` mirror `Results.snapshot(limit:offset:)` and bound
+    /// hydration to the requested window (list positions, post-`offset`).
+    public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
+        let count = linkListRef.count()
+        let start = Swift.min(Swift.max(Int(offset ?? 0), 0), count)
+        let end = limit.map { Swift.min(start + Swift.max(Int($0), 0), count) } ?? count
+        return (start..<end).map { linkListRef.get(at: $0) }
     }
 
     #if canImport(Combine)
@@ -243,9 +262,98 @@ public struct List<Element>: MutableCollection, BidirectionalCollection, SchemaP
 
 extension List: LinkProperty where Element: Model {
     public typealias ModelType = Element
-    
+
     public static var modelType: any Model.Type {
         Element.self
+    }
+}
+
+// MARK: - Lazy query views
+
+/// A lazy, SQL-backed view over a managed `List` — what `List.where(_:)` and
+/// `List.sortedBy(_:)` return. Membership and order come from ONE SQL query
+/// over the link table joined to the target table (positions only — no row
+/// data); elements hydrate one at a time on access, preserving Lattice's
+/// lazy-loading model. Views compose: `list.where { … }.sortedBy(…)` runs a
+/// single combined query.
+///
+/// Positions are fixed when the view is created. If you mutate the underlying
+/// list while iterating — e.g. deleting elements, which cascade-removes them
+/// from the list — materialize first with `snapshot()`.
+public struct ListSlice<Element>: RandomAccessCollection
+    where Element: Model, Element.ListRef == ModelLinkListRef<Element> {
+
+    private let listRef: ModelLinkListRef<Element>
+    private let predicate: String?
+    private let sort: (column: String, ascending: Bool)?
+    private let positions: [Int]
+
+    init(listRef: ModelLinkListRef<Element>,
+         predicate: String?,
+         sort: (column: String, ascending: Bool)?) {
+        self.listRef = listRef
+        self.predicate = predicate
+        self.sort = sort
+        self.positions = listRef.indices(matching: predicate,
+                                         orderedBy: sort?.column,
+                                         ascending: sort?.ascending ?? true)
+    }
+
+    public var startIndex: Int { 0 }
+    public var endIndex: Int { positions.count }
+    public func index(after i: Int) -> Int { i + 1 }
+    public func index(before i: Int) -> Int { i - 1 }
+
+    /// Hydrates only the accessed element.
+    public subscript(position: Int) -> Element {
+        listRef.get(at: positions[position])
+    }
+
+    /// Narrow the view with an additional predicate (combined into one query).
+    public func `where`(_ predicate: Predicate<Element>) -> ListSlice<Element> {
+        let query = predicate(Query<Element>()).predicate
+        let combined = self.predicate.map { "(\($0)) AND (\(query))" } ?? query
+        return ListSlice(listRef: listRef, predicate: combined, sort: sort)
+    }
+
+    /// Re-sort the view (replaces any existing sort; one combined query).
+    public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> ListSlice<Element> {
+        ListSlice(listRef: listRef, predicate: predicate,
+                  sort: ListSlice.sortColumn(for: sortDescriptor))
+    }
+
+    /// Materialize the view's elements (e.g. before mutating the list).
+    ///
+    /// `limit`/`offset` mirror `Results.snapshot(limit:offset:)` and bound
+    /// hydration to the requested window. Note: the view's position query ran
+    /// (unbounded) at view creation — the bound here saves row hydration,
+    /// which is the dominant cost.
+    public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
+        let start = Swift.min(Swift.max(Int(offset ?? 0), 0), positions.count)
+        let end = limit.map { Swift.min(start + Swift.max(Int($0), 0), positions.count) } ?? positions.count
+        return (start..<end).map { listRef.get(at: positions[$0]) }
+    }
+
+    static func sortColumn(for descriptor: SortDescriptor<Element>) -> (column: String, ascending: Bool)? {
+        guard let keyPath = descriptor.keyPath else { return nil }
+        return (_name(for: keyPath), descriptor.order == .forward)
+    }
+}
+
+extension List where Element: Model, Element.ListRef == ModelLinkListRef<Element> {
+    /// Lazy filtered view — the predicate runs in SQL against the link-table
+    /// join; elements hydrate on access.
+    public func `where`(_ predicate: Predicate<Element>) -> ListSlice<Element> {
+        let query = predicate(Query<Element>()).predicate
+        return ListSlice(listRef: linkListRef, predicate: query, sort: nil)
+    }
+
+    /// Lazy sorted view — ordering runs in SQL against the link-table join;
+    /// elements hydrate on access (`.first` hydrates exactly one).
+    public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> ListSlice<Element> {
+        ListSlice(listRef: linkListRef,
+                  predicate: nil,
+                  sort: ListSlice.sortColumn(for: sortDescriptor))
     }
 }
 

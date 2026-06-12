@@ -165,7 +165,7 @@ class CascadeLinkCleanupTests: BaseTest {
             var batches: [YieldBatch] = []
             var idx = 0
             for await refs in l.changeStream {
-                let resolved = refs.compactMap { $0.resolve(on: l) }
+                let resolved = refs.compactMap { $0.resolve(isolation: nil, on: l) }
                 let deletes = resolved
                     .filter { $0.operation == .delete }
                     .map { DeleteAudit(table: $0.tableName) }

@@ -137,7 +137,7 @@ actor SyncTests {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
                         break
                     }
@@ -152,7 +152,7 @@ actor SyncTests {
                 let changeStream = lattice1.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: lattice1) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: lattice1) })
                     if resolved.contains(where: { $0.isSynchronized && $0.tableName == "SimpleSyncObject" }) {
                         break
                     }
@@ -179,7 +179,7 @@ actor SyncTests {
                 continuation.resume()
                 var updateCount = 0
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     let updates = resolved.filter { $0.operation == .update && $0.tableName == "SimpleSyncObject" }
                     updateCount += updates.count
                     if updateCount >= 2 {
@@ -204,7 +204,7 @@ actor SyncTests {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     if resolved.contains(where: { $0.operation == .delete && $0.tableName == "SimpleSyncObject" }) {
                         break
                     }
@@ -240,7 +240,7 @@ actor SyncTests {
                 let changeStream = l2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap { $0.resolve(on: l2) }
+                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: l2) }
                     if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SyncParent" }) {
                         return
                     }
@@ -285,7 +285,7 @@ actor SyncTests {
                 let changeStream = l2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap { $0.resolve(on: l2) }
+                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: l2) }
                     if resolved.contains(where: { $0.operation == .delete && $0.tableName == linkTable }) {
                         return
                     }
@@ -326,7 +326,7 @@ actor SyncTests {
                 let changeStream = l2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap { $0.resolve(on: l2) }
+                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: l2) }
                     if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SyncParent" }) {
                         return
                     }
@@ -363,7 +363,7 @@ actor SyncTests {
                 let changeStream = l2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap { $0.resolve(on: l2) }
+                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: l2) }
                     if resolved.contains(where: { $0.operation == .delete && $0.tableName == linkTable }) {
                         return
                     }
@@ -437,7 +437,7 @@ actor SyncTests {
                 continuation.resume()
                 var insertCount = 0
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     insertCount += changes.count(where: { $0.operation == .insert })
                     // 3 model inserts: 1 parent + 2 children
                     // (link table AuditLog entries don't generate changeStream notifications)
@@ -452,7 +452,7 @@ actor SyncTests {
                 let changeStream = lattice1.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice1) })
+                    let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice1) })
                     if changes.allSatisfy({ $0.isSynchronized }) {
                         break
                     }
@@ -542,7 +542,7 @@ actor SyncTests {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     if changes.contains(where: { $0.operation == .insert && $0.tableName == "SyncVectorObject" }) {
                         break
                     }
@@ -558,7 +558,7 @@ actor SyncTests {
                 let changeStream = lattice1.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice1) })
+                    let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice1) })
                     if changes.allSatisfy({ $0.isSynchronized }) {
                         break
                     }
@@ -592,7 +592,7 @@ actor SyncTests {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     if changes.contains(where: { $0.operation == .update && $0.tableName == "SyncVectorObject" }) {
                         break
                     }
@@ -620,7 +620,7 @@ actor SyncTests {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     if changes.contains(where: { $0.operation == .insert && $0.tableName == "SyncGeoObject" }) {
                         break
                     }
@@ -635,7 +635,7 @@ actor SyncTests {
                 let changeStream = lattice1.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice1) })
+                    let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice1) })
                     if changes.allSatisfy({ $0.isSynchronized }) {
                         break
                     }
@@ -664,7 +664,7 @@ actor SyncTests {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     if changes.contains(where: { $0.operation == .update && $0.tableName == "SyncGeoObject" }) {
                         break
                     }
@@ -692,7 +692,7 @@ actor SyncTests {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     if changes.contains(where: { $0.operation == .insert && $0.tableName == "SyncEmbeddedObject" }) {
                         break
                     }
@@ -707,7 +707,7 @@ actor SyncTests {
                 let changeStream = lattice1.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice1) })
+                    let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice1) })
                     if changes.allSatisfy({ $0.isSynchronized }) {
                         break
                     }
@@ -733,7 +733,7 @@ actor SyncTests {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let changes = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     if changes.contains(where: { $0.operation == .update && $0.tableName == "SyncEmbeddedObject" }) {
                         break
                     }
@@ -760,7 +760,7 @@ actor SyncTests {
                 let changeStream = l2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: l2) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: l2) })
                     if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
                         break
                     }
@@ -780,7 +780,7 @@ actor SyncTests {
                 let changeStream = l1.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: l1) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: l1) })
                     if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
                         break
                     }
@@ -813,7 +813,7 @@ actor SyncTests {
                 let changeStream = server.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: server) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: server) })
                     if resolved.contains(where: { $0.tableName == "SimpleSyncObject" }) {
                         break
                     }
@@ -838,7 +838,7 @@ actor SyncTests {
                 let changeStream = observer.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: observer) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: observer) })
                     if resolved.contains(where: { $0.tableName == "SimpleSyncObject" }) {
                         break
                     }
@@ -878,7 +878,7 @@ actor SyncTests {
                 let changeStream = server.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: server) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: server) })
                     if resolved.contains(where: { $0.tableName == "SimpleSyncObject" }) {
                         break
                     }
@@ -910,7 +910,7 @@ actor SyncTests {
                 let changeStream = observer.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: observer) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: observer) })
                     if resolved.contains(where: { $0.tableName == "SimpleSyncObject" }) {
                         break
                     }
@@ -947,7 +947,7 @@ actor SyncTests {
                 let changeStream = l2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: l2) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: l2) })
                     if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
                         break
                     }
@@ -976,7 +976,7 @@ actor SyncTests {
                 let changeStream = l2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: l2) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: l2) })
                     if resolved.contains(where: { $0.tableName == "SimpleSyncObject" }),
                        l2.objects(SimpleSyncObject.self).contains(where: { $0.value == 200 }) {
                         break
@@ -1028,7 +1028,7 @@ actor SyncTests {
                 let changeStream = l2.changeStream
                 continuation.resume()
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: l2) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: l2) })
                     if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
                         break
                     }
@@ -1099,7 +1099,7 @@ actor SyncTests {
                 continuation.resume()
                 var insertCount = 0
                 for await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(on: lattice2) })
+                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     insertCount += resolved.count(where: { $0.tableName == "SimpleSyncObject" && $0.operation == .insert })
                     if insertCount >= count {
                         break

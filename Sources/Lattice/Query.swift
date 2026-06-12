@@ -413,6 +413,18 @@ public struct Query<T>: Sendable {
     }
 }
 
+extension Query where T == Bool {
+    /// Row-identity match on the primary key column. Observer membership
+    /// checks need "predicate AND id == rowId", but `id` isn't a declared
+    /// model property so dynamic-member lookup can't express it generically.
+    package static func primaryKeyEquals(_ id: Int64) -> Query<Bool> {
+        Query<Bool>(.comparison(operator: .equal,
+                                .keyPath(["id"], options: []),
+                                .constant(id),
+                                options: []))
+    }
+}
+
 // MARK: Numerics
 extension Query where T: _QueryNumeric {
     /// :nodoc:

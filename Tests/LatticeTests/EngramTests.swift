@@ -191,7 +191,7 @@ actor EngramIntegrationTests {
                 var insertCount = 0
                 print("[TEST] Server observer started, waiting for \(expectedSynced) inserts...")
                 for await changes in stream {
-                    let resolved = changes.compactMap { $0.resolve(on: db) }
+                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: db) }
                     let inserts = resolved.filter {
                         $0.tableName == "EngramMemory" && $0.operation == .insert
                     }
@@ -440,7 +440,7 @@ actor EngramSyncRealismTests {
                 continuation.resume()
                 var count = 0
                 for await changes in stream {
-                    let resolved = changes.compactMap { $0.resolve(on: db) }
+                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: db) }
                     let inserts = resolved.filter { $0.tableName == tableName && $0.operation == .insert }
                     if !inserts.isEmpty {
                         count += inserts.count
