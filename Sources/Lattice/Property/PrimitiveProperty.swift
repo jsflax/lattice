@@ -24,7 +24,8 @@ extension UUID: PrimitiveProperty {
 }
 
 extension URL: PrimitiveProperty {
-    public static var defaultValue: URL { .init(filePath: "") }
+    // URL(fileURLWithPath:) instead of URL(filePath:) — the latter is iOS 16+.
+    public static var defaultValue: URL { .init(fileURLWithPath: "") }
     public static var sqlType: String { "TEXT" }
     public static var anyPropertyKind: AnyProperty.Kind {
         .string

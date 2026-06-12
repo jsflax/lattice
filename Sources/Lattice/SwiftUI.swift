@@ -20,7 +20,7 @@ private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "Frame
                 fetch()
             }
         }
-        @MainActor var sortBy: SortDescriptor<T>? {
+        @MainActor var sortBy: KeyPathSort<T>? {
             didSet {
                 fetch()
             }
@@ -32,7 +32,7 @@ private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "Frame
         }
 
         @MainActor init(predicate: @escaping Predicate<T>, fetchLimit: Int? = nil,
-                        sortBy: SortDescriptor<T>?) {
+                        sortBy: KeyPathSort<T>?) {
             self.predicate = predicate
             self.fetchLimit = fetchLimit
             self.sortBy = sortBy
@@ -45,7 +45,7 @@ private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "Frame
             }
             wrappedValue = lattice.objects().where(predicate)
             if let sortBy {
-                wrappedValue = wrappedValue.sortedBy(sortBy)
+                wrappedValue = wrappedValue._sorted(by: sortBy)
             }
             DispatchQueue.main.async {
                 self.objectWillChange.send()
@@ -73,7 +73,7 @@ private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "Frame
             // reliably detects the swap. (The previous bind-once guard kept observing
             // the stale — possibly closed — handle forever.)
             if let current = self.lattice,
-               current.cxxLatticeRef.hash_value() == lattice.cxxLatticeRef.hash_value() {
+               current.backend.identityHash == lattice.backend.identityHash {
                 return  // same handle — keep the existing observation
             }
 
@@ -122,7 +122,7 @@ private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "Frame
                               sort: (any KeyPath<T, V> & Sendable)? = nil,
                               order: SortOrder? = nil) where V: Comparable {
         self.predicate = predicate
-        self._wrapper = .init(wrappedValue: Wrapper(predicate: predicate, fetchLimit: fetchLimit, sortBy: sort.map { SortDescriptor($0, order: order ?? .forward) }))
+        self._wrapper = .init(wrappedValue: Wrapper(predicate: predicate, fetchLimit: fetchLimit, sortBy: sort.map { KeyPathSort<T>(column: _name(for: $0 as PartialKeyPath<T>), order: order ?? .forward) }))
     }
     
     @MainActor public init(fetchLimit: Int) {
@@ -156,16 +156,21 @@ extension EnvironmentValues {
 
 import SwiftUI
 
+// Preview-only scaffolding — DEBUG-only so the shipping module carries neither
+// the test model nor the view. @Bindable and the 2-parameter onChange(of:_:)
+// are iOS 17+, so the view carries the full availability quadruple.
+#if DEBUG
+
 @Model
 final class Person: @unchecked Sendable {
     var name: String
     var age: Int
 }
 
-
+@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
 struct TestView: View {
     @Bindable var person: Person
-    
+
     var body: some View {
         VStack {
             Text("Age: \(person.age)")
@@ -181,21 +186,28 @@ struct TestView: View {
 }
 
 #Preview {
-    let lattice = try! Lattice(Person.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "preview_lattice.sqlite")))
+    // appendingPathComponent / Task.sleep(nanoseconds:) instead of the iOS 16+
+    // appending(path:) / Task.sleep(for:), so the preview body compiles at iOS 15.
+    let lattice = try! Lattice(Person.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("preview_lattice.sqlite")))
     let person = {
         var person = Person()
         lattice.add(person)
         Task.detached { [ref = person.sendableReference] in
-            let lattice = try! Lattice(Person.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "preview_lattice.sqlite")))
+            let lattice = try! Lattice(Person.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("preview_lattice.sqlite")))
             let person = ref.resolve(on: lattice)!
             print(person.globalId)
             while true {
-                try await Task.sleep(for: .seconds(2))
+                try await Task.sleep(nanoseconds: 2_000_000_000)
                 person.age += 1
             }
         }
         return person
     }()
-    TestView(person: lattice.object(primaryKey: person.primaryKey!)!)
+    if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
+        TestView(person: lattice.object(primaryKey: person.primaryKey!)!)
+    } else {
+        Text("Preview requires iOS 17+")
+    }
 }
+#endif  // DEBUG
 #endif

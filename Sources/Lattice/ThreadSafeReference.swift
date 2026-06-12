@@ -2,8 +2,26 @@ import Foundation
 
 public protocol SendableReference<NonSendable>: Sendable {
     associatedtype NonSendable
-    
+
     func resolve(on lattice: Lattice) -> NonSendable?
+}
+
+/// Concrete type-eraser for `SendableReference`. Replaces `any
+/// SendableReference<T>` (a parameterized existential — an iOS-16 runtime
+/// floor) at the few sites that need a heterogeneous/erased reference (e.g.
+/// `Lattice.changeStream`'s `[…]` element). `SendableReference` has a single
+/// requirement, so the eraser is just a captured `@Sendable (Lattice) -> T?`
+/// closure.
+public struct AnySendableReference<NonSendable>: SendableReference {
+    private let _resolve: @Sendable (Lattice) -> NonSendable?
+
+    public init<R: SendableReference>(_ reference: R) where R.NonSendable == NonSendable {
+        self._resolve = { reference.resolve(on: $0) }
+    }
+
+    public func resolve(on lattice: Lattice) -> NonSendable? {
+        _resolve(lattice)
+    }
 }
 
 public protocol LatticeIsolated {
@@ -63,117 +81,98 @@ extension Collection {
     }
 }
 
+// A thread-safe reference to a `Results` query. iOS-15 note: this used to store
+// an `any AnyResultsThreadSafeReference<R>` (a parameterized existential — an
+// iOS-16 runtime floor) and reach it through `as!` casts to that constrained
+// existential (also iOS-16). It now stores a plain `@Sendable (Lattice) -> R?`
+// resolve closure: a concrete type-eraser that back-deploys to iOS 15 and drops
+// every `as!` cast. Each `sendableReference` accessor captures its query state
+// into the closure and rebuilds the concrete `Results` on `resolve`.
 public struct ResultsThreadSafeReference<R: Results>: SendableReference {
-    private let anyResultsThreadSafeReference: any AnyResultsThreadSafeReference<R>
-    
-    fileprivate init(_ results: any AnyResultsThreadSafeReference<R>) {
-        self.anyResultsThreadSafeReference = results
+    private let _resolve: @Sendable (Lattice) -> R?
+
+    fileprivate init(_ resolve: @escaping @Sendable (Lattice) -> R?) {
+        self._resolve = resolve
     }
-    
+
     public func resolve(on lattice: Lattice) -> R? {
-        anyResultsThreadSafeReference.resolve(on: lattice)
-    }
-}
-
-protocol AnyResultsThreadSafeReference<NonSendable>: SendableReference where NonSendable: Results {
-}
-
-private struct TableResultsThreadSafeReference<T: Model>: AnyResultsThreadSafeReference {
-    typealias Res = TableResults<T>
-
-    private let whereStatement: Query<Bool>?
-    // Store as existential to avoid direct SortDescriptor type metadata
-    // reference at link time (swift-foundation bug: AllowedComparison
-    // metadata not exported on Linux release builds)
-    private let sortComparator: (any SortComparator)?
-
-    public init(_ results: TableResults<T>) {
-        self.whereStatement = results.whereStatement
-        self.sortComparator = results.sortStatement
-    }
-
-    public func resolve(on lattice: Lattice) -> (some Results<T>)? {
-        TableResults(lattice, whereStatement: whereStatement, sortStatement: sortComparator)
-    }
-}
-
-private struct VirtualResultsThreadSafeReference<each M: Model, Element>: AnyResultsThreadSafeReference {
-    typealias Res = _VirtualResults<repeat each M, Element>
-
-    private let whereStatement: Query<Bool>?
-    private let sortComparator: (any SortComparator)?
-
-    public init(_ results: Res) {
-        self.whereStatement = results.whereStatement
-        self.sortComparator = results.sortStatement
-    }
-
-    public func resolve(on lattice: Lattice) -> (some Results<Element>)? {
-        Res(lattice, whereStatement: whereStatement, sortStatement: sortComparator)
+        _resolve(lattice)
     }
 }
 
 extension TableResults {
     public var sendableReference: ResultsThreadSafeReference<TableResults<Element>> {
-        .init(TableResultsThreadSafeReference(self) as! (any AnyResultsThreadSafeReference<TableResults<Element>>))
+        let whereStatement = self.whereStatement
+        // Capture the sort as an existential to avoid a direct SortDescriptor type
+        // metadata reference at link time (swift-foundation bug: AllowedComparison
+        // metadata not exported on Linux release builds).
+        let sortComparator: (any SortComparator)? = self.sortStatement
+        return .init { lattice in
+            TableResults(lattice, whereStatement: whereStatement, sortStatement: sortComparator)
+        }
     }
 }
 
+@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
 extension _VirtualResults {
     public var sendableReference: ResultsThreadSafeReference<_VirtualResults<repeat each M, Element>> {
-        .init(VirtualResultsThreadSafeReference(self) as! (any AnyResultsThreadSafeReference<_VirtualResults<repeat each M, Element>>))
+        let whereStatement = self.whereStatement
+        let sortComparator: (any SortComparator)? = self.sortStatement
+        return .init { lattice in
+            Self(lattice, whereStatement: whereStatement, sortStatement: sortComparator)
+        }
     }
 }
 
-private struct NearestResultsThreadSafeReference<T: Model>: AnyResultsThreadSafeReference {
-    typealias Res = NearestResults<T>
-
-    private let whereStatement: Query<Bool>?
-    private let sortStatement: RawNearestSortDescriptor?
-    private let boundsConstraint: BoundsConstraint?
-    private let proximity: ProximityType
-
-    public init(_ results: TableNearestResults<T>) {
-        self.whereStatement = results.whereStatement
-        self.sortStatement = results.sortStatement
-        self.boundsConstraint = results.boundsConstraint
-        self.proximity = results.proximity
-    }
-
-    public func resolve(on lattice: Lattice) -> (some Results<_NearestMatch<T>>)? {
-        TableNearestResults(lattice: lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, proximity: proximity)
+extension _VirtualResultsCompat {
+    public var sendableReference: ResultsThreadSafeReference<_VirtualResultsCompat<Element>> {
+        // iOS 15 compat: the model-type list is carried as stored data (it no
+        // longer rides in the generic signature the way the pack version's does).
+        let modelTypes = self.modelTypes
+        let whereStatement = self.whereStatement
+        let sortComparator: (any SortComparator)? = self.sortStatement
+        return .init { lattice in
+            Self(lattice, modelTypes: modelTypes, whereStatement: whereStatement, sortStatement: sortComparator)
+        }
     }
 }
 
 extension TableNearestResults {
     public var sendableReference: ResultsThreadSafeReference<TableNearestResults<T>> {
-        .init(NearestResultsThreadSafeReference(self) as! (any AnyResultsThreadSafeReference<TableNearestResults<T>>))
+        let whereStatement = self.whereStatement
+        let sortStatement = self.sortStatement
+        let boundsConstraint = self.boundsConstraint
+        let proximity = self.proximity
+        return .init { lattice in
+            TableNearestResults(lattice: lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, proximity: proximity)
+        }
     }
 }
 
+@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
 extension _VirtualNearestResults {
     public var sendableReference: ResultsThreadSafeReference<_VirtualNearestResults<repeat each M, T>> {
-        .init(VirtualNearestResultsThreadSafeReference(self) as! (any AnyResultsThreadSafeReference<_VirtualNearestResults<repeat each M, T>>))
+        let whereStatement = self.whereStatement
+        let sortStatement = self.sortStatement
+        let boundsConstraint = self.boundsConstraint
+        let proximity = self.proximity
+        return .init { lattice in
+            Self(lattice: lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, proximity: proximity)
+        }
     }
 }
 
-private struct VirtualNearestResultsThreadSafeReference<each M: Model, T>: AnyResultsThreadSafeReference {
-    typealias Res = _VirtualNearestResults<repeat each M, T>
-
-    private let whereStatement: Query<Bool>?
-    private let sortStatement: RawNearestSortDescriptor?
-    private let boundsConstraint: BoundsConstraint?
-    private let proximity: ProximityType
-
-    public init(_ results: _VirtualNearestResults<repeat each M, T>) {
-        self.whereStatement = results.whereStatement
-        self.sortStatement = results.sortStatement
-        self.boundsConstraint = results.boundsConstraint
-        self.proximity = results.proximity
-    }
-
-    public func resolve(on lattice: Lattice) -> (some Results<_NearestMatch<T>>)? {
-        _VirtualNearestResults<repeat each M, T>(lattice: lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, proximity: proximity)
+extension _VirtualNearestResultsCompat {
+    public var sendableReference: ResultsThreadSafeReference<_VirtualNearestResultsCompat<T>> {
+        // iOS 15 compat: carries the model-type list as stored data.
+        let modelTypes = self.modelTypes
+        let whereStatement = self.whereStatement
+        let sortStatement = self.sortStatement
+        let boundsConstraint = self.boundsConstraint
+        let proximity = self.proximity
+        return .init { lattice in
+            Self(lattice: lattice, modelTypes: modelTypes, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, proximity: proximity)
+        }
     }
 }
 
@@ -193,7 +192,7 @@ public struct LatticeThreadSafeReference: Sendable {
         // would recreate an empty `.sqlite` on disk and fire a spurious empty
         // snapshot. For in-memory configs there is no file to check.
         if !configuration.isStoredInMemoryOnly,
-           !FileManager.default.fileExists(atPath: configuration.fileURL.path(percentEncoded: false)) {
+           !FileManager.default.fileExists(atPath: configuration.fileURL.path) {
             return nil
         }
         return try? Lattice(for: self.modelTypes, configuration: configuration)

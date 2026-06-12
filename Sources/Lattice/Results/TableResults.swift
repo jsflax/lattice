@@ -16,6 +16,19 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     internal var _sortDescriptor: SortDescriptor<Element>? {
         sortStatement as? SortDescriptor<Element>
     }
+    /// The resolved ORDER BY column + direction, without touching
+    /// `SortDescriptor.keyPath` (iOS 17+) except behind an availability guard.
+    /// `sortedBy(_:order:)` stores a `KeyPathSort` so this resolves on any OS.
+    internal var _sortColumn: (name: String, order: SortOrder)? {
+        if let ks = sortStatement as? KeyPathSort<Element> {
+            return (ks.column, ks.order)
+        }
+        if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *),
+           let sd = sortStatement as? SortDescriptor<Element>, let kp = sd.keyPath {
+            return (_name(for: kp), sd.order)
+        }
+        return nil
+    }
     internal let boundsConstraint: BoundsConstraint?
     internal let groupByColumn: String?
     internal let distinctByColumn: String?
@@ -30,89 +43,13 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             return snapshotWithBounds(bounds, limit: limit, offset: offset)
         }
 
-        let tableName = std.string(Element.entityName)
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-        let orderBy: lattice.OptionalString = if let sd = _sortDescriptor, let keyPath = sd.keyPath {
-            lattice.string_to_optional(std.string("\(_name(for: keyPath)) \(sd.order == .forward ? "ASC" : "DESC")"))
-        } else {
-            .init()
-        }
-        let limitOpt: lattice.OptionalInt64 = if let limit { lattice.int64_to_optional(limit) } else { .init() }
-        let offsetOpt: lattice.OptionalInt64 = if let offset { lattice.int64_to_optional(offset) } else { .init() }
-        let groupByOpt: lattice.OptionalString = if let groupByColumn {
-            lattice.string_to_optional(std.string(groupByColumn))
-        } else {
-            .init()
-        }
-        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
-            lattice.string_to_optional(std.string(distinctByColumn))
-        } else {
-            .init()
-        }
-
-        let cxxResults = _lattice.cxxLattice.objects(tableName, whereClause, orderBy, limitOpt, offsetOpt, groupByOpt, distinctByOpt)
-
-        var objects: [Element] = []
-        objects.reserveCapacity(cxxResults.size())
-
-        for i in 0..<cxxResults.size() {
-            let cxxObject = cxxResults[i]
-            let object = Element(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(cxxObject).make_shared()))
-            objects.append(object)
-        }
-
-        return objects
+        let orderBy: String? = _sortColumn.map { "\($0.name) \($0.order == .forward ? "ASC" : "DESC")" }
+        return _lattice.backend.objects(table: Element.entityName, where: whereStatement?.predicate, orderBy: orderBy, limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn).map { Element(dynamicObject: $0) }
     }
 
     private func snapshotWithBounds(_ bounds: BoundsConstraint, limit: Int64?, offset: Int64?) -> [Element] {
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-
-        let orderBy: lattice.OptionalString = if let sd = _sortDescriptor, let kp = sd.keyPath {
-            lattice.string_to_optional(std.string("\(_name(for: kp)) \(sd.order == .forward ? "ASC" : "DESC")"))
-        } else {
-            .init()
-        }
-
-        let limitOpt: lattice.OptionalInt64 = if let limit { lattice.int64_to_optional(limit) } else { .init() }
-        let offsetOpt: lattice.OptionalInt64 = if let offset { lattice.int64_to_optional(offset) } else { .init() }
-        let groupByOpt: lattice.OptionalString = if let groupByColumn {
-            lattice.string_to_optional(std.string(groupByColumn))
-        } else {
-            .init()
-        }
-
-        let cxxResults = _lattice.cxxLattice.objectsWithinBBox(
-            table: std.string(Element.entityName),
-            geoColumn: std.string(bounds.propertyName),
-            minLat: bounds.minLat,
-            maxLat: bounds.maxLat,
-            minLon: bounds.minLon,
-            maxLon: bounds.maxLon,
-            where: whereClause,
-            orderBy: orderBy,
-            limit: limitOpt,
-            offset: offsetOpt,
-            groupBy: groupByOpt
-        )
-
-        var results: [Element] = []
-        results.reserveCapacity(cxxResults.size())
-
-        for i in 0..<cxxResults.size() {
-            let cxxObject = cxxResults[i]
-            let object = Element(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(cxxObject).make_shared()))
-            results.append(object)
-        }
-
-        return results
+        let orderBy: String? = _sortColumn.map { "\($0.name) \($0.order == .forward ? "ASC" : "DESC")" }
+        return _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: whereStatement?.predicate, orderBy: orderBy, limit: limit, offset: offset, groupBy: groupByColumn).map { Element(dynamicObject: $0) }
     }
 
     init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: (any SortComparator)? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil, distinctByColumn: String? = nil) {
@@ -133,8 +70,22 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         self.distinctByColumn = nil
     }
 
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> TableResults<Element> {
         return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortDescriptor, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
+    }
+
+    /// Key-path based sort, available on all deployment targets (unlike the
+    /// `SortDescriptor` overload, whose `keyPath` is iOS 17+). Resolves the
+    /// column at call time and stores it as a `KeyPathSort`.
+    public func sortedBy<V>(_ keyPath: KeyPath<Element, V>, order: SortOrder = .forward) -> TableResults<Element> {
+        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: KeyPathSort<Element>(column: _name(for: keyPath), order: order), boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
+    }
+
+    /// Applies a pre-resolved `KeyPathSort` (used by `@LatticeQuery`, which
+    /// resolves the column from a key path up front so it works on iOS 15).
+    internal func _sorted(by comparator: KeyPathSort<Element>) -> TableResults<Element> {
+        return TableResults(_lattice, whereStatement: whereStatement, sortStatement: comparator, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
     public func `where`(_ query: ((Query<Element>) -> Query<Bool>)) -> TableResults<Element> {
@@ -211,39 +162,10 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
 
     public var endIndex: Int {
-
-        let tableName = std.string(Element.entityName)
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-        let groupByOpt: lattice.OptionalString = if let groupByColumn {
-            lattice.string_to_optional(std.string(groupByColumn))
-        } else {
-            .init()
-        }
-        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
-            lattice.string_to_optional(std.string(distinctByColumn))
-        } else {
-            .init()
-        }
-
-        // If we have a bounds constraint, use the spatial count method
         if let bounds = boundsConstraint {
-            return Int(_lattice.cxxLattice.countWithinBBox(
-                table: tableName,
-                geoColumn: std.string(bounds.propertyName),
-                minLat: bounds.minLat,
-                maxLat: bounds.maxLat,
-                minLon: bounds.minLon,
-                maxLon: bounds.maxLon,
-                where: whereClause
-            ))
+            return Int(_lattice.backend.countWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: whereStatement?.predicate))
         }
-
-        // Live count from C++
-        return Int(_lattice.cxxLattice.count(tableName, whereClause, groupByOpt, distinctByOpt))
+        return Int(_lattice.backend.count(table: Element.entityName, where: whereStatement?.predicate, groupBy: groupByColumn, distinctBy: distinctByColumn))
     }
 
     public func index(after i: Int) -> Int {
@@ -290,8 +212,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: _sortDescriptor.map {
-                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            sortStatement: _sortColumn.map {
+                RawNearestSortDescriptor(descriptor: .keyPath($0.name), order: $0.order)
             },
             boundsConstraint: boundsConstraint,
             proximity: .vector(constraint),
@@ -348,8 +270,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: _sortDescriptor.map {
-                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            sortStatement: _sortColumn.map {
+                RawNearestSortDescriptor(descriptor: .keyPath($0.name), order: $0.order)
             },
             boundsConstraint: boundsConstraint,
             proximity: .geo(constraint),
@@ -377,8 +299,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: _sortDescriptor.map {
-                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            sortStatement: _sortColumn.map {
+                RawNearestSortDescriptor(descriptor: .keyPath($0.name), order: $0.order)
             },
             boundsConstraint: boundsConstraint,
             proximity: .text(constraint),
@@ -404,8 +326,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         return TableNearestResults(
             lattice: _lattice,
             whereStatement: whereStatement,
-            sortStatement: _sortDescriptor.map {
-                RawNearestSortDescriptor($0.keyPath!, order: $0.order)
+            sortStatement: _sortColumn.map {
+                RawNearestSortDescriptor(descriptor: .keyPath($0.name), order: $0.order)
             },
             boundsConstraint: boundsConstraint,
             proximity: .text(constraint),

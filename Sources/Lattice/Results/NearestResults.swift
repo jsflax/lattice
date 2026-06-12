@@ -386,13 +386,24 @@ public struct TableNearestResults<T: Model>: NearestResults {
 
     // MARK: - Results Protocol Conformance
 
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self {
+        // Gated to iOS 17 (SortDescriptor.keyPath); callers on older OSes use sortedBy(_:order:).
+        _sorted(by: sortDescriptor.keyPath!, order: sortDescriptor.order)
+    }
+
+    /// Key-path based sort, available on all deployment targets.
+    public func sortedBy<V>(_ keyPath: KeyPath<Element, V>, order: SortOrder = .forward) -> Self {
+        _sorted(by: keyPath, order: order)
+    }
+
+    private func _sorted(by keyPath: PartialKeyPath<Element>, order: SortOrder) -> Self {
         let t = T.init(isolation: #isolation)
-        _ = _NearestMatch.init(object: t, distance: 0)[keyPath: sortDescriptor.keyPath!]
+        _ = _NearestMatch.init(object: t, distance: 0)[keyPath: keyPath]
         return .init(lattice: self._lattice,
                      whereStatement: whereStatement,
                      sortStatement: .init(descriptor: .keyPath(t._lastKeyPathUsed!),
-                                          order: sortDescriptor.order),
+                                          order: order),
                      boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
@@ -422,92 +433,45 @@ public struct TableNearestResults<T: Model>: NearestResults {
     public var startIndex: Int { 0 }
     public var count: Int { endIndex }
 
-    public var endIndex: Int {
+    /// Builds the neutral constraint params shared by `endIndex` and `snapshot`
+    /// (the same conversion `_VirtualNearestResultsCompat` uses).
+    private func buildConstraints() -> (bounds: [BoundsConstraintParam], vectors: [VectorConstraintParam], geos: [GeoConstraintParam], texts: [TextConstraintParam], sort: SortDescriptorParam, flatVectors: [VectorConstraint], flatGeos: [GeoNearestConstraint], flatTexts: [TextConstraint]) {
         let (vectors, geos, texts) = flattenProximity(proximity)
-        let vectorLimit = vectors.map(\.k).min() ?? Int.max
-        let geoLimit = geos.map(\.limit).min() ?? Int.max
-        let textLimit = texts.map(\.limit).min() ?? Int.max
+
+        var cb: [BoundsConstraintParam] = []
+        if let bounds = boundsConstraint {
+            cb.append(BoundsConstraintParam(column: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon))
+        }
+        let cv = vectors.map { VectorConstraintParam(column: $0.propertyName, queryVector: Array($0.queryVector), k: Int32($0.k), metric: Int32($0.metric.rawValue)) }
+        let cg = geos.map { GeoConstraintParam(column: $0.propertyName, centerLat: $0.centerLat, centerLon: $0.centerLon, radiusMeters: $0.radiusMeters) }
+        let ct = texts.map { TextConstraintParam(column: $0.propertyName, searchText: $0.searchText, limit: Int32($0.limit)) }
+
+        var cs = SortDescriptorParam(kind: .none, column: "", ascending: true)
+        if let sort = sortStatement {
+            let kind: SortKind
+            let column: String
+            switch sort.descriptor {
+            case .keyPath(let propName): kind = .property; column = propName
+            case .geoDistance: kind = .geoDistance; column = geos.first?.propertyName ?? ""
+            case .vectorDistance: kind = .vectorDistance; column = vectors.first?.propertyName ?? ""
+            case .textRank: kind = .textRank; column = texts.first?.propertyName ?? ""
+            }
+            cs = SortDescriptorParam(kind: kind, column: column, ascending: sort.order == .forward)
+        }
+        return (cb, cv, cg, ct, cs, vectors, geos, texts)
+    }
+
+    public var endIndex: Int {
+        let c = buildConstraints()
+        let vectorLimit = c.flatVectors.map(\.k).min() ?? Int.max
+        let geoLimit = c.flatGeos.map(\.limit).min() ?? Int.max
+        let textLimit = c.flatTexts.map(\.limit).min() ?? Int.max
         let maxLimit = Swift.min(vectorLimit, Swift.min(geoLimit, textLimit))
 
-        let tableName = std.string(T.entityName)
-
-        var cxxBounds = lattice.BoundsConstraintVector()
-        if let bounds = boundsConstraint {
-            var bc = lattice.bounds_constraint()
-            bc.column = std.string(bounds.propertyName)
-            bc.min_lat = bounds.minLat
-            bc.max_lat = bounds.maxLat
-            bc.min_lon = bounds.minLon
-            bc.max_lon = bounds.maxLon
-            cxxBounds.push_back(bc)
-        }
-
-        var cxxVectors = lattice.VectorConstraintVector()
-        for vc in vectors {
-            var cxxVc = lattice.vector_constraint()
-            cxxVc.column = std.string(vc.propertyName)
-            var byteVec = lattice.ByteVector()
-            for byte in vc.queryVector { byteVec.push_back(byte) }
-            cxxVc.query_vector = byteVec
-            cxxVc.k = Int32(vc.k)
-            cxxVc.metric = vc.metric.rawValue
-            cxxVectors.push_back(cxxVc)
-        }
-
-        var cxxGeos = lattice.GeoConstraintVector()
-        for gc in geos {
-            var cxxGc = lattice.geo_constraint()
-            cxxGc.column = std.string(gc.propertyName)
-            cxxGc.center_lat = gc.centerLat
-            cxxGc.center_lon = gc.centerLon
-            cxxGc.radius_meters = gc.radiusMeters
-            cxxGeos.push_back(cxxGc)
-        }
-
-        var cxxTexts = lattice.TextConstraintVector()
-        for tc in texts {
-            var cxxTc = lattice.text_constraint()
-            cxxTc.column = std.string(tc.propertyName)
-            cxxTc.search_text = std.string(tc.searchText)
-            cxxTc.limit = Int32(tc.limit)
-            cxxTexts.push_back(cxxTc)
-        }
-
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else { .init() }
-
-        var cxxSort = lattice.sort_descriptor()
-        if let sort = sortStatement {
-            switch sort.descriptor {
-            case .keyPath(let propName):
-                cxxSort.type = .property
-                cxxSort.column = std.string(propName)
-            case .geoDistance:
-                cxxSort.type = .geo_distance
-                cxxSort.column = std.string(geos.first?.propertyName ?? "")
-            case .vectorDistance:
-                cxxSort.type = .vector_distance
-                cxxSort.column = std.string(vectors.first?.propertyName ?? "")
-            case .textRank:
-                cxxSort.type = .text_rank
-                cxxSort.column = std.string(texts.first?.propertyName ?? "")
-            }
-            cxxSort.ascending = (sort.order == .forward)
-        }
-
-        let groupByOpt: lattice.OptionalString = if let groupByColumn {
-            lattice.string_to_optional(std.string(groupByColumn))
-        } else { .init() }
-        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
-            lattice.string_to_optional(std.string(distinctByColumn))
-        } else { .init() }
-
-        let count = Int(_lattice.cxxLattice.combinedNearestQueryCount(
-            table: tableName, bounds: cxxBounds, vectors: cxxVectors,
-            geos: cxxGeos, texts: cxxTexts, where: whereClause,
-            sort: cxxSort, limit: Int64(maxLimit),
-            groupBy: groupByOpt, distinctBy: distinctByOpt))
+        let count = Int(_lattice.backend.combinedNearestQueryCount(
+            table: T.entityName, bounds: c.bounds, vectors: c.vectors, geos: c.geos, texts: c.texts,
+            where: whereStatement?.predicate, sort: c.sort, limit: Int64(maxLimit),
+            groupBy: groupByColumn, distinctBy: distinctByColumn))
         return Swift.min(count, maxLimit)
     }
 
@@ -535,151 +499,46 @@ public struct TableNearestResults<T: Model>: NearestResults {
 
     /// Execute the query and return results with distances.
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [_NearestMatch<T>] {
-        let tableName = std.string(T.entityName)
-        let (vectors, geos, texts) = flattenProximity(proximity)
-
-        // Build C++ constraint vectors
-        var cxxBounds = lattice.BoundsConstraintVector()
-        if let bounds = boundsConstraint {
-            var bc = lattice.bounds_constraint()
-            bc.column = std.string(bounds.propertyName)
-            bc.min_lat = bounds.minLat
-            bc.max_lat = bounds.maxLat
-            bc.min_lon = bounds.minLon
-            bc.max_lon = bounds.maxLon
-            cxxBounds.push_back(bc)
-        }
-
-        var cxxVectors = lattice.VectorConstraintVector()
-        for vc in vectors {
-            var cxxVc = lattice.vector_constraint()
-            cxxVc.column = std.string(vc.propertyName)
-            var byteVec = lattice.ByteVector()
-            for byte in vc.queryVector {
-                byteVec.push_back(byte)
-            }
-            cxxVc.query_vector = byteVec
-            cxxVc.k = Int32(vc.k)
-            cxxVc.metric = vc.metric.rawValue
-            cxxVectors.push_back(cxxVc)
-        }
-
-        var cxxGeos = lattice.GeoConstraintVector()
-        for gc in geos {
-            var cxxGc = lattice.geo_constraint()
-            cxxGc.column = std.string(gc.propertyName)
-            cxxGc.center_lat = gc.centerLat
-            cxxGc.center_lon = gc.centerLon
-            cxxGc.radius_meters = gc.radiusMeters
-            cxxGeos.push_back(cxxGc)
-        }
-
-        var cxxTexts = lattice.TextConstraintVector()
-        for tc in texts {
-            var cxxTc = lattice.text_constraint()
-            cxxTc.column = std.string(tc.propertyName)
-            cxxTc.search_text = std.string(tc.searchText)
-            cxxTc.limit = Int32(tc.limit)
-            cxxTexts.push_back(cxxTc)
-        }
-
-        // Build where clause
-        let whereClause: lattice.OptionalString = if let whereStatement {
-            lattice.string_to_optional(std.string(whereStatement.predicate))
-        } else {
-            .init()
-        }
-
-        // Build sort descriptor
-        var cxxSort = lattice.sort_descriptor()
-        if let sort = sortStatement {
-            switch sort.descriptor {
-            case .keyPath(let propName):
-                cxxSort.type = .property
-                cxxSort.column = std.string(propName)
-            case .geoDistance:
-                cxxSort.type = .geo_distance
-                cxxSort.column = std.string(geos.first?.propertyName ?? "")
-            case .vectorDistance:
-                cxxSort.type = .vector_distance
-                cxxSort.column = std.string(vectors.first?.propertyName ?? "")
-            case .textRank:
-                cxxSort.type = .text_rank
-                cxxSort.column = std.string(texts.first?.propertyName ?? "")
-            }
-            cxxSort.ascending = (sort.order == .forward)
-        }
+        let c = buildConstraints()
 
         // Calculate effective limit from constraints (not endIndex to avoid recursion)
-        let vectorLimit = vectors.map(\.k).min() ?? Int.max
-        let geoLimit = geos.map(\.limit).min() ?? Int.max
-        let textLimit = texts.map(\.limit).min() ?? Int.max
+        let vectorLimit = c.flatVectors.map(\.k).min() ?? Int.max
+        let geoLimit = c.flatGeos.map(\.limit).min() ?? Int.max
+        let textLimit = c.flatTexts.map(\.limit).min() ?? Int.max
         let constraintLimit = Swift.min(vectorLimit, Swift.min(geoLimit, textLimit))
 
         let effectiveOffset = offset.map { Int($0) } ?? 0
         let effectiveLimit = limit.map { Int($0) } ?? constraintLimit
         let fetchLimit = Int64(Swift.min(effectiveOffset + effectiveLimit, constraintLimit))
 
-        // Build group by / distinct by
-        let groupByOpt: lattice.OptionalString = if let groupByColumn {
-            lattice.string_to_optional(std.string(groupByColumn))
-        } else {
-            .init()
-        }
-        let distinctByOpt: lattice.OptionalString = if let distinctByColumn {
-            lattice.string_to_optional(std.string(distinctByColumn))
-        } else {
-            .init()
-        }
+        let rows = _lattice.backend.combinedNearestQuery(
+            table: T.entityName, bounds: c.bounds, vectors: c.vectors, geos: c.geos, texts: c.texts,
+            where: whereStatement?.predicate, sort: c.sort, limit: fetchLimit,
+            groupBy: groupByColumn, distinctBy: distinctByColumn)
 
-        // Call combined C++ query
-        let cxxResults = _lattice.cxxLattice.combinedNearestQuery(
-            table: tableName,
-            bounds: cxxBounds,
-            vectors: cxxVectors,
-            geos: cxxGeos,
-            texts: cxxTexts,
-            where: whereClause,
-            sort: cxxSort,
-            limit: fetchLimit,
-            groupBy: groupByOpt,
-            distinctBy: distinctByOpt
-        )
-
-        // Convert results
         var results: [_NearestMatch<T>] = []
         let startIdx = effectiveOffset
-        let endIdx = Swift.min(Int(cxxResults.size()), effectiveOffset + effectiveLimit)
+        let endIdx = Swift.min(rows.count, effectiveOffset + effectiveLimit)
         guard startIdx < endIdx else { return results }
         results.reserveCapacity(endIdx - startIdx)
 
         // Build lookup for geo units (handle multiple constraints on same column)
         let geoUnits: [String: DistanceUnit] = Dictionary(
-            geos.map { ($0.propertyName, $0.unit) },
+            c.flatGeos.map { ($0.propertyName, $0.unit) },
             uniquingKeysWith: { first, _ in first }
         )
 
-        for i in startIdx..<endIdx {
-            let result = cxxResults[i]
-            let managedObj = result.object
-
-            // Extract distances from the vector
+        for row in rows[startIdx..<endIdx] {
+            // Convert geo distances from meters to the requested unit
             var distances: [String: Double] = [:]
-            for j in 0..<result.distances.size() {
-                let entry = result.distances[j]
-                let columnName = String(entry.column)
-                let distanceValue = entry.distance
-
-                // Convert geo distances from meters to requested unit
-                if let unit = geoUnits[columnName] {
-                    distances[columnName] = unit.fromMeters(distanceValue)
+            for entry in row.distances {
+                if let unit = geoUnits[entry.column] {
+                    distances[entry.column] = unit.fromMeters(entry.distance)
                 } else {
-                    distances[columnName] = distanceValue
+                    distances[entry.column] = entry.distance
                 }
             }
-
-            let swiftObj = T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(managedObj).make_shared()))
-            results.append(_NearestMatch(object: swiftObj, distances: distances))
+            results.append(_NearestMatch(object: T(row.object), distances: distances))
         }
 
         return results
@@ -784,6 +643,9 @@ public struct TableNearestResults<T: Model>: NearestResults {
     }
 }
 
+// Parameter-pack polymorphic nearest results. Gated to iOS 17 (variadic
+// generics); iOS 15 uses `_VirtualNearestResultsCompat` (NearestResultsCompat.swift).
+@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
 package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
     public typealias Element = _NearestMatch<T>
     public typealias QueryType = Query<_NearestMatch<T>>
@@ -886,17 +748,28 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
 
     // MARK: - Results Protocol Conformance
 
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> Self {
+        // Gated to iOS 17 (SortDescriptor.keyPath); callers on older OSes use sortedBy(_:order:).
+        _sorted(by: sortDescriptor.keyPath!, order: sortDescriptor.order)
+    }
+
+    /// Key-path based sort, available on all deployment targets.
+    public func sortedBy<V>(_ keyPath: KeyPath<Element, V>, order: SortOrder = .forward) -> Self {
+        _sorted(by: keyPath, order: order)
+    }
+
+    private func _sorted(by keyPath: PartialKeyPath<Element>, order: SortOrder) -> Self {
         let object = firstType.init(isolation: #isolation) as! T
         let match = _NearestMatch(object: object as! T, distance: 0)
-        _ = match[keyPath: sortDescriptor.keyPath!]
-        guard let keyPath = (object as! any Model)._lastKeyPathUsed else {
+        _ = match[keyPath: keyPath]
+        guard let column = (object as! any Model)._lastKeyPathUsed else {
             preconditionFailure()
         }
         return .init(lattice: self._lattice,
                      whereStatement: whereStatement,
-                     sortStatement: .init(descriptor: .keyPath(keyPath),
-                                          order: sortDescriptor.order),
+                     sortStatement: .init(descriptor: .keyPath(column),
+                                          order: order),
                      boundsConstraint: boundsConstraint, proximity: proximity, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
@@ -1014,7 +887,7 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
         // Sum counts across all model types
         var total = 0
         for type in repeat (each M).self {
-            total += Int(_lattice.cxxLattice.combinedNearestQueryCount(
+            total += Int(_lattice.cxxLatticeRef.combinedNearestQueryCount(
                 table: std.string(type.entityName), bounds: cxxBounds,
                 vectors: cxxVectors, geos: cxxGeos, texts: cxxTexts,
                 where: whereClause, sort: cxxSort, limit: Int64(maxLimit),
@@ -1156,7 +1029,7 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
         for type in repeat (each M).self {
             let tableName = std.string(type.entityName)
 
-            let cxxResults = _lattice.cxxLattice.combinedNearestQuery(
+            let cxxResults = _lattice.cxxLatticeRef.combinedNearestQuery(
                 table: tableName,
                 bounds: cxxBounds,
                 vectors: cxxVectors,

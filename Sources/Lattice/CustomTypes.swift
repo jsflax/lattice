@@ -24,7 +24,7 @@ extension ClosedRange: EmbeddedModel, Codable, DefaultInitializable, CxxListMana
     
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
         let jsonStr = String(data: try! JSONEncoder().encode(value), encoding: .utf8)!
-        storage._ref.setString(named: std.string(name), std.string(jsonStr))
+        storage._ref.setString(named: name, jsonStr)
     }
     
     public static var defaultValue: Self {
@@ -57,7 +57,7 @@ extension ClosedRange: EmbeddedModel, Codable, DefaultInitializable, CxxListMana
 //    
 //    public static func setField(on object: inout CxxDynamicObjectRef, named name: String, _ value: Self) {
 //        let jsonStr = String(data: try! JSONEncoder().encode(value), encoding: .utf8)!
-//        object.setString(named: std.string(name), std.string(jsonStr))
+//        object.setString(named: name, std.string(jsonStr))
 //    }
 //    
 //    public static var defaultValue: Self {

@@ -24,7 +24,10 @@ public protocol LinkListRef<Element> {
     func indicesWhere(_ query: String) -> [Int]
 
     var linkTableName: String { get }
-    var latticeRef: lattice.swift_lattice_ref? { get }
+    /// The owning db handle as a neutral backend (nil when unmanaged). Replaces
+    /// the former `lattice.swift_lattice_ref?` so the protocol carries no
+    /// foreign-reference type into the iOS-15 floor.
+    var latticeBackend: (any LatticeBackend)? { get }
 }
 
 public protocol LinkListable: SchemaProperty {
@@ -36,28 +39,26 @@ public protocol LinkListable: SchemaProperty {
 // MARK: - ModelLinkListRef (wraps C++ link_list_ref)
 
 public struct ModelLinkListRef<T: Model>: @unchecked Sendable, LinkListRef {
-    var _ref: lattice.link_list_ref
+    var _ref: any ObjectListBackend
 
-    init(_ref: lattice.link_list_ref) {
+    init(_ref: any ObjectListBackend) {
         self._ref = _ref
     }
 
     public static func new() -> Self {
-        Self(_ref: .create())
+        Self(_ref: CxxObjectListBackend(.create()))
     }
 
     public func get(at position: Int) -> T {
-        let proxy = _ref[position]
-        return T(proxy.objectRef!)
+        T(_ref.object(at: position)!)
     }
 
     public mutating func set(at position: Int, _ element: T) {
-        var proxy = _ref[position]
-        proxy.assign(element._dynamicObject._ref)
+        _ref.setObject(at: position, element._dynamicObject._ref)
     }
 
     public func count() -> Int {
-        _ref.size()
+        _ref.size
     }
 
     public mutating func append(_ element: T) {
@@ -65,7 +66,7 @@ public struct ModelLinkListRef<T: Model>: @unchecked Sendable, LinkListRef {
     }
 
     public func remove(at position: Int) {
-        _ref.erase(position)
+        _ref.erase(at: position)
     }
 
     public func removeAll() {
@@ -73,20 +74,18 @@ public struct ModelLinkListRef<T: Model>: @unchecked Sendable, LinkListRef {
     }
 
     public func indexOf(_ element: T) -> Int? {
-        let opt = _ref.findIndex(element._dynamicObject._ref)
-        return opt.hasValue ? Int(opt.pointee) : nil
+        _ref.findIndex(of: element._dynamicObject._ref)
     }
 
     public func indicesWhere(_ query: String) -> [Int] {
-        let results = _ref.findWhere(std.string(query))
-        return (0..<results.count).map { Int(results[$0]) }
+        _ref.findWhere(query)
     }
 
     public var linkTableName: String {
-        String(_ref.linkTableName)
+        _ref.linkTableName
     }
 
-    public var latticeRef: lattice.swift_lattice_ref? {
+    public var latticeBackend: (any LatticeBackend)? {
         _ref.lattice
     }
 }
@@ -233,10 +232,10 @@ public struct List<Element>: MutableCollection, BidirectionalCollection, SchemaP
     /// Does NOT fire for child property changes — only link table mutations.
     public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
         let linkTableName = linkListRef.linkTableName
-        guard !linkTableName.isEmpty, let latticeRef = linkListRef.latticeRef else {
+        guard !linkTableName.isEmpty, let latticeBackend = linkListRef.latticeBackend else {
             return AnyCancellable {}
         }
-        return Lattice.observeLinkTable(linkTableName, cxxLattice: latticeRef.get(), block: observer)
+        return Lattice.observeLinkTable(linkTableName, backend: latticeBackend, block: observer)
     }
     #endif
 }

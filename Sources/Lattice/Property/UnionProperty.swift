@@ -87,7 +87,7 @@ extension UUID: UnionPrimitiveProperty {
 
 extension URL: UnionPrimitiveProperty {
     public static func getField(from uv: lattice.union_value, named name: String) -> URL {
-        URL(string: String(uv.getString(std.string(name)))) ?? URL(filePath: "")
+        URL(string: String(uv.getString(std.string(name)))) ?? URL(fileURLWithPath: "")
     }
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: URL) {
         uv.setString(std.string(name), std.string(value.absoluteString))
@@ -172,8 +172,10 @@ public protocol _LatticeUnionQueryEnum {
 extension LatticeUnion {
     public static var anyPropertyKind: AnyProperty.Kind { .string }
 
+    // Union field access marshals through the C++ union_value handle surface,
+    // which works on every OS (value-converted below the FRT floor).
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
-        let uv = storage._ref.getUnion(named: std.string(name))
+        let uv = storage._ref.asCxxObjectRef!.getUnion(named: std.string(name))
         if String(uv.case_name).isEmpty {
             return Self.defaultValue
         }
@@ -182,6 +184,6 @@ extension LatticeUnion {
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
         let uv = value._toCxxUnionValue()
-        storage._ref.setUnion(named: std.string(name), uv)
+        storage._ref.asCxxObjectRef!.setUnion(named: std.string(name), uv)
     }
 }

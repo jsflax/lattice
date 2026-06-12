@@ -140,11 +140,10 @@ extension Vector: CxxManaged where Element: VectorElement {
     }
     
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Vector<Element> {
-        Vector(fromData: Data(storage._ref.getData(named: std.string(name))))
+        Vector(fromData: storage._ref.getData(named: name))
     }
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Vector<Element>) {
-        storage._ref.setData(named: std.string(name), value.toData().reduce(into: lattice.ByteVector(),
-                                                                      { $0.push_back($1) }))
+        storage._ref.setData(named: name, value.toData())
     }
     
     public static func getManagedOptional(from object: lattice.ManagedModel, name: std.string) -> CxxManagedSpecialization.OptionalType {

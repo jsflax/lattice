@@ -55,7 +55,7 @@ actor NIORelaySyncTests {
                 print("[NIOSyncRelay] catch-up: \(count) events for \(conn.id)\n")
                 for i in stride(from: 0, to: count, by: 1000) {
                     let page = events[i..<min(count, i + 1000)]
-                    let data = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
+                    let data = try JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
                     print("[NIOSyncRelay] sending catch-up: \(data.count) bytes to \(conn.id)\n")
                     conn.send(data)
                 }
