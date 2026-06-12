@@ -113,7 +113,7 @@ class VirtualListJunctionTableTests: BaseTest {
         let latticeB = try testLattice(TestDog.self, TestCat.self, TestPersonWithPets.self)
 
         // Encode events as ServerSentEvent (the wire format)
-        let data = try JSONEncoder().encode(ServerSentEvent.auditLog(events))
+        let data = try JSONEncoder().encode(ServerSentEvent.auditLog(Array(events)))
 
         // This is the critical call — receive() must NOT throw.
         // If the junction table doesn't exist in Lattice B, this will fail
@@ -164,7 +164,7 @@ class VirtualListJunctionTableTests: BaseTest {
                 print("[DIAG]   field: \(k) = \(v)")
             }
         }
-        let data = try JSONEncoder().encode(ServerSentEvent.auditLog(events))
+        let data = try JSONEncoder().encode(ServerSentEvent.auditLog(Array(events)))
 
         // --- Relay Lattice: same schema, mimics SyncRelay ---
         let relay = try testLattice(TestDog.self, TestCat.self, TestPersonWithPets.self)

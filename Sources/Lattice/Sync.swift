@@ -110,7 +110,11 @@ extension AuditLog {
 // ============================================================================
 
 public enum ServerSentEvent: Codable {
-    case auditLog(any Sequence<AuditLog>)
+    // Concrete [AuditLog] rather than `any Sequence<AuditLog>`: the latter is a
+    // parameterized existential (iOS-16 runtime floor), and the payload is always
+    // materialized to an array on decode/encode anyway. Callers passing a lazy
+    // sequence (e.g. a Results Slice) wrap it with `Array(...)`.
+    case auditLog([AuditLog])
     case ack([UUID])
 
     private enum CodingKeys: String, CodingKey {
@@ -139,7 +143,7 @@ public enum ServerSentEvent: Codable {
         switch self {
         case .auditLog(let logs):
             try container.encode("auditLog", forKey: .kind)
-            try container.encode(Array(logs), forKey: .auditLog)
+            try container.encode(logs, forKey: .auditLog)
         case .ack(let ids):
             try container.encode("ack", forKey: .kind)
             try container.encode(ids, forKey: .ack)
@@ -172,12 +176,11 @@ struct UncheckedSendable<T>: @unchecked Sendable {
 
 extension Lattice {
     public func receive(_ data: Data) throws -> [UUID] {
-        let result = cxxLattice.receive_sync_data(data.toCxxValue()).compactMap {
-            UUID(uuidString: String($0))
+        let result = backend.receiveSyncData(data).compactMap {
+            UUID(uuidString: $0)
         }
-        let lastError = cxxLattice.last_receive_error()
-        if lastError.__convertToBool() {
-            throw LatticeError.syncReceiveFailed(String(lastError.pointee))
+        if let lastError = backend.lastReceiveError() {
+            throw LatticeError.syncReceiveFailed(lastError)
         }
         return result
     }
@@ -186,7 +189,7 @@ extension Lattice {
     /// Use `snapshot(limit:offset:)` to paginate without loading all entries into memory.
     public func eventsAfter(globalId: UUID?) -> TableResults<AuditLog> {
         var results = objects(AuditLog.self)
-            .sortedBy(.init(\.primaryKey, order: .forward))
+            .sortedBy(\.primaryKey, order: .forward)
         if let globalId {
             let checkpointId = objects(AuditLog.self)
                 .where { $0.globalId == globalId }

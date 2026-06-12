@@ -59,34 +59,31 @@ extension Model {
     }
 }
 
-final class LatticeExecutor: SerialExecutor {
-    func enqueue(_ job: consuming ExecutorJob) {
-        job.runSynchronously(on: self.asUnownedSerialExecutor())
-    }
-}
+// NOTE: a `LatticeExecutor: SerialExecutor` used to live here. It was unused
+// (zero references) and `SerialExecutor`/`ExecutorJob` are iOS 17+, so it was
+// removed to support the iOS 15 deployment floor.
 
 extension UnsafeMutablePointer: @unchecked @retroactive Sendable {
 }
 extension UnsafeMutableRawPointer: @unchecked @retroactive Sendable {
 }
-extension lattice.swift_lattice: @unchecked @retroactive Sendable {
-}
+// The db is reached exclusively through swift_lattice_ref (a foreign reference
+// on iOS 16.4+, a copyable value type below the floor) — Swift never names the
+// underlying swift_lattice FRT.
 extension lattice.swift_lattice_ref: Hashable, Equatable, @unchecked @retroactive Sendable {
     public var hashValue: Int {
         Int(self.hash_value())
     }
-    
+
     public static func ==(_ lhs: Self, _ rhs: Self) -> Bool {
         lhs.hashValue == rhs.hashValue
     }
 }
 
 public struct Lattice {
-    #if canImport(os)
-    private static let synchronizersLock = OSAllocatedUnfairLock<Void>()
-    #else
+    // UnfairLock back-deploys (os_unfair_lock, iOS 10+); OSAllocatedUnfairLock
+    // would force an iOS-16 floor. Same primitive underneath.
     private static let synchronizersLock = UnfairLock(initialState: ())
-    #endif
     
     public struct SyncConfiguration {
         
@@ -537,7 +534,7 @@ public struct Lattice {
                       authorizationToken.map { std.string($0) } ?? std.string(),
                       currentScheduler.scheduler)
             } else {
-                config = .init(std.string(self.fileURL.path(percentEncoded: false)),
+                config = .init(std.string(self.fileURL.path),
                       self.wssEndpoint.map {
                     std.string($0.absoluteString)
                 } ?? std.string(),
@@ -547,16 +544,7 @@ public struct Lattice {
             config.read_only = isReadOnly
             config.busy_timeout_ms = Int32(busyTimeoutMs)
             if let syncFilter {
-                var filterEntries = lattice.SyncFilterVector()
-                for (tableName, whereClause) in syncFilter.entries {
-                    var entry = lattice.sync_filter_entry()
-                    entry.table_name = std.string(tableName)
-                    if let whereClause {
-                        entry.where_clause = lattice.string_to_optional(std.string(whereClause))
-                    }
-                    filterEntries.push_back(entry)
-                }
-                config.set_sync_filter(filterEntries)
+                config.set_sync_filter(_makeCxxSyncFilter(Array(syncFilter.entries)))
             }
             if let ipcTargets, !ipcTargets.isEmpty {
                 var targets = lattice.IPCTargetVector()
@@ -567,16 +555,7 @@ public struct Lattice {
                         ipcTarget.socket_path = lattice.string_to_optional(std.string(socketPath))
                     }
                     if let filter = target.syncFilter {
-                        var filterEntries = lattice.SyncFilterVector()
-                        for (tableName, whereClause) in filter.entries {
-                            var entry = lattice.sync_filter_entry()
-                            entry.table_name = std.string(tableName)
-                            if let whereClause {
-                                entry.where_clause = lattice.string_to_optional(std.string(whereClause))
-                            }
-                            filterEntries.push_back(entry)
-                        }
-                        ipcTarget.sync_filter = lattice.sync_filter_to_optional(filterEntries)
+                        ipcTarget.sync_filter = lattice.sync_filter_to_optional(_makeCxxSyncFilter(Array(filter.entries)))
                     }
                     targets.push_back(ipcTarget)
                 }
@@ -606,24 +585,31 @@ public struct Lattice {
     /// Training starts automatically on open. Queries work during training
     /// (brute-force fallback), so this is only needed for benchmarks/tests.
     public func waitForVectorIndexTraining() async {
-        await Task.detached { [cxxLattice] in
-            cxxLattice.waitForVec0Training()
+        await Task.detached { [backend] in
+            backend.waitForVec0Training()
         }.value
     }
 
     /// Train IVF vector indexes synchronously. Call after bulk inserts to
     /// activate IVF search. Opens a separate DB connection for training.
     public func trainVectorIndexes() {
-        cxxLattice.trainUntrainedVec0Tables()
+        backend.trainUntrainedVec0Tables()
     }
 
     /// Background task that trains IVF indexes on open. Await this in tests
     /// to ensure IVF is active before measuring performance.
     public internal(set) var vectorIndexTrainingTask: Task<Void, Never>?
 
-    let cxxLatticeRef: lattice.swift_lattice_ref
-    var cxxLattice: lattice.swift_lattice {
-        cxxLatticeRef.get()
+    /// The boxed db backend (the single stored db handle), a `CxxBackend` on
+    /// every OS. Neutral ORM operations route through it; the paths that drive
+    /// the C++ surface directly (observers, nearest queries, attach) use
+    /// `cxxLatticeRef` below.
+    let backend: any LatticeBackend
+
+    /// The underlying C++ `swift_lattice_ref` — a foreign reference on
+    /// iOS 16.4+, a copyable value type over the same shared db below the floor.
+    var cxxLatticeRef: lattice.swift_lattice_ref {
+        backend.asCxxLatticeRef!
     }
     internal var isolation: (any Actor)?
     public var _isolation: (any Actor)? { isolation }
@@ -638,7 +624,7 @@ public struct Lattice {
             // Fallback: look up by path if hash lookup fails
             // This can happen when C++ creates a new impl for the same path
             let refPath = String(ref.path())
-            if let cached = Self.cache.values.first(where: { $0.configuration.fileURL.path(percentEncoded: false) == refPath }) {
+            if let cached = Self.cache.values.first(where: { $0.configuration.fileURL.path == refPath }) {
                 return cached
             }
             // Debug: print cache state
@@ -646,17 +632,13 @@ public struct Lattice {
             print("  Looking for hash: \(key.implHash), path: \(refPath)")
             print("  Cache has \(Self.cache.count) entries:")
             for (k, v) in Self.cache {
-                print("    hash: \(k.implHash), path: \(v.configuration.fileURL.path(percentEncoded: false))")
+                print("    hash: \(k.implHash), path: \(v.configuration.fileURL.path)")
             }
             preconditionFailure("Lattice not found in cache for ref with hash \(key.implHash), path: \(refPath)")
         }
     }
     
-    #if canImport(os)
-    private static let cacheLock = OSAllocatedUnfairLock<Void>()
-    #else
     private static let cacheLock = UnfairLock(initialState: ())
-    #endif
 
     /// Cache key that uses the underlying impl_ pointer hash for stable identity
     private struct CacheKey: Hashable {
@@ -664,6 +646,10 @@ public struct Lattice {
 
         init(_ ref: lattice.swift_lattice_ref) {
             self.implHash = ref.hash_value()
+        }
+
+        init(_ backend: any LatticeBackend) {
+            self.implHash = backend.identityHash
         }
 
         func hash(into hasher: inout Hasher) {
@@ -698,6 +684,12 @@ public struct Lattice {
         let allTypes = Self.discoverAllTypes(from: schema)
         self.modelTypes = allTypes
 
+        // Record the registered model types for polymorphic/virtual queries.
+        // Set here (the designated init) so BOTH the array `init(for:)` and the
+        // variadic `init<each M>` paths populate it — previously only the
+        // variadic path did, leaving virtual queries broken via `init(for:)`.
+        self.schema = SchemaCompat(modelTypes: schema)
+
         // Register all model types in the global registry for VirtualList type resolution
         for type in allTypes {
             ModelTypeRegistry.shared.register(type)
@@ -726,7 +718,8 @@ public struct Lattice {
         }
 
         var error = lattice.cxx_error()
-        
+        let createdRef: lattice.swift_lattice_ref
+
         if let migration = configuration.migration {
             // Find the target version from migration dict (highest key)
             let targetVersion = migration.keys.max() ?? 1
@@ -752,9 +745,11 @@ public struct Lattice {
                 let migCtx = Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).takeUnretainedValue()
                 let entityName = String(cString: tableName)
 
-                // Read old/new refs from thread-local storage (set by C++ before this callback)
-                guard let oldRef = lattice.migrationGetOldRow(),
-                      let newRef = lattice.migrationGetNewRow() else { return }
+                // Read old/new refs from thread-local storage (set by C++ before
+                // this callback). `_optRef` normalizes the value-path import
+                // (non-optional, empty when absent) to a Swift optional.
+                guard let oldRef = _optRef(lattice.migrationGetOldRow()),
+                      let newRef = _optRef(lattice.migrationGetNewRow()) else { return }
 
                 // Dispatch to the Migration for the version step the bridge is
                 // currently walking — NOT the final target. A v1→v3 walk fires
@@ -769,16 +764,20 @@ public struct Lattice {
                 Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).release()
             })
 
-            self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: swiftConfig,
-                                                                  schemas: cxxSchemas,
-                                                                  error: &error)
+            createdRef = lattice.swift_lattice_ref.create(swiftConfig: swiftConfig,
+                                                          schemas: cxxSchemas,
+                                                          error: &error)
         } else {
-            self.cxxLatticeRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(), schemas: cxxSchemas, error: &error)
+            createdRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(), schemas: cxxSchemas, error: &error)
         }
         guard error.msg.empty() else {
             throw error
         }
-        let key = CacheKey(self.cxxLatticeRef)
+        // The single db-handle construction site: the swift_lattice_ref from
+        // `create` (a foreign reference on iOS 16.4+, a copyable value type
+        // below the floor) is boxed into the one stored backend.
+        self.backend = CxxBackend(createdRef)
+        let key = CacheKey(self.backend)
         let latticeInstance = self
         Self.cacheLock.withLockUnchecked { Self.cache[key] = latticeInstance }
     }
@@ -806,7 +805,6 @@ public struct Lattice {
 //            types.append(type)
 //        }
 //        try self.init(for: types, configuration: configuration, migration: migration)
-//        self.schema = Schema(repeat each modelTypes)
 //    }
 
     /// Initialize Lattice with model types and a migration block.
@@ -840,6 +838,10 @@ public struct Lattice {
     ///   - modelTypes: The model types to register
     ///   - configuration: Database configuration
     ///   - migration: Block called when schema changes are detected
+    // Variadic (parameter-pack) convenience init — iOS 17+ (variadic generics).
+    // For unbounded arity on iOS 17+. iOS 15 uses the fixed-arity overloads below
+    // or `init(for: [Model.Type])`.
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public init<each M: Model>(isolation: isolated (any Actor)? = #isolation,
                                _ modelTypes: repeat (each M).Type,
                                configuration: Configuration = defaultConfiguration) throws {
@@ -848,7 +850,38 @@ public struct Lattice {
             types.append(type)
         }
         try self.init(for: types, configuration: configuration)
-        self.schema = Schema(repeat each modelTypes)
+        // schema is already set by the designated init (as a SchemaCompat).
+    }
+
+    // Fixed-arity convenience inits (no parameter packs) — available on all
+    // deployment targets. They forward to `init(for:)`; for more types than
+    // these cover, use `init(for: [Model.Type])`.
+    public init<A: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a], configuration: configuration)
+    }
+    public init<A: Model, B: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a, b], configuration: configuration)
+    }
+    public init<A: Model, B: Model, C: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a, b, c], configuration: configuration)
+    }
+    public init<A: Model, B: Model, C: Model, D: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a, b, c, d], configuration: configuration)
+    }
+    public init<A: Model, B: Model, C: Model, D: Model, E: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, _ e: E.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a, b, c, d, e], configuration: configuration)
+    }
+    public init<A: Model, B: Model, C: Model, D: Model, E: Model, F: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, _ e: E.Type, _ f: F.Type, configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [a, b, c, d, e, f], configuration: configuration)
+    }
+
+    /// Open with no model types (e.g. a SwiftUI environment placeholder). This
+    /// non-variadic overload is available on ALL deployment targets — without it,
+    /// the zero-argument `Lattice(configuration:)` call binds to the variadic
+    /// `init<each M>` (empty pack), which is iOS 17+ (parameter packs).
+    public init(isolation: isolated (any Actor)? = #isolation,
+                configuration: Configuration = defaultConfiguration) throws {
+        try self.init(for: [], configuration: configuration)
     }
 
     enum Error: Swift.Error {
@@ -870,10 +903,10 @@ public struct Lattice {
         // process notifier, and synchronizer. Without this, SQLite warns
         // "vnode unlinked while in use" because the connection still has the
         // file mmap'd.
-        let filePath = fileURL.path(percentEncoded: false)
+        let filePath = fileURL.path
         cacheLock.withLockUnchecked {
-            for (key, value) in cache where value.configuration.fileURL.path(percentEncoded: false) == filePath {
-                value.cxxLattice.close()
+            for (key, value) in cache where value.configuration.fileURL.path == filePath {
+                value.backend.close()
                 cache.removeValue(forKey: key)
             }
         }
@@ -943,38 +976,24 @@ public struct Lattice {
     
     // MARK: Add
     public func add<T: Model>(_ object: borrowing T) {
-        guard object.lattice == nil else {
+        guard !object.isManaged else {
             fatalError()
         }
-        let ref = object._dynamicObject._ref
-        var cxxError = lattice.cxx_error()
-        cxxLattice.add(ref, &cxxError)
-        guard cxxError.msg.empty() else {
-            fatalError(String(cxxError.msg))
-        }
-        object._dynamicObject._ref = ref
+        do { try backend.add(object._dynamicObject._ref) } catch { fatalError("\(error)") }
         // Register for cross-instance observation now that the object has a primaryKey
         object._registerIfNeeded()
     }
 
     public func add<T: Model>(_ object: borrowing T, preservingGlobalId globalId: UUID) {
-        guard object.lattice == nil else {
+        guard !object.isManaged else {
             fatalError()
         }
-        let ref = object._dynamicObject._ref
-        cxxLattice.add_preserving_global_id(ref, std.string(globalId.uuidString))
-        object._dynamicObject._ref = ref
+        backend.addPreservingGlobalId(object._dynamicObject._ref, globalId: globalId)
         object._registerIfNeeded()
     }
     
     public func add<S: Sequence>(contentsOf newElements: S) where S.Element: Model {
-        // Bulk insert via C++
-        var cxxObjects = lattice.DynamicObjectRefPtrVector()
-        for element in newElements {
-            lattice.push_dynamic_object_ref(&cxxObjects, element._dynamicObject._ref)
-        }
-
-        cxxLattice.add_bulk(&cxxObjects)
+        backend.addBulk(newElements.map { $0._dynamicObject._ref })
     }
 
     // MARK: Add/Delete for VirtualModel (existential)
@@ -983,10 +1002,8 @@ public struct Lattice {
         guard let model = object as? any Model else {
             fatalError("VirtualModel type must also conform to Model")
         }
-        guard model.lattice == nil else { fatalError() }
-        let ref = model._dynamicObject._ref
-        cxxLattice.add(ref)
-        model._dynamicObject._ref = ref
+        guard !model.isManaged else { fatalError() }
+        try? backend.add(model._dynamicObject._ref)
         model._registerIfNeeded()
     }
 
@@ -994,7 +1011,7 @@ public struct Lattice {
         guard let model = object as? any Model else {
             fatalError("VirtualModel type must also conform to Model")
         }
-        return cxxLattice.remove(model._dynamicObject._ref)
+        return backend.remove(model._dynamicObject._ref)
     }
 
     func beginObserving<T: Model>(_ object: T) {
@@ -1004,19 +1021,11 @@ public struct Lattice {
     
     public func object<T>(isolation: isolated (any Actor)? = #isolation,
                           _ type: T.Type = T.self, primaryKey: Int64) -> T? where T: Model {
-        let object = cxxLattice.object(primaryKey, std.string(type.entityName))
-        if object.hasValue {
-            return T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(object.pointee).make_shared()))
-        }
-        return nil
+        return backend.object(primaryKey: primaryKey, table: type.entityName).map { T(dynamicObject: $0) }
     }
     
     public func object<T>(_ type: T.Type = T.self, globalId: UUID) -> T? where T: Model {
-        let globalIdString = globalId.uuidString.lowercased()
-        if let object = cxxLattice.object_by_global_id(std.string(globalIdString), std.string(type.entityName)).value {
-            return T(dynamicObject: CxxDynamicObjectRef.wrap(CxxDynamicObject(object.pointee).make_shared()))
-        }
-        return nil
+        return backend.objectByGlobalId(globalId.uuidString.lowercased(), table: type.entityName).map { T(dynamicObject: $0) }
     }
     
     public func objects<T>(_ type: T.Type = T.self) -> TableResults<T> where T: Model {
@@ -1027,14 +1036,14 @@ public struct Lattice {
     @discardableResult public func delete<T: Model>(_ object: consuming T) -> Bool {
 //        defer { object._dynamicObject = T.defaultCxxLatticeObject }
 //        var dynamicObject = consume object._dynamicObject
-        return cxxLattice.remove(object._dynamicObject._ref)
+        return backend.remove(object._dynamicObject._ref)
         
     }
     
     @discardableResult public func delete<T: Model>(_ modelType: T.Type = T.self,
                                                     where: ((Query<T>) -> Query<Bool>)? = nil) -> Bool {
-        let whereClause: lattice.OptionalString = `where`.map { lattice.string_to_optional(std.string($0(Query<T>()).predicate)) } ?? .init()
-        return cxxLattice.delete_where(std.string(T.entityName), whereClause)
+        let whereClause: String? = `where`.map { $0(Query<T>()).predicate }
+        return backend.deleteWhere(table: T.entityName, where: whereClause)
     }
     
     public func deleteHistory() {
@@ -1048,13 +1057,13 @@ public struct Lattice {
     /// - Parameter staleThresholdSeconds: If > 0, evict slots inactive for this long.
     @discardableResult
     public func compactHistory(staleThresholdSeconds: Int64 = 0) -> Int64 {
-        cxxLattice.safe_compact_audit_log(staleThresholdSeconds)
+        backend.safeCompactAuditLog(staleThresholdSeconds: staleThresholdSeconds)
     }
 
     /// Backdate all replication slots' last_active_at by the given number of seconds.
     /// Test-only: enables deterministic stale-slot eviction without wall-clock sleeps.
     public func backdateReplicationSlots(seconds: Int64) {
-        cxxLattice.backdate_replication_slots(seconds)
+        backend.backdateReplicationSlots(seconds: seconds)
     }
 
     /// Nuclear compaction: deletes ALL history, regenerates snapshots, resets slots.
@@ -1062,14 +1071,14 @@ public struct Lattice {
     /// - Returns: Number of snapshot entries created.
     @discardableResult
     public func forceCompactHistory() -> Int64 {
-        cxxLattice.force_compact_audit_log()
+        backend.forceCompactAuditLog()
     }
 
     /// Flushes WAL contents to the main database file and truncates the WAL.
     /// Called automatically on deinitialization but can be invoked explicitly
     /// to ensure durability or reduce WAL file size.
     public func checkpoint() {
-        cxxLattice.checkpoint()
+        backend.checkpoint()
     }
 
     /// Incremental query-planner statistics refresh (`PRAGMA optimize`).
@@ -1077,7 +1086,7 @@ public struct Lattice {
     /// processes should call this from maintenance paths; the automatic
     /// close-time refresh never runs when the process is killed.
     public func optimize() {
-        cxxLattice.optimize()
+        backend.optimize()
     }
 
     /// Drop and rebuild the vec0 index, purging orphan entries that bloat chunk storage.
@@ -1087,7 +1096,7 @@ public struct Lattice {
         let t = T.init(isolation: #isolation)
         _ = t[keyPath: keyPath]
         let column = t._lastKeyPathUsed
-        return Int64(cxxLattice.vacuum_vec0(std.string(tableName), std.string(column)))
+        return backend.vacuumVec0(table: tableName, column: column ?? "")
     }
 
     /// Rebuilds the database file, reclaiming disk space from deleted rows
@@ -1097,18 +1106,18 @@ public struct Lattice {
     /// - Important: Requires exclusive database access. Will throw if another
     ///   process has the database open. Do not call during active queries.
     public func vacuum() {
-        cxxLattice.vacuum()
+        backend.vacuum()
     }
 
     /// Whether the sync WebSocket connection is currently active.
     public var isSyncConnected: Bool {
-        cxxLattice.is_sync_connected()
+        backend.isSyncConnected()
     }
 
     /// Explicitly close all database connections and tear down the synchronizer.
     /// If a sibling instance exists for the same database, it will inherit sync responsibility.
     public func close() {
-        cxxLattice.close()
+        backend.close()
     }
 
     // MARK: Sync Progress
@@ -1139,27 +1148,16 @@ public struct Lattice {
     /// Otherwise, it observes AuditLog changes via Darwin notifications and derives
     /// progress from the count of unsynchronized entries.
     public func onSyncProgress(_ handler: @escaping @Sendable (SyncProgress) -> Void) {
-        if cxxLattice.is_sync_agent() {
+        if backend.isSyncAgent() {
             // In-process path: register callback on synchronizer atomics
-            let context = SyncProgressContext(handler)
-            let contextPtr = Unmanaged.passRetained(context).toOpaque()
-            cxxLattice.set_on_sync_progress(
-                contextPtr,
-                { ctx, pending, total, acked, received in
-                    guard let ctx else { return }
-                    let context = Unmanaged<SyncProgressContext>.fromOpaque(ctx).takeUnretainedValue()
-                    context.callback(SyncProgress(
-                        pendingUpload: Int(pending),
-                        totalUpload: Int(total),
-                        acked: Int(acked),
-                        received: Int(received)
-                    ))
-                },
-                { ctx in
-                    guard let ctx else { return }
-                    Unmanaged<SyncProgressContext>.fromOpaque(ctx).release()
-                }
-            )
+            backend.setOnSyncProgress { pending, total, acked, received in
+                handler(SyncProgress(
+                    pendingUpload: Int(pending),
+                    totalUpload: Int(total),
+                    acked: Int(acked),
+                    received: Int(received)
+                ))
+            }
         } else {
             // Cross-process path: observe AuditLog changes and derive progress
             // from the count of unsynchronized entries.
@@ -1169,42 +1167,12 @@ public struct Lattice {
 
     /// Register a callback for sync errors (connection failures, protocol errors, etc.).
     public func onSyncError(_ handler: @escaping @Sendable (String) -> Void) {
-        let context = SyncErrorContext(handler)
-        let contextPtr = Unmanaged.passRetained(context).toOpaque()
-        cxxLattice.set_on_sync_error(
-            contextPtr,
-            { ctx, errorPtr, len in
-                guard let ctx, let errorPtr else { return }
-                let error = String(
-                    bytesNoCopy: UnsafeMutableRawPointer(mutating: errorPtr),
-                    length: Int(len),
-                    encoding: .utf8,
-                    freeWhenDone: false
-                ) ?? "unknown error"
-                Unmanaged<SyncErrorContext>.fromOpaque(ctx).takeUnretainedValue().callback(error)
-            },
-            { ctx in
-                guard let ctx else { return }
-                Unmanaged<SyncErrorContext>.fromOpaque(ctx).release()
-            }
-        )
+        backend.setOnSyncError(handler)
     }
 
     /// Register a callback for sync connection state changes.
     public func onSyncStateChange(_ handler: @escaping @Sendable (Bool) -> Void) {
-        let context = SyncStateContext(handler)
-        let contextPtr = Unmanaged.passRetained(context).toOpaque()
-        cxxLattice.set_on_sync_state_change(
-            contextPtr,
-            { ctx, connected in
-                guard let ctx else { return }
-                Unmanaged<SyncStateContext>.fromOpaque(ctx).takeUnretainedValue().callback(connected)
-            },
-            { ctx in
-                guard let ctx else { return }
-                Unmanaged<SyncStateContext>.fromOpaque(ctx).release()
-            }
-        )
+        backend.setOnSyncStateChange(handler)
     }
 
     /// AsyncStream of sync progress updates. Yields on every progress change
@@ -1215,47 +1183,38 @@ public struct Lattice {
     /// Transparently works cross-process via AuditLog observation when
     /// this process is not the sync agent.
     public var syncProgressStream: AsyncStream<SyncProgress> {
-        let cxx = cxxLattice
-        let isSyncAgent = cxx.is_sync_agent()
+        let backend = self.backend
+        let isSyncAgent = backend.isSyncAgent()
         let modelTypes = self.modelTypes
         let configuration = self.configuration
         return AsyncStream { continuation in
             if isSyncAgent {
                 // In-process path
-                let context = SyncProgressContext { progress in
-                    continuation.yield(progress)
+                backend.setOnSyncProgress { pending, total, acked, received in
+                    continuation.yield(SyncProgress(
+                        pendingUpload: Int(pending),
+                        totalUpload: Int(total),
+                        acked: Int(acked),
+                        received: Int(received)
+                    ))
                 }
-                let contextPtr = Unmanaged.passRetained(context).toOpaque()
-                cxx.set_on_sync_progress(
-                    contextPtr,
-                    { ctx, pending, total, acked, received in
-                        guard let ctx else { return }
-                        let context = Unmanaged<SyncProgressContext>.fromOpaque(ctx).takeUnretainedValue()
-                        context.callback(SyncProgress(
-                            pendingUpload: Int(pending),
-                            totalUpload: Int(total),
-                            acked: Int(acked),
-                            received: Int(received)
-                        ))
-                    },
-                    { ctx in
-                        guard let ctx else { return }
-                        Unmanaged<SyncProgressContext>.fromOpaque(ctx).release()
-                    }
-                )
 
                 continuation.onTermination = { _ in
-                    cxx.set_on_sync_progress(nil, nil, nil)
+                    backend.setOnSyncProgress(nil)
                 }
             } else {
-                // Cross-process path: observe AuditLog changes via Darwin notifications
-                let queryLattice = try! Lattice(for: modelTypes, configuration: configuration)
-                let tableName = std.string(AuditLog.entityName)
-                var previousPending = 0
+                // Cross-process path: observe AuditLog changes via Darwin notifications.
+                // queryLattice is only touched from the serial observer callback;
+                // wrap it for capture by the @Sendable observer closure.
+                let queryLattice = UncheckedSendable(try! Lattice(for: modelTypes, configuration: configuration))
+                // nonisolated(unsafe): mutated only from the serial AuditLog
+                // observer callback (no concurrent access), captured by the
+                // @Sendable observer closure.
+                nonisolated(unsafe) var previousPending = 0
 
-                let context = TableObserverContext { _ in
+                let observerId = backend.addTableObserver(table: AuditLog.entityName) { _ in
                     // Batch contents are irrelevant — re-read pending count.
-                    let pending = queryLattice.count(AuditLog.self, where: { $0.isSynchronized == false })
+                    let pending = queryLattice.value.count(AuditLog.self, where: { $0.isSynchronized == false })
                     let diff = previousPending - pending
                     let acked = max(0, diff)
                     previousPending = pending
@@ -1266,17 +1225,9 @@ public struct Lattice {
                         received: 0
                     ))
                 }
-                let contextPtr = Unmanaged.passRetained(context).toOpaque()
-
-                let observerId = cxx.add_table_observer(
-                    tableName,
-                    contextPtr,
-                    Lattice._tableObserverTrampoline,
-                    Lattice._tableObserverDestroy
-                )
 
                 continuation.onTermination = { _ in
-                    cxx.remove_table_observer(tableName, observerId)
+                    backend.removeTableObserver(table: AuditLog.entityName, observerId: observerId)
                 }
             }
         }
@@ -1299,35 +1250,27 @@ public struct Lattice {
     /// Pass `nil` to clear the filter and sync everything.
     public func updateSyncFilter(_ filter: SyncFilter?) {
         if let filter {
-            var filterEntries = lattice.SyncFilterVector()
-            for (tableName, whereClause) in filter.entries {
-                var entry = lattice.sync_filter_entry()
-                entry.table_name = std.string(tableName)
-                if let whereClause {
-                    entry.where_clause = lattice.string_to_optional(std.string(whereClause))
-                }
-                filterEntries.push_back(entry)
-            }
-            cxxLattice.update_sync_filter(filterEntries)
+            let params = filter.entries.map { SyncFilterParam(tableName: $0.key, whereClause: $0.value) }
+            backend.updateSyncFilter(params)
         } else {
-            cxxLattice.clear_sync_filter()
+            backend.clearSyncFilter()
         }
     }
 
     public func count<T>(_ modelType: T.Type, where: ((Query<T>) -> Query<Bool>)? = nil) -> Int where T: Model {
-        let whereClause: lattice.OptionalString = `where`.map { lattice.string_to_optional( std.string($0(Query<T>()).predicate)) } ?? lattice.OptionalString()
-        return Int(cxxLattice.count(std.string(T.entityName), whereClause))
+        let whereClause: String? = `where`.map { $0(Query<T>()).predicate }
+        return Int(backend.count(table: T.entityName, where: whereClause))
     }
     
     /// Holds observation state and cancels on deinit
     public final class TableObservationToken: Cancellable, @unchecked Sendable {
-        private let cxxLattice: lattice.swift_lattice
-        private let tableName: std.string
+        private let backend: any LatticeBackend
+        private let tableName: String
         private let observerId: UInt64
         private var isCancelled = false
 
-        init(cxxLattice: lattice.swift_lattice, tableName: std.string, observerId: UInt64) {
-            self.cxxLattice = cxxLattice
+        init(backend: any LatticeBackend, tableName: String, observerId: UInt64) {
+            self.backend = backend
             self.tableName = tableName
             self.observerId = observerId
         }
@@ -1335,7 +1278,7 @@ public struct Lattice {
         public func cancel() {
             guard !isCancelled else { return }
             isCancelled = true
-            cxxLattice.remove_table_observer(tableName, observerId)
+            backend.removeTableObserver(table: tableName, observerId: observerId)
         }
 
         deinit {
@@ -1343,87 +1286,11 @@ public struct Lattice {
         }
     }
 
-    /// One row's worth of metadata from a batched observer fire. Mirrors
-    /// the C++ `change_event` tuple. Materialized once in the Swift
-    /// trampoline from the parallel arrays the C bridge hands us.
-    struct TableChange: Sendable {
-        let operation: String
-        let rowId: Int64
-        let globalRowId: String
-    }
-
-    /// Context class to bridge Swift closures to C callbacks. The
-    /// callback fires once per WAL flush with the batch of rows from
-    /// that flush — a 3-row transaction is one fire of 3 entries, not
-    /// 3 fires of 1. Single-row events are the degenerate case
-    /// (count=1).
-    private final class TableObserverContext {
-        let callback: ([TableChange]) -> Void
-
-        init(callback: @escaping ([TableChange]) -> Void) {
-            self.callback = callback
-        }
-    }
-
-    /// C trampoline shared by every Swift `add_table_observer`
-    /// registration site. Unpacks the parallel C arrays once into
-    /// `[TableChange]` and hands them to the Swift closure.
-    ///
-    /// Lifetime: the C++ bridge guarantees the array pointers are valid
-    /// for the duration of this call (they reference vectors held on
-    /// the dispatch stack); we copy the strings into Swift `String`s
-    /// here so the resulting `TableChange` values are safe to capture
-    /// by the consumer.
-    private static let _tableObserverTrampoline:
-        @convention(c) (UnsafeMutableRawPointer?,
-                        UnsafePointer<UnsafePointer<CChar>?>?,
-                        UnsafePointer<Int64>?,
-                        UnsafePointer<UnsafePointer<CChar>?>?,
-                        Int) -> Void = { contextPtr, ops, rowIds, gids, count in
-        guard let contextPtr, count > 0,
-              let ops, let rowIds, let gids else { return }
-        let context = Unmanaged<TableObserverContext>.fromOpaque(contextPtr)
-            .takeUnretainedValue()
-        var changes: [TableChange] = []
-        changes.reserveCapacity(count)
-        for i in 0..<count {
-            let op = ops[i].map { String(cString: $0) } ?? ""
-            let gid = gids[i].map { String(cString: $0) } ?? ""
-            changes.append(TableChange(operation: op, rowId: rowIds[i], globalRowId: gid))
-        }
-        context.callback(changes)
-    }
-
-    private static let _tableObserverDestroy:
-        @convention(c) (UnsafeMutableRawPointer?) -> Void = { ptr in
-        guard let ptr else { return }
-        Unmanaged<TableObserverContext>.fromOpaque(ptr).release()
-    }
-
-    /// Context class for sync progress C callback bridge
-    private final class SyncProgressContext: @unchecked Sendable {
-        let callback: @Sendable (SyncProgress) -> Void
-
-        init(_ callback: @escaping @Sendable (SyncProgress) -> Void) {
-            self.callback = callback
-        }
-    }
-
-    private final class SyncErrorContext: @unchecked Sendable {
-        let callback: @Sendable (String) -> Void
-
-        init(_ callback: @escaping @Sendable (String) -> Void) {
-            self.callback = callback
-        }
-    }
-
-    private final class SyncStateContext: @unchecked Sendable {
-        let callback: @Sendable (Bool) -> Void
-
-        init(_ callback: @escaping @Sendable (Bool) -> Void) {
-            self.callback = callback
-        }
-    }
+    // The C-fn-ptr table-observer trampoline, its TableChange struct, and the
+    // SyncProgress/Error/State context classes that used to live here are gone:
+    // the observer/sync-callback registration now happens inside CxxBackend
+    // (the `_CxxClosureBox` + @convention(c) thunks), so every call site passes
+    // a plain Swift closure through the neutral backend surface instead.
 
     /// Start a passive sync progress observer for cross-process use.
     /// Called when this process is NOT the sync agent. Uses the dedicated
@@ -1436,15 +1303,10 @@ public struct Lattice {
         // the first call (previousPending is mutated but only from the serial
         // xproc callback — no concurrent access).
         nonisolated(unsafe) var previousPending = 0
-        let cxx = cxxLattice
+        let backend = self.backend
 
-        class XprocIdleContext {
-            let callback: () -> Void
-            init(_ callback: @escaping () -> Void) { self.callback = callback }
-        }
-
-        let context = XprocIdleContext { [cxx] in
-            let pending = Int(cxx.pending_sync_entry_count())
+        backend.setOnXprocIdle {
+            let pending = Int(backend.pendingSyncEntryCount())
             let diff = previousPending - pending
             let acked = max(0, diff)
             previousPending = pending
@@ -1455,72 +1317,40 @@ public struct Lattice {
                 received: 0
             ))
         }
-        let contextPtr = Unmanaged.passRetained(context).toOpaque()
-
-        cxxLattice.set_on_xproc_idle(
-            contextPtr,
-            { ctx in
-                guard let ctx else { return }
-                Unmanaged<XprocIdleContext>.fromOpaque(ctx).takeUnretainedValue().callback()
-            },
-            { ctx in
-                guard let ctx else { return }
-                Unmanaged<XprocIdleContext>.fromOpaque(ctx).release()
-            }
-        )
     }
 
     public func observe(_ block: @escaping ([AuditLog]) -> ()) -> AnyCancellable {
-        let tableName = std.string(AuditLog.entityName)
-
-        // Create context that holds the Swift closure. The C++ side
-        // delivers batches per WAL flush; this public Swift API has
-        // historically fired the block ONCE PER ROW with a one-element
-        // array (the `[AuditLog]` shape was a misnomer — always
-        // length 1). Preserve that contract by fanning the batch out
-        // here: walk each change in commit order, resolve its
-        // AuditLog row, fire `block([auditLog])` per row. Consumers
-        // (e.g. CrossProcessTests c556cd2) that count callback fires
+        let backend = self.backend
+        // The C++ side delivers batches per WAL flush; this public Swift API has
+        // historically fired the block ONCE PER ROW with a one-element array
+        // (the `[AuditLog]` shape was a misnomer — always length 1). Preserve
+        // that contract by fanning the batch out here: walk each change in commit
+        // order, resolve its AuditLog row, fire `block([auditLog])` per row.
+        // Consumers (e.g. CrossProcessTests c556cd2) that count callback fires
         // see the same N firings the per-row implementation gave.
-        let context = TableObserverContext { [self] changes in
-            // TEMP DIAGNOSTIC: write batch shape to a known file so we
-            // can compare CLI vs Xcode runs.
-            if let h = FileHandle(forWritingAtPath: "/tmp/lattice-observe-trace.log") {
-                let line = "\(Date().timeIntervalSince1970): observe([AuditLog]) batch.size=\(changes.count): \(changes.map { "(\($0.operation),\($0.rowId))" }.joined(separator: ","))\n"
-                try? h.seekToEnd()
-                h.write(Data(line.utf8))
-                try? h.close()
-            }
+        //
+        // The observer callback fires on the synchronizer's background thread, so
+        // the neutral surface requires @Sendable; `self`/`block` are not Sendable
+        // but are only touched here, so wrap them for capture.
+        let s = UncheckedSendable(self)
+        let blk = UncheckedSendable(block)
+        let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
             for change in changes {
-                if let auditLog = self.object(AuditLog.self, primaryKey: change.rowId) {
-                    block([auditLog])
+                if let auditLog = s.value.object(AuditLog.self, primaryKey: change.rowId) {
+                    blk.value([auditLog])
                 }
             }
         }
 
-        // Prevent context from being deallocated.
-        // shared_ptr<void> in C++ ensures context lives through in-flight callbacks.
-        let contextPtr = Unmanaged.passRetained(context).toOpaque()
-
-        let observerId = cxxLattice.add_table_observer(
-            tableName,
-            contextPtr,
-            Lattice._tableObserverTrampoline,
-            Lattice._tableObserverDestroy
-        )
-
-        // Create cancellable token — context release handled by C++ shared_ptr destroy
-        let token = TableObservationToken(cxxLattice: cxxLattice, tableName: tableName, observerId: observerId)
+        let token = TableObservationToken(backend: backend, tableName: AuditLog.entityName, observerId: observerId)
 
         return AnyCancellable {
             token.cancel()
         }
     }
 
-    public var changeStream: AsyncStream<[any SendableReference<AuditLog>]> {
-        AsyncStream<[any SendableReference<AuditLog>]> { [cxxLattice, modelTypes, configuration] stream in
-            let tableName = std.string(AuditLog.entityName)
-
+    public var changeStream: AsyncStream<[AnySendableReference<AuditLog>]> {
+        AsyncStream<[AnySendableReference<AuditLog>]> { [backend, modelTypes, configuration] stream in
             let log = Logger.sync
 
             // Create a single Lattice for all queries instead of one per notification.
@@ -1535,9 +1365,11 @@ public struct Lattice {
             queryConfig.ipcTargets = nil
             queryConfig.wssEndpoint = nil
             queryConfig.authorizationToken = nil
-            let queryLattice = try! Lattice(for: modelTypes, configuration: queryConfig)
+            // Only touched from the serial observer callback below; wrap for the
+            // @Sendable observer closure.
+            let queryLattice = UncheckedSendable(try! Lattice(for: modelTypes, configuration: queryConfig))
 
-            let context = TableObserverContext { changes in
+            let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
                 // One yield per WAL flush, with all refs from this
                 // batch. Wire-relay consumers (e.g. ClaudeCodeIRC's
                 // RoomSyncServer.broadcastEntries) ship one frame per
@@ -1546,13 +1378,13 @@ public struct Lattice {
                 // one frame and applies atomically. See the
                 // notify_changes_batched comment in LatticeCore for
                 // the full rationale.
-                let refs: [any SendableReference<AuditLog>] = changes.compactMap { c in
-                    guard let auditLog = queryLattice.object(AuditLog.self, primaryKey: c.rowId) else {
+                let refs: [AnySendableReference<AuditLog>] = changes.compactMap { c in
+                    guard let auditLog = queryLattice.value.object(AuditLog.self, primaryKey: c.rowId) else {
                         log.warning("changeStream: no AuditLog for pk=\(c.rowId)")
                         return nil
                     }
                     log.debug("changeStream entry: table=\(auditLog.tableName) modelOp=\(auditLog.operation) modelRowId=\(auditLog.rowId)")
-                    return auditLog.sendableReference
+                    return AnySendableReference(auditLog.sendableReference)
                 }
                 if !refs.isEmpty {
                     log.debug("changeStream yield: count=\(refs.count)")
@@ -1560,17 +1392,8 @@ public struct Lattice {
                 }
             }
 
-            let contextPtr = Unmanaged.passRetained(context).toOpaque()
-
-            let observerId = cxxLattice.add_table_observer(
-                tableName,
-                contextPtr,
-                Lattice._tableObserverTrampoline,
-                Lattice._tableObserverDestroy
-            )
-
             stream.onTermination = { _ in
-                cxxLattice.remove_table_observer(tableName, observerId)
+                backend.removeTableObserver(table: AuditLog.entityName, observerId: observerId)
             }
         }
     }
@@ -1585,8 +1408,8 @@ public struct Lattice {
     
     func observe<T: Model>(_ modelType: T.Type, where: Query<Bool>? = nil,
                            block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
-        let tableName = std.string(T.entityName)
-        
+        let backend = self.backend
+
         let block = UnsafeBlock(block: block)
 
         // Capture a sendable reference once, rather than resolving on every
@@ -1594,7 +1417,7 @@ public struct Lattice {
         // ensure_tables()) per callback, which races with teardown under load.
         let ref = self.sendableReference
 
-        let context = TableObserverContext { changes in
+        let observerId = backend.addTableObserver(table: T.entityName) { changes in
             // Walk the batch and dispatch one CollectionChange per row,
             // preserving input commit order. Same per-row semantics as
             // the legacy callback — just delivered in one fire instead
@@ -1671,22 +1494,13 @@ public struct Lattice {
             }
         }
 
-        let contextPtr = Unmanaged.passRetained(context).toOpaque()
-
-        let observerId = cxxLattice.add_table_observer(
-            tableName,
-            contextPtr,
-            Lattice._tableObserverTrampoline,
-            Lattice._tableObserverDestroy
-        )
-
-        let token = TableObservationToken(cxxLattice: cxxLattice, tableName: tableName, observerId: observerId)
+        let token = TableObservationToken(backend: backend, tableName: T.entityName, observerId: observerId)
 
         return AnyCancellable {
             token.cancel()
         }
     }
-    
+
     public func observe<T: Model>(_ modelType: T.Type, where: LatticePredicate<T>? = nil,
                                   block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
         observe(modelType, where: `where`?(Query()), block: block)
@@ -1694,35 +1508,27 @@ public struct Lattice {
 
     /// Observe structural changes on a link table (insert/delete/update rows in the link table itself).
     /// Used by List.observe and VirtualList.observe for add/remove/reorder notifications.
-    static func observeLinkTable(_ linkTableName: String, cxxLattice: lattice.swift_lattice, block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
-        let tableName = std.string(linkTableName)
-
-        let context = TableObserverContext { changes in
+    static func observeLinkTable(_ linkTableName: String, backend: any LatticeBackend, block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
+        // block is non-Sendable but only invoked from the serial observer
+        // callback; wrap for the @Sendable observer closure.
+        let blk = UncheckedSendable(block)
+        let observerId = backend.addTableObserver(table: linkTableName) { changes in
             // Walk batch synchronously, fire block per row in commit order.
             for entry in changes {
                 switch entry.operation {
                 case "INSERT":
-                    block(.insert(entry.rowId))
+                    blk.value(.insert(entry.rowId))
                 case "DELETE":
-                    block(.delete(entry.rowId))
+                    blk.value(.delete(entry.rowId))
                 case "UPDATE":
-                    block(.update(entry.rowId))
+                    blk.value(.update(entry.rowId))
                 default:
                     break
                 }
             }
         }
 
-        let contextPtr = Unmanaged.passRetained(context).toOpaque()
-
-        let observerId = cxxLattice.add_table_observer(
-            tableName,
-            contextPtr,
-            Lattice._tableObserverTrampoline,
-            Lattice._tableObserverDestroy
-        )
-
-        let token = TableObservationToken(cxxLattice: cxxLattice, tableName: tableName, observerId: observerId)
+        let token = TableObservationToken(backend: backend, tableName: linkTableName, observerId: observerId)
         return AnyCancellable {
             token.cancel()
         }
@@ -1730,15 +1536,11 @@ public struct Lattice {
 
     public func beginTransaction(isolation: isolated (any Actor)? = #isolation) {
         // Start the transaction.
-        var cxxError = lattice.cxx_error()
-        cxxLattice.begin_transaction(&cxxError)
-        guard cxxError.msg.empty() else {
-            fatalError(String(cxxError.msg))
-        }
+        backend.beginTransaction()
     }
     
     public func commitTransaction(isolation: isolated (any Actor)? = #isolation) {
-        cxxLattice.commit()
+        backend.commit()
     }
     
     public func transaction<T>(isolation: isolated (any Actor)? = #isolation,
@@ -1750,7 +1552,7 @@ public struct Lattice {
     }
     
     public mutating func attach(lattice: Lattice) {
-        cxxLattice.attach(lattice.cxxLattice)
+        backend.attach(lattice.backend)
         schema = schema?.merge(typeErased: lattice.schema!)
     }
     
@@ -1763,9 +1565,10 @@ public struct Lattice {
         queryConfig.authorizationToken = nil
         queryConfig.syncFilter = nil
         let cxxConfig = queryConfig.cxxConfiguration()
-        let newCxxLattice = LatticeCxx.swift_lattice_ref.create(swiftConfig: cxxConfig,
-                                                                schemas: modelTypes.cxxSchema)!
-        newCxxLattice.get().attach(lattice.cxxLattice)
+        // `_requireLatticeRef` unwraps the FRT-optional / value-non-optional gap.
+        let newCxxLattice = _requireLatticeRef(LatticeCxx.swift_lattice_ref.create(swiftConfig: cxxConfig,
+                                                                schemas: modelTypes.cxxSchema))
+        newCxxLattice.attach(lattice.cxxLatticeRef)
         var newLattice = Lattice.init(ref: newCxxLattice)
         newLattice.schema = schema?.merge(typeErased: lattice.schema!)
         return newLattice
@@ -1774,60 +1577,78 @@ public struct Lattice {
 
 typealias LatticeCxx = lattice
 
+// The schema carries the registered model types so polymorphic/virtual queries
+// (`objects(SomeVirtualModel.self)`) can discover which concrete types conform.
+// It exposes the type list as a plain array (`modelTypeList`) so it works the
+// same with or without parameter packs; `merge` combines two type lists. The
+// previous pack-based `merge<each V>` requirement was removed (it forced an
+// iOS 17 floor on the whole protocol).
 protocol _Schema {
+    var modelTypeList: [any Model.Type] { get }
     func merge(typeErased: _Schema) -> _Schema
-    func merge<each V: Model>(other: Schema<repeat each V>) -> _Schema
     func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> VirtualResults<T>
 }
 
-package struct Schema<each M: Model>: _Schema {
-    let modelTypes: (repeat (each M).Type)
-    package init(_ modelTypes: repeat (each M).Type) {
-        self.modelTypes = (repeat each modelTypes)
-    }
-    
-    func addType<T: Model>(_ type: T.Type) -> _Schema {
-        Schema<repeat each M, T>(repeat each self.modelTypes, type)
-    }
-    
-    func merge(typeErased: any _Schema) -> any _Schema {
-        typeErased.merge(other: self)
-    }
-    
-    func merge<each V: Model>(other: Schema<repeat each V>) -> _Schema {
-        Schema<repeat (each M), repeat each V>.init(repeat each self.modelTypes, repeat each other.modelTypes)
-    }
-    
-    package func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> any VirtualResults<T> {
-        // Collect matching types in the variadic loop (no existential box needed)
+extension _Schema {
+    fileprivate func _generateVirtualResults<T>(matching modelTypes: [any Model.Type], _ type: T.Type, on lattice: Lattice) -> any VirtualResults<T> {
         var matchingTypes: [any Model.Type] = []
-        for modelType in repeat each modelTypes {
+        for modelType in modelTypes {
             if modelType.init(isolation: #isolation) is T {
                 matchingTypes.append(modelType)
             }
         }
-        // Build VirtualResults outside variadic context using existential opening
         return _buildVirtualResults(from: matchingTypes, proto: type, lattice: lattice)
     }
 }
 
+// Array-backed schema — no parameter packs, so it works on every deployment
+// target. This is what `Lattice` stores; both the array and variadic inits build
+// it.
+struct SchemaCompat: _Schema {
+    let modelTypes: [any Model.Type]
+    var modelTypeList: [any Model.Type] { modelTypes }
+    func merge(typeErased: any _Schema) -> any _Schema {
+        SchemaCompat(modelTypes: modelTypes + typeErased.modelTypeList)
+    }
+    func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> any VirtualResults<T> {
+        _generateVirtualResults(matching: modelTypes, type, on: lattice)
+    }
+}
+
+
 // Build VirtualResults outside of variadic generic context to avoid IRGen crash on Linux.
 // Uses existential opening on `any Model.Type` instead of pack element archetypes.
+@available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
 private func _makeInitialVirtualResults<M: Model, T>(
     _ modelType: M.Type, proto: T.Type, lattice: Lattice
 ) -> any VirtualResults<T> {
     _VirtualResults<M, T>(types: modelType, proto: proto, lattice: lattice)
 }
 
+extension Lattice {
+    /// Test seam: forces the array-backed compat results types (the < iOS 17
+    /// path) even where `#available` would select the parameter-pack types, so
+    /// the macOS test suite can runtime-verify the compat surface (which is
+    /// otherwise dead code on every test platform). Task-local — scope it with
+    /// `Lattice.$_forceCompatPaths.withValue(true) { ... }`.
+    @TaskLocal package static var _forceCompatPaths = false
+}
+
 private func _buildVirtualResults<T>(
     from types: [any Model.Type], proto: T.Type, lattice: Lattice
 ) -> any VirtualResults<T> {
     guard let first = types.first else { fatalError("No types conform to \(T.self)") }
-    var result = _makeInitialVirtualResults(first, proto: proto, lattice: lattice)
-    for remaining in types.dropFirst() {
-        result = result._addType(remaining)
+    // iOS 17+: build the parameter-pack `_VirtualResults` (grown one type at a
+    // time). iOS 15: build the array-backed `_VirtualResultsCompat` directly.
+    if !Lattice._forceCompatPaths, #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *) {
+        var result = _makeInitialVirtualResults(first, proto: proto, lattice: lattice)
+        for remaining in types.dropFirst() {
+            result = result._addType(remaining)
+        }
+        return result
+    } else {
+        return _VirtualResultsCompat<T>(modelTypes: types, proto: proto, lattice: lattice)
     }
-    return result
 }
 
 extension Array where Element == any Model.Type {
@@ -1879,7 +1700,7 @@ extension Lattice {
     /// Direct log output to a file instead of stderr.
     /// Pass nil to revert to stderr. Caller owns the FILE* lifetime.
     public static func setLogFile(_ fileURL: URL) {
-        let path = fileURL.path(percentEncoded: false)
+        let path = fileURL.path
         guard let cFilePointer = fopen(path, "w") else {
             // stderr, never stdout: stdout may be a wire protocol (MCP stdio)
             // and any stray line corrupts the stream.

@@ -130,7 +130,7 @@ struct Embedded: EmbeddedModel {
     var name: String
     var grandparent: Grandparent?
     @Relation(link: \Child.parent)
-    var children: any Results<Child>
+    var children: TableResults<Child>
 }
 
 @Model class ModelWithConstraints {

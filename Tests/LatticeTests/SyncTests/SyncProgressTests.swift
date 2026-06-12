@@ -76,7 +76,7 @@ actor SyncProgressTests {
             print("[SERVER:SyncProgress] Sending \(count) initial events to new connection")
             for i in stride(from: 0, to: count, by: 1000) {
                 let page = events[i..<min(count, i + 1000)]
-                let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(page))
+                let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
                 ws.send(ByteBuffer(data: encoded))
             }
         }

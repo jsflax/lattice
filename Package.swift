@@ -5,7 +5,7 @@ import CompilerPluginSupport
 
 let package = Package(
     name: "Lattice",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [.macOS(.v14), .iOS(.v15)],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
@@ -24,7 +24,7 @@ let package = Package(
         .package(url: "https://github.com/vapor/vapor.git", from: "4.76.0"),
         .package(url: "https://github.com/vapor/fluent.git", from: "4.0.0"),
         .package(url: "https://github.com/vapor/fluent-sqlite-driver.git", from: "4.8.0"),
-        .package(url: "https://github.com/vapor/jwt.git",    from: "5.0.0"),
+//        .package(url: "https://github.com/vapor/jwt.git",    from: "5.0.0"),
         .package(url: "https://github.com/vapor/websocket-kit.git", from: "2.15.0"),
     ],
     targets: [
@@ -65,16 +65,16 @@ let package = Package(
                 .product(name: "Vapor", package: "vapor"),
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]),
-        .executableTarget(
-            name: "LatticeExampleServer",
-            dependencies: [
-                "LatticeServerKit",
-                .product(name: "Vapor", package: "vapor"),
-                .product(name: "Fluent", package: "fluent"),
-                .product(name: "FluentSQLiteDriver", package: "fluent-sqlite-driver"),
-                .product(name: "JWT", package: "jwt"),
-            ],
-            swiftSettings: [.interoperabilityMode(.Cxx)]),
+//        .executableTarget(
+//            name: "LatticeExampleServer",
+//            dependencies: [
+//                "LatticeServerKit",
+//                .product(name: "Vapor", package: "vapor"),
+//                .product(name: "Fluent", package: "fluent"),
+//                .product(name: "FluentSQLiteDriver", package: "fluent-sqlite-driver"),
+////                .product(name: "JWT", package: "jwt"),
+//            ],
+//            swiftSettings: [.interoperabilityMode(.Cxx)]),
         .executableTarget(name: "LatticeMain",
                           dependencies: ["Lattice"],
                           swiftSettings: [.interoperabilityMode(.Cxx)])

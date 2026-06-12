@@ -38,8 +38,10 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         weak var instance: (any Model)?
         let objectIdentifier: ObjectIdentifier
         var cxxObserverId: UInt64?
-        var cxxLatticeRef: lattice.swift_lattice_ref?
-        
+        // Boxed backend handle; deregister recovers the swift_lattice_ref via
+        // asCxxLatticeRef (the handle works on every OS — value-converted
+        // below the FRT floor).
+        var latticeBackend: (any LatticeBackend)?
         init(_ model: any Model) {
             self.instance = model
             self.objectIdentifier = ObjectIdentifier(model)
@@ -57,7 +59,9 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     /// Register a model instance for cross-instance and cross-process observation
     func register(_ model: any Model, tableName: String) {
         guard let primaryKey = model.primaryKey else { return }
-        guard let latticeRef = model._dynamicObject._ref.lattice else { return }
+        guard let latticeBackend = model._dynamicObject._ref.lattice else { return }
+        // Cross-process object observation uses the C++ object-observer API.
+        guard let latticeRef = latticeBackend.asCxxLatticeRef else { return }
         let dbPath = String(latticeRef.path())
         let key = InstanceKey(databasePath: dbPath, tableName: tableName, primaryKey: primaryKey)
         var ref = WeakModelRef(model)
@@ -68,7 +72,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         let observerCtx = _ObjectObserverCtx(dbPath: dbPath, tableName: tableName, primaryKey: primaryKey)
         let observerCtxPtr = Unmanaged.passRetained(observerCtx).toOpaque()
 
-        let observerId = latticeRef.get().add_object_observer(
+        let observerId = latticeRef.add_object_observer(
             std.string(tableName),
             primaryKey,
             observerCtxPtr,
@@ -102,7 +106,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
             }
         )
         ref.cxxObserverId = observerId
-        ref.cxxLatticeRef = latticeRef
+        ref.latticeBackend = latticeBackend
         lock.lock()
         registeredKeys[objectId] = key
         var refs = instances.removeValue(forKey: key) ?? []
@@ -173,8 +177,9 @@ final class ModelInstanceRegistry: @unchecked Sendable {
 
         for ref in removedRefs {
             if let observerId = ref.cxxObserverId,
-               let latticeRef = ref.cxxLatticeRef {
-                latticeRef.get().remove_object_observer(std.string(tableName), key.primaryKey, observerId)
+               let latticeBackend = ref.latticeBackend,
+               let latticeRef = latticeBackend.asCxxLatticeRef {
+                latticeRef.remove_object_observer(std.string(tableName), key.primaryKey, observerId)
             }
         }
     }
@@ -244,7 +249,11 @@ public struct _ModelObserver {
     }
 }
 
-public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identifiable, SchemaProperty, CxxManaged, LatticeIsolated, LinkListable, UnionProperty {
+// NOTE: `Observable` (iOS 17) is intentionally NOT a refinement here — that
+// would force an iOS-17 floor on every model. The @Model macro instead adds
+// `Observable` conformance per-model behind `@available(iOS 17, *)`. Below iOS 17
+// models still drive SwiftUI via `ObservableObject` (Combine).
+public protocol Model: AnyObject, ObservableObject, Hashable, Identifiable, SchemaProperty, CxxManaged, LatticeIsolated, LinkListable, UnionProperty {
     init(isolation: isolated (any Actor)?)
 //    var lattice: Lattice? { get set }
     static var entityName: String { get }
@@ -254,6 +263,7 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
     @available(*, deprecated, renamed: "globalId")
     var __globalId: UUID? { get }
 
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     var _$observationRegistrar: Observation.ObservationRegistrar { get }
     func _objectWillChange_send()
     func _triggerObservers_send(keyPath: String)
@@ -273,7 +283,7 @@ public protocol Model: AnyObject, Observable, ObservableObject, Hashable, Identi
 
 extension Model {
     package init(isolation: isolated (any Actor)? = #isolation,
-                 dynamicObject: CxxDynamicObjectRef) {
+                 dynamicObject: any ObjectBackend) {
         self.init(isolation: isolation)
         self._dynamicObject._ref = dynamicObject
         // Register for cross-instance observation if this object has a primaryKey
@@ -282,14 +292,20 @@ extension Model {
         }
     }
     
-    public init(_ refType: CxxDynamicObjectRef) {
+    public init(_ refType: any ObjectBackend) {
         self.init(dynamicObject: refType)
     }
+
+    // Boxing overload: query/list hydration produces a C++ dynamic_object_ref
+    // (FRT on 16.4+, value type below); this wraps it in a CxxObjectBackend.
+    public init(dynamicObject refType: CxxDynamicObjectRef) {
+        self.init(dynamicObject: CxxObjectBackend(refType) as any ObjectBackend)
+    }
     public static func _makeLinkList(from storage: borrowing ModelStorage, named name: String) -> ModelLinkListRef<Self> {
-        ModelLinkListRef(_ref: storage._ref.getLinkList(named: std.string(name)))
+        ModelLinkListRef(_ref: storage._ref.getLinkList(named: name))
     }
     
-    public var asRefType: CxxDynamicObjectRef { self._dynamicObject._ref }
+    public var asRefType: any ObjectBackend { self._dynamicObject._ref }
     
     public static var defaultValue: Self {
         .init(isolation: #isolation)
@@ -300,8 +316,12 @@ extension Model {
     public static var indexedProperties: Set<String> { [] }
 
     public var lattice: Lattice? {
-        _dynamicObject._ref.lattice.map { Lattice.init(ref: $0) }
+        _dynamicObject._ref.lattice?.asCxxLatticeRef.map { Lattice.init(ref: $0) }
     }
+
+    /// Cheap managed-check: true when the object is persisted (has an owning
+    /// db). Avoids the box→unbox→cache-lookup round trip of `lattice != nil`.
+    public var isManaged: Bool { _dynamicObject._ref.hasLattice }
 
     /// Fire all instance-level observers whose property filter matches (or have no filter).
     public func _fireObservers(propertyName: String) {
@@ -372,12 +392,12 @@ extension Model {
 
     public static func getField(from storage: borrowing ModelStorage, named name: String) -> Self {
         let model = Self(isolation: #isolation)
-        model._dynamicObject._ref = storage._ref.getObject(named: std.string(name))
+        model._dynamicObject._ref = storage._ref.getObject(named: name)
         return model
     }
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
-        storage._ref.setObject(named: std.string(name), value._dynamicObject._ref)
+        storage._ref.setObject(named: name, value._dynamicObject._ref)
     }
 
     #if canImport(Combine)
@@ -612,24 +632,24 @@ public func _defaultCxxLatticeObject<M>(_ model: M.Type) -> CxxDynamicObject whe
 
 extension Model {
     public static func getField(from uv: lattice.union_value, named name: String) -> Self {
-        guard let linkRef = uv.getLinkRef(std.string(name)) else {
+        guard let linkRef = _optRef(uv.getLinkRef(std.string(name))) else {
             return Self(isolation: nil)
         }
         let model = Self(isolation: nil)
-        model._dynamicObject._ref = linkRef
+        model._dynamicObject._ref = CxxObjectBackend(linkRef)
         return model
     }
 
     public static func setField(on uv: inout lattice.union_value, named name: String, _ value: Self) {
         let gid = value.globalId?.uuidString.lowercased() ?? ""
         uv.setString(std.string(name), std.string(gid))
-        uv.setLinkRef(std.string(name), value._dynamicObject._ref)
+        uv.setLinkRef(std.string(name), value._dynamicObject._ref.asCxxObjectRef!)
     }
 }
 
 extension Model {
     public var debugDescription: String {
-        String(_dynamicObject._ref.debug_description())
+        _dynamicObject._ref.debugDescription()
     }
 }
 
@@ -640,7 +660,7 @@ func _name<T>(for keyPath: PartialKeyPath<T>) -> String where T: Model {
 }
 
 @attached(member, names: arbitrary)
-@attached(extension, conformances: Model, names: arbitrary)
+@attached(extension, conformances: Model, Observable, names: arbitrary)
 @attached(memberAttribute)
 public macro Model() = #externalMacro(module: "LatticeMacros",
                                       type: "ModelMacro")
