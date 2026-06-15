@@ -60,6 +60,13 @@ public struct TableChanges: Sendable {
 // context pointer and the queued row updates) lives behind a shared_ptr in
 // C++, so value-path copies alias the same queue and the methods import
 // non-mutating. It is never instantiated on the core CRUD path.
+//
+// Gated to the foreign-reference-type floor (iOS 16.4 / macOS 13.3 / …): the
+// package back-deploys to iOS 15, where `swift_migration_context_ref` isn't
+// available, so the wrapper must be availability-guarded to compile. Nothing
+// references this type below the floor (the portable migration API is the
+// `Migration` struct + `DynamicObject`).
+@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 public final class MigrationContext: @unchecked Sendable {
     let cxxContext: lattice.swift_migration_context_ref
 
