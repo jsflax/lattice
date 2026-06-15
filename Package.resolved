@@ -1,5 +1,5 @@
 {
-  "originHash" : "78a7c0d3e5620e52dc7bef7626125b80ceca663ead12d9493fb8ed25f7f59ed3",
+  "originHash" : "aaed3cf4410cb9301595ee3336c96c3693c2db4801003bbd1ba3498ea2a9965b",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -58,10 +58,10 @@
     {
       "identity" : "latticecore",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/jsflax/LatticeCore.git",
+      "location" : "https://github.com/dianaperezafanador/LatticeCore.git",
       "state" : {
-        "branch" : "main",
-        "revision" : "f6ccb4bf7e5f6fdc5413c459e806899e7a041a6d"
+        "branch" : "fix/frt-ios15-backdeploy",
+        "revision" : "09fad499897732d99cfec7c0b08887897a4f506f"
       }
     },
     {
@@ -294,8 +294,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-syntax.git",
       "state" : {
-        "revision" : "9de99a78f099e59caf2b2beec65a4c45d54b2081",
-        "version" : "603.0.1"
+        "revision" : "4799286537280063c85a32f09884cfbca301b1a1",
+        "version" : "602.0.0"
       }
     },
     {

@@ -15,7 +15,10 @@ let package = Package(
         .executable(name: "LatticeMain", targets: ["LatticeMain"])
     ],
     dependencies: [
-        .package(url: "https://github.com/jsflax/LatticeCore.git", branch: "main"),
+        // Fork with the iOS-15 back-deploy fix (bridge defaults to the value-type
+        // path so foreign-reference *_ref types don't desync from the deployment
+        // target). Repoint at jsflax/LatticeCore once the fix lands upstream.
+        .package(url: "https://github.com/dianaperezafanador/LatticeCore.git", branch: "fix/frt-ios15-backdeploy"),
         .package(url: "https://github.com/apple/swift-syntax.git", from: "602.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
