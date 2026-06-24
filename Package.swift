@@ -12,7 +12,9 @@ let package = Package(
             name: "Lattice",
             targets: ["Lattice"]),
         .library(name: "LatticeServerKit", targets: ["LatticeServerKit"]),
-        .executable(name: "LatticeMain", targets: ["LatticeMain"])
+        .library(name: "LatticeMCP", targets: ["LatticeMCP"]),
+        .executable(name: "LatticeMain", targets: ["LatticeMain"]),
+        .executable(name: "lattice-mcp", targets: ["lattice-mcp"]),
     ],
     dependencies: [
         .package(path: "../LatticeCore"),
@@ -26,6 +28,7 @@ let package = Package(
         .package(url: "https://github.com/vapor/fluent-sqlite-driver.git", from: "4.8.0"),
 //        .package(url: "https://github.com/vapor/jwt.git",    from: "5.0.0"),
         .package(url: "https://github.com/vapor/websocket-kit.git", from: "2.15.0"),
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.0"),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -54,6 +57,7 @@ let package = Package(
             name: "LatticeTests",
             dependencies: [
                 "Lattice",
+                "LatticeMCP",
                     .product(name: "Vapor", package: "vapor")
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]
@@ -77,6 +81,19 @@ let package = Package(
 //            swiftSettings: [.interoperabilityMode(.Cxx)]),
         .executableTarget(name: "LatticeMain",
                           dependencies: ["Lattice"],
+                          swiftSettings: [.interoperabilityMode(.Cxx)]),
+        // Generic, file-agnostic MCP query server over the dynamic Lattice API.
+        // LatticeMCP owns the Lattice/C++ boundary (Cxx interop); the executable
+        // shell imports the MCP SDK WITHOUT Cxx interop so the SDK's dependency
+        // graph (EventSource/swift-numerics) compiles normally.
+        .target(name: "LatticeMCP",
+                dependencies: ["Lattice"],
+                swiftSettings: [.interoperabilityMode(.Cxx)]),
+        .executableTarget(name: "lattice-mcp",
+                          dependencies: [
+                            "LatticeMCP",
+                            .product(name: "MCP", package: "swift-sdk"),
+                          ],
                           swiftSettings: [.interoperabilityMode(.Cxx)])
     ]
 )

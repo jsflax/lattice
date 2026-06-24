@@ -121,26 +121,11 @@ public final class MigrationContext: @unchecked Sendable {
 
 }
 
-@dynamicMemberLookup
-public final class DynamicObject {
-    private var dynamicObject: CxxDynamicObjectRef
-
-    internal init(_ dynamicObject: CxxDynamicObjectRef) {
-        self.dynamicObject = dynamicObject
-    }
-
-    public subscript<T>(dynamicMember keyPath: String) -> T where T: CxxManaged {
-        get {
-            var storage = ModelStorage(_ref: CxxObjectBackend(dynamicObject))
-            return T.getField(from: storage, named: keyPath)
-        }
-        set {
-            var storage = ModelStorage(_ref: CxxObjectBackend(dynamicObject))
-            T.setField(on: &storage, named: keyPath, newValue)
-            dynamicObject = storage._ref.asCxxObjectRef!
-        }
-    }
-}
+// NOTE: `DynamicObject` now lives in `Dynamic/DynamicObject.swift` — it is the
+// public, schema-driven `@dynamicMemberLookup` type for the dynamic (no
+// compile-time `@Model` types) query API. The previous internal definition here
+// (a typed `<T: CxxManaged>` accessor used only by the unused `MigrationBlock`
+// typealias below) had no live callers and was superseded.
 
 // MARK: - Migration Block Type
 
