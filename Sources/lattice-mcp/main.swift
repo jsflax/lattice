@@ -76,6 +76,41 @@ func toolDefinitions() -> [Tool] {
                 "required": ["model"],
              ]),
              annotations: ro),
+
+        Tool(name: "lattice_search",
+             description: "Full-text search (FTS5) over a @FullText column; results ordered by relevance (`score`).",
+             inputSchema: schemaValue([
+                "type": "object",
+                "properties": ["model": str, "field": str, "match": str, "limit": int, "depth": int],
+                "required": ["model", "field", "match"],
+             ]),
+             annotations: ro),
+
+        Tool(name: "lattice_nearest",
+             description: "Vector ANN search over a Vector column. Supply a `vector` (array of numbers); `metric` is l2|cosine|l1. Returns rows with `distance`.",
+             inputSchema: schemaValue([
+                "type": "object",
+                "properties": [
+                    "model": str, "field": str,
+                    "vector": ["type": "array", "items": ["type": "number"]],
+                    "k": int, "metric": str, "depth": int,
+                ],
+                "required": ["model", "field", "vector"],
+             ]),
+             annotations: ro),
+
+        Tool(name: "lattice_geo",
+             description: "Geo proximity search over a geo column within `radiusMeters` of `near` {lat, lon}; results ordered by distance (`distanceMeters`).",
+             inputSchema: schemaValue([
+                "type": "object",
+                "properties": [
+                    "model": str, "field": str,
+                    "near": ["type": "object", "properties": ["lat": ["type": "number"], "lon": ["type": "number"]]],
+                    "radiusMeters": ["type": "number"], "limit": int, "depth": int,
+                ],
+                "required": ["model", "field", "near"],
+             ]),
+             annotations: ro),
     ]
 }
 

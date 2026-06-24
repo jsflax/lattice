@@ -36,7 +36,8 @@ public actor LatticeDataProvider {
     private var schemaByTable: [String: ObjectSchema] = [:]
 
     /// The tool names this provider answers.
-    public static let toolNames = ["lattice_schema", "lattice_query", "lattice_get", "lattice_count"]
+    public static let toolNames = ["lattice_schema", "lattice_query", "lattice_get", "lattice_count",
+                                   "lattice_search", "lattice_nearest", "lattice_geo"]
 
     public init(fileURL: URL,
                 defaultLimit: Int = 100,
@@ -61,6 +62,9 @@ public actor LatticeDataProvider {
             case "lattice_query":  payload = try queryPayload(args)
             case "lattice_get":    payload = try getPayload(args)
             case "lattice_count":  payload = try countPayload(args)
+            case "lattice_search": payload = try searchPayload(args)
+            case "lattice_nearest": payload = try nearestPayload(args)
+            case "lattice_geo":    payload = try geoPayload(args)
             default: return .error("unknown_tool", "No tool named '\(tool)'")
             }
             let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
@@ -149,7 +153,97 @@ public actor LatticeDataProvider {
         return ["model": model, "count": results.count]
     }
 
+    private func searchPayload(_ args: [String: Any]) throws -> [String: Any] {
+        let model = try requireModel(args)
+        let props = try properties(of: model)
+        let field = try requireField(args, "field", in: props)
+        guard let match = args["match"] as? String else {
+            throw ToolError(code: "invalid_predicate", message: "'match' (string) is required")
+        }
+        let limit = clampLimit(args["limit"])
+        let rows = lattice.dynamicNearest(
+            table: model,
+            texts: [TextConstraintParam(column: field, searchText: match, limit: Int32(limit))],
+            sort: SortDescriptorParam(kind: .textRank, column: field, ascending: true),
+            limit: limit)
+        return resultsPayload(model, rows, field: field, distanceKey: "score", depth: depthArg(args))
+    }
+
+    private func nearestPayload(_ args: [String: Any]) throws -> [String: Any] {
+        let model = try requireModel(args)
+        let props = try properties(of: model)
+        let field = try requireField(args, "field", in: props)
+        guard let vecAny = args["vector"] as? [Any] else {
+            throw ToolError(code: "invalid_predicate", message: "'vector' (array of numbers) is required")
+        }
+        let doubles = vecAny.compactMap { ($0 as? NSNumber)?.doubleValue }
+        let k = Int32((args["k"] as? Int) ?? 10)
+        let rows = lattice.dynamicNearest(
+            table: model,
+            vectors: [VectorConstraintParam(column: field, queryVector: Self.vectorBytes(doubles),
+                                            k: k, metric: Self.metricInt(args["metric"] as? String))],
+            sort: SortDescriptorParam(kind: .vectorDistance, column: field, ascending: true),
+            limit: Int(k))
+        return resultsPayload(model, rows, field: field, distanceKey: "distance", depth: depthArg(args))
+    }
+
+    private func geoPayload(_ args: [String: Any]) throws -> [String: Any] {
+        let model = try requireModel(args)
+        let props = try properties(of: model)
+        let field = try requireField(args, "field", in: props)
+        guard let near = args["near"] as? [String: Any],
+              let lat = (near["lat"] as? NSNumber)?.doubleValue,
+              let lon = (near["lon"] as? NSNumber)?.doubleValue else {
+            throw ToolError(code: "invalid_predicate", message: "'near' {lat, lon} is required")
+        }
+        let radius = (args["radiusMeters"] as? NSNumber)?.doubleValue ?? 1000
+        let limit = clampLimit(args["limit"])
+        let rows = lattice.dynamicNearest(
+            table: model,
+            geos: [GeoConstraintParam(column: field, centerLat: lat, centerLon: lon, radiusMeters: radius)],
+            sort: SortDescriptorParam(kind: .geoDistance, column: field, ascending: true),
+            limit: limit)
+        return resultsPayload(model, rows, field: field, distanceKey: "distanceMeters", depth: depthArg(args))
+    }
+
+    private func resultsPayload(_ model: String,
+                               _ rows: [(object: DynamicObject, distances: [DistanceEntry])],
+                               field: String, distanceKey: String, depth: Int) -> [String: Any] {
+        let results = rows.map { row -> [String: Any] in
+            var obj = row.object.jsonObject(maxDepth: depth)
+            if let d = (row.distances.first { $0.column == field } ?? row.distances.first)?.distance {
+                obj[distanceKey] = d
+            }
+            return obj
+        }
+        return ["model": model, "count": results.count, "results": results]
+    }
+
     // MARK: - Helpers
+
+    private func requireField(_ args: [String: Any], _ key: String, in props: [PropertyInfo]) throws -> String {
+        guard let field = args[key] as? String else {
+            throw ToolError(code: "invalid_predicate", message: "'\(key)' (string) is required")
+        }
+        guard isQueryable(field, in: props) else {
+            throw ToolError(code: "unknown_property", message: "Unknown property '\(field)'")
+        }
+        return field
+    }
+
+    private static func vectorBytes(_ doubles: [Double]) -> [UInt8] {
+        var out = [UInt8](); out.reserveCapacity(doubles.count * 4)
+        for d in doubles { var f = Float(d); withUnsafeBytes(of: &f) { out.append(contentsOf: $0) } }
+        return out
+    }
+
+    private static func metricInt(_ s: String?) -> Int32 {
+        switch (s ?? "l2").lowercased() {
+        case "cosine": return 1
+        case "l1": return 2
+        default: return 0
+        }
+    }
 
     private func requireModel(_ args: [String: Any]) throws -> String {
         guard let model = args["model"] as? String else {
