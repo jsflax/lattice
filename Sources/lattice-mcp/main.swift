@@ -2,16 +2,20 @@ import Foundation
 import MCP
 import LatticeMCP
 
-// lattice-mcp — a generic, read-only MCP query server over a .lattice file.
+// lattice-mcp — a generic, read-only MCP query server over .lattice files.
 //
-//   lattice-mcp --db /path/to/app.lattice
-//   lattice-mcp /path/to/app.lattice
+//   lattice-mcp                      # generic: pass `db` per tool call
+//   lattice-mcp --db /path/app.lattice   # optional default DB for calls that omit `db`
+//   lattice-mcp /path/app.lattice
 //
 // Speaks MCP over stdio; register it with an MCP client (e.g. Claude Code/Desktop).
+// One registration serves ANY .lattice file: each tool takes an optional `db`
+// path, and providers are opened/cached per path by LatticeProviderPool.
 // This target deliberately does NOT enable C++ interop: the Lattice/C++ boundary
-// lives inside LatticeMCP (LatticeDataProvider), so the MCP SDK and its
-// dependencies compile normally.
+// lives inside LatticeMCP, so the MCP SDK and its dependencies compile normally.
 
+/// Optional launch-default DB path (`--db <path>` or a bare positional arg).
+/// nil means every call must supply its own `db` argument.
 func parseDBPath() -> String? {
     let args = Array(CommandLine.arguments.dropFirst())
     if let i = args.firstIndex(of: "--db"), i + 1 < args.count { return args[i + 1] }
@@ -38,11 +42,15 @@ func toolDefinitions() -> [Tool] {
     let str: [String: Any] = ["type": "string"]
     let int: [String: Any] = ["type": "integer"]
     let obj: [String: Any] = ["type": "object"]
+    // Per-call database selector: one registered server can query any .lattice
+    // file. Optional only if the server was launched with --db.
+    let db: [String: Any] = ["type": "string",
+                             "description": "Absolute path to the .lattice file. Optional if lattice-mcp was started with --db."]
 
     return [
         Tool(name: "lattice_schema",
              description: "List every model table and its property schema (kind, type, link target, indexed/unique/fullText/vector/geo flags, union cases).",
-             inputSchema: schemaValue(["type": "object", "properties": [String: Any]()]),
+             inputSchema: schemaValue(["type": "object", "properties": ["db": db]]),
              annotations: ro),
 
         Tool(name: "lattice_query",
@@ -50,6 +58,7 @@ func toolDefinitions() -> [Tool] {
              inputSchema: schemaValue([
                 "type": "object",
                 "properties": [
+                    "db": db,
                     "model": str,
                     "where": ["type": "object", "description": "JSON predicate: {col:{$op:val}} with $eq $ne $gt $gte $lt $lte $contains $hasPrefix $hasSuffix $in $between, plus $and/$or/$not."],
                     "sort": ["type": "array", "items": ["type": "object", "properties": ["field": str, "order": str]]],
@@ -63,7 +72,7 @@ func toolDefinitions() -> [Tool] {
              description: "Fetch a single object by primaryKey or globalId.",
              inputSchema: schemaValue([
                 "type": "object",
-                "properties": ["model": str, "primaryKey": int, "globalId": str, "depth": int],
+                "properties": ["db": db, "model": str, "primaryKey": int, "globalId": str, "depth": int],
                 "required": ["model"],
              ]),
              annotations: ro),
@@ -72,7 +81,7 @@ func toolDefinitions() -> [Tool] {
              description: "Count objects of a model matching an optional JSON predicate.",
              inputSchema: schemaValue([
                 "type": "object",
-                "properties": ["model": str, "where": obj],
+                "properties": ["db": db, "model": str, "where": obj],
                 "required": ["model"],
              ]),
              annotations: ro),
@@ -81,7 +90,7 @@ func toolDefinitions() -> [Tool] {
              description: "Full-text search (FTS5) over a @FullText column; results ordered by relevance (`score`).",
              inputSchema: schemaValue([
                 "type": "object",
-                "properties": ["model": str, "field": str, "match": str, "limit": int, "depth": int],
+                "properties": ["db": db, "model": str, "field": str, "match": str, "limit": int, "depth": int],
                 "required": ["model", "field", "match"],
              ]),
              annotations: ro),
@@ -91,6 +100,7 @@ func toolDefinitions() -> [Tool] {
              inputSchema: schemaValue([
                 "type": "object",
                 "properties": [
+                    "db": db,
                     "model": str, "field": str,
                     "vector": ["type": "array", "items": ["type": "number"]],
                     "k": int, "metric": str, "depth": int,
@@ -104,6 +114,7 @@ func toolDefinitions() -> [Tool] {
              inputSchema: schemaValue([
                 "type": "object",
                 "properties": [
+                    "db": db,
                     "model": str, "field": str,
                     "near": ["type": "object", "properties": ["lat": ["type": "number"], "lon": ["type": "number"]]],
                     "radiusMeters": ["type": "number"], "limit": int, "depth": int,
@@ -114,22 +125,19 @@ func toolDefinitions() -> [Tool] {
     ]
 }
 
-guard let path = parseDBPath() else {
-    FileHandle.standardError.write(Data("usage: lattice-mcp --db <path-to-.lattice>\n".utf8))
-    exit(2)
-}
+// No DB is required up front: the server is generic and each tool can name its
+// own `db`. A bare path / --db just sets the default for calls that omit `db`.
+let defaultDB = parseDBPath().map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
 
 do {
-    let providerTask = Task {
-        try await LatticeDataProvider(fileURL: URL(fileURLWithPath: path))
-    }
+    let pool = LatticeProviderPool(defaultDB: defaultDB)
     let server = Server(name: "lattice", version: "0.1.0",
                         capabilities: .init(tools: .init(listChanged: false)))
     let tools = toolDefinitions()
     await server.withMethodHandler(ListTools.self) { _ in ListTools.Result(tools: tools) }
     await server.withMethodHandler(CallTool.self) { params in
-        let result = try await providerTask.value.handle(tool: params.name,
-                                                         argumentsJSON: argumentsJSON(params.arguments))
+        let result = await pool.handle(tool: params.name,
+                                       argumentsJSON: argumentsJSON(params.arguments))
         return CallTool.Result(content: [.text(text: result.json, annotations: nil, _meta: nil)],
                                isError: result.isError)
     }

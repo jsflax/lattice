@@ -164,4 +164,36 @@ final class DynamicAPITests {
         #expect(dogShallow["globalId"] != nil)
         #expect(dogShallow["name"] == nil)
     }
+
+    // Regression: a NIL to-one link must not crash. Previously
+    // dynamic_object::get_object dereferenced a null managed<T*> (get_value()
+    // == nullptr) via m->table_name(), segfaulting whenever an object with an
+    // unset link was serialized at depth > 0.
+    @Test func testDynamicNilLinkSerialization() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "dynnil_\(UUID().uuidString).sqlite")
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+
+        do {
+            let lattice = try Lattice(DynPerson.self, DynDog.self,
+                                      configuration: .init(fileURL: url))
+            let p = DynPerson(); p.name = "Loner"; p.age = 50  // no dog
+            lattice.add(p)
+            lattice.checkpoint()
+            lattice.close()
+        }
+
+        let dyn = try Lattice.dynamic(fileURL: url)
+        let row = try #require(dyn.dynamicObjects("DynPerson").first)
+
+        // Accessing the nil link returns nil rather than crashing.
+        #expect(row.dog as? DynamicObject == nil)
+
+        // Serializing with link traversal must not crash; the nil link is
+        // simply omitted (no `dog` key).
+        let json = row.jsonObject(maxDepth: 2)
+        #expect(json["name"] as? String == "Loner")
+        #expect(json["dog"] == nil)
+        #expect((try? JSONSerialization.data(withJSONObject: json)) != nil)
+    }
 }
