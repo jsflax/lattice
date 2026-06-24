@@ -1,5 +1,5 @@
 {
-  "originHash" : "78a7c0d3e5620e52dc7bef7626125b80ceca663ead12d9493fb8ed25f7f59ed3",
+  "originHash" : "a5722e4091f92f01825baca20956c3efe32cbe6a813a1c5619100593d6502d19",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -53,15 +53,6 @@
       "state" : {
         "revision" : "e227d94dc3fe7099a096ac2ca28cad1f69bd8d5b",
         "version" : "4.9.0"
-      }
-    },
-    {
-      "identity" : "latticecore",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/jsflax/LatticeCore.git",
-      "state" : {
-        "branch" : "main",
-        "revision" : "0bc61e063b085ef4e51ffa11175033e0e1e0f43c"
       }
     },
     {
@@ -292,7 +283,7 @@
     {
       "identity" : "swift-syntax",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-syntax.git",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
       "state" : {
         "revision" : "9de99a78f099e59caf2b2beec65a4c45d54b2081",
         "version" : "603.0.1"

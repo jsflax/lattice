@@ -43,6 +43,8 @@ private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "Frame
             guard let lattice else {
                 return
             }
+            LatticePerf.bump(.fetches)
+            LatticePerf.emitFetchEvent()
             wrappedValue = lattice.objects().where(predicate)
             if let sortBy {
                 wrappedValue = wrappedValue._sorted(by: sortBy)

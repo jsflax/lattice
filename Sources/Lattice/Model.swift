@@ -58,6 +58,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
 
     /// Register a model instance for cross-instance and cross-process observation
     func register(_ model: any Model, tableName: String) {
+        LatticePerf.bump(.registrations)
         guard let primaryKey = model.primaryKey else { return }
         guard let latticeBackend = model._dynamicObject._ref.lattice else { return }
         // Cross-process object observation uses the C++ object-observer API.
@@ -135,6 +136,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     /// Uses the pre-stored InstanceKey to avoid accessing the model's C++ lattice ref,
     /// which may be a dangling pointer during deinit teardown.
     func deregister(_ model: any Model, tableName: String) {
+        LatticePerf.bump(.deregistrations)
         let objectId = ObjectIdentifier(model)
 
         lock.lock()
@@ -284,6 +286,7 @@ public protocol Model: AnyObject, ObservableObject, Hashable, Identifiable, Sche
 extension Model {
     package init(isolation: isolated (any Actor)? = #isolation,
                  dynamicObject: any ObjectBackend) {
+        LatticePerf.bump(.materializations)
         self.init(isolation: isolation)
         self._dynamicObject._ref = dynamicObject
         // Register for cross-instance observation if this object has a primaryKey
@@ -316,7 +319,7 @@ extension Model {
     public static var indexedProperties: Set<String> { [] }
 
     public var lattice: Lattice? {
-        _dynamicObject._ref.lattice?.asCxxLatticeRef.map { Lattice.init(ref: $0) }
+        _dynamicObject._ref.lattice?.asCxxLatticeRef.flatMap { Lattice.init(ref: $0) }
     }
 
     /// Cheap managed-check: true when the object is persisted (has an owning
@@ -665,7 +668,7 @@ func _name<T>(for keyPath: PartialKeyPath<T>) -> String where T: Model {
 public macro Model() = #externalMacro(module: "LatticeMacros",
                                       type: "ModelMacro")
 
-@attached(extension, conformances: LatticeEnum, names: arbitrary)
+@attached(extension, conformances: LatticeEnum, Codable, DetachableLeaf, names: arbitrary)
 public macro LatticeEnum() = #externalMacro(module: "LatticeMacros",
                                             type: "EnumMacro")
 

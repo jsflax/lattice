@@ -521,7 +521,7 @@ public struct Lattice {
             self.busyTimeoutMs = busyTimeoutMs
         }
 
-        fileprivate func cxxConfiguration(isolation: isolated (any Actor)? = #isolation) -> lattice.swift_configuration {
+        internal func cxxConfiguration(isolation: isolated (any Actor)? = #isolation) -> lattice.swift_configuration {
             // Create a scheduler for the current isolation context.
             // This ensures different isolation contexts get different cache keys in C++.
             let currentScheduler = Scheduler(isolation: isolation)
@@ -614,28 +614,42 @@ public struct Lattice {
     internal var isolation: (any Actor)?
     public var _isolation: (any Actor)? { isolation }
     
-    internal init(isolation: isolated (any Actor)? = #isolation,
-                  ref: lattice.swift_lattice_ref) {
-        self = Self.cacheLock.withLockUnchecked {
+    /// Resolve the Lattice wrapper for a C++ ref arriving through a trampoline
+    /// (observer/sync callbacks, `Model.lattice`). Returns nil when the
+    /// instance has been released — late callbacks for a dead Lattice are
+    /// dropped by callers, never resurrected. (The old path-based fallback
+    /// could hand back a DIFFERENT instance for the same file — the
+    /// zero-schema "ghost instance" bug class — and the preconditionFailure
+    /// it backstopped crashed the process whenever a trampoline outlived its
+    /// Lattice. Both are replaced by nil.)
+    internal init?(isolation: isolated (any Actor)? = #isolation,
+                   ref: lattice.swift_lattice_ref) {
+        let resurrected: Lattice? = Self.cacheLock.withLockUnchecked {
             let key = CacheKey(ref)
-            if let cached = Self.cache[key] {
-                return cached
+            if let entry = Self.cache[key] {
+                if let lattice = entry.resurrect() { return lattice }
+                Self.cache.removeValue(forKey: key)  // expired entry
             }
-            // Fallback: look up by path if hash lookup fails
-            // This can happen when C++ creates a new impl for the same path
-            let refPath = String(ref.path())
-            if let cached = Self.cache.values.first(where: { $0.configuration.fileURL.path == refPath }) {
-                return cached
-            }
-            // Debug: print cache state
-            print("[Lattice Cache Debug]")
-            print("  Looking for hash: \(key.implHash), path: \(refPath)")
-            print("  Cache has \(Self.cache.count) entries:")
-            for (k, v) in Self.cache {
-                print("    hash: \(k.implHash), path: \(v.configuration.fileURL.path)")
-            }
-            preconditionFailure("Lattice not found in cache for ref with hash \(key.implHash), path: \(refPath)")
+            return nil
         }
+        guard let resurrected else { return nil }
+        self = resurrected
+    }
+
+    /// Direct construction from an existing backend — bypasses the cache
+    /// lookup. Does NOT register in the cache (callers that need trampoline
+    /// resolution register explicitly; the resurrect path must not re-enter
+    /// the non-recursive cache lock).
+    internal init(backend: any LatticeBackend,
+                  configuration: Configuration,
+                  modelTypes: [any Model.Type],
+                  schema: _Schema?,
+                  isolation: (any Actor)?) {
+        self.backend = backend
+        self.configuration = configuration
+        self.modelTypes = modelTypes
+        self.schema = schema
+        self.isolation = isolation
     }
     
     private static let cacheLock = UnfairLock(initialState: ())
@@ -661,7 +675,34 @@ public struct Lattice {
         }
     }
 
-    private nonisolated(unsafe) static var cache: [CacheKey: Lattice] = [:]
+    /// Weak-value cache entry: enough to rebuild a Lattice wrapper for
+    /// trampolines while the backend is alive, without pinning it. When the
+    /// last user-held Lattice copy releases its backend, the C++ impl closes
+    /// (sockets, scheduler threads) and the entry expires — the old strong
+    /// cache kept every instance alive for the life of the process.
+    private final class WeakCacheEntry {
+        weak var backend: (any LatticeBackend)?
+        let configuration: Configuration
+        let modelTypes: [any Model.Type]
+        let schema: _Schema?
+        let isolation: (any Actor)?
+
+        init(_ lattice: Lattice) {
+            self.backend = lattice.backend
+            self.configuration = lattice.configuration
+            self.modelTypes = lattice.modelTypes
+            self.schema = lattice.schema
+            self.isolation = lattice.isolation
+        }
+
+        func resurrect() -> Lattice? {
+            guard let backend else { return nil }
+            return Lattice(backend: backend, configuration: configuration,
+                           modelTypes: modelTypes, schema: schema, isolation: isolation)
+        }
+    }
+
+    private nonisolated(unsafe) static var cache: [CacheKey: WeakCacheEntry] = [:]
 
     /// Context passed through void* for the row migration C function pointer callback.
     private final class _MigrationCtx: @unchecked Sendable {
@@ -778,8 +819,8 @@ public struct Lattice {
         // below the floor) is boxed into the one stored backend.
         self.backend = CxxBackend(createdRef)
         let key = CacheKey(self.backend)
-        let latticeInstance = self
-        Self.cacheLock.withLockUnchecked { Self.cache[key] = latticeInstance }
+        let entry = WeakCacheEntry(self)
+        Self.cacheLock.withLockUnchecked { Self.cache[key] = entry }
     }
 
     // MARK: Public Inits
@@ -905,8 +946,8 @@ public struct Lattice {
         // file mmap'd.
         let filePath = fileURL.path
         cacheLock.withLockUnchecked {
-            for (key, value) in cache where value.configuration.fileURL.path == filePath {
-                value.backend.close()
+            for (key, entry) in cache where entry.configuration.fileURL.path == filePath {
+                entry.backend?.close()
                 cache.removeValue(forKey: key)
             }
         }
@@ -1569,8 +1610,19 @@ public struct Lattice {
         let newCxxLattice = _requireLatticeRef(LatticeCxx.swift_lattice_ref.create(swiftConfig: cxxConfig,
                                                                 schemas: modelTypes.cxxSchema))
         newCxxLattice.attach(lattice.cxxLatticeRef)
-        var newLattice = Lattice.init(ref: newCxxLattice)
+        // Construct directly: this query-only connection is intentionally a
+        // distinct impl (its config differs from ours), so a cache lookup by
+        // ref would miss. Register it so trampolines on the attached
+        // connection can still resolve.
+        var newLattice = Lattice(backend: CxxBackend(newCxxLattice),
+                                 configuration: queryConfig,
+                                 modelTypes: modelTypes,
+                                 schema: schema,
+                                 isolation: isolation)
         newLattice.schema = schema?.merge(typeErased: lattice.schema!)
+        Self.cacheLock.withLockUnchecked {
+            Self.cache[CacheKey(newLattice.backend)] = WeakCacheEntry(newLattice)
+        }
         return newLattice
     }
 }

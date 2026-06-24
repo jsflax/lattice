@@ -15,6 +15,10 @@ public protocol LinkListRef<Element> {
 
     static func new() -> Self
     func get(at position: Int) -> Element
+    /// Nil-guarded variant of `get(at:)`: returns nil when the backing slot is
+    /// null (e.g. a row was cascade-removed concurrently) instead of trapping.
+    /// Used by `@Detached` materialization. Default falls back to `get(at:)`.
+    func tryGet(at position: Int) -> Element?
     mutating func set(at position: Int, _ element: Element)
     func count() -> Int
     mutating func append(_ element: Element)
@@ -28,6 +32,12 @@ public protocol LinkListRef<Element> {
     /// the former `lattice.swift_lattice_ref?` so the protocol carries no
     /// foreign-reference type into the iOS-15 floor.
     var latticeBackend: (any LatticeBackend)? { get }
+}
+
+extension LinkListRef {
+    /// Default: force-hydrate via `get(at:)`. Backends with a nullable slot
+    /// (e.g. `ModelLinkListRef`) override this to return nil instead of trapping.
+    public func tryGet(at position: Int) -> Element? { get(at: position) }
 }
 
 public protocol LinkListable: SchemaProperty {
@@ -51,6 +61,10 @@ public struct ModelLinkListRef<T: Model>: @unchecked Sendable, LinkListRef {
 
     public func get(at position: Int) -> T {
         T(_ref.object(at: position)!)
+    }
+
+    public func tryGet(at position: Int) -> T? {
+        _ref.object(at: position).map { T($0) }
     }
 
     public mutating func set(at position: Int, _ element: T) {
@@ -261,6 +275,23 @@ extension List: LinkProperty where Element: Model {
 
     public static var modelType: any Model.Type {
         Element.self
+    }
+}
+
+extension List {
+    /// Nil-guarded materialization for `@Detached`: walks positions skipping any
+    /// whose backend slot is null (a concurrent cascade-delete can shrink the
+    /// link table between `count()` and access), instead of trapping the way
+    /// `subscript`/`snapshot()` do via force-unwrap. Must be called on the
+    /// model's owning isolation (same thread-confinement contract as any read).
+    func _detachedElements() -> [Element] {
+        let n = linkListRef.count()
+        var out: [Element] = []
+        out.reserveCapacity(n)
+        for i in 0..<n {
+            if let e = linkListRef.tryGet(at: i) { out.append(e) }
+        }
+        return out
     }
 }
 

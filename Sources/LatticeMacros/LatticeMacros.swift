@@ -548,6 +548,99 @@ private func isOptionalExistentialString(_ typeStr: String) -> Bool {
     return false
 }
 
+/// `@Detached` — generates a nested `Sendable & Codable` value mirror
+/// (`Model.Detached`) plus `detached(maxDepth:)`. Emits each stored property as
+/// `T.DetachedRepr` and populates it via the `Detachable` witness; all scalar/
+/// link/collection logic lives in the runtime conformances (see Detached.swift),
+/// so this macro stays purely structural. Apply alongside `@Model`.
+class DetachedMacro: MemberMacro, ExtensionMacro {
+
+    /// Stored properties that become `Detached` fields. Excludes computed/
+    /// transient/relation members (as `@Codable` does), and skips what cannot be
+    /// mirrored off a live model: virtual/existential links and `VirtualList`
+    /// backlinks (they'd otherwise emit a non-resolving `DetachedRepr`).
+    private static func detachedMembers(_ declaration: some DeclGroupSyntax) throws -> [MemberView] {
+        try declaration.memberBlock.members.compactMap(view(for:)).filter { m in
+            guard !m.isComputed, !m.isTransient, !m.isRelation else { return false }
+            if isOptionalExistentialString(m.type) { return false }     // (any Proto)? virtual link
+            let u = m.unwrappedType
+            if u.hasPrefix("any ") || m.type.hasPrefix("any ") { return false }  // bare existential
+            if u.hasPrefix("VirtualList") || u.hasPrefix("VirtualLink") { return false }  // backlinks
+            return true
+        }
+    }
+
+    // Members: the nested `Detached` struct + `detached(maxDepth:)`.
+    static func expansion(
+        of node: AttributeSyntax,
+        providingMembersOf declaration: some DeclGroupSyntax,
+        conformingTo protocols: [TypeSyntax],
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        guard let classDecl = declaration.as(ClassDeclSyntax.self) else { return [] }
+        let typeName = classDecl.name.trimmed
+        let members = try detachedMembers(declaration)
+
+        let fields = members
+            .map { "public let \($0.name): \($0.type).DetachedRepr" }
+            .joined(separator: "\n    ")
+        let assigns = members
+            .map { "self.\($0.name) = m.\($0.name)._detached(remainingDepth: remainingDepth - 1, visited: &visited)" }
+            .joined(separator: "\n        ")
+
+        let structDecl: DeclSyntax = """
+        public struct Detached: Sendable, Codable, Equatable {
+            public let globalId: UUID?
+            public let primaryKey: Int64?
+            \(raw: fields)
+            public init(_ m: \(raw: typeName), remainingDepth: Int, visited: inout Set<DetachKey>) {
+                self.globalId = m.globalId
+                self.primaryKey = m.primaryKey
+                \(raw: assigns)
+            }
+        }
+        """
+
+        let detachedMethod: DeclSyntax = """
+        public func detached(maxDepth: Int = 5) -> Detached {
+            var visited: Set<DetachKey> = [_detachKey]
+            return Detached(self, remainingDepth: maxDepth, visited: &visited)
+        }
+        """
+        return [structDecl, detachedMethod]
+    }
+
+    // Extension: the `Detachable` conformance (inlines the depth/cycle gate,
+    // matching the validated spike — no closure indirection).
+    static func expansion(
+        of node: AttributeSyntax,
+        attachedTo declaration: some DeclGroupSyntax,
+        providingExtensionsOf type: some TypeSyntaxProtocol,
+        conformingTo protocols: [TypeSyntax],
+        in context: some MacroExpansionContext
+    ) throws -> [ExtensionDeclSyntax] {
+        guard declaration.is(ClassDeclSyntax.self) else { return [] }
+        let ext: DeclSyntax = """
+        extension \(type.trimmed): Detachable {
+            public typealias DetachedRepr = DetachedRef<Detached>
+            public typealias DetachedOptionalRepr = DetachedRef<Detached>
+            public func _detached(remainingDepth: Int, visited: inout Set<DetachKey>) -> DetachedRef<Detached> {
+                guard remainingDepth > 0 else { return .none }
+                let _key = _detachKey
+                guard !visited.contains(_key) else { return .none }
+                visited.insert(_key)
+                defer { visited.remove(_key) }
+                return .some(Detached(self, remainingDepth: remainingDepth, visited: &visited))
+            }
+            public func _detachedOptional(remainingDepth: Int, visited: inout Set<DetachKey>) -> DetachedRef<Detached> {
+                _detached(remainingDepth: remainingDepth, visited: &visited)
+            }
+        }
+        """
+        return [ext.cast(ExtensionDeclSyntax.self)]
+    }
+}
+
 class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
     static func expansion(of node: SwiftSyntax.AttributeSyntax, attachedTo declaration: some SwiftSyntax.DeclGroupSyntax, providingAttributesFor member: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.AttributeSyntax] {
         // Try to cast the member to a variable declaration.
@@ -1028,16 +1121,23 @@ class EnumMacro: ExtensionMacro {
             throw MacroError.message("@LatticeEnum requires at least one case")
         }
 
+        // Make every @LatticeEnum transparently `@Detached`-able (DetachableLeaf)
+        // with no per-enum boilerplate. DetachableLeaf needs Codable + Sendable: a
+        // @LatticeEnum is always a no-payload, SchemaProperty-raw (String/Int) enum,
+        // so Codable synthesizes and Sendable is implicit. We add `Codable` only when
+        // it isn't already declared (else it's a redundant-conformance error).
+        let inherited = Set((enumDecl.inheritanceClause?.inheritedTypes ?? []).map { $0.type.trimmedDescription })
+        let hasCodable = inherited.contains("Codable") || (inherited.contains("Decodable") && inherited.contains("Encodable"))
+        let conformanceList = (["LatticeEnum"] + (hasCodable ? [] : ["Codable"]) + ["DetachableLeaf"]).joined(separator: ", ")
+
         return [
-            ExtensionDeclSyntax(
-                extendedType: type,
-                inheritanceClause: .init(inheritedTypes: .init(arrayLiteral: InheritedTypeSyntax(type: TypeSyntax("LatticeEnum")))),
-                memberBlock: """
-                {
+            DeclSyntax(
+                """
+                extension \(type.trimmed): \(raw: conformanceList) {
                     public static var defaultValue: Self { .\(raw: caseName) }
                 }
                 """
-            )
+            ).cast(ExtensionDeclSyntax.self)
         ]
     }
 }
@@ -1287,6 +1387,7 @@ struct LatticeMacrosPlugin: CompilerPlugin {
 //        LatticeMemberMacro.self,
         UniqueMacro.self, CodableMacro.self, EnumMacro.self, UnionMacro.self, EmbeddedModelMacro.self,
         VirtualModelMacro.self, FullTextMacro.self, IndexedMacro.self,
-        VirtualLinkPropertyMacro.self, CodingKeyMacro.self, CodableIgnoredMacro.self
+        VirtualLinkPropertyMacro.self, CodingKeyMacro.self, CodableIgnoredMacro.self,
+        DetachedMacro.self
     ]
 }

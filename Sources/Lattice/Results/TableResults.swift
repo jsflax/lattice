@@ -37,6 +37,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
     // Helper to build query parameters - always fetches fresh from DB (live results)
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
+        LatticePerf.bump(.snapshots)
 
         // If we have a bounds constraint, use the spatial query path
         if let bounds = boundsConstraint {
