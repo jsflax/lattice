@@ -15,9 +15,8 @@ extension Lattice {
     ///
     /// Query with `dynamicObjects(_:)`; introspect with `dynamicSchema`.
     ///
-    /// NOTE: read-only uses immutable open mode (does not consult the WAL), so a
-    /// concurrent writer's uncheckpointed changes are not visible. Point at a
-    /// checkpointed file, or have the writer checkpoint first.
+    /// Read-only opens are WAL-aware (`SQLITE_OPEN_READONLY`) and will see a
+    /// concurrent writer's committed-but-uncheckpointed rows.
     public static func dynamic(fileURL: URL) throws -> Lattice {
         var configuration = Configuration(fileURL: fileURL)
         configuration.isReadOnly = true
