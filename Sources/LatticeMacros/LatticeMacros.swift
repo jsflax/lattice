@@ -588,10 +588,13 @@ class DetachedMacro: MemberMacro, ExtensionMacro {
             .map { "self.\($0.name) = m.\($0.name)._detached(remainingDepth: remainingDepth - 1, visited: &visited)" }
             .joined(separator: "\n        ")
         // A public MEMBERWISE init so `.Detached` can be CONSTRUCTED in Swift (DSL / config builders), not only
-        // produced by detaching a live row. Per-field defaults: List → [], optional → nil, else the model's own
-        // initializer (`= X`) or `.defaultValue` — so a builder sets only the few fields it cares about.
+        // produced by detaching a live row. Per-field defaults: List/Set → [], optional → nil, else the model's
+        // own initializer (`= X`) or `.defaultValue` — so a builder sets only the few fields it cares about.
+        // NB: a `Set<T>`'s DetachedRepr is `[T.DetachedRepr]` (an Array), so the model's `Set` literal default
+        // (e.g. `= AgentCapability.all`) does NOT type-match the param — use the empty Array literal instead.
         let mwParams = (["globalId: UUID? = nil", "primaryKey: Int64? = nil"] + members.map { m -> String in
-            let def = m.type.hasPrefix("List<") ? "[]" : (m.isOptional ? "nil" : (m.assignment ?? ".defaultValue"))
+            let isCollection = m.type.hasPrefix("List<") || m.type.hasPrefix("Set<")
+            let def = isCollection ? "[]" : (m.isOptional ? "nil" : (m.assignment ?? ".defaultValue"))
             return "\(m.name): \(m.type).DetachedRepr = \(def)"
         }).joined(separator: ",\n            ")
         let mwAssigns = (["self.globalId = globalId", "self.primaryKey = primaryKey"]
@@ -1328,6 +1331,7 @@ class UnionMacro: ExtensionMacro {
                     InheritedTypeSyntax(type: TypeSyntax("LatticeUnion"), trailingComma: .commaToken()),
                     InheritedTypeSyntax(type: TypeSyntax("Codable"), trailingComma: .commaToken()),
                     InheritedTypeSyntax(type: TypeSyntax("Sendable"), trailingComma: .commaToken()),
+                    InheritedTypeSyntax(type: TypeSyntax("Equatable"), trailingComma: .commaToken()),
                     InheritedTypeSyntax(type: TypeSyntax("DetachableLeaf"))
                 )),
                 memberBlock: """

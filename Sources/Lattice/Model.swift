@@ -672,7 +672,7 @@ public macro Model() = #externalMacro(module: "LatticeMacros",
 public macro LatticeEnum() = #externalMacro(module: "LatticeMacros",
                                             type: "EnumMacro")
 
-@attached(extension, conformances: LatticeUnion, Codable, Sendable, DetachableLeaf, names: arbitrary)
+@attached(extension, conformances: LatticeUnion, Codable, Sendable, Equatable, DetachableLeaf, names: arbitrary)
 public macro Union() = #externalMacro(module: "LatticeMacros",
                                       type: "UnionMacro")
 
