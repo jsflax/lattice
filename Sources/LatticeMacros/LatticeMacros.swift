@@ -587,6 +587,15 @@ class DetachedMacro: MemberMacro, ExtensionMacro {
         let assigns = members
             .map { "self.\($0.name) = m.\($0.name)._detached(remainingDepth: remainingDepth - 1, visited: &visited)" }
             .joined(separator: "\n        ")
+        // A public MEMBERWISE init so `.Detached` can be CONSTRUCTED in Swift (DSL / config builders), not only
+        // produced by detaching a live row. Per-field defaults: List → [], optional → nil, else the model's own
+        // initializer (`= X`) or `.defaultValue` — so a builder sets only the few fields it cares about.
+        let mwParams = (["globalId: UUID? = nil", "primaryKey: Int64? = nil"] + members.map { m -> String in
+            let def = m.type.hasPrefix("List<") ? "[]" : (m.isOptional ? "nil" : (m.assignment ?? ".defaultValue"))
+            return "\(m.name): \(m.type).DetachedRepr = \(def)"
+        }).joined(separator: ",\n            ")
+        let mwAssigns = (["self.globalId = globalId", "self.primaryKey = primaryKey"]
+            + members.map { "self.\($0.name) = \($0.name)" }).joined(separator: "\n            ")
 
         let structDecl: DeclSyntax = """
         public struct Detached: Sendable, Codable, Equatable {
@@ -597,6 +606,11 @@ class DetachedMacro: MemberMacro, ExtensionMacro {
                 self.globalId = m.globalId
                 self.primaryKey = m.primaryKey
                 \(raw: assigns)
+            }
+            public init(
+                \(raw: mwParams)
+            ) {
+                \(raw: mwAssigns)
             }
         }
         """
@@ -1306,8 +1320,15 @@ class UnionMacro: ExtensionMacro {
         return [
             ExtensionDeclSyntax(
                 extendedType: type,
+                // Parity with @LatticeEnum: make every @Union transparently `@Detached`-able (DetachableLeaf
+                // needs Codable + Sendable). Codable synthesizes for an enum whose payloads are all Codable;
+                // Sendable holds when the payloads are Sendable (the union is stored on a model either way).
+                // Without these, a @Union field on a @Detached model fails ('DetachedRepr not Codable').
                 inheritanceClause: .init(inheritedTypes: .init(arrayLiteral:
-                    InheritedTypeSyntax(type: TypeSyntax("LatticeUnion"))
+                    InheritedTypeSyntax(type: TypeSyntax("LatticeUnion"), trailingComma: .commaToken()),
+                    InheritedTypeSyntax(type: TypeSyntax("Codable"), trailingComma: .commaToken()),
+                    InheritedTypeSyntax(type: TypeSyntax("Sendable"), trailingComma: .commaToken()),
+                    InheritedTypeSyntax(type: TypeSyntax("DetachableLeaf"))
                 )),
                 memberBlock: """
                 {
