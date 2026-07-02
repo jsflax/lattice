@@ -284,14 +284,18 @@ actor SyncProgressTests {
             authorizationToken: "bad",
             wssEndpoint: URL(string: "ws://localhost:1/nonexistent"))
 
+        // The instance must outlive the await: an error callback can't be
+        // delivered to a torn-down Lattice, and the old `let lattice` inside
+        // the closure only worked because the strong cache leaked the instance.
+        let lattice = try! Lattice(SimpleSyncObject.self, configuration: badConfig)
         let errorMessage: String = await withCheckedContinuation { continuation in
             let once = AtomicOnce()
-            let lattice = try! Lattice(SimpleSyncObject.self, configuration: badConfig)
             lattice.onSyncError { error in
                 guard once.tryFire() else { return }
                 continuation.resume(returning: error)
             }
         }
+        withExtendedLifetime(lattice) {}
 
         #expect(!errorMessage.isEmpty, "Error message should not be empty")
     }

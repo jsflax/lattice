@@ -12,7 +12,7 @@ import Lattice
 import Observation
 import Vapor
 
-@Suite("Sync Tests")
+@Suite("Sync Tests", .serialized)
 actor SyncTests {
     let app: Application
     let syncLatticeURL = FileManager.default.temporaryDirectory
