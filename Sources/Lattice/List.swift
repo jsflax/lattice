@@ -344,6 +344,9 @@ public struct ListSlice<Element>: RandomAccessCollection
     }
 
     /// Re-sort the view (replaces any existing sort; one combined query).
+    /// iOS 17+ because `SortDescriptor.keyPath` — the only way to recover the
+    /// sort column — is iOS 17+ (same contract as `Results.sortedBy(_:)`).
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> ListSlice<Element> {
         ListSlice(listRef: listRef, predicate: predicate,
                   sort: ListSlice.sortColumn(for: sortDescriptor))
@@ -361,6 +364,7 @@ public struct ListSlice<Element>: RandomAccessCollection
         return (start..<end).map { listRef.get(at: positions[$0]) }
     }
 
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     static func sortColumn(for descriptor: SortDescriptor<Element>) -> (column: String, ascending: Bool)? {
         guard let keyPath = descriptor.keyPath else { return nil }
         return (_name(for: keyPath), descriptor.order == .forward)
@@ -377,6 +381,8 @@ extension List where Element: Model, Element.ListRef == ModelLinkListRef<Element
 
     /// Lazy sorted view — ordering runs in SQL against the link-table join;
     /// elements hydrate on access (`.first` hydrates exactly one).
+    /// iOS 17+ because `SortDescriptor.keyPath` is iOS 17+ (see `Results.sortedBy(_:)`).
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public func sortedBy(_ sortDescriptor: SortDescriptor<Element>) -> ListSlice<Element> {
         ListSlice(listRef: linkListRef,
                   predicate: nil,

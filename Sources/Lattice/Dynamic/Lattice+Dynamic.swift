@@ -20,8 +20,10 @@ extension Lattice {
     public static func dynamic(fileURL: URL) throws -> Lattice {
         var configuration = Configuration(fileURL: fileURL)
         configuration.isReadOnly = true
-        guard let ref = lattice.swift_lattice_ref.createDynamic(config: configuration.cxxConfiguration()),
-              ref.isValid() else {
+        // `_optLatticeRef` normalizes the FRT-optional (16.4+) vs value-non-optional
+        // (iOS 15 path) factory return — `guard let` directly on the factory result
+        // only compiles on FRT platforms.
+        guard let ref = _optLatticeRef(lattice.swift_lattice_ref.createDynamic(config: configuration.cxxConfiguration())) else {
             throw Lattice.Error.databaseError("Could not open \(fileURL.path) dynamically")
         }
         return Lattice(backend: CxxBackend(ref),

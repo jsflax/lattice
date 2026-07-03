@@ -250,7 +250,9 @@ extension Migration {
             linkProperty: std.string(_name(for: link)),
             parentGlobalId: std.string(parentGid.uuidString))
         return (0..<count).compactMap { index in
-            guard let ref = lattice.migrationTakeBacklinkResult(at: index) else { return nil }
+            // `_optRef` normalizes the result, which imports as a non-optional
+            // value (empty when absent) below the FRT floor (same as `lookup`).
+            guard let ref = _optRef(lattice.migrationTakeBacklinkResult(at: index)) else { return nil }
             return C(dynamicObject: ref)
         }
     }
