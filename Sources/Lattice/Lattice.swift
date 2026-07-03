@@ -1188,6 +1188,13 @@ public struct Lattice {
     /// (is_sync_agent), the callback is registered on the in-process synchronizer.
     /// Otherwise, it observes AuditLog changes via Darwin notifications and derives
     /// progress from the count of unsynchronized entries.
+    /// Entries in the sync set not yet synchronized across every registered
+    /// sync channel — the same number the passive sync-progress observer
+    /// reports as pending. 0 means fully relayed/acknowledged.
+    public var pendingSyncEntryCount: Int {
+        Int(backend.pendingSyncEntryCount())
+    }
+
     public func onSyncProgress(_ handler: @escaping @Sendable (SyncProgress) -> Void) {
         if backend.isSyncAgent() {
             // In-process path: register callback on synchronizer atomics
