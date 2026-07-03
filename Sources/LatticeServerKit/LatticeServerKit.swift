@@ -66,35 +66,19 @@ extension Lattice {
 
             let latticeURL: URL? = storageURL
                 .appending(path: "\(userId.uuidString).sqlite")
-            
-            do {
-                try await Task {
-                    guard let lattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
-                        print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
-                        try? await ws.close()
-                        return
-                    }
-                    
-                    let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-                    let count = events.count
-                    if count > 0 {
-                        print(">>> Bringing user up to date with \(count) events")
-                        for i in stride(from: 0, to: count, by: 1000) {
-                            let page = events[i..<min(count, i + 1000)]
-                            let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
-                            await ws.send(ByteBuffer(data: encoded))
-                        }
-                    }
-                }.value
-            } catch {
-                print("Error bringing user up to date: \(error.localizedDescription)")
-            }
-            
-            await sockets.add(socket: ws, for: userId)
+
+            // Register frame handlers BEFORE any await: clients upload their
+            // pending entries immediately on connect, and any frame that
+            // arrives before onBinary is registered is silently dropped by
+            // WebSocketKit. The old order (catch-up first, handlers after)
+            // lost the first upload of a fresh connection whenever the
+            // per-user lattice open + eventsAfter took longer than the
+            // client's connect→upload turnaround — the entry then sat
+            // unACKed until the next reconnect. Registration must run on the
+            // socket's event loop (NIOLoopBound), hence the execute hop.
             ws.eventLoop.execute {
                 ws.onText { ws, str in
                     print("🧦", "Received String Event", str)
-                    print(str)
                 }
                 ws.onBinary { ws, bb in
                     print("🧦", "Received Binary Event")
@@ -104,7 +88,7 @@ extension Lattice {
                         try? await ws.close()
                         return
                     }
-                    
+
                     do {
                         let globalIds = try lattice.receive(Data(buffer: bb))
                         ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
@@ -121,6 +105,32 @@ extension Lattice {
                         await sockets.remove(socket: ws, for: userId)
                     }
                 }
+            }
+            await sockets.add(socket: ws, for: userId)
+
+            // Catch-up AFTER handlers are live. Incoming frames during
+            // catch-up serialize through the same per-user lattice.
+            do {
+                try await Task {
+                    guard let lattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
+                        print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
+                        try? await ws.close()
+                        return
+                    }
+
+                    let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
+                    let count = events.count
+                    if count > 0 {
+                        print(">>> Bringing user up to date with \(count) events")
+                        for i in stride(from: 0, to: count, by: 1000) {
+                            let page = events[i..<min(count, i + 1000)]
+                            let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
+                            await ws.send(ByteBuffer(data: encoded))
+                        }
+                    }
+                }.value
+            } catch {
+                print("Error bringing user up to date: \(error.localizedDescription)")
             }
         }
     }
