@@ -603,7 +603,12 @@ actor EngramSyncRealismTests {
         syncedConfig.ipcTargets = [.init(channel: channel)]
         syncedConfig.authorizationToken = "token"
         syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
-        let _ = try Lattice(EngramMemory.self, configuration: syncedConfig)
+        // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
+        // the last reference tears the instance down (weak instance cache) and
+        // takes the relay with it. `let _ =` only ever worked because the old
+        // strong cache leaked the instance.
+        let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
+        defer { withExtendedLifetime(hub) {} }
         try await Task.sleep(for: .milliseconds(500))
 
         // Set up observer BEFORE inserting so we don't miss events
@@ -695,7 +700,12 @@ actor EngramSyncRealismTests {
         syncedConfig.ipcTargets = [.init(channel: channel)]
         syncedConfig.authorizationToken = "token"
         syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
-        let _ = try Lattice(EngramMemory.self, configuration: syncedConfig)
+        // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
+        // the last reference tears the instance down (weak instance cache) and
+        // takes the relay with it. `let _ =` only ever worked because the old
+        // strong cache leaked the instance.
+        let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
+        defer { withExtendedLifetime(hub) {} }
         try await Task.sleep(for: .milliseconds(500))
 
         // Set up observer BEFORE inserting so we don't miss events
@@ -746,7 +756,12 @@ actor EngramSyncRealismTests {
         syncedConfig.ipcTargets = [.init(channel: channel)]
         syncedConfig.authorizationToken = "token"
         syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
-        let _ = try Lattice(EngramMemory.self, configuration: syncedConfig)
+        // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
+        // the last reference tears the instance down (weak instance cache) and
+        // takes the relay with it. `let _ =` only ever worked because the old
+        // strong cache leaked the instance.
+        let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
+        defer { withExtendedLifetime(hub) {} }
         try await Task.sleep(for: .milliseconds(500))
 
         // Set up observer BEFORE inserting so we don't miss events
@@ -802,7 +817,12 @@ actor EngramSyncRealismTests {
         syncedConfig.ipcTargets = [.init(channel: channel)]
         syncedConfig.authorizationToken = "token"
         syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
-        let _ = try Lattice(EngramMemory.self, configuration: syncedConfig)
+        // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
+        // the last reference tears the instance down (weak instance cache) and
+        // takes the relay with it. `let _ =` only ever worked because the old
+        // strong cache leaked the instance.
+        let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
+        defer { withExtendedLifetime(hub) {} }
         try await Task.sleep(for: .milliseconds(500))
 
         // Set up observer BEFORE inserting so we don't miss events
