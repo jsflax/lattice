@@ -1760,14 +1760,16 @@ extension Lattice {
     /// Pass nil to revert to stderr. Caller owns the FILE* lifetime.
     public static func setLogFile(_ fileURL: URL) {
         let path = fileURL.path
+        // FileHandle.standardError, never stdout: stdout may be a wire
+        // protocol (MCP stdio) and any stray line corrupts the stream.
+        // (Not fputs(stderr): on Glibc `stderr` is a shared-mutable global
+        // and Swift 6 rejects the reference — broke the Linux build.)
         guard let cFilePointer = fopen(path, "w") else {
-            // stderr, never stdout: stdout may be a wire protocol (MCP stdio)
-            // and any stray line corrupts the stream.
-            fputs("Failed to open log file: \(path)\n", stderr)
+            FileHandle.standardError.write(Data("Failed to open log file: \(path)\n".utf8))
             return
         }
         lattice.set_log_file(cFilePointer)
-        fputs("Log file path: \(path)\n", stderr)
+        FileHandle.standardError.write(Data("Log file path: \(path)\n".utf8))
     }
 }
 
