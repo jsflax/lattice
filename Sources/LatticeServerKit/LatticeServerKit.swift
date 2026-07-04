@@ -67,6 +67,20 @@ extension Lattice {
             let latticeURL: URL? = storageURL
                 .appending(path: "\(userId.uuidString).sqlite")
 
+            // ONE lattice per connection, opened before the handlers and held
+            // for the socket's lifetime. The previous shape opened a fresh
+            // Lattice inside EVERY onBinary invocation: under a real upload
+            // burst (hundreds of frames landing on event-loop threads) the
+            // weak instance cache raced open/dealloc across threads and the
+            // production relay segfaulted (exit 139) seconds after a client
+            // with a backlog connected.
+            guard let connectionLattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
+                print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
+                try? await ws.close()
+                return
+            }
+            let held = UnsafeSendableBox(connectionLattice)
+
             // Register frame handlers BEFORE any await: clients upload their
             // pending entries immediately on connect, and any frame that
             // arrives before onBinary is registered is silently dropped by
@@ -81,16 +95,8 @@ extension Lattice {
                     print("🧦", "Received String Event", str)
                 }
                 ws.onBinary { ws, bb in
-                    print("🧦", "Received Binary Event")
-
-                    guard let lattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
-                        print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
-                        try? await ws.close()
-                        return
-                    }
-
                     do {
-                        let globalIds = try lattice.receive(Data(buffer: bb))
+                        let globalIds = try held.value.receive(Data(buffer: bb))
                         ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
                     } catch {
                         print("Error:", error)
@@ -103,6 +109,8 @@ extension Lattice {
                 ws.onClose.whenComplete { _ in
                     Task {
                         await sockets.remove(socket: ws, for: userId)
+                        // Release the per-connection lattice with the socket.
+                        held.clear()
                     }
                 }
             }
@@ -112,11 +120,7 @@ extension Lattice {
             // catch-up serialize through the same per-user lattice.
             do {
                 try await Task {
-                    guard let lattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
-                        print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
-                        try? await ws.close()
-                        return
-                    }
+                    let lattice = held.value
 
                     let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
                     let count = events.count
@@ -137,4 +141,15 @@ extension Lattice {
 }
 
 extension Data: DataProtocol {
+}
+
+
+/// Holds a non-Sendable value captured by the relay's @Sendable socket
+/// callbacks. Access is serialized by the connection's event loop; `clear()`
+/// releases on close.
+final class UnsafeSendableBox<T>: @unchecked Sendable {
+    private var stored: T?
+    init(_ value: T) { self.stored = value }
+    var value: T { stored! }
+    func clear() { stored = nil }
 }
