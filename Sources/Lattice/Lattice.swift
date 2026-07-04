@@ -93,7 +93,8 @@ public struct Lattice {
     internal final class WebsocketClient: @unchecked Sendable {
         private var webSocketTask: URLSessionWebSocketTask?
         private var currentState: lattice.transport_state = .closed
-        private let session: URLSession
+        // Recreated per connect attempt — see performConnect.
+        private var session: URLSession
         private let delegateHandler: WebSocketDelegateHandler
 
         // Pointers to trigger C++ callbacks - set after generic_websocket_client is created
@@ -178,6 +179,17 @@ public struct Lattice {
                 triggerError("Invalid URL: \(urlString)")
                 return
             }
+
+            // Fresh ephemeral session per attempt. URLSession caches auth
+            // state per protection space: after ONE 401 response (e.g. the
+            // server's boot window while litestream restores the auth DB),
+            // CFNetwork stopped sending our manually-set Authorization header
+            // on every subsequent task in the same session — so a daemon that
+            // ever saw a 401 reconnected anonymously FOREVER (production:
+            // hours of 60s-cadence 401s while the same token passed via curl).
+            // An ephemeral config also drops cookies/credential caches.
+            session.finishTasksAndInvalidate()
+            session = URLSession(configuration: .ephemeral, delegate: delegateHandler, delegateQueue: nil)
 
             var request = URLRequest(url: url)
             headers.forEach { (keyValuePair) in
