@@ -336,7 +336,21 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     // Sync data ingestion — returns the affected globalId strings; the caller
     // parses them into UUIDs and checks `lastReceiveError()`.
     func receiveSyncData(_ data: Data) -> [String] {
-        ref.receive_sync_data(data.toCxxValue()).map { String($0) }
+        // Index loop, NOT .map: Sequence/Collection conformance operations on
+        // imported C++ containers jump through a null protocol witness on
+        // aarch64 Linux (Swift 6.3) — this exact line segfaulted the
+        // production relay on the first received frame (Fly exit 139,
+        // backtrace: null <- Collection witness for std.vector). Direct
+        // method dispatch (size()/operator[]) is unaffected.
+        let vec = ref.receive_sync_data(data.toCxxValue())
+        var out: [String] = []
+        out.reserveCapacity(vec.size())
+        var i = 0
+        while i < vec.size() {
+            out.append(String(vec[i]))
+            i += 1
+        }
+        return out
     }
     func lastReceiveError() -> String? {
         let e = ref.last_receive_error()

@@ -131,7 +131,17 @@ internal final class NIOWebsocketClient: @unchecked Sendable {
         if message.msg_type == .text {
             ws.send(String(message.as_string()))
         } else {
-            let bytes = Array(message.data)
+            // Index loop, NOT Array(...): the CxxConvertibleToCollection
+            // conformance for std.vector jumps through a null witness on
+            // aarch64 Linux — see CxxBackend.receiveSyncData.
+            let vec = message.data
+            var bytes = [UInt8]()
+            bytes.reserveCapacity(vec.size())
+            var i = 0
+            while i < vec.size() {
+                bytes.append(vec[i])
+                i += 1
+            }
             ws.send(bytes)
         }
     }
