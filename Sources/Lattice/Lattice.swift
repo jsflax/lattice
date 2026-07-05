@@ -103,13 +103,24 @@ public struct Lattice {
         final class WebSocketDelegateHandler: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
             weak var client: WebsocketClient?
 
+            // The handler is shared across the per-attempt sessions (see
+            // performConnect). Events from an invalidated PREVIOUS session —
+            // its task's cancellation fires didComplete(NSURLErrorCancelled)
+            // — must not tear down the CURRENT attempt: without this guard the
+            // cancel of attempt N-1 error-looped attempt N forever.
+            private func isCurrent(_ session: URLSession) -> Bool {
+                client?.session === session
+            }
+
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didOpenWithProtocol protocol: String?) {
+                guard isCurrent(session) else { return }
                 client?.handleOpen()
             }
 
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+                guard isCurrent(session) else { return }
                 let reasonString = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
                 client?.handleClose(code: Int(closeCode.rawValue), reason: reasonString)
             }
@@ -117,6 +128,7 @@ public struct Lattice {
             func urlSession(_ session: URLSession,
                             task: URLSessionTask,
                             didCompleteWithError error: (any Swift.Error)?) {
+                guard isCurrent(session) else { return }
                 if let error = error {
                     client?.handleError(error.localizedDescription)
                 }
