@@ -1320,20 +1320,60 @@ class UnionMacro: ExtensionMacro {
 
         let queryEnumName = "\(simpleTypeName)_Query"
 
+        // Parity with @LatticeEnum: make a @Union transparently `@Detached`-able
+        // (DetachableLeaf needs Codable + Sendable) — but ONLY when the payloads
+        // can actually satisfy those. Model-class payloads are links: they are
+        // neither Codable nor Sendable, and a linked row can't satisfy
+        // `DetachedRepr == Self` anyway. Emitting the conformances
+        // unconditionally broke every class-payload union at compile time
+        // ("associated value contains non-Sendable type").
+        //
+        // Rule: emit Codable/Sendable/DetachableLeaf iff every case payload is
+        // a known value-leaf type, OR the author explicitly declares
+        // `Codable, Sendable` on the enum (asserting their payloads qualify).
+        let valueLeafTypes: Set<String> = [
+            "String", "Int", "Int8", "Int16", "Int32", "Int64",
+            "UInt", "UInt8", "UInt16", "UInt32", "UInt64",
+            "Double", "Float", "Bool", "Date", "UUID", "Data",
+        ]
+        func isValueLeaf(_ typeName: String) -> Bool {
+            var t = typeName
+            if t.hasSuffix("?") { t = String(t.dropLast()) }
+            if t.hasPrefix("Optional<") && t.hasSuffix(">") {
+                t = String(t.dropFirst("Optional<".count).dropLast())
+            }
+            if let last = t.split(separator: ".").last { t = String(last) }
+            return valueLeafTypes.contains(t)
+        }
+        let allPayloadsAreValueLeaves = cases.allSatisfy { c in
+            c.fields.allSatisfy { isValueLeaf($0.typeName) }
+        }
+        let declared = enumDecl.inheritanceClause?.inheritedTypes.map {
+            $0.type.trimmedDescription
+        } ?? []
+        let declaresCodable = declared.contains("Codable")
+            || (declared.contains("Encodable") && declared.contains("Decodable"))
+        let declaresSendable = declared.contains("Sendable")
+        let emitLeaf = allPayloadsAreValueLeaves || (declaresCodable && declaresSendable)
+
+        var conformances = ["LatticeUnion", "Equatable"]
+        if emitLeaf {
+            if !declaresCodable { conformances.append("Codable") }
+            if !declaresSendable { conformances.append("Sendable") }
+            conformances.append("DetachableLeaf")
+        }
+        let inheritedTypes = InheritedTypeListSyntax(
+            conformances.enumerated().map { i, name in
+                InheritedTypeSyntax(
+                    type: TypeSyntax("\(raw: name)"),
+                    trailingComma: i == conformances.count - 1 ? nil : .commaToken())
+            }
+        )
+
         return [
             ExtensionDeclSyntax(
                 extendedType: type,
-                // Parity with @LatticeEnum: make every @Union transparently `@Detached`-able (DetachableLeaf
-                // needs Codable + Sendable). Codable synthesizes for an enum whose payloads are all Codable;
-                // Sendable holds when the payloads are Sendable (the union is stored on a model either way).
-                // Without these, a @Union field on a @Detached model fails ('DetachedRepr not Codable').
-                inheritanceClause: .init(inheritedTypes: .init(arrayLiteral:
-                    InheritedTypeSyntax(type: TypeSyntax("LatticeUnion"), trailingComma: .commaToken()),
-                    InheritedTypeSyntax(type: TypeSyntax("Codable"), trailingComma: .commaToken()),
-                    InheritedTypeSyntax(type: TypeSyntax("Sendable"), trailingComma: .commaToken()),
-                    InheritedTypeSyntax(type: TypeSyntax("Equatable"), trailingComma: .commaToken()),
-                    InheritedTypeSyntax(type: TypeSyntax("DetachableLeaf"))
-                )),
+                inheritanceClause: .init(inheritedTypes: inheritedTypes),
                 memberBlock: """
                 {
                     public static var unionTableName: String { "\(raw: tableName)" }
