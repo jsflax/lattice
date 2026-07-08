@@ -210,6 +210,29 @@ public protocol ObjectBackend: AnyObject, Sendable {
 
     // Diagnostics
     func debugDescription() -> String
+
+    // Materialized reads (row cache). Defaults are no-ops so non-Cxx
+    // conformers are unaffected; the Cxx backend forwards to the
+    // dynamic_object row cache (see its contract in the bridge header).
+    func enableRowCache()
+    func disableRowCache()
+    func refreshRowCache()
+    var isRowCacheEnabled: Bool { get }
+
+    /// SQL-side atomic increment (`SET col = col + delta`). The default
+    /// falls back to a non-atomic get+set for backends without native
+    /// support.
+    func incrementInt(named name: String, by delta: Int64)
+}
+
+public extension ObjectBackend {
+    func enableRowCache() {}
+    func disableRowCache() {}
+    func refreshRowCache() {}
+    var isRowCacheEnabled: Bool { false }
+    func incrementInt(named name: String, by delta: Int64) {
+        setInt(named: name, getInt(named: name) + delta)
+    }
 }
 
 // MARK: - ObjectListBackend (link_list — List<Model> / VirtualList)

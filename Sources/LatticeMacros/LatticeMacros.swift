@@ -618,10 +618,19 @@ class DetachedMacro: MemberMacro, ExtensionMacro {
         }
         """
 
+        // Routed through withDetachSnapshot: an explicitly-materialized
+        // object detaches from its hydrated snapshot (0 SQL); a live object
+        // refreshes ONCE (1 statement, vs one per field before) and keeps
+        // read-time freshness — `detached()` observably returns "state now"
+        // for existing callers either way.
         let detachedMethod: DeclSyntax = """
         public func detached(maxDepth: Int = 5) -> Detached {
-            var visited: Set<DetachKey> = [_detachKey]
-            return Detached(self, remainingDepth: maxDepth, visited: &visited)
+            withDetachSnapshot {
+                // _detachKey (globalId read) must live INSIDE the snapshot —
+                // outside it, every detach paid live SELECTs for the key.
+                var visited: Set<DetachKey> = [_detachKey]
+                return Detached(self, remainingDepth: maxDepth, visited: &visited)
+            }
         }
         """
         return [structDecl, detachedMethod]

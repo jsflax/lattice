@@ -103,6 +103,15 @@ final class CxxObjectBackend: ObjectBackend, @unchecked Sendable {
     @inlinable func hasValue(named name: String) -> Bool { ref.hasValue(named: std.string(name)) }
     @inlinable func setNull(named name: String) { ref.setNil(named: std.string(name)) }
 
+    // Materialized reads — forwarded to the dynamic_object row cache.
+    @inlinable func enableRowCache() { ref.enableRowCache() }
+    @inlinable func disableRowCache() { ref.disableRowCache() }
+    @inlinable func refreshRowCache() { ref.refreshRowCache() }
+    @inlinable var isRowCacheEnabled: Bool { ref.isRowCacheEnabled() }
+    @inlinable func incrementInt(named name: String, by delta: Int64) {
+        ref.incrementIntField(named: std.string(name), by: delta)
+    }
+
     @inlinable func getInt(named name: String) -> Int64 { Int64(ref.getInt(named: std.string(name))) }
     @inlinable func getDouble(named name: String) -> Double { ref.getDouble(named: std.string(name)) }
     @inlinable func getFloat(named name: String) -> Float { ref.getFloat(named: std.string(name)) }
