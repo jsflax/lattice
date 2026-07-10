@@ -350,7 +350,7 @@ actor NIORelaySyncTests {
     // QUARANTINED (Jul 8 2026): pre-existing hang — see the note on
     // test_UpdatesSyncCorrectly (EngramTests.swift); verified at bb34cad
     // against remote LatticeCore 0.10.3.
-    @Test(.disabled("pre-existing hang: relay sends never reach the test server; timeLimit doesn't fire — owner: 1.0 item D (D1a frame-drop fix + D1b TestSyncServer + D4 re-enable)"), .timeLimit(.minutes(1))) func test_NIORelayCatchUp() async throws {
+    @Test(.timeLimit(.minutes(1))) func test_NIORelayCatchUp() async throws {
         let relay = try NIOSyncRelay(config: serverLatticeConfig)
 
         // Pre-populate the relay with data

@@ -67,13 +67,60 @@ extension Lattice {
             let latticeURL: URL? = storageURL
                 .appending(path: "\(userId.uuidString).sqlite")
 
-            // ONE lattice per connection, opened before the handlers and held
-            // for the socket's lifetime. The previous shape opened a fresh
-            // Lattice inside EVERY onBinary invocation: under a real upload
-            // burst (hundreds of frames landing on event-loop threads) the
-            // weak instance cache raced open/dealloc across threads and the
-            // production relay segfaulted (exit 139) seconds after a client
-            // with a backlog connected.
+            // Per-connection state, confined to the socket's event loop.
+            // Frames that arrive before the (slow — schema ensure, epoch
+            // migrations) per-user lattice open finishes are BUFFERED and
+            // replayed in arrival order the moment it's live. Previously the
+            // open ran before handler registration, and WebSocketKit silently
+            // drops frames with no onBinary registered — a client that
+            // uploaded within the open window lost that frame, its entries
+            // sat unACKed until the resend/reconnect, and the relay tests
+            // that await that first delivery hung (the intermittent CI hang
+            // class). ONE lattice per connection, held for the socket's
+            // lifetime (a fresh Lattice per frame raced the weak instance
+            // cache and segfaulted under real bursts — exit 139).
+            let state = ConnectionRelayState()
+
+            @Sendable func processFrame(_ ws: WebSocket, _ bb: ByteBuffer, _ lattice: Lattice) {
+                do {
+                    let globalIds = try lattice.receive(Data(buffer: bb))
+                    ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
+                } catch {
+                    print("Error:", error)
+                }
+                Task {
+                    for socket in await sockets.sockets(for: userId) where socket !== ws {
+                        socket.send(bb)
+                    }
+                }
+            }
+
+            // Handlers go live FIRST — synchronously on the socket's event
+            // loop, before the lattice open. The sync onBinary body keeps
+            // receive() strictly frame-ordered on the loop.
+            ws.eventLoop.execute {
+                ws.onText { ws, str in
+                    print("🧦", "Received String Event", str)
+                }
+                ws.onBinary { ws, bb in
+                    if let lattice = state.lattice {
+                        processFrame(ws, bb, lattice)
+                    } else {
+                        state.buffered.append(bb)
+                    }
+                }
+                ws.onClose.whenComplete { _ in
+                    Task {
+                        await sockets.remove(socket: ws, for: userId)
+                        // Release the per-connection lattice with the socket.
+                        ws.eventLoop.execute {
+                            state.lattice = nil
+                            state.buffered.removeAll()
+                        }
+                    }
+                }
+            }
+
             guard let connectionLattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
                 print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
                 try? await ws.close()
@@ -81,38 +128,12 @@ extension Lattice {
             }
             let held = UnsafeSendableBox(connectionLattice)
 
-            // Register frame handlers BEFORE any await: clients upload their
-            // pending entries immediately on connect, and any frame that
-            // arrives before onBinary is registered is silently dropped by
-            // WebSocketKit. The old order (catch-up first, handlers after)
-            // lost the first upload of a fresh connection whenever the
-            // per-user lattice open + eventsAfter took longer than the
-            // client's connect→upload turnaround — the entry then sat
-            // unACKed until the next reconnect. Registration must run on the
-            // socket's event loop (NIOLoopBound), hence the execute hop.
+            // Go live: replay anything that arrived during the open, in
+            // order, then hand subsequent frames straight to the lattice.
             ws.eventLoop.execute {
-                ws.onText { ws, str in
-                    print("🧦", "Received String Event", str)
-                }
-                ws.onBinary { ws, bb in
-                    do {
-                        let globalIds = try held.value.receive(Data(buffer: bb))
-                        ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
-                    } catch {
-                        print("Error:", error)
-                    }
-
-                    for socket in await sockets.sockets(for: userId) where socket !== ws {
-                        socket.send(bb)
-                    }
-                }
-                ws.onClose.whenComplete { _ in
-                    Task {
-                        await sockets.remove(socket: ws, for: userId)
-                        // Release the per-connection lattice with the socket.
-                        held.clear()
-                    }
-                }
+                for bb in state.buffered { processFrame(ws, bb, held.value) }
+                state.buffered.removeAll()
+                state.lattice = held.value
             }
             await sockets.add(socket: ws, for: userId)
 
@@ -152,4 +173,14 @@ final class UnsafeSendableBox<T>: @unchecked Sendable {
     init(_ value: T) { self.stored = value }
     var value: T { stored! }
     func clear() { stored = nil }
+}
+
+/// Per-connection relay state. All access is confined to the socket's event
+/// loop (handler bodies and the `execute` hops that mutate it), so the
+/// unchecked-Sendable is a loop-confinement claim, not a locking one.
+/// `lattice == nil` means "still opening": frames buffer in arrival order
+/// and are replayed the moment the per-user lattice goes live.
+final class ConnectionRelayState: @unchecked Sendable {
+    var lattice: Lattice?
+    var buffered: [ByteBuffer] = []
 }
