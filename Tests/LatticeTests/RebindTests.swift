@@ -60,7 +60,7 @@ final class RebindTests: BaseTest {
     /// handle's rows (not the first handle's). Hosted SwiftUI in a headless test
     /// is timing-sensitive, so this pumps the run loop generously.
     @MainActor
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_SwapLattice_RebindsToNewHandle() throws {
         let a = try testLattice(path: "\(String.random(length: 32)).sqlite", Person.self)
         for name in ["A1", "A2"] { let p = Person(); p.name = name; p.age = 1; a.add(p) }

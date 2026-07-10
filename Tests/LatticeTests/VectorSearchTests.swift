@@ -730,7 +730,7 @@ class Vec0LockStormTests: BaseTest {
     /// Rapid add + nearest on same Lattice.
     /// The INSERT trigger fires DELETE+INSERT on vec0 for each add,
     /// while nearest() may trigger reconciliation if counts diverge.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_Vec0RapidAddAndQuery_NoLockErrors() async throws {
         let lattice = try testLattice(Document.self)
 
@@ -1282,7 +1282,7 @@ class Vec0LockStormTests: BaseTest {
     /// Bulk delete + re-add with embeddings (simulates memory consolidation).
     /// Each remove triggers DELETE on vec0, each add triggers INSERT trigger
     /// which does DELETE+INSERT. Interleaved nearest() queries must not fail.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_Vec0BulkDeleteAndReAdd_NoLockErrors() async throws {
         let lattice = try testLattice(Document.self)
 

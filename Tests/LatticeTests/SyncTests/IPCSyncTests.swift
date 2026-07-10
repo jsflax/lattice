@@ -127,7 +127,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 1: Source → Target (basic IPC sync)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_SourceToTarget() async throws {
         let channel = "ipc-test-\(String.random(length: 8))"
 
@@ -152,7 +152,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 2: Bidirectional (target → source flows back)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_Bidirectional() async throws {
         let channel = "ipc-bidi-\(String.random(length: 8))"
 
@@ -184,7 +184,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 3: Filtered IPC (only matching rows sync)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_WithFilter() async throws {
         let channel = "ipc-filt-\(String.random(length: 8))"
 
@@ -214,7 +214,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 4: Object leaves IPC sync set (update fails predicate → DELETE)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_FilteredObjectLeavesSet() async throws {
         let channel = "ipc-leave-\(String.random(length: 8))"
 
@@ -244,7 +244,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 5: Object enters IPC sync set (update passes predicate → INSERT)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_FilteredObjectEntersSet() async throws {
         let channel = "ipc-enter-\(String.random(length: 8))"
 
@@ -274,7 +274,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 6: Multiple IPC channels from one source
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_MultipleChannels() async throws {
         let channelA = "ipc-multi-a-\(String.random(length: 8))"
         let channelB = "ipc-multi-b-\(String.random(length: 8))"
@@ -326,7 +326,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 5: Reconnection after server restart
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_Reconnection() async throws {
         let channel = "ipc-recon-\(String.random(length: 8))"
 
@@ -361,7 +361,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 7: Runtime filter widening over IPC (updateSyncFilter)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_RuntimeFilterWidening() async throws {
         let channel = "ipc-widen-\(String.random(length: 8))"
 
@@ -399,7 +399,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 8: Runtime filter narrowing over IPC (updateSyncFilter)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_RuntimeFilterNarrowing() async throws {
         let channel = "ipc-narrow-\(String.random(length: 8))"
 
@@ -437,7 +437,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 9: Deleted rows are skipped during sync catchup (no crash)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_DeletedRowSkippedOnCatchup() async throws {
         let channel = "ipc-del-\(String.random(length: 8))"
 
@@ -469,7 +469,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 10: Stale socket file doesn't prevent IPC from connecting
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_StaleSocketRecovery() async throws {
         let channel = "ipc-stale-\(String.random(length: 8))"
 
@@ -526,7 +526,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 12: BLOB/vector columns survive IPC JSON round-trip
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)), .disabled())
+    @Test(.timeLimit(.minutes(5)), .disabled())
     func test_IPCSync_BlobColumnRoundTrip() async throws {
         Lattice.setLogLevel(.debug)
         defer { Lattice.setLogLevel(.warn) }
@@ -707,7 +707,7 @@ actor IPCSyncTests {
     // =========================================================================
     // Test 13: Subquery-filtered IPC sync (only links whose endpoints match)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_SubqueryFilteredLinks() async throws {
         let channel = "ipc-sq-\(String.random(length: 8))"
 

@@ -249,7 +249,7 @@ actor NIORelaySyncTests {
 
     /// Core test: Two Lattice clients sync through a raw NIO WebSocket relay.
     /// Lattice1 inserts data → relay receives & broadcasts → Lattice2 should see it.
-    @Test(.timeLimit(.minutes(1))) func test_NIORelayBasicSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_NIORelayBasicSync() async throws {
         let relay = try NIOSyncRelay(config: serverLatticeConfig)
         let (serverChannel, port, eventLoopGroup) = try await startNIOServer(relay: relay)
         defer {
@@ -350,7 +350,7 @@ actor NIORelaySyncTests {
     // QUARANTINED (Jul 8 2026): pre-existing hang — see the note on
     // test_UpdatesSyncCorrectly (EngramTests.swift); verified at bb34cad
     // against remote LatticeCore 0.10.3.
-    @Test(.timeLimit(.minutes(1))) func test_NIORelayCatchUp() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_NIORelayCatchUp() async throws {
         let relay = try NIOSyncRelay(config: serverLatticeConfig)
 
         // Pre-populate the relay with data

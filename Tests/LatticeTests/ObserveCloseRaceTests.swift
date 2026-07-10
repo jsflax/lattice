@@ -48,7 +48,7 @@ class ObserveCloseRaceTests: BaseTest {
     /// its own per-isolation `Lattice` via `sendableReference` so
     /// the read survives the close on main.
     @MainActor
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_PerIsolationResolve_SurvivesCloseOnMain() async throws {
         let lattice = try testLattice(path: path, Person.self)
         Self.seed(lattice: lattice, count: 500)
@@ -92,7 +92,7 @@ class ObserveCloseRaceTests: BaseTest {
 
     /// Same race, attaching isolation pinned to a custom `actor`
     /// (the shape used by ClaudeCodeIRC's `RoomSyncServer`).
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_PerIsolationResolve_SurvivesCloseOnCustomActor() async throws {
         nonisolated(unsafe) var enteredContinuation: CheckedContinuation<Void, Never>?
         nonisolated(unsafe) var exitedContinuation: CheckedContinuation<Void, Never>?

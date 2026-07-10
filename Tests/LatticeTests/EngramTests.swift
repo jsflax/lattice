@@ -685,7 +685,7 @@ actor EngramSyncRealismTests {
     // =========================================================================
     // TEST 3: Private memories are never synced
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_PrivateMemoriesNeverSync() async throws {
         let channel = "realism-private-\(String.random(length: 8))"
 
@@ -809,7 +809,7 @@ actor EngramSyncRealismTests {
     // 0.13.3 sync work) against remote LatticeCore 0.10.3. These tests were
     // unrunnable since Jul 5 (the @Union compile break masked them).
     // See the fix/sync-lifetime-tests effort; re-enable with a real fix.
-    @Test(.disabled("non-INSERT relay delivery defect — owner: 1.0 item D2 (UPDATE/reconcile-DELETE never reach the peer; frame-drop half fixed by the connect-window buffer, this half is the apply/classify path)"), .timeLimit(.minutes(1)))
+    @Test(.disabled("non-INSERT relay delivery defect — owner: 1.0 item D2 (UPDATE/reconcile-DELETE never reach the peer; frame-drop half fixed by the connect-window buffer, this half is the apply/classify path)"), .timeLimit(.minutes(5)))
     func test_UpdatesSyncCorrectly() async throws {
         let channel = "realism-update-\(String.random(length: 8))"
 

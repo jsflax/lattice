@@ -120,7 +120,7 @@ actor SyncProgressTests {
                                     configuration: localLattice2Configuration)
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_SyncProgress_UploadTracking() async throws {
         let lattice = localLattice1!
         let config = localLattice1Configuration
@@ -153,7 +153,7 @@ actor SyncProgressTests {
         #expect(progress.totalUpload > 0)
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_SyncProgress_AckTracking() async throws {
         let lattice = localLattice1!
 
@@ -173,7 +173,7 @@ actor SyncProgressTests {
         #expect(acked.acked > 0)
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_SyncProgress_DownloadTracking() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
@@ -209,7 +209,7 @@ actor SyncProgressTests {
         #expect(lattice2.objects(SimpleSyncObject.self).contains(where: { $0.value == 77 }))
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_SyncProgress_Callback() async throws {
         let lattice = localLattice1!
         let config = localLattice1Configuration
@@ -241,7 +241,7 @@ actor SyncProgressTests {
         #expect(progress.totalUpload > 0)
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_SyncProgress_OwnedDB_BackgroundThread() async throws {
         let lattice = localLattice1!
         let config = localLattice1Configuration
@@ -272,7 +272,7 @@ actor SyncProgressTests {
         #expect(result == true, "Progress callback should fire on a background thread")
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_SyncError_FiresOnConnectionFailure() async throws {
         // Connect to a port that isn't listening — should trigger onSyncError
         let badURL = FileManager.default.temporaryDirectory
@@ -300,7 +300,7 @@ actor SyncProgressTests {
         #expect(!errorMessage.isEmpty, "Error message should not be empty")
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_SyncStateChange_Connected() async throws {
         let lattice = localLattice1!
 

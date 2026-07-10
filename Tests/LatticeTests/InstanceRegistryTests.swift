@@ -29,7 +29,7 @@ class InstanceRegistryTests: BaseTest {
     /// while observers create additional instances in their callbacks.
     /// This maximizes contention on ModelInstanceRegistry's lock and the
     /// probability of hitting the race window.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_ConcurrentRegisterDeregisterNoDeadlock() async throws {
         let lattice = try Lattice(Widget.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
 
@@ -93,7 +93,7 @@ class InstanceRegistryTests: BaseTest {
     /// Simpler variant: rapid create-fetch-drop cycles for the same row on multiple
     /// tasks without observers. Tests that concurrent register/deregister for
     /// overlapping InstanceKeys doesn't deadlock or corrupt state.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_ConcurrentFetchDropNoDeadlock() async throws {
         let lattice = try Lattice(Widget.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
 

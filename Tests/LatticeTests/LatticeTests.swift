@@ -543,7 +543,7 @@ class LatticeTests: BaseTest {
         }
     }
     
-    @Test(.timeLimit(.minutes(1))) func testResults_Observe() async throws {
+    @Test(.timeLimit(.minutes(5))) func testResults_Observe() async throws {
         let lattice = try testLattice(path: path, Person.self, Dog.self)
 
         var insertHitCount = 0

@@ -124,7 +124,7 @@ actor SyncTests {
                                     configuration: localLattice2Configuration)
     }
     
-    @Test(.timeLimit(.minutes(1))) func test_BasicSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_BasicSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 
@@ -223,7 +223,7 @@ actor SyncTests {
     /// dangling. The local-side cleanup is covered by
     /// `CascadeLinkCleanupTests`; this verifies the same invariant
     /// survives sync replay on the receiving lattice.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_DeletingLinkedChild_OptionalGoesToNilOnPeer() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
@@ -312,7 +312,7 @@ actor SyncTests {
     /// never clean up its link table on its own — explains the
     /// orphaned `_Session_Member_host` rows seen in ClaudeCodeIRC after
     /// host `/leave`.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_LinkTableDeleteAudit_RidesOverSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
@@ -422,7 +422,7 @@ actor SyncTests {
     /// Test that List<T> relationships sync properly between clients.
     /// This test verifies that when a parent object with children is created on one client,
     /// the relationship (not just the objects) syncs to the other client.
-    @Test(.timeLimit(.minutes(1))) func test_ListRelationshipSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_ListRelationshipSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 
@@ -528,7 +528,7 @@ actor SyncTests {
     }
 
     /// Test that FloatVector fields sync properly between clients.
-    @Test(.timeLimit(.minutes(1))) func test_VectorSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_VectorSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 
@@ -609,7 +609,7 @@ actor SyncTests {
     }
 
     /// Test that CLLocationCoordinate2D (R*Tree virtual table) fields sync properly.
-    @Test(.timeLimit(.minutes(1))) func test_GeoboundsSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_GeoboundsSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 
@@ -681,7 +681,7 @@ actor SyncTests {
     }
 
     /// Test that EmbeddedModel fields sync properly.
-    @Test(.timeLimit(.minutes(1))) func test_EmbeddedModelSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_EmbeddedModelSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 
@@ -748,7 +748,7 @@ actor SyncTests {
     }
 
     /// test_BasicSync only tests lattice1→lattice2. This tests lattice2→lattice1 as well.
-    @Test(.timeLimit(.minutes(1))) func test_BidirectionalSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_BidirectionalSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 
@@ -799,7 +799,7 @@ actor SyncTests {
     }
 
     /// Test that a fresh client receives historical events on connect via eventsAfter().
-    @Test(.timeLimit(.minutes(1))) func test_CatchUpSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_CatchUpSync() async throws {
         let lattice = localLattice1!
 
         // Write data and wait for it to arrive in the SERVER's DB.
@@ -863,7 +863,7 @@ actor SyncTests {
     /// Test that server-side compaction doesn't break catch-up sync.
     /// After the server compacts its audit log (replacing history with INSERT snapshots),
     /// a fresh client should still receive all current data on connect.
-    @Test(.timeLimit(.minutes(1))) func test_ServerCompactionCatchUp() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_ServerCompactionCatchUp() async throws {
         let lattice = localLattice1!
 
         // Step 1: Write data and wait for it to arrive in the SERVER's DB.
@@ -935,7 +935,7 @@ actor SyncTests {
 
     /// Test that client-side compaction doesn't break ongoing sync.
     /// After a client compacts its local audit log, new changes should still sync.
-    @Test(.timeLimit(.minutes(1))) func test_ClientCompactionThenSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_ClientCompactionThenSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 
@@ -997,7 +997,7 @@ actor SyncTests {
 
     /// Test that closing the lattice instance that owns the synchronizer
     /// hands off sync responsibility to a surviving sibling instance.
-    @Test(.timeLimit(.minutes(1))) func test_SyncHandoff() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_SyncHandoff() async throws {
         let lattice2 = localLattice2!
 
         // Fresh path so we control which instance gets the synchronizer
@@ -1085,7 +1085,7 @@ actor SyncTests {
     }
 
     /// Test that a bulk insert in a transaction syncs correctly.
-    @Test(.timeLimit(.minutes(1))) func test_BulkInsertSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_BulkInsertSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 

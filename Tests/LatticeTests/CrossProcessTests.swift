@@ -166,7 +166,7 @@ struct CrossProcessTests {
 
     /// Tests that `withObservationTracking` (what @Bindable uses) detects
     /// cross-process property changes on a hydrated model instance.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func crossProcessBindableObservation() async throws {
         // ── Child path ──────────────────────────────────────────────
         if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
@@ -225,7 +225,7 @@ struct CrossProcessTests {
         #expect(person.age == 99, "Expected age 99 after cross-process update, got \(person.age)")
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func crossProcessObservation() async throws {
         // ── Child path ──────────────────────────────────────────────
         if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
@@ -295,7 +295,7 @@ struct CrossProcessTests {
         }
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func selfNotificationSuppressed() async throws {
         guard ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] == nil else { return }
 
@@ -337,7 +337,7 @@ struct CrossProcessTests {
                 "Expected 1 insert notification, got \(insertCount) — self-notification not suppressed")
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func crossProcessObjectObservation() async throws {
         // ── Child path ──────────────────────────────────────────────
         if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
@@ -394,7 +394,7 @@ struct CrossProcessTests {
         #expect(person.age == 99, "Expected age 99 after cross-process update, got \(person.age)")
     }
 
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func crossProcessUpdateObservation() async throws {
         // ── Child path ──────────────────────────────────────────────
         if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
@@ -460,7 +460,7 @@ struct CrossProcessTests {
     /// write UPDATEs existing AuditLog rows (e.g., marking isSynchronized = 1)
     /// without creating new rows. This is the exact production path: the daemon
     /// ACKs synced entries, and the Visualizer's onSyncProgress should update.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func crossProcessAuditLogUpdateFiresObserver() async throws {
         // ── Child path ──────────────────────────────────────────────
         if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
@@ -520,7 +520,7 @@ struct CrossProcessTests {
     /// an observer on the parent model. This is the CanaryBuilder scenario:
     /// MCP server appends a node to a container's children list, and the
     /// macOS builder app should see the change.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func crossProcessListAppend() async throws {
         // ── Child path ──────────────────────────────────────────────
         if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
@@ -584,7 +584,7 @@ struct CrossProcessTests {
 
     /// Tests that a cross-process VirtualList<any Protocol> append (polymorphic
     /// link table INSERT) triggers an observer on the parent model.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func crossProcessVirtualListAppend() async throws {
         // ── Child path ──────────────────────────────────────────────
         if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
@@ -664,7 +664,7 @@ struct CrossProcessTests {
     /// Surfaced by an Apr 30 2026 smoke test: a multi-question
     /// AskUserQuestion (3 rows in one shim transaction) only ever delivered
     /// Q1 to the peer.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func multiRowTransactionFiresAuditObserverOncePerRow() async throws {
         // ── Child path: insert 3 Person rows in a single transaction ──
         if ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] != nil {

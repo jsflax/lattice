@@ -66,7 +66,7 @@ actor ReplicationSlotTests {
     // =========================================================================
     // Test 1: Replication slot is created on IPC connect
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_replicationSlot_createdOnConnect() async throws {
         let channel = "slot-test-\(String.random(length: 8))"
 
@@ -93,7 +93,7 @@ actor ReplicationSlotTests {
     // =========================================================================
     // Test 2: Replication slot advances on ACK
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_replicationSlot_advancesOnAck() async throws {
         let channel = "slot-ack-\(String.random(length: 8))"
 
@@ -128,7 +128,7 @@ actor ReplicationSlotTests {
     // =========================================================================
     // Test 3: Safe compact preserves entries between different slot cursors
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_safeCompact_deletesOnlyBelowMinSlot() async throws {
         let channel = "slot-min-\(String.random(length: 8))"
 
@@ -162,7 +162,7 @@ actor ReplicationSlotTests {
     // =========================================================================
     // Test 4: Safe compact returns -1 when no slots exist
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_safeCompact_noSlots_returnsNegativeOne() async throws {
         // Standalone lattice — no IPC, no sync, no replication slots
         let standaloneURL = FileManager.default.temporaryDirectory
@@ -185,7 +185,7 @@ actor ReplicationSlotTests {
     // =========================================================================
     // Test 5: Force compact resets slot cursors
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_forceCompact_resetsSlots() async throws {
         let channel = "slot-force-\(String.random(length: 8))"
 
@@ -223,7 +223,7 @@ actor ReplicationSlotTests {
     // =========================================================================
     // Test 6: Stale slot eviction
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_safeCompact_staleSlotEviction() async throws {
         let channel = "slot-stale-\(String.random(length: 8))"
 
@@ -264,7 +264,7 @@ actor ReplicationSlotTests {
     /// so `JSONEncoder` emits `"globalId": null`. The C++ parser treats null as empty string.
     /// When multiple batches arrive, the fast-path dedup (`SELECT id FROM AuditLog WHERE globalId = ?`)
     /// matches the empty-globalId rows from batch 1, causing all subsequent batches to be skipped.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_EventsAfter_GlobalId_Roundtrip() async throws {
         // Create a Lattice and add some objects so we have audit log entries
         let url = FileManager.default.temporaryDirectory

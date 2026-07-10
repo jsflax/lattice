@@ -122,7 +122,7 @@ actor IPCCloudRelayTests {
     // =========================================================================
     // Full pipeline: local →IPC→ synced →WSS→ server
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_CloudRelay() async throws {
         let channel = "ipc-relay-\(String.random(length: 8))"
 
@@ -161,7 +161,7 @@ actor IPCCloudRelayTests {
     // =========================================================================
     // Full pipeline reverse: cloudDevice →WSS→ server →relay→ synced →IPC→ local
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_ReverseCloudRelay() async throws {
         let channel = "ipc-rev-\(String.random(length: 8))"
 

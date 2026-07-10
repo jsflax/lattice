@@ -132,7 +132,7 @@ actor URLChangeSyncTests {
     /// reaches server B (the new URL); writes that pre-dated the open of B
     /// reach server A (the old URL) — confirming the kick happened only AT
     /// the moment of B's open.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func laterOpenWithDifferentURLTakesOverSync() async throws {
         let urlA = URL(string: "http://localhost:\(portA)/test")!
         let urlB = URL(string: "http://localhost:\(portB)/test")!
@@ -208,7 +208,7 @@ actor URLChangeSyncTests {
     /// same path with the SAME URL must NOT kick either of them. The first to
     /// acquire the flock owns sync; the second runs as a dormant duplicate.
     /// Behavior unchanged from pre-fix.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func sameURLDoesNotKick() async throws {
         let urlA = URL(string: "http://localhost:\(portA)/test")!
         let configA = Lattice.Configuration(

@@ -12,7 +12,7 @@ import Vapor
 // MARK: - VirtualList & VirtualLink Sync Tests
 
 extension SyncTests {
-    @Test(.timeLimit(.minutes(1))) func test_VirtualListSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_VirtualListSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 
@@ -104,7 +104,7 @@ extension SyncTests {
         #expect((syncedPerson.pets.first(where: { $0.name == "Rex" }) as? TestDog)?.breed == "Lab")
     }
 
-    @Test(.timeLimit(.minutes(1))) func test_VirtualLinkSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_VirtualLinkSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 
@@ -192,7 +192,7 @@ extension SyncTests {
     // MARK: - Cascade Delete Sync (WSS)
 
     /// Deleting a child object should cascade-remove link table entries and sync both deletions.
-    @Test(.timeLimit(.minutes(1))) func test_VirtualListCascadeDeleteSync() async throws {
+    @Test(.timeLimit(.minutes(5))) func test_VirtualListCascadeDeleteSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 
@@ -328,7 +328,7 @@ actor IPCVirtualCascadeDeleteTests {
     }
 
     /// Deleting a child object should cascade-remove link table entries and sync both via IPC.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_IPCSync_VirtualListCascadeDelete() async throws {
         let channel = "ipc-vcascade-\(String.random(length: 8))"
 

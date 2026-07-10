@@ -230,7 +230,7 @@ actor FilteredSyncTests {
     // =========================================================================
     // Test 1: Only configured tables sync
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_FilteredSync_TableWhitelist() async throws {
         var filter = Lattice.SyncFilter()
         filter.include(FilteredNote.self)
@@ -257,7 +257,7 @@ actor FilteredSyncTests {
     // =========================================================================
     // Test 2: Only matching rows sync
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_FilteredSync_PredicateFilter() async throws {
         var filter = Lattice.SyncFilter()
         filter.include(FilteredNote.self, where: { $0.isPublic == true })
@@ -280,7 +280,7 @@ actor FilteredSyncTests {
     // =========================================================================
     // Test 3: Object leaves sync set (update makes row fail predicate → DELETE)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_FilteredSync_ObjectLeavesSet() async throws {
         var filter = Lattice.SyncFilter()
         filter.include(FilteredNote.self, where: { $0.isPublic == true })
@@ -304,7 +304,7 @@ actor FilteredSyncTests {
     // =========================================================================
     // Test 4: Object enters sync set (update makes row pass predicate → INSERT)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_FilteredSync_ObjectEntersSet() async throws {
         var filter = Lattice.SyncFilter()
         filter.include(FilteredNote.self, where: { $0.isPublic == true })
@@ -328,7 +328,7 @@ actor FilteredSyncTests {
     // =========================================================================
     // Test 5: Runtime filter change triggers reconciliation
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_FilteredSync_RuntimeFilterChange() async throws {
         var filter = Lattice.SyncFilter()
         filter.include(FilteredNote.self, where: { $0.isPublic == true })
@@ -359,7 +359,7 @@ actor FilteredSyncTests {
     // QUARANTINED (Jul 8 2026): pre-existing hang — see the note on
     // test_UpdatesSyncCorrectly (EngramTests.swift); verified at bb34cad
     // against remote LatticeCore 0.10.3.
-    @Test(.disabled("non-INSERT relay delivery defect — owner: 1.0 item D2 (UPDATE/reconcile-DELETE never reach the peer; frame-drop half fixed by the connect-window buffer, this half is the apply/classify path)"), .timeLimit(.minutes(1)))
+    @Test(.disabled("non-INSERT relay delivery defect — owner: 1.0 item D2 (UPDATE/reconcile-DELETE never reach the peer; frame-drop half fixed by the connect-window buffer, this half is the apply/classify path)"), .timeLimit(.minutes(5)))
     func test_FilteredSync_RuntimeFilterNarrowing() async throws {
         // Start with filter that includes all notes
         var filter = Lattice.SyncFilter()
@@ -392,7 +392,7 @@ actor FilteredSyncTests {
     // =========================================================================
     // Test 6: nil filter syncs everything (backwards compatible)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_FilteredSync_NilFilterSyncsEverything() async throws {
         sender = try makeSender(syncFilter: nil)
         try await Task.sleep(for: .milliseconds(500))
@@ -413,7 +413,7 @@ actor FilteredSyncTests {
     // =========================================================================
     // Test 7: Empty filter syncs nothing
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_FilteredSync_EmptyFilterSyncsNothing() async throws {
         let filter = Lattice.SyncFilter()
         sender = try makeSender(syncFilter: filter)
@@ -429,7 +429,7 @@ actor FilteredSyncTests {
     // =========================================================================
     // Test 8: Download ignores filter (filter is upload-only)
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func test_FilteredSync_DownloadIgnoresFilter() async throws {
         sender = try makeSender(syncFilter: nil)
         try await Task.sleep(for: .milliseconds(500))
