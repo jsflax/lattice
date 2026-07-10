@@ -1,4 +1,6 @@
-import Combine
+#if canImport(Combine)
+import Combine  // AnyCancellable on Darwin; Linux uses Lattice's shim (LinuxCompat.swift)
+#endif
 import Foundation
 import Testing
 @testable import Lattice
