@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.10.8] - 2026-07-10
+
+(0.10.7 was tagged but never published — its release gate hung on a relay
+frame-drop race this version fixes; rolled forward per policy.)
+
+### Fixed
+- **Relay connect-window frame drop**: LatticeServerKit registered its
+  frame handlers only after the per-user lattice open plus an event-loop
+  hop; WebSocketKit silently drops frames with no handler registered, so a
+  client that uploaded within that window lost the frame and its entries
+  sat unACKed until resend/reconnect. Handlers now go live synchronously
+  first; frames arriving during the open buffer in order and replay when
+  the lattice is ready. `test_NIORelayCatchUp` (quarantined for exactly
+  this) is re-enabled.
+- **Linux**: first green Linux test suite since 0.9.x — an interop
+  segfault feeding a returned `std.vector` temporary straight into
+  `Data.init(Sequence)` (production read path for Data/Vector fields), the
+  Linux geo shim ported across two refactors it slept through, an
+  unguarded Combine import, and a strict-concurrency capture.
+- CI: containers to swift:6.3-noble (6.2 refused the 6.3 manifest at parse
+  time); 30-minute job timeouts so a hang fails fast instead of zombieing.
+
 ## [0.10.7] - 2026-07-10
 
 ### Added
