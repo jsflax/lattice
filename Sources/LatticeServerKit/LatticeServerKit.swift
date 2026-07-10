@@ -112,10 +112,19 @@ extension Lattice {
                 ws.onClose.whenComplete { _ in
                     Task {
                         await sockets.remove(socket: ws, for: userId)
-                        // Release the per-connection lattice with the socket.
+                        // Detach the per-connection lattice ON the loop (state
+                        // is loop-confined) but RELEASE it OFF the loop:
+                        // ~lattice_db tears down sync threads, and running
+                        // that inline in `execute` stalls the shared event
+                        // loop for every other connection (observed as
+                        // time-limit storms in the in-process relay tests).
                         ws.eventLoop.execute {
+                            let box = state.lattice.map(UnsafeSendableBox.init)
                             state.lattice = nil
                             state.buffered.removeAll()
+                            if let box {
+                                Task.detached { box.clear() }
+                            }
                         }
                     }
                 }
