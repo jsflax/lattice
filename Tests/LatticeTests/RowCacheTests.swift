@@ -14,9 +14,10 @@ final class RcNote {
     var subtitle: String? = nil
 }
 
-/// Statement-budget assertions read the process-GLOBAL SQL counter, so the
-/// whole suite is serialized — a parallel test's queries would corrupt the
-/// deltas.
+/// Statement-budget assertions use the THREAD-LOCAL statement counter: these
+/// tests read synchronously on one thread, and swift-testing runs other
+/// suites in parallel in-process — the global counter races their SQL.
+/// (.serialized keeps the fixtures' own writes ordered.)
 @Suite("Row cache (materialized reads)", .serialized)
 final class RowCacheTests: BaseTest {
 
@@ -38,7 +39,7 @@ final class RowCacheTests: BaseTest {
         fetched.materialize()
         #expect(fetched.isMaterialized)
 
-        let base = Lattice.totalSQLStatementCount
+        let base = Lattice.threadSQLStatementCount
         for _ in 0..<5 {
             #expect(fetched.title == "T")
             #expect(fetched.views == 7)
@@ -46,14 +47,14 @@ final class RowCacheTests: BaseTest {
             #expect(fetched.pinned == true)
             #expect(fetched.subtitle == "S")
         }
-        #expect(Lattice.totalSQLStatementCount - base == 0,
+        #expect(Lattice.threadSQLStatementCount - base == 0,
                 "materialized reads must not issue SQL")
 
         // Contrast: live object pays per read.
         let live = try #require(lattice.objects(RcNote.self).first)
-        let liveBase = Lattice.totalSQLStatementCount
+        let liveBase = Lattice.threadSQLStatementCount
         _ = live.title; _ = live.views; _ = live.rating
-        #expect(Lattice.totalSQLStatementCount - liveBase >= 3,
+        #expect(Lattice.threadSQLStatementCount - liveBase >= 3,
                 "expected the live path to issue one statement per read")
     }
 
@@ -66,10 +67,10 @@ final class RowCacheTests: BaseTest {
         m.views = 8
         m.title = "T2"
 
-        let base = Lattice.totalSQLStatementCount
+        let base = Lattice.threadSQLStatementCount
         #expect(m.views == 8)
         #expect(m.title == "T2")
-        #expect(Lattice.totalSQLStatementCount - base == 0,
+        #expect(Lattice.threadSQLStatementCount - base == 0,
                 "read-your-writes must be served from the snapshot")
 
         let verify = try #require(lattice.objects(RcNote.self).first)
@@ -123,18 +124,18 @@ final class RowCacheTests: BaseTest {
         let other = try #require(lattice.objects(RcNote.self).first)
         other.views = 42
 
-        let base = Lattice.totalSQLStatementCount
+        let base = Lattice.threadSQLStatementCount
         let snap = live.detached()
-        let used = Lattice.totalSQLStatementCount - base
+        let used = Lattice.threadSQLStatementCount - base
         #expect(snap.views == 42, "detached() lost read-time freshness")
         #expect(used <= 3, "detached() issued \(used) statements — expected ~1 (refresh), not one per field")
         #expect(!live.isMaterialized, "detached() must restore live-read mode")
 
         // Explicitly materialized: detaches from the existing snapshot.
         live.materialize()
-        let base2 = Lattice.totalSQLStatementCount
+        let base2 = Lattice.threadSQLStatementCount
         let snap2 = live.detached()
-        #expect(Lattice.totalSQLStatementCount - base2 == 0,
+        #expect(Lattice.threadSQLStatementCount - base2 == 0,
                 "materialized detach should be statement-free")
         #expect(snap2.views == 42)
     }
@@ -164,11 +165,11 @@ final class RowCacheTests: BaseTest {
         }
         let all = lattice.objects(RcNote.self).materializedSnapshot()
         #expect(all.count == 10)
-        let base = Lattice.totalSQLStatementCount
+        let base = Lattice.threadSQLStatementCount
         for n in all {
             _ = n.title; _ = n.views; _ = n.pinned
         }
-        #expect(Lattice.totalSQLStatementCount - base == 0,
+        #expect(Lattice.threadSQLStatementCount - base == 0,
                 "materializedSnapshot elements must read statement-free")
     }
 }

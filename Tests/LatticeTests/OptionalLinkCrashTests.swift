@@ -30,7 +30,7 @@ struct OptionalLinkCrashTests {
         try Lattice(
             Parent.self,
             Child.self,
-            configuration: .init(isStoredInMemoryOnly: true)
+            configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite"))
         )
     }
 

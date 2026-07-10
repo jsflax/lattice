@@ -100,5 +100,12 @@ public extension Lattice {
     static var totalSQLStatementCount: UInt64 {
         lattice.swift_lattice.totalSQLStatementCount()
     }
+
+    /// Thread-local twin of `totalSQLStatementCount`: counts only statements
+    /// issued from the calling thread. Use for EXACT budgets on synchronous
+    /// read paths — immune to parallel test suites in the same process.
+    static var threadSQLStatementCount: UInt64 {
+        lattice.swift_lattice.threadSQLStatementCount()
+    }
 }
 #endif

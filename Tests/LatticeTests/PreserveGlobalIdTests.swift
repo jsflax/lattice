@@ -15,8 +15,10 @@ final class TestMemory {
 
 @Suite struct PreserveGlobalIdTests {
     @Test func addWithPreservedGlobalId() throws {
-        let latticeA = try Lattice(TestMemory.self, configuration: .init(isStoredInMemoryOnly: true))
-        let latticeB = try Lattice(TestMemory.self, configuration: .init(isStoredInMemoryOnly: true))
+        // Distinct temp paths: the A/B pair must be two separate stores (in-memory
+        // previously guaranteed this via the bridge's skip-cache; files need distinct paths).
+        let latticeA = try Lattice(TestMemory.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
+        let latticeB = try Lattice(TestMemory.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
 
         // Add to lattice A
         let original = TestMemory(content: "test memory", project: "proj")
@@ -37,7 +39,7 @@ final class TestMemory {
     }
 
     @Test func addWithPreservedGlobalId_differentFromGenerated() throws {
-        let lattice = try Lattice(TestMemory.self, configuration: .init(isStoredInMemoryOnly: true))
+        let lattice = try Lattice(TestMemory.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
 
         let specificId = UUID()
         let obj = TestMemory(content: "specific id", project: "test")
@@ -47,7 +49,7 @@ final class TestMemory {
     }
 
     @Test func addWithoutPreservedGlobalId_generatesNew() throws {
-        let lattice = try Lattice(TestMemory.self, configuration: .init(isStoredInMemoryOnly: true))
+        let lattice = try Lattice(TestMemory.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
 
         let obj = TestMemory(content: "auto id", project: "test")
         lattice.add(obj)

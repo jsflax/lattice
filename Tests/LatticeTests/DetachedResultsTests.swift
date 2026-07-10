@@ -53,15 +53,28 @@ final class DetachedResultsTests: BaseTest {
         results.stop()
     }
 
-    /// Detaching the SAME persisted row twice must yield identical bytes — a
-    /// render-model's Equatable per-row skip depends on this stability. (Probes
-    /// whether the `defaultDepthIsFive` nondeterminism reaches persisted rows.)
+    /// Detaching the SAME persisted row twice must yield value-identical
+    /// snapshots — a render-model's Equatable per-row skip depends on this.
+    /// (Probes whether the `defaultDepthIsFive` nondeterminism reaches
+    /// persisted rows.)
+    ///
+    /// Byte-level comparison requires `.sortedKeys`: JSONEncoder serializes
+    /// keyed containers in hash order, which varies PER ENCODER INSTANCE —
+    /// two back-to-back encodes of equal values legitimately differ in key
+    /// order (caught live under the parallel suite: identical values,
+    /// shuffled keys). Consumers memoizing on encoded bytes must sort keys;
+    /// consumers diffing rows should compare `Detached` values directly.
     @Test func detachOfPersistedRowIsStable() throws {
         let lattice = try testLattice(DRItem.self)
         let a = DRItem(); a.name = "x"; a.rank = 3
         lattice.transaction { lattice.add(a) }
-        let d1 = try JSONEncoder().encode(a.detached())
-        let d2 = try JSONEncoder().encode(a.detached())
+        // The actual contract: value-identical snapshots.
+        #expect(a.detached() == a.detached())
+        // Byte stability under deterministic key ordering.
+        let enc1 = JSONEncoder(); enc1.outputFormatting = .sortedKeys
+        let enc2 = JSONEncoder(); enc2.outputFormatting = .sortedKeys
+        let d1 = try enc1.encode(a.detached())
+        let d2 = try enc2.encode(a.detached())
         #expect(d1 == d2)
     }
 }

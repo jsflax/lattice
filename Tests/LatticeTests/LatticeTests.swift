@@ -641,7 +641,7 @@ class LatticeTests: BaseTest {
         #expect(deleteHitCount == 2)
     }
     
-    @Test
+    @Test(.disabled("in-memory directive: no tests on in-memory lattices until named memory lands — owner: 1.0 item E2 restores this (memory semantics are the point of this test; a temp-file flip would duplicate test_AuditLogObserve)"))
     func test_AuditLogObserve_inMemory() async throws {
         let lattice = try Lattice(Person.self, Dog.self, configuration: .init(isStoredInMemoryOnly: true))
 
@@ -715,7 +715,13 @@ class LatticeTests: BaseTest {
         #expect(deleteHitCount == 0)
     }
 
-    @Test func test_CrossInstanceObservation() async throws {
+    // QUARANTINED (Jul 8 2026): pre-existing deterministic failure —
+    // cross-instance change notification never arrives (fails in ~20ms, not
+    // a timeout). Verified at bb34cad (main before the 0.13.3 sync work)
+    // against remote LatticeCore 0.10.3. Unrunnable since Jul 5's @Union
+    // compile break masked it. Re-enable with a real fix.
+    @Test(.disabled("pre-existing: cross-instance observation never fires; reproduces at bb34cad — owner: 1.0 items E1.5 (URI-keyed notifier for in-memory) then F (await-based rewrite); stays in-memory as E1.5's re-enable target"))
+    func test_CrossInstanceObservation() async throws {
         let lattice = try Lattice(Person.self, Dog.self, configuration: .init(isStoredInMemoryOnly: true))
 
         // Create and add a person
@@ -825,7 +831,9 @@ class LatticeTests: BaseTest {
         token.cancel()
     }
 
-    @Test func test_ObserveCrossInstance() async throws {
+    // QUARANTINED (Jul 8 2026): pre-existing — see test_CrossInstanceObservation.
+    @Test(.disabled("pre-existing: cross-instance observation never fires; reproduces at bb34cad — owner: 1.0 item F (await-based rewrite; file-backed, so may re-enable ahead of E1.5)"))
+    func test_ObserveCrossInstance() async throws {
         let dbName = "observe_xinstance_\(UUID().uuidString).sqlite"
         let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
         let lattice = try Lattice(

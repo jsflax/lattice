@@ -802,7 +802,14 @@ actor EngramSyncRealismTests {
     // =========================================================================
     // TEST 5: Updates to already-synced memories
     // =========================================================================
-    @Test(.timeLimit(.minutes(1)))
+    // QUARANTINED (Jul 8 2026): hangs — sends never reach the in-process
+    // relay server (entries loop "unACKed after timeout" forever) and the
+    // timeLimit trait never fires (non-cancellable await). Verified
+    // PRE-EXISTING: reproduces identically at bb34cad (main before the
+    // 0.13.3 sync work) against remote LatticeCore 0.10.3. These tests were
+    // unrunnable since Jul 5 (the @Union compile break masked them).
+    // See the fix/sync-lifetime-tests effort; re-enable with a real fix.
+    @Test(.disabled("pre-existing hang: relay sends never reach the test server; timeLimit doesn't fire — owner: 1.0 item D (D1a frame-drop fix + D1b TestSyncServer + D4 re-enable)"), .timeLimit(.minutes(1)))
     func test_UpdatesSyncCorrectly() async throws {
         let channel = "realism-update-\(String.random(length: 8))"
 

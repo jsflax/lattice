@@ -31,7 +31,7 @@ class InstanceRegistryTests: BaseTest {
     /// probability of hitting the race window.
     @Test(.timeLimit(.minutes(1)))
     func test_ConcurrentRegisterDeregisterNoDeadlock() async throws {
-        let lattice = try Lattice(Widget.self, configuration: .init(isStoredInMemoryOnly: true))
+        let lattice = try Lattice(Widget.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
 
         // Create several rows to spread observer traffic across multiple InstanceKeys
         let rowCount = 20
@@ -95,7 +95,7 @@ class InstanceRegistryTests: BaseTest {
     /// overlapping InstanceKeys doesn't deadlock or corrupt state.
     @Test(.timeLimit(.minutes(1)))
     func test_ConcurrentFetchDropNoDeadlock() async throws {
-        let lattice = try Lattice(Widget.self, configuration: .init(isStoredInMemoryOnly: true))
+        let lattice = try Lattice(Widget.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
 
         let w = Widget()
         w.value = 42
