@@ -5,7 +5,7 @@
 #if !canImport(MapKit)
 
 import Foundation
-import Lattice
+@testable import Lattice  // asCxxObjectRef (internal) — mirrors Sources/Lattice/Geobounds.swift
 
 // MARK: - CLLocationCoordinate2D
 
@@ -35,22 +35,22 @@ public struct CLLocationCoordinate2D: CxxManaged, GeoboundsProperty, LinkListabl
 
     // MARK: CxxManaged
 
-    public static func getField(from storage: inout ModelStorage, named name: String) -> CLLocationCoordinate2D {
-        let bounds = storage._ref.getGeoBounds(named: std.string(name))
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> CLLocationCoordinate2D {
+        let bounds = storage._ref.asCxxObjectRef!.getGeoBounds(named: std.string(name))
         return CLLocationCoordinate2D(latitude: bounds.center_lat(), longitude: bounds.center_lon())
     }
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: CLLocationCoordinate2D) {
-        storage._ref.setGeoBounds(named: std.string(name),
+        storage._ref.asCxxObjectRef!.setGeoBounds(named: std.string(name),
                                   minLat: value.latitude, maxLat: value.latitude,
                                   minLon: value.longitude, maxLon: value.longitude)
     }
 
     // MARK: LinkListable
 
-    public static func _makeLinkList(from storage: inout ModelStorage, named name: String) -> GeoBoundsLinkListRef<CLLocationCoordinate2D> {
+    public static func _makeLinkList(from storage: borrowing ModelStorage, named name: String) -> GeoBoundsLinkListRef<CLLocationCoordinate2D> {
         GeoBoundsLinkListRef(
-            _ref: storage._ref.getGeoBoundsList(named: std.string(name)),
+            _ref: storage._ref.asCxxObjectRef!.getGeoBoundsList(named: std.string(name)),
             fromRef: { CLLocationCoordinate2D($0) },
             toRef: { $0.asRefType }
         )
@@ -108,8 +108,8 @@ public struct MKCoordinateRegion: CxxManaged, GeoboundsProperty, LinkListable {
 
     // MARK: CxxManaged
 
-    public static func getField(from storage: inout ModelStorage, named name: String) -> MKCoordinateRegion {
-        let bounds = storage._ref.getGeoBounds(named: std.string(name))
+    public static func getField(from storage: borrowing ModelStorage, named name: String) -> MKCoordinateRegion {
+        let bounds = storage._ref.asCxxObjectRef!.getGeoBounds(named: std.string(name))
         let center = CLLocationCoordinate2D(latitude: bounds.center_lat(), longitude: bounds.center_lon())
         let span = MKCoordinateSpan(latitudeDelta: bounds.lat_span(), longitudeDelta: bounds.lon_span())
         return .init(center: center, span: span)
@@ -117,16 +117,16 @@ public struct MKCoordinateRegion: CxxManaged, GeoboundsProperty, LinkListable {
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: MKCoordinateRegion) {
         let bbox = value.boundingBox
-        storage._ref.setGeoBounds(named: std.string(name),
+        storage._ref.asCxxObjectRef!.setGeoBounds(named: std.string(name),
                                   minLat: bbox.minLat, maxLat: bbox.maxLat,
                                   minLon: bbox.minLon, maxLon: bbox.maxLon)
     }
 
     // MARK: LinkListable
 
-    public static func _makeLinkList(from storage: inout ModelStorage, named name: String) -> GeoBoundsLinkListRef<MKCoordinateRegion> {
+    public static func _makeLinkList(from storage: borrowing ModelStorage, named name: String) -> GeoBoundsLinkListRef<MKCoordinateRegion> {
         GeoBoundsLinkListRef(
-            _ref: storage._ref.getGeoBoundsList(named: std.string(name)),
+            _ref: storage._ref.asCxxObjectRef!.getGeoBoundsList(named: std.string(name)),
             fromRef: { MKCoordinateRegion($0) },
             toRef: { $0.asRefType }
         )

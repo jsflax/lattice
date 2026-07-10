@@ -109,7 +109,10 @@ final class CloseGuardTests: BaseTest {
     /// a live connection before `db_`/`read_db_` are reset — no SIGSEGV.
     @Test(.timeLimit(.minutes(1)))
     func test_ConcurrentReadsDuringClose_NoCrash() throws {
-        let lattice = try testLattice(path: "\(String.random(length: 32)).sqlite", Person.self)
+        // Deliberately shared across reader threads — the close-during-read
+        // race IS the subject under test (Linux 6.3 enforces the Sendable
+        // capture; Darwin's toolchain lets it slide).
+        nonisolated(unsafe) let lattice = try testLattice(path: "\(String.random(length: 32)).sqlite", Person.self)
         seed(lattice, (0..<200).map { "P\($0)" })
 
         let stop = DispatchSemaphore(value: 0)

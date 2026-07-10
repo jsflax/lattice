@@ -118,7 +118,16 @@ final class CxxObjectBackend: ObjectBackend, @unchecked Sendable {
     @inlinable func getBool(named name: String) -> Bool { ref.getBool(named: std.string(name)) }
     @inlinable func getString(named name: String) -> String { String(ref.getString(named: std.string(name))) }
     func getData(named name: String) -> Data {
-        Data(ref.getData(named: std.string(name)))
+        // Linux interop: feeding the returned std.vector temporary straight
+        // into Data.init(Sequence) crashes — the Collection witnesses run
+        // against an unmaterialized temporary (null self in count.getter,
+        // observed on aarch64 Linux). Bind it, guard empty, copy explicitly.
+        let vec = ref.getData(named: std.string(name))
+        let count = Int(vec.size())
+        guard count > 0 else { return Data() }
+        var out = Data(capacity: count)
+        for i in 0..<count { out.append(vec[i]) }
+        return out
     }
 
     @inlinable func setInt(named name: String, _ value: Int64) { ref.setInt(named: std.string(name), value) }
