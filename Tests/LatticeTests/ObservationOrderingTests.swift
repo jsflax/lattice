@@ -71,8 +71,9 @@ class ObservationOrderingTests: BaseTest {
         #expect(rowIds.sorted() == Array(1...Int64(writes)), "every commit delivered exactly once")
     }
 
-    /// Cross-handle: a SECOND lattice over the same file must also see events
-    /// in commit order (delivery rides the same-path instance registry).
+    /// Cross-handle: a SECOND lattice over the same file must see every
+    /// commit exactly once (delivery rides the same-path instance registry;
+    /// arrival order is best-effort per the contract).
     @Test func crossHandleDelivery_isExactlyOnce() async throws {
         let path = "ordering_\(String.random(length: 16)).sqlite"
         let writer = try testLattice(path: path, OrderedItem.self)

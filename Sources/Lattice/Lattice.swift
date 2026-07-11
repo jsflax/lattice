@@ -541,10 +541,16 @@ public struct Lattice {
         /// set a small value (e.g. 5000) so a stuck writer can't hang the UI.
         public var busyTimeoutMs: Int = 30_000
 
-        /// Sync tuning knobs (1.0 item I2), forwarded verbatim into every
-        /// synchronizer this database creates (WSS and IPC). Every field is
-        /// optional: nil keeps the core default — this surface never re-states
-        /// a default, so core-side default changes apply everywhere at once.
+        /// Sync tuning knobs (1.0 item I2), forwarded into every synchronizer
+        /// this database creates (WSS and IPC). Every field is optional: nil
+        /// keeps the core default — this surface never re-states a default, so
+        /// core-side default changes apply everywhere at once. Values that
+        /// would break the synchronizer are IGNORED (the knob keeps its core
+        /// default): `chunkSize <= 0` (would permanently stall uploads),
+        /// `baseDelaySeconds`/`maxDelaySeconds <= 0` (reconnect hot loop), and
+        /// negative windows/intervals. `0` remains meaningful where it means
+        /// "disabled": `maxReconnectAttempts` (unlimited), `uploadCoalesceMs`
+        /// (legacy immediate dispatch), checkpoint intervals (off).
         public struct SyncTuning: Sendable, Equatable, Hashable {
             /// Max events per sync message (core default 1000).
             public var chunkSize: Int?
@@ -1773,23 +1779,27 @@ public struct Lattice {
         queryConfig.authorizationToken = nil
         queryConfig.syncFilter = nil
         let cxxConfig = queryConfig.cxxConfiguration()
+        // UNCACHED construction is load-bearing: when the parent has no
+        // sync/IPC, the stripped config's cache key is IDENTICAL to the
+        // parent's — the keyed cache would return the PARENT instance and the
+        // ATTACH below would mutate the parent's own connection.
         // `_requireLatticeRef` unwraps the FRT-optional / value-non-optional gap.
-        let newCxxLattice = _requireLatticeRef(LatticeCxx.swift_lattice_ref.create(swiftConfig: cxxConfig,
+        let newCxxLattice = _requireLatticeRef(LatticeCxx.swift_lattice_ref.createUncached(swiftConfig: cxxConfig,
                                                                 schemas: modelTypes.cxxSchema))
         guard newCxxLattice.attach(lattice.cxxLatticeRef) else {
             let reason = newCxxLattice.last_attach_error()
             throw LatticeError.attachFailed(
                 reason.__convertToBool() ? String(reason.pointee) : "unknown attach failure")
         }
-        // Construct directly: this query-only connection is intentionally a
-        // distinct impl (its config differs from ours), so a cache lookup by
-        // ref would miss. Register it so trampolines on the attached
-        // connection can still resolve.
         var newLattice = Lattice(backend: CxxBackend(newCxxLattice),
                                  configuration: queryConfig,
                                  modelTypes: modelTypes,
                                  schema: schema,
                                  isolation: isolation)
+        // Record the attachment on the clone so detach(lattice:) works on it
+        // and a repeat attach can't double-book (same bookkeeping as attach).
+        newLattice.baseSchema = schema
+        newLattice.attachedSchemas = [(lattice.configuration.canonicalPath, lattice.schema!)]
         newLattice.schema = schema?.merge(typeErased: lattice.schema!)
         Self.cacheLock.withLockUnchecked {
             Self.cache[CacheKey(newLattice.backend)] = WeakCacheEntry(newLattice)

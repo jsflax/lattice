@@ -726,11 +726,9 @@ class LatticeTests: BaseTest {
         #expect(deleteHitCount == 0)
     }
 
-    // QUARANTINED (Jul 8 2026): pre-existing deterministic failure —
-    // cross-instance change notification never arrives (fails in ~20ms, not
-    // a timeout). Verified at bb34cad (main before the 0.13.3 sync work)
-    // against remote LatticeCore 0.10.3. Unrunnable since Jul 5's @Union
-    // compile break masked it. Re-enable with a real fix.
+    // Re-enabled Jul 11 2026: named memory (E1/E2) gave in-memory lattices
+    // the path-keyed identity the registries need, and the await-based
+    // rewrite fixed the test's synchronous assertion (item F).
     @Test func test_CrossInstanceObservation() async throws {
         // E1/E2 re-enable target: named memory gives in-memory lattices the
         // path-keyed identity the instance registries key on.
@@ -1024,12 +1022,15 @@ class LatticeTests: BaseTest {
         // all triggers silently. Verify table-level observation still fires.
         let lattice = try testLattice(path: path, MigrationV2.Person.self)
 
-        nonisolated(unsafe) var receivedChange: CollectionChange?
-        nonisolated(unsafe) var checkedContinuation: CheckedContinuation<Void, Never>?
+        let receivedChange = LockedBox<CollectionChange?>(nil)
+        let checkedContinuation = LockedBox<CheckedContinuation<Void, Never>?>(nil)
+        let once = AtomicOnce()
         let cancellable = lattice.objects(MigrationV2.Person.self)
             .observe { change in
-                receivedChange = change
-                checkedContinuation?.resume()
+                receivedChange.withLock { $0 = change }
+                if once.tryFire() {
+                    checkedContinuation.withLock { $0 }?.resume()
+                }
             }
 
         // Insert a new row — observer should fire
@@ -1037,13 +1038,13 @@ class LatticeTests: BaseTest {
         person.name = "Bob"
         person.age = 25
         await withCheckedContinuation { continuation in
-            checkedContinuation = continuation
+            checkedContinuation.withLock { $0 = continuation }
             lattice.add(person)
         }
 
         cancellable.cancel()
-        guard case .insert = receivedChange else {
-            Issue.record("Expected .insert, got \(String(describing: receivedChange))")
+        guard case .insert = receivedChange.withLock({ $0 }) else {
+            Issue.record("Expected .insert, got \(String(describing: receivedChange.withLock { $0 }))")
             return
         }
     }

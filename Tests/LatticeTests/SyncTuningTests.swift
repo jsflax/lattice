@@ -74,9 +74,15 @@ actor SyncTuningFrameTests {
             wssEndpoint: server.endpoint,
             syncTuning: .init(chunkSize: 1)))
 
+        // ONE transaction → one commit → one upload pass: with the default
+        // chunk size all 5 entries ride a single frame, so per-entry frames
+        // can only come from chunkSize 1 (per-commit dispatch can't explain
+        // them away).
         let writes = 5
-        for i in 0..<writes {
-            client.add(TunedItem(name: "tuned-\(i)"))
+        client.transaction {
+            for i in 0..<writes {
+                client.add(TunedItem(name: "tuned-\(i)"))
+            }
         }
 
         let start = Date()
