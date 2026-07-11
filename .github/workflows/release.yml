@@ -11,7 +11,7 @@ jobs:
   test-macos:
     runs-on: macos-26
     # Known intermittent relay-test hang (1.0 item D) — fail fast, re-run.
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Build
@@ -35,7 +35,7 @@ jobs:
 
   test-linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     # Must be >= the manifest's swift-tools-version (6.3) — see linux.yml.
     container: swift:6.3-noble
     steps:

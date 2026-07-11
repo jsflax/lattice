@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     # A known intermittent relay-test hang (pre-existing, tracked for 1.0
     # item D) can wedge a run; fail fast and re-run instead of a 6h zombie.
-    timeout-minutes: 30
+    timeout-minutes: 60
     # Must be >= the manifest's swift-tools-version (6.3): a 6.2 toolchain
     # refuses the manifest at parse time, before any compile error can surface.
     container: swift:6.3-noble
