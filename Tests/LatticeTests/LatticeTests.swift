@@ -780,14 +780,19 @@ class LatticeTests: BaseTest {
         #expect(person1 !== person2)
 
         // Count notifications on the OTHER instance
-        var otherNotificationCount = 0
+        nonisolated(unsafe) var otherNotificationCount = 0
         let otherCancellable = person2._objectWillChange.sink {
             otherNotificationCount += 1
         }
 
         person1.age = 31
 
-        // Allow any queued GCD callbacks to fire
+        // Await first delivery (bounded — flat sleeps under-wait on slow
+        // runners), then a short settle window to catch duplicates.
+        let start = Date()
+        while otherNotificationCount == 0, Date().timeIntervalSince(start) < 10 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         try await Task.sleep(for: .milliseconds(200))
 
         #expect(otherNotificationCount == 1,
@@ -838,8 +843,9 @@ class LatticeTests: BaseTest {
     }
 
     // QUARANTINED (Jul 8 2026): pre-existing — see test_CrossInstanceObservation.
-    @Test(.disabled("pre-existing: cross-instance observation never fires; reproduces at bb34cad — owner: 1.0 item F (await-based rewrite; file-backed, so may re-enable ahead of E1.5)"))
-    func test_ObserveCrossInstance() async throws {
+    @Test func test_ObserveCrossInstance() async throws {
+        // 1.0 item F re-enable: property-name delivery is Task{}-dispatched —
+        // await it instead of asserting synchronously after the write.
         let dbName = "observe_xinstance_\(UUID().uuidString).sqlite"
         let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
         let lattice = try Lattice(
@@ -855,13 +861,17 @@ class LatticeTests: BaseTest {
 
         let person2 = lattice.object(Person.self, primaryKey: person1.primaryKey!)!
 
-        var receivedProperties: [String] = []
+        nonisolated(unsafe) var receivedProperties: [String] = []
         let token = person2.observe { propertyName in
             receivedProperties.append(propertyName)
         }
 
         person1.age = 31
 
+        let start = Date()
+        while !receivedProperties.contains("age"), Date().timeIntervalSince(start) < 10 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(receivedProperties.contains("age"))
         #expect(person2.age == 31)
         token.cancel()
