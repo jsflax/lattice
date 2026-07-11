@@ -24,8 +24,8 @@ import Vapor
 /// `changeStream`) — no polls, no sleeps, per project convention.
 @Suite("URLChange Sync Tests")
 actor URLChangeSyncTests {
-    let appA: Application
-    let appB: Application
+    let serverA: TestSyncServer
+    let serverB: TestSyncServer
     let sharedPath = FileManager.default.temporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     let serverPathA = FileManager.default.temporaryDirectory
@@ -34,16 +34,14 @@ actor URLChangeSyncTests {
         .appending(path: "\(String.random(length: 30)).sqlite")
     var portA: Int = 0
     var portB: Int = 0
-    private let socketsA = SocketStore(label: "URLChangeA")
-    private let socketsB = SocketStore(label: "URLChangeB")
     private let serverConfigA: Lattice.Configuration
     private let serverConfigB: Lattice.Configuration
 
     enum URLChangeError: Error { case noPort }
 
     deinit {
-        appA.shutdown()
-        appB.shutdown()
+        serverA.shutdown()
+        serverB.shutdown()
         try? FileManager.default.removeItem(at: sharedPath)
         try? FileManager.default.removeItem(at: serverPathA)
         try? FileManager.default.removeItem(at: serverPathB)
@@ -51,65 +49,15 @@ actor URLChangeSyncTests {
 
     init() async throws {
         lattice_set_log_level(lattice.log_level.warn)
-        var env = try Environment.detect()
-        env.arguments = ["vapor"]
-        self.appA = try await Application.make(env)
-        self.appB = try await Application.make(env)
-        appA.http.server.configuration.port = 0
-        appB.http.server.configuration.port = 0
-
         self.serverConfigA = .init(fileURL: serverPathA)
         self.serverConfigB = .init(fileURL: serverPathB)
 
-        // Pre-create server-side lattices so the WS handlers can reopen them
-        // off-EventLoop without races.
-        _ = try Lattice(for: [SimpleSyncObject.self], configuration: serverConfigA)
-        _ = try Lattice(for: [SimpleSyncObject.self], configuration: serverConfigB)
-
-        try await Self.installRelay(on: appA, configuration: serverConfigA, sockets: socketsA)
-        try await Self.installRelay(on: appB, configuration: serverConfigB, sockets: socketsB)
-        try await appA.startup()
-        try await appB.startup()
-
-        guard let pA = appA.http.server.shared.localAddress?.port else { throw URLChangeError.noPort }
-        guard let pB = appB.http.server.shared.localAddress?.port else { throw URLChangeError.noPort }
-        self.portA = pA
-        self.portB = pB
-    }
-
-    private static func installRelay(
-        on app: Application,
-        configuration: Lattice.Configuration,
-        sockets: SocketStore
-    ) async throws {
-        app.webSocket("test", maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 500 * 1024 * 1024)) { req, ws in
-            sockets.append(ws)
-            ws.onBinary { ws, bb in
-                let data = Data(buffer: bb)
-                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let kind = json["kind"] as? String else { return }
-                if kind == "auditLog" {
-                    if let auditLogs = json["auditLog"] as? [[String: Any]] {
-                        let globalIds = auditLogs.compactMap { $0["globalId"] as? String }
-                            .compactMap(UUID.init(uuidString:))
-                        ws.send(try! JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
-                    }
-                    for socket in sockets.others(excluding: ws) { socket.send(bb) }
-                }
-                Task.detached {
-                    let lattice = try Lattice(configuration: configuration)
-                    _ = try? lattice.receive(data)
-                }
-            }
-            let lattice = try! Lattice(configuration: configuration)
-            let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-            let count = events.count
-            for i in stride(from: 0, to: count, by: 1000) {
-                let page = events[i..<min(count, i + 1000)]
-                let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
-                ws.send(ByteBuffer(data: encoded))
-            }
-        }
+        // D1b: shared TestSyncServer per endpoint (one server-lifetime
+        // lattice each, ordered persistence).
+        self.serverA = try await TestSyncServer(models: [SimpleSyncObject.self], configuration: serverConfigA, label: "URLChangeA")
+        self.serverB = try await TestSyncServer(models: [SimpleSyncObject.self], configuration: serverConfigB, label: "URLChangeB")
+        self.portA = serverA.port
+        self.portB = serverB.port
     }
 
     /// Wait for `lattice` to fire `onSyncStateChange(connected)` matching the

@@ -271,3 +271,86 @@ extension AttachTests {
         #expect(projects == ["b"])
     }
 }
+
+// MARK: - P0 review fixes: bookkeeping idempotence, path-keyed detach, mixed storage
+
+protocol AttachVenue: VirtualModel {
+    var name: String { get }
+}
+
+@Model final class AttachRestaurant: AttachVenue {
+    var name: String
+    init(name: String = "") { self.name = name }
+}
+
+@Model final class AttachMuseum: AttachVenue {
+    var name: String
+    var exhibits: Int
+    init(name: String = "", exhibits: Int = 0) { self.name = name; self.exhibits = exhibits }
+}
+
+extension AttachTests {
+    /// Repeat attach must not double-book the schema; one detach must fully
+    /// remove the attachment from polymorphic membership (review finding:
+    /// duplicate attachedSchemas entry survived a single detach).
+    @Test func attachTwice_detachOnce_restoresBaseSchemaMembership() async throws {
+        var l1 = try testLattice(AttachRestaurant.self)
+        let l2 = try testLattice(AttachMuseum.self)
+        l1.add(AttachRestaurant(name: "R"))
+        l2.add(AttachMuseum(name: "M"))
+
+        try l1.attach(lattice: l2)
+        try l1.attach(lattice: l2)  // idempotent — no duplicate schema arms
+        #expect(l1.objects(AttachVenue.self).count == 2)
+
+        try l1.detach(lattice: l2)
+        #expect(l1.objects(AttachVenue.self).count == 1, "Museum must leave polymorphic membership after ONE detach")
+        // Second detach is a clean no-op.
+        try l1.detach(lattice: l2)
+        #expect(l1.objects(AttachVenue.self).count == 1)
+    }
+
+    /// Detach is path-keyed like the C++ side: a REOPENED handle over the
+    /// attached database detaches it fully, schema included.
+    @Test func detachViaReopenedHandle_removesSchema() async throws {
+        var l1 = try testLattice(AttachRestaurant.self)
+        let path = "reopen_detach_\(String.random(length: 16)).sqlite"
+        let l2 = try testLattice(path: path, AttachMuseum.self)
+        l2.add(AttachMuseum(name: "M"))
+
+        try l1.attach(lattice: l2)
+        #expect(l1.objects(AttachVenue.self).count == 1)
+
+        // Fresh handle over the same file (different backend identity).
+        let l2Again = try Lattice(AttachMuseum.self, configuration: .init(
+            fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
+        try l1.detach(lattice: l2Again)
+        #expect(l1.objects(AttachVenue.self).count == 0, "path-keyed detach must remove the schema too")
+    }
+
+    /// Mixed storage: a FILE-backed lattice attaching a NAMED-MEMORY lattice
+    /// must see the memory rows (core now opens all connections URI-capable;
+    /// previously this silently attached an empty literal file).
+    @Test func fileLattice_attachesMemoryLattice() async throws {
+        var main = try testLattice(PlainItem.self)
+        let mem = try Lattice(PlainItem.self, configuration: .init(storage: .memory(named: "attach_mem_\(String.random(length: 8))")))
+        mem.add(PlainItem(content: "from-memory", project: "m"))
+        main.add(PlainItem(content: "from-file", project: "f"))
+
+        try main.attach(lattice: mem)
+        #expect(main.objects(PlainItem.self).count == 2)
+        try main.detach(lattice: mem)
+        #expect(main.objects(PlainItem.self).count == 1)
+    }
+
+    /// Memory names with URI-hostile characters are percent-encoded — they
+    /// stay in-memory (no on-disk file) and distinct names stay distinct.
+    @Test func memoryName_withHostileCharacters_staysInMemoryAndDistinct() async throws {
+        let a = try Lattice(PlainItem.self, configuration: .init(storage: .memory(named: "cache?v=2")))
+        let b = try Lattice(PlainItem.self, configuration: .init(storage: .memory(named: "cache?v=3")))
+        a.add(PlainItem(content: "a", project: "a"))
+        #expect(a.objects(PlainItem.self).count == 1)
+        #expect(b.objects(PlainItem.self).count == 0, "distinct hostile names must not collide")
+        #expect(!FileManager.default.fileExists(atPath: "cache"), "no on-disk file may appear")
+    }
+}

@@ -179,7 +179,18 @@ final class TestSyncServer: @unchecked Sendable {
     let app: Application
     let lattice: Lattice
     let sockets: SocketStore
+    private let path: String
     private(set) var port: Int = 0
+
+    final class FrameCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        func increment() { lock.withLock { count += 1 } }
+        var value: Int { lock.withLock { count } }
+    }
+    private let frameCounter = FrameCounter()
+    /// Number of auditLog frames the server has received (I2's frame-count probe).
+    var auditFrameCount: Int { frameCounter.value }
     private let frameContinuation: AsyncStream<Data>.Continuation
     private var consumer: Task<Void, Never>?
 
@@ -194,6 +205,7 @@ final class TestSyncServer: @unchecked Sendable {
         // Server-lifetime lattice — constructed BEFORE any handler can fire.
         self.lattice = try Lattice(for: models, configuration: configuration)
         self.sockets = SocketStore(label: label)
+        self.path = path
 
         var env = try Environment.detect()
         env.arguments = ["vapor"]
@@ -211,6 +223,7 @@ final class TestSyncServer: @unchecked Sendable {
         }
 
         let sockets = self.sockets
+        let frames = self.frameCounter
         app.webSocket(.constant(path), maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 500 * 1024 * 1024)) { req, ws in
             sockets.append(ws)
             ws.onBinary { ws, bb in
@@ -218,6 +231,7 @@ final class TestSyncServer: @unchecked Sendable {
                 guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let kind = json["kind"] as? String else { return }
                 if kind == "auditLog" {
+                    frames.increment()
                     // ACK immediately (before persistence) and forward to the
                     // other clients — synchronous, no DB work on the event loop.
                     if let auditLogs = json["auditLog"] as? [[String: Any]] {
@@ -250,7 +264,7 @@ final class TestSyncServer: @unchecked Sendable {
         self.port = assignedPort
     }
 
-    var endpoint: URL { URL(string: "http://localhost:\(port)/test")! }
+    var endpoint: URL { URL(string: "http://localhost:\(port)/\(path)")! }
 
     func shutdown() {
         frameContinuation.finish()

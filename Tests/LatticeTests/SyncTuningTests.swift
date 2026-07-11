@@ -42,3 +42,48 @@ class SyncTuningTests: BaseTest {
         #expect(lattice.objects(TunedItem.self).count == 1)
     }
 }
+
+// I2's end-to-end evidence (owed since 8ac403d): chunkSize actually reaches
+// the live synchronizer. With chunkSize 1, N inserted objects arrive at the
+// server as at least N separate auditLog frames; the default (1000) would
+// batch them into far fewer. Server lives on the suite (init/deinit) — the
+// per-test lifecycle trips Vapor's ServeCommand deinit assertion.
+@Suite("Sync Tuning Frame Tests", .serialized)
+actor SyncTuningFrameTests {
+    let server: TestSyncServer
+    let serverURL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 24)).sqlite")
+    let clientURL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 24)).sqlite")
+
+    init() async throws {
+        lattice_set_log_level(lattice.log_level.warn)
+        self.server = try await TestSyncServer(models: [TunedItem.self],
+                                               configuration: .init(fileURL: serverURL),
+                                               label: "TuningFrames")
+    }
+
+    deinit {
+        server.shutdown()
+        try? Lattice.delete(for: .init(fileURL: serverURL))
+        try? Lattice.delete(for: .init(fileURL: clientURL))
+    }
+
+    @Test(.timeLimit(.minutes(5))) func chunkSizeOne_forcesPerEntryFrames() async throws {
+        let client = try Lattice(TunedItem.self, configuration: .init(
+            fileURL: clientURL,
+            authorizationToken: "t",
+            wssEndpoint: server.endpoint,
+            syncTuning: .init(chunkSize: 1)))
+
+        let writes = 5
+        for i in 0..<writes {
+            client.add(TunedItem(name: "tuned-\(i)"))
+        }
+
+        let start = Date()
+        while server.auditFrameCount < writes, Date().timeIntervalSince(start) < 60 {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(server.auditFrameCount >= writes,
+                "chunkSize 1 must produce at least one frame per entry, got \(server.auditFrameCount)")
+    }
+}

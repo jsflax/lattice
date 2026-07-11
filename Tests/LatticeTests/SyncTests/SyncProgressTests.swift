@@ -14,7 +14,7 @@ import Vapor
 
 @Suite("Sync Progress Tests")
 actor SyncProgressTests {
-    let app: Application
+    let server: TestSyncServer
     let syncLatticeURL = FileManager.default.temporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     let lattice1URL = FileManager.default.temporaryDirectory
@@ -29,81 +29,25 @@ actor SyncProgressTests {
     var localLattice1Configuration: Lattice.Configuration
     var localLattice2Configuration: Lattice.Configuration
 
-    private let sockets = SocketStore(label: "SyncProgress")
-
     deinit {
-        app.shutdown()
+        server.shutdown()
         try? Lattice.delete(for: localLattice1Configuration)
         try? Lattice.delete(for: localLattice2Configuration)
         try? Lattice.delete(for: syncedLatticeConfiguration)
     }
 
-    private func launchServer() async throws {
-        let syncedLatticeConfiguration = self.syncedLatticeConfiguration
-        app.webSocket("test", maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 500 * 1024 * 1024)) { req, ws in
-            print("[SERVER:SyncProgress] New WebSocket connection accepted, total=\(self.sockets.count + 1)")
-            self.sockets.append(ws)
-            ws.onBinary { ws, bb in
-                let data = Data(buffer: bb)
-                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let kind = json["kind"] as? String else {
-                    print("[SERVER:SyncProgress] Failed to parse incoming message")
-                    return
-                }
-
-                if kind == "auditLog" {
-                    if let auditLogs = json["auditLog"] as? [[String: Any]] {
-                        let globalIds = auditLogs.compactMap { $0["globalId"] as? String }
-                            .compactMap(UUID.init(uuidString:))
-                        print("[SERVER:SyncProgress] Received \(auditLogs.count) audit entries, sending ACK for \(globalIds.count) ids")
-                        ws.send(try! JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
-                    }
-                    let others = self.sockets.others(excluding: ws)
-                    print("[SERVER:SyncProgress] Relaying to \(others.count) other sockets")
-                    for socket in others {
-                        socket.send(bb)
-                    }
-                }
-                Task.detached {
-                    let lattice = try Lattice(configuration: syncedLatticeConfiguration)
-                    _ = try? lattice.receive(data)
-                }
-            }
-
-            let lattice = try! Lattice(configuration: syncedLatticeConfiguration)
-            let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-            let count = events.count
-            print("[SERVER:SyncProgress] Sending \(count) initial events to new connection")
-            for i in stride(from: 0, to: count, by: 1000) {
-                let page = events[i..<min(count, i + 1000)]
-                let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
-                ws.send(ByteBuffer(data: encoded))
-            }
-        }
-    }
-
     init() async throws {
         lattice_set_log_level(lattice.log_level.debug)
-        var env = try Environment.detect()
-        env.arguments = ["vapor"]
-        self.app = try await Application.make(env)
         self.localLattice1Configuration = .init(fileURL: lattice1URL)
         self.localLattice2Configuration = .init(fileURL: lattice2URL)
         self.syncedLatticeConfiguration = .init(fileURL: syncLatticeURL)
 
-        app.http.server.configuration.port = 0
-
-        syncedLattice = try Lattice(for: [SimpleSyncObject.self],
-                                    configuration: syncedLatticeConfiguration)
-
-        try await launchServer()
-        try await app.startup()
-
-        guard let localAddress = app.http.server.shared.localAddress,
-              let assignedPort = localAddress.port else {
-            throw SyncTests.SyncTestError.noPort
-        }
-        self.port = assignedPort
+        // D1b: shared TestSyncServer (one server-lifetime lattice, ordered persistence).
+        self.server = try await TestSyncServer(models: [SimpleSyncObject.self],
+                                               configuration: syncedLatticeConfiguration,
+                                               label: "SyncProgress")
+        syncedLattice = server.lattice
+        self.port = server.port
 
         localLattice1Configuration = Lattice.Configuration(
             fileURL: lattice1URL,
@@ -181,9 +125,9 @@ actor SyncProgressTests {
         // Wait for both WebSocket connections to be established before inserting.
         // Without this, lattice1 can upload before lattice2 connects, and the
         // server relays to 0 other sockets — lattice2 never receives the entry.
-        await sockets.waitForCount(2)
+        await server.sockets.waitForCount(2)
 
-        print("[DownloadTracking] START lattice1=\(lattice1URL.lastPathComponent) lattice2=\(lattice2URL.lastPathComponent) sockets=\(sockets.count)")
+        print("[DownloadTracking] START lattice1=\(lattice1URL.lastPathComponent) lattice2=\(lattice2URL.lastPathComponent) sockets=\(server.sockets.count)")
 
         // Wait for lattice2's own sync progress to show received increased.
         // Register the callback BEFORE triggering the sync so we don't miss

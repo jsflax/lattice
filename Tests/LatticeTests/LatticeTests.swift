@@ -166,6 +166,17 @@ func testLattice(isolation: isolated (any Actor)? = #isolation,
     try Lattice(for: types, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
 }
 
+/// Minimal mutex box for test observers that fire on background threads.
+final class LockedBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: T
+    init(_ value: T) { self.value = value }
+    func withLock<R>(_ body: (inout T) -> R) -> R {
+        lock.lock(); defer { lock.unlock() }
+        return body(&value)
+    }
+}
+
 class BaseTest {
     private static let logFile: UnsafeMutablePointer<FILE>? = {
         let f = fopen("/tmp/lattice_swift_tests.log", "w")
@@ -742,19 +753,19 @@ class LatticeTests: BaseTest {
         // Track if person2's objectWillChange fires. Delivery is
         // Task{}-dispatched — await it instead of asserting synchronously
         // (1.0 item F: the sync #expect was the bug, not the plumbing).
-        nonisolated(unsafe) var didReceiveChange = false
+        let didReceiveChange = LockedBox<Bool>(false)
         let cancellable = person2._objectWillChange.sink {
-            didReceiveChange = true
+            didReceiveChange.withLock { $0 = true }
         }
 
         // Modify person1
         person1.age = 31
 
         let start = Date()
-        while !didReceiveChange, Date().timeIntervalSince(start) < 10 {
+        while !didReceiveChange.withLock({ $0 }), Date().timeIntervalSince(start) < 10 {
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(didReceiveChange, "Cross-instance observation should notify other instances")
+        #expect(didReceiveChange.withLock { $0 }, "Cross-instance observation should notify other instances")
 
         // person2 should see the updated value (reads from shared C++ storage)
         #expect(person2.age == 31, "Other instance should see updated value")
@@ -780,9 +791,9 @@ class LatticeTests: BaseTest {
         #expect(person1 !== person2)
 
         // Count notifications on the OTHER instance
-        nonisolated(unsafe) var otherNotificationCount = 0
+        let otherNotificationCount = LockedBox<Int>(0)
         let otherCancellable = person2._objectWillChange.sink {
-            otherNotificationCount += 1
+            otherNotificationCount.withLock { $0 += 1 }
         }
 
         person1.age = 31
@@ -790,13 +801,14 @@ class LatticeTests: BaseTest {
         // Await first delivery (bounded — flat sleeps under-wait on slow
         // runners), then a short settle window to catch duplicates.
         let start = Date()
-        while otherNotificationCount == 0, Date().timeIntervalSince(start) < 10 {
+        while otherNotificationCount.withLock({ $0 }) == 0, Date().timeIntervalSince(start) < 10 {
             try await Task.sleep(for: .milliseconds(10))
         }
         try await Task.sleep(for: .milliseconds(200))
 
-        #expect(otherNotificationCount == 1,
-                "Expected exactly 1 objectWillChange on other instance, got \(otherNotificationCount)")
+        let finalCount = otherNotificationCount.withLock { $0 }
+        #expect(finalCount == 1,
+                "Expected exactly 1 objectWillChange on other instance, got \(finalCount)")
         #expect(person2.age == 31)
 
         otherCancellable.cancel()
@@ -861,18 +873,18 @@ class LatticeTests: BaseTest {
 
         let person2 = lattice.object(Person.self, primaryKey: person1.primaryKey!)!
 
-        nonisolated(unsafe) var receivedProperties: [String] = []
+        let received = LockedBox<[String]>([])
         let token = person2.observe { propertyName in
-            receivedProperties.append(propertyName)
+            received.withLock { $0.append(propertyName) }
         }
 
         person1.age = 31
 
         let start = Date()
-        while !receivedProperties.contains("age"), Date().timeIntervalSince(start) < 10 {
+        while !received.withLock({ $0.contains("age") }), Date().timeIntervalSince(start) < 10 {
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(receivedProperties.contains("age"))
+        #expect(received.withLock { $0.contains("age") })
         #expect(person2.age == 31)
         token.cancel()
     }

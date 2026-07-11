@@ -20,8 +20,7 @@ import Testing
 @Suite("Observation Ordering Tests", .serialized)
 class ObservationOrderingTests: BaseTest {
 
-    @Test func auditLogDelivery_isInCommitOrder() async throws {
-        // Single-channel (in-memory) — strict ordering is the contract.
+    @Test func auditLogDelivery_isExactlyOnceAndGapFree() async throws {
         let lattice = try Lattice(OrderedItem.self, configuration: .init(storage: .memory()))
 
         let collector = OrderCollector()
@@ -42,11 +41,14 @@ class ObservationOrderingTests: BaseTest {
         // AuditLog ids are the total-order source: sorted, they must be the
         // exact commit sequence with no gaps.
         let sorted = ids.sorted()
-        #expect(sorted == Array(sorted.first!...sorted.last!), "AuditLog ids must be gap-free commit sequence")
+        guard let first = sorted.first, let last = sorted.last else {
+            Issue.record("no AuditLog events delivered at all")
+            return
+        }
+        #expect(sorted == Array(first...last), "AuditLog ids must be gap-free commit sequence")
     }
 
-    @Test func collectionChanges_areInCommitOrder() async throws {
-        // Single-channel (in-memory) — strict ordering is the contract.
+    @Test func collectionChanges_deliverExactlyOnce() async throws {
         let lattice = try Lattice(OrderedItem.self, configuration: .init(storage: .memory()))
 
         let collector = OrderCollector()
@@ -71,7 +73,7 @@ class ObservationOrderingTests: BaseTest {
 
     /// Cross-handle: a SECOND lattice over the same file must also see events
     /// in commit order (delivery rides the same-path instance registry).
-    @Test func crossHandleDelivery_isInCommitOrder() async throws {
+    @Test func crossHandleDelivery_isExactlyOnce() async throws {
         let path = "ordering_\(String.random(length: 16)).sqlite"
         let writer = try testLattice(path: path, OrderedItem.self)
         let observerSide = try testLattice(path: path, OrderedItem.self)
@@ -107,7 +109,10 @@ private final class OrderCollector: @unchecked Sendable {
 private func waitUntil(deadline: TimeInterval = 15, _ condition: () -> Bool) async throws {
     let start = Date()
     while !condition() {
-        if Date().timeIntervalSince(start) > deadline { return }
+        if Date().timeIntervalSince(start) > deadline {
+            Issue.record("timed out after \(deadline)s waiting for delivery — assertions below reflect PARTIAL data")
+            return
+        }
         try await Task.sleep(for: .milliseconds(10))
     }
 }

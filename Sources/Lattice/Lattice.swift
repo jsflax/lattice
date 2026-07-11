@@ -481,6 +481,24 @@ public struct Lattice {
 
         public var storage: Storage
 
+        /// The exact path/URI handed to the C++ core — also the key the
+        /// attach/detach bookkeeping shares with the core's own path-keyed
+        /// attachment table. Memory names are percent-encoded so characters
+        /// that would terminate the SQLite URI path ('?', '#', '%', ' ')
+        /// cannot silently turn a memory database into an on-disk file or
+        /// collide two distinct names.
+        internal var canonicalPath: String {
+            switch storage {
+            case .file(let url):
+                return url.path
+            case .memory(let name):
+                var allowed = CharacterSet.alphanumerics
+                allowed.insert(charactersIn: "-._~")
+                let encoded = name.addingPercentEncoding(withAllowedCharacters: allowed) ?? name
+                return "file:\(encoded)?mode=memory&cache=shared"
+            }
+        }
+
         /// The on-disk location for `.file` storage. For in-memory storage the
         /// getter returns the legacy `:memory:` placeholder URL; setting this
         /// switches the configuration to `.file` storage.
@@ -621,10 +639,7 @@ public struct Lattice {
             // Create a scheduler for the current isolation context.
             // This ensures different isolation contexts get different cache keys in C++.
             let currentScheduler = Scheduler(isolation: isolation)
-            let path = switch storage {
-            case .file(let url): url.path
-            case .memory(let name): "file:\(name)?mode=memory&cache=shared"
-            }
+            let path = canonicalPath
             var config: lattice.swift_configuration = .init(
                 std.string(path),
                 self.wssEndpoint.map { std.string($0.absoluteString) } ?? std.string(),
@@ -931,9 +946,14 @@ public struct Lattice {
     }
 
     internal var schema: _Schema?
-    /// (backend identity, schema) per attached lattice — lets detach rebuild
-    /// the merged schema from the remaining attachments.
-    internal var attachedSchemas: [(ObjectIdentifier, any _Schema)] = []
+    /// The schema as it was BEFORE any attach — detach rebuilds from this,
+    /// preserving the original (possibly pack-based) schema semantics.
+    internal var baseSchema: _Schema?
+    /// (canonical attached path, schema) per attachment. Keyed by PATH to
+    /// mirror the C++ side's path-keyed attachment table: any handle over the
+    /// same database — including one reopened later — can detach it, and a
+    /// repeat attach cannot double-book.
+    internal var attachedSchemas: [(String, any _Schema)] = []
 
 //    /// Initialize Lattice with model types.
 //    ///
@@ -1715,23 +1735,29 @@ public struct Lattice {
     
     public mutating func attach(lattice: Lattice) throws {
         try backend.attach(lattice.backend)
-        // Keyed by backend identity: value-type Lattice copies share one
-        // backend, so any copy of the attached lattice can detach it.
-        attachedSchemas.append((ObjectIdentifier(lattice.backend), lattice.schema!))
+        let key = lattice.configuration.canonicalPath
+        // Idempotent at the Swift layer too: the C++ side no-ops a repeat
+        // attach of the same path — do not double-book its schema (a stale
+        // duplicate would survive one detach and poison polymorphic queries).
+        guard !attachedSchemas.contains(where: { $0.0 == key }) else { return }
+        if baseSchema == nil { baseSchema = schema }
+        attachedSchemas.append((key, lattice.schema!))
         schema = schema?.merge(typeErased: lattice.schema!)
     }
 
     /// Remove a previously attached lattice: drops its union/passthrough
     /// views, DETACHes the database, and rebuilds this handle's merged
-    /// schema from the remaining attachments. Idempotent — detaching a
-    /// lattice that isn't attached is a no-op.
+    /// schema from the remaining attachments. Keyed by database path (like
+    /// the C++ side), so ANY handle over the attached database — including
+    /// one reopened later — detaches it. Idempotent: detaching a lattice
+    /// that isn't attached is a no-op and leaves the schema untouched.
     public mutating func detach(lattice: Lattice) throws {
         try backend.detach(lattice.backend)
-        if let idx = attachedSchemas.firstIndex(where: { $0.0 == ObjectIdentifier(lattice.backend) }) {
-            attachedSchemas.remove(at: idx)
-        }
-        // Rebuild the merged schema from the base + remaining attachments.
-        var rebuilt: any _Schema = SchemaCompat(modelTypes: modelTypes)
+        let key = lattice.configuration.canonicalPath
+        guard let idx = attachedSchemas.firstIndex(where: { $0.0 == key }) else { return }
+        attachedSchemas.remove(at: idx)
+        // Rebuild from the ORIGINAL pre-attach schema + remaining attachments.
+        var rebuilt: any _Schema = baseSchema ?? SchemaCompat(modelTypes: modelTypes)
         for (_, attached) in attachedSchemas {
             rebuilt = rebuilt.merge(typeErased: attached)
         }
