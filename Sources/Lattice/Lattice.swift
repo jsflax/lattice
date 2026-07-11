@@ -497,6 +497,52 @@ public struct Lattice {
         /// set a small value (e.g. 5000) so a stuck writer can't hang the UI.
         public var busyTimeoutMs: Int = 30_000
 
+        /// Sync tuning knobs (1.0 item I2), forwarded verbatim into every
+        /// synchronizer this database creates (WSS and IPC). Every field is
+        /// optional: nil keeps the core default — this surface never re-states
+        /// a default, so core-side default changes apply everywhere at once.
+        public struct SyncTuning: Sendable, Equatable, Hashable {
+            /// Max events per sync message (core default 1000).
+            public var chunkSize: Int?
+            /// 0 = unlimited (core default).
+            public var maxReconnectAttempts: Int?
+            public var baseDelaySeconds: Double?
+            public var maxDelaySeconds: Double?
+            /// A connection must stay open at least this long before a drop
+            /// resets the reconnect backoff (flapping-endpoint guard).
+            public var stableConnectionMs: Int?
+            /// Upload-tick coalescing window; 0 = legacy immediate dispatch.
+            public var uploadCoalesceMs: Int?
+            /// Periodic WAL maintenance cadences; require uploadCoalesceMs > 0.
+            public var checkpointPassiveIntervalMs: Int?
+            public var checkpointTruncateIntervalMs: Int?
+            /// Incremental upload cursor (core default true).
+            public var useUploadFloor: Bool?
+
+            public init(chunkSize: Int? = nil,
+                        maxReconnectAttempts: Int? = nil,
+                        baseDelaySeconds: Double? = nil,
+                        maxDelaySeconds: Double? = nil,
+                        stableConnectionMs: Int? = nil,
+                        uploadCoalesceMs: Int? = nil,
+                        checkpointPassiveIntervalMs: Int? = nil,
+                        checkpointTruncateIntervalMs: Int? = nil,
+                        useUploadFloor: Bool? = nil) {
+                self.chunkSize = chunkSize
+                self.maxReconnectAttempts = maxReconnectAttempts
+                self.baseDelaySeconds = baseDelaySeconds
+                self.maxDelaySeconds = maxDelaySeconds
+                self.stableConnectionMs = stableConnectionMs
+                self.uploadCoalesceMs = uploadCoalesceMs
+                self.checkpointPassiveIntervalMs = checkpointPassiveIntervalMs
+                self.checkpointTruncateIntervalMs = checkpointTruncateIntervalMs
+                self.useUploadFloor = useUploadFloor
+            }
+        }
+
+        /// nil = all core defaults.
+        public var syncTuning: SyncTuning?
+
         // MARK: Equatable / Hashable (migration excluded — closures aren't comparable)
         public static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.isStoredInMemoryOnly == rhs.isStoredInMemoryOnly &&
@@ -507,7 +553,8 @@ public struct Lattice {
             lhs.isReadOnly == rhs.isReadOnly &&
             lhs.syncFilter == rhs.syncFilter &&
             lhs.ipcTargets == rhs.ipcTargets &&
-            lhs.busyTimeoutMs == rhs.busyTimeoutMs
+            lhs.busyTimeoutMs == rhs.busyTimeoutMs &&
+            lhs.syncTuning == rhs.syncTuning
         }
 
         public func hash(into hasher: inout Hasher) {
@@ -520,12 +567,14 @@ public struct Lattice {
             hasher.combine(syncFilter)
             hasher.combine(ipcTargets)
             hasher.combine(busyTimeoutMs)
+            hasher.combine(syncTuning)
         }
 
         public init(isStoredInMemoryOnly: Bool = false, fileURL: URL? = nil,
                     authorizationToken: String? = nil, wssEndpoint: URL? = nil,
                     isReadOnly: Bool = false, migration: [Int: Migration]? = nil,
-                    syncFilter: SyncFilter? = nil, busyTimeoutMs: Int = 30_000) {
+                    syncFilter: SyncFilter? = nil, busyTimeoutMs: Int = 30_000,
+                    syncTuning: SyncTuning? = nil) {
             self.isStoredInMemoryOnly = isStoredInMemoryOnly
             let fileURL = if isStoredInMemoryOnly {
                 URL(fileURLWithPath: ":memory:")
@@ -549,6 +598,7 @@ public struct Lattice {
             self.migration = migration
             self.syncFilter = syncFilter
             self.busyTimeoutMs = busyTimeoutMs
+            self.syncTuning = syncTuning
         }
 
         internal func cxxConfiguration(isolation: isolated (any Actor)? = #isolation) -> lattice.swift_configuration {
@@ -573,6 +623,17 @@ public struct Lattice {
             }
             config.read_only = isReadOnly
             config.busy_timeout_ms = Int32(busyTimeoutMs)
+            if let t = syncTuning {
+                if let v = t.chunkSize { config.set_sync_chunk_size(Int64(v)) }
+                if let v = t.maxReconnectAttempts { config.set_sync_max_reconnect_attempts(Int32(v)) }
+                if let v = t.baseDelaySeconds { config.set_sync_base_delay_seconds(v) }
+                if let v = t.maxDelaySeconds { config.set_sync_max_delay_seconds(v) }
+                if let v = t.stableConnectionMs { config.set_sync_stable_connection_ms(Int64(v)) }
+                if let v = t.uploadCoalesceMs { config.set_sync_upload_coalesce_ms(Int32(v)) }
+                if let v = t.checkpointPassiveIntervalMs { config.set_sync_checkpoint_passive_interval_ms(Int32(v)) }
+                if let v = t.checkpointTruncateIntervalMs { config.set_sync_checkpoint_truncate_interval_ms(Int32(v)) }
+                if let v = t.useUploadFloor { config.set_sync_use_upload_floor(v) }
+            }
             if let syncFilter {
                 config.set_sync_filter(_makeCxxSyncFilter(Array(syncFilter.entries)))
             }
