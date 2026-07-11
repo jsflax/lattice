@@ -465,8 +465,34 @@ public struct Lattice {
     }
 
     public struct Configuration: Sendable, Equatable, Hashable {
-        public var isStoredInMemoryOnly: Bool = false
-        public var fileURL: URL
+        /// Where the database lives (1.0 item E2, replaces `isStoredInMemoryOnly`).
+        public enum Storage: Sendable, Equatable, Hashable {
+            /// On-disk database at the given file URL.
+            case file(URL)
+            /// Same-process in-memory database. Handles opened with the SAME
+            /// name share one database (and cross-notify); distinct names are
+            /// fully isolated. Backed by a shared-cache SQLite URI
+            /// (`file:<name>?mode=memory&cache=shared`).
+            case memory(named: String)
+            /// A fresh, private in-memory database (unique name per call —
+            /// two configurations built with `.memory()` never share).
+            public static func memory() -> Storage { .memory(named: UUID().uuidString) }
+        }
+
+        public var storage: Storage
+
+        /// The on-disk location for `.file` storage. For in-memory storage the
+        /// getter returns the legacy `:memory:` placeholder URL; setting this
+        /// switches the configuration to `.file` storage.
+        public var fileURL: URL {
+            get {
+                switch storage {
+                case .file(let url): return url
+                case .memory: return URL(fileURLWithPath: ":memory:")
+                }
+            }
+            set { storage = .file(newValue) }
+        }
         public var authorizationToken: String?
         public var wssEndpoint: URL?
         private var scheduler: Scheduler
@@ -545,8 +571,7 @@ public struct Lattice {
 
         // MARK: Equatable / Hashable (migration excluded — closures aren't comparable)
         public static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.isStoredInMemoryOnly == rhs.isStoredInMemoryOnly &&
-            lhs.fileURL == rhs.fileURL &&
+            lhs.storage == rhs.storage &&
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
             lhs.scheduler == rhs.scheduler &&
@@ -558,8 +583,7 @@ public struct Lattice {
         }
 
         public func hash(into hasher: inout Hasher) {
-            hasher.combine(isStoredInMemoryOnly)
-            hasher.combine(fileURL)
+            hasher.combine(storage)
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
             hasher.combine(scheduler)
@@ -570,27 +594,19 @@ public struct Lattice {
             hasher.combine(syncTuning)
         }
 
-        public init(isStoredInMemoryOnly: Bool = false, fileURL: URL? = nil,
+        public init(storage: Storage? = nil, fileURL: URL? = nil,
                     authorizationToken: String? = nil, wssEndpoint: URL? = nil,
                     isReadOnly: Bool = false, migration: [Int: Migration]? = nil,
                     syncFilter: SyncFilter? = nil, busyTimeoutMs: Int = 30_000,
                     syncTuning: SyncTuning? = nil) {
-            self.isStoredInMemoryOnly = isStoredInMemoryOnly
-            let fileURL = if isStoredInMemoryOnly {
-                URL(fileURLWithPath: ":memory:")
-            } else {
-                if let fileURL = fileURL {
-                    fileURL
-                } else {
-                    try! FileManager.default
-                        .url(for: .documentDirectory,
-                             in: .userDomainMask,
-                             appropriateFor: nil,
-                             create: false)
-                        .appendingPathComponent("lattice\(wssEndpoint != nil ? "_ws" : "").sqlite")
-                }
-            }
-            self.fileURL = fileURL
+            // storage wins; fileURL is the long-standing convenience spelling;
+            // neither → the default documents-directory database.
+            self.storage = storage ?? .file(fileURL ?? (try! FileManager.default
+                .url(for: .documentDirectory,
+                     in: .userDomainMask,
+                     appropriateFor: nil,
+                     create: false)
+                .appendingPathComponent("lattice\(wssEndpoint != nil ? "_ws" : "").sqlite")))
             self.authorizationToken = authorizationToken
             self.wssEndpoint = wssEndpoint
             self.scheduler = Scheduler()
@@ -605,22 +621,15 @@ public struct Lattice {
             // Create a scheduler for the current isolation context.
             // This ensures different isolation contexts get different cache keys in C++.
             let currentScheduler = Scheduler(isolation: isolation)
-            var config: lattice.swift_configuration
-            if isStoredInMemoryOnly {
-                config = .init(std.string(":memory:"),
-                      self.wssEndpoint.map {
-                    std.string($0.absoluteString)
-                } ?? std.string(),
-                      authorizationToken.map { std.string($0) } ?? std.string(),
-                      currentScheduler.scheduler)
-            } else {
-                config = .init(std.string(self.fileURL.path),
-                      self.wssEndpoint.map {
-                    std.string($0.absoluteString)
-                } ?? std.string(),
-                      authorizationToken.map { std.string($0) } ?? std.string(),
-                      currentScheduler.scheduler)
+            let path = switch storage {
+            case .file(let url): url.path
+            case .memory(let name): "file:\(name)?mode=memory&cache=shared"
             }
+            var config: lattice.swift_configuration = .init(
+                std.string(path),
+                self.wssEndpoint.map { std.string($0.absoluteString) } ?? std.string(),
+                authorizationToken.map { std.string($0) } ?? std.string(),
+                currentScheduler.scheduler)
             config.read_only = isReadOnly
             config.busy_timeout_ms = Int32(busyTimeoutMs)
             if let t = syncTuning {
@@ -1027,10 +1036,8 @@ public struct Lattice {
         let latticeSHMURL: URL
         let latticeWALURL: URL
 
-        let fileURL = if configuration.isStoredInMemoryOnly {
+        guard case .file(let fileURL) = configuration.storage else {
             throw Error.databaseError("Cannot delete in-memory database")
-        } else {
-            configuration.fileURL
         }
 
         // Explicitly close all SQLite connections for this path before unlinking

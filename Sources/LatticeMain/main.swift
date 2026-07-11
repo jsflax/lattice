@@ -6,5 +6,5 @@ class Person {
     var name: String
 }
 //
-let l = try Lattice(Person.self, configuration: .init(isStoredInMemoryOnly: true))
+let l = try Lattice(Person.self, configuration: .init(storage: .memory()))
 

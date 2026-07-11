@@ -641,9 +641,9 @@ class LatticeTests: BaseTest {
         #expect(deleteHitCount == 2)
     }
     
-    @Test(.disabled("in-memory directive: no tests on in-memory lattices until named memory lands — owner: 1.0 item E2 restores this (memory semantics are the point of this test; a temp-file flip would duplicate test_AuditLogObserve)"))
-    func test_AuditLogObserve_inMemory() async throws {
-        let lattice = try Lattice(Person.self, Dog.self, configuration: .init(isStoredInMemoryOnly: true))
+    @Test func test_AuditLogObserve_inMemory() async throws {
+        // E2 restore: named in-memory storage — memory semantics are the point.
+        let lattice = try Lattice(Person.self, Dog.self, configuration: .init(storage: .memory()))
 
         var insertHitCount = 0
         var deleteHitCount = 0
@@ -720,9 +720,10 @@ class LatticeTests: BaseTest {
     // a timeout). Verified at bb34cad (main before the 0.13.3 sync work)
     // against remote LatticeCore 0.10.3. Unrunnable since Jul 5's @Union
     // compile break masked it. Re-enable with a real fix.
-    @Test(.disabled("pre-existing: cross-instance observation never fires; reproduces at bb34cad — owner: 1.0 items E1.5 (URI-keyed notifier for in-memory) then F (await-based rewrite); stays in-memory as E1.5's re-enable target"))
-    func test_CrossInstanceObservation() async throws {
-        let lattice = try Lattice(Person.self, Dog.self, configuration: .init(isStoredInMemoryOnly: true))
+    @Test func test_CrossInstanceObservation() async throws {
+        // E1/E2 re-enable target: named memory gives in-memory lattices the
+        // path-keyed identity the instance registries key on.
+        let lattice = try Lattice(Person.self, Dog.self, configuration: .init(storage: .memory()))
 
         // Create and add a person
         let person1 = Person()
@@ -738,8 +739,10 @@ class LatticeTests: BaseTest {
         #expect(person1.name == person2.name)
         #expect(person1.age == person2.age)
 
-        // Track if person2's objectWillChange fires
-        var didReceiveChange = false
+        // Track if person2's objectWillChange fires. Delivery is
+        // Task{}-dispatched — await it instead of asserting synchronously
+        // (1.0 item F: the sync #expect was the bug, not the plumbing).
+        nonisolated(unsafe) var didReceiveChange = false
         let cancellable = person2._objectWillChange.sink {
             didReceiveChange = true
         }
@@ -747,7 +750,10 @@ class LatticeTests: BaseTest {
         // Modify person1
         person1.age = 31
 
-        // person2 should have been notified
+        let start = Date()
+        while !didReceiveChange, Date().timeIntervalSince(start) < 10 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(didReceiveChange, "Cross-instance observation should notify other instances")
 
         // person2 should see the updated value (reads from shared C++ storage)

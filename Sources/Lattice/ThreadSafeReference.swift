@@ -194,8 +194,8 @@ public struct LatticeThreadSafeReference: Sendable {
         // trampoline that re-resolves must bail rather than reopen — reopening
         // would recreate an empty `.sqlite` on disk and fire a spurious empty
         // snapshot. For in-memory configs there is no file to check.
-        if !configuration.isStoredInMemoryOnly,
-           !FileManager.default.fileExists(atPath: configuration.fileURL.path) {
+        if case .file(let url) = configuration.storage,
+           !FileManager.default.fileExists(atPath: url.path) {
             return nil
         }
         return try? Lattice(for: self.modelTypes, configuration: configuration)

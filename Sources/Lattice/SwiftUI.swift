@@ -138,7 +138,7 @@ private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "Frame
 }
 
 public struct LatticeEnvironmentKey: EnvironmentKey {
-    nonisolated(unsafe) public static var defaultValue: Lattice = try! Lattice(configuration: .init(isStoredInMemoryOnly: true))
+    nonisolated(unsafe) public static var defaultValue: Lattice = try! Lattice(configuration: .init(storage: .memory()))
 }
 public struct LatticeSchemaEnvironmentKey: EnvironmentKey {
     nonisolated(unsafe) public static var defaultValue: [any Model.Type] = []
