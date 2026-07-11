@@ -1469,13 +1469,16 @@ public struct Lattice {
     }
 
     /// Delivery-ordering contract (1.0): payload-bearing change streams — this
-    /// AuditLog observer and the table/collection observers — deliver events in
-    /// COMMIT ORDER: batches arrive in transaction-commit order and each batch
-    /// is walked synchronously in commit order. Property-change signals
-    /// (`objectWillChange` / `@Observable` triggers) are exempt: they carry no
-    /// payload, are dispatched via unstructured Tasks, and may arrive in any
-    /// order or coalesce — the row itself always reads latest-committed.
-    /// Pinned by ObservationOrderingTests.
+    /// AuditLog observer and the table/collection observers — guarantee that
+    /// every committed change is delivered exactly once and that each BATCH
+    /// is walked synchronously in commit order. Cross-batch ARRIVAL order is
+    /// best-effort: near-simultaneous commits can interleave under CPU
+    /// contention (delivery hops threads between the C++ notify path and the
+    /// callback), so consumers needing a total order must sort by AuditLog
+    /// id — the ids are commit-ordered by construction. Property-change
+    /// signals (`objectWillChange` / `@Observable` triggers) additionally
+    /// carry no payload and may coalesce; the row itself always reads
+    /// latest-committed. Pinned by ObservationOrderingTests.
     public func observe(_ block: @escaping ([AuditLog]) -> ()) -> AnyCancellable {
         let backend = self.backend
         // The C++ side delivers batches per WAL flush; this public Swift API has
@@ -1563,8 +1566,8 @@ public struct Lattice {
         }
     }
     
-    /// Events deliver in commit order — see the delivery-ordering contract on
-    /// `observe(_:)` ([AuditLog] overload); pinned by ObservationOrderingTests.
+    /// Exactly-once, per-batch commit-ordered delivery — see the
+    /// delivery-ordering contract on `observe(_:)` ([AuditLog] overload).
     func observe<T: Model>(_ modelType: T.Type, where: Query<Bool>? = nil,
                            block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
         let backend = self.backend
