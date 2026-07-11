@@ -82,7 +82,7 @@ struct SyncFilterTests {
 
 @Suite("Filtered Sync Tests", .serialized)
 actor FilteredSyncTests {
-    let app: Application
+    let server: TestSyncServer
     let serverLatticeURL = FileManager.default.temporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     let senderURL = FileManager.default.temporaryDirectory
@@ -96,10 +96,8 @@ actor FilteredSyncTests {
     var senderConfig: Lattice.Configuration
     var receiverConfig: Lattice.Configuration
 
-    private let sockets = SocketStore(label: "FilteredSync")
-
     deinit {
-        app.shutdown()
+        server.shutdown()
         try? Lattice.delete(for: senderConfig)
         try? Lattice.delete(for: receiverConfig)
         try? Lattice.delete(for: serverLatticeConfig)
@@ -107,56 +105,16 @@ actor FilteredSyncTests {
 
     init() async throws {
         lattice_set_log_level(lattice.log_level.warn)
-        var env = try Environment.detect()
-        env.arguments = ["vapor"]
-        self.app = try await Application.make(env)
         self.serverLatticeConfig = .init(fileURL: serverLatticeURL)
         self.senderConfig = .init(fileURL: senderURL)
         self.receiverConfig = .init(fileURL: receiverURL)
-        app.http.server.configuration.port = 0
 
-        // Server lattice (no sync endpoint)
-        let _ = try Lattice(FilteredNote.self, FilteredTag.self, configuration: serverLatticeConfig)
-
-        // Launch WebSocket relay
-        let serverLatticeConfig = self.serverLatticeConfig
-        app.webSocket("test", maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 500 * 1024 * 1024)) { req, ws in
-            self.sockets.append(ws)
-            ws.onBinary { ws, bb in
-                let data = Data(buffer: bb)
-                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let kind = json["kind"] as? String else { return }
-                if kind == "auditLog" {
-                    if let auditLogs = json["auditLog"] as? [[String: Any]] {
-                        let globalIds = auditLogs.compactMap { $0["globalId"] as? String }
-                            .compactMap(UUID.init(uuidString:))
-                        ws.send(try! JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
-                    }
-                    for socket in self.sockets.others(excluding: ws) {
-                        socket.send(bb)
-                    }
-                }
-                Task.detached {
-                    let lattice = try Lattice(configuration: serverLatticeConfig)
-                    _ = try? lattice.receive(data)
-                }
-            }
-            let lattice = try! Lattice(configuration: serverLatticeConfig)
-            let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-            let count = events.count
-            for i in stride(from: 0, to: count, by: 1000) {
-                let page = events[i..<min(count, i + 1000)]
-                let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
-                ws.send(ByteBuffer(data: encoded))
-            }
-        }
-
-        try await app.startup()
-        guard let localAddress = app.http.server.shared.localAddress,
-              let assignedPort = localAddress.port else {
-            throw SyncTests.SyncTestError.noPort
-        }
-        self.port = assignedPort
+        // D1b: shared TestSyncServer (one server-lifetime lattice, ordered persistence).
+        self.server = try await TestSyncServer(
+            models: [FilteredNote.self, FilteredTag.self],
+            configuration: serverLatticeConfig,
+            label: "FilteredSync")
+        self.port = server.port
 
         // Receiver: no sync filter (accepts everything the server sends)
         receiverConfig = Lattice.Configuration(

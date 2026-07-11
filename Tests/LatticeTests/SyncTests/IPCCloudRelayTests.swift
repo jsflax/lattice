@@ -11,7 +11,7 @@ import Vapor
 
 @Suite("IPC Cloud Relay Tests")
 actor IPCCloudRelayTests {
-    let app: Application
+    let server: TestSyncServer
     let localURL = FileManager.default.temporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     let syncedURL = FileManager.default.temporaryDirectory
@@ -23,10 +23,8 @@ actor IPCCloudRelayTests {
     var serverConfig: Lattice.Configuration
     var port: Int = 0
 
-    private let sockets = SocketStore(label: "IPCCloudRelay")
-
     deinit {
-        app.shutdown()
+        server.shutdown()
         try? Lattice.delete(for: localConfig)
         try? Lattice.delete(for: syncedConfig)
         try? Lattice.delete(for: serverConfig)
@@ -34,56 +32,16 @@ actor IPCCloudRelayTests {
 
     init() async throws {
         lattice_set_log_level(lattice.log_level.warn)
-        var env = try Environment.detect()
-        env.arguments = ["vapor"]
-        self.app = try await Application.make(env)
         self.localConfig = .init(fileURL: localURL)
         self.syncedConfig = .init(fileURL: syncedURL)
         self.serverConfig = .init(fileURL: serverURL)
-        app.http.server.configuration.port = 0
 
-        // Server-side lattice (no sync)
-        let _ = try Lattice(IPCNote.self, configuration: serverConfig)
-
-        // WebSocket relay server
-        let serverConfigCopy = self.serverConfig
-        app.webSocket("test", maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 500 * 1024 * 1024)) { req, ws in
-            self.sockets.append(ws)
-            ws.onBinary { ws, bb in
-                let data = Data(buffer: bb)
-                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let kind = json["kind"] as? String else { return }
-                if kind == "auditLog" {
-                    if let auditLogs = json["auditLog"] as? [[String: Any]] {
-                        let globalIds = auditLogs.compactMap { $0["globalId"] as? String }
-                            .compactMap(UUID.init(uuidString:))
-                        ws.send(try! JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
-                    }
-                    for socket in self.sockets.others(excluding: ws) {
-                        socket.send(bb)
-                    }
-                }
-                Task.detached {
-                    let lattice = try Lattice(configuration: serverConfigCopy)
-                    _ = try? lattice.receive(data)
-                }
-            }
-            let lattice = try! Lattice(configuration: serverConfigCopy)
-            let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-            let count = events.count
-            for i in stride(from: 0, to: count, by: 1000) {
-                let page = events[i..<min(count, i + 1000)]
-                let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
-                ws.send(ByteBuffer(data: encoded))
-            }
-        }
-
-        try await app.startup()
-        guard let localAddress = app.http.server.shared.localAddress,
-              let assignedPort = localAddress.port else {
-            throw SyncTests.SyncTestError.noPort
-        }
-        self.port = assignedPort
+        // D1b: shared TestSyncServer (one server-lifetime lattice, ordered persistence).
+        self.server = try await TestSyncServer(
+            models: [IPCNote.self],
+            configuration: serverConfig,
+            label: "IPCCloudRelay")
+        self.port = server.port
     }
 
     /// Create a plain observer config by stripping IPC/WSS targets.
