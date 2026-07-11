@@ -657,7 +657,7 @@ class Vec0OrphanTests: BaseTest {
 
         // Create the attached (UNION ALL) view — this is what readLattice()
         // returns for synced projects in production
-        let combined = local.attaching(lattice: synced)
+        let combined = try local.attaching(lattice: synced)
 
         // Verify combined view sees all 8 docs
         let combinedCount = combined.objects(Document.self).count
@@ -1007,7 +1007,7 @@ class Vec0LockStormTests: BaseTest {
         }
 
         // Attach should not crash
-        let combined = lattice1.attaching(lattice: lattice2)
+        let combined = try lattice1.attaching(lattice: lattice2)
 
         // Regular query across both DBs
         let total = combined.objects(Document.self).count
@@ -1036,7 +1036,7 @@ class Vec0LockStormTests: BaseTest {
         lattice1.trainVectorIndexes()
         lattice2.trainVectorIndexes()
 
-        let combined = lattice1.attaching(lattice: lattice2)
+        let combined = try lattice1.attaching(lattice: lattice2)
 
         let total = combined.objects(Document.self).count
         #expect(total == 100, "Attached trained DBs should see all docs, got \(total)")
@@ -1142,7 +1142,7 @@ class Vec0LockStormTests: BaseTest {
             ))
         }
 
-        let combined = lattice.attaching(lattice: lattice2)
+        let combined = try lattice.attaching(lattice: lattice2)
         let combinedNearest = combined.objects(MemoryLike.self)
             .nearest(to: query, on: \.embedding, limit: 10)
         let combinedSnapshot = combinedNearest.snapshot()
@@ -1354,7 +1354,7 @@ class Vec0LockStormTests: BaseTest {
         synced.add(Document(title: "synced-1", embedding: [0.0, 0.0, 1.0]))
 
         // Create attached view (UNION ALL) — same as Engram's readLattice()
-        let combined = local.attaching(lattice: synced)
+        let combined = try local.attaching(lattice: synced)
 
         // Query through the combined view — objects get schema-qualified table names
         let results = combined.objects(Document.self)

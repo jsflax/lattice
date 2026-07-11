@@ -368,7 +368,8 @@ public protocol LatticeBackend: AnyObject, Sendable {
 
     // Lifecycle
     func close()
-    func attach(_ other: any LatticeBackend)   // C++-to-C++; conformer downcasts peer
+    func attach(_ other: any LatticeBackend) throws   // C++-to-C++; conformer downcasts peer
+    func detach(_ other: any LatticeBackend) throws
 
     // Sync status
     func isSyncAgent() -> Bool

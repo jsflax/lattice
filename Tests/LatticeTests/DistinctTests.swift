@@ -95,7 +95,7 @@ class DistinctTests: BaseTest {
         // Unique to synced
         synced.add(PlainItem(content: "memory3", project: "alpha"))
 
-        let query = local.attaching(lattice: synced)
+        let query = try local.attaching(lattice: synced)
 
         // Without distinct: 5 rows (2 local + 3 synced)
         #expect(query.objects(PlainItem.self).count == 5)
@@ -131,7 +131,7 @@ class DistinctTests: BaseTest {
         synced.add(PlainItem(content: "shared item", project: "test"), preservingGlobalId: globalId)
 
         // Without distinct, UNION ALL returns both
-        let query = local.attaching(lattice: synced)
+        let query = try local.attaching(lattice: synced)
         #expect(query.objects(PlainItem.self).count == 2)
 
         // With distinct by globalId, deduplicates to 1
@@ -159,7 +159,7 @@ class DistinctTests: BaseTest {
         // Unique to synced
         synced.add(PlainItem(content: "synced only", project: "test"))
 
-        let query = local.attaching(lattice: synced)
+        let query = try local.attaching(lattice: synced)
 
         // Without distinct: 4 (2 local + 2 synced)
         #expect(query.objects(PlainItem.self).count == 4)
@@ -183,7 +183,7 @@ class DistinctTests: BaseTest {
         local.add(PlainItem(content: "local beta", project: "beta"))
         synced.add(PlainItem(content: "synced beta", project: "beta"))
 
-        let query = local.attaching(lattice: synced)
+        let query = try local.attaching(lattice: synced)
 
         // Filter to alpha + distinct: should be 1
         let alphaResults = query.objects(PlainItem.self)

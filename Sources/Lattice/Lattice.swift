@@ -46,6 +46,12 @@ public enum LatticeError: Error {
     case missingLatticeContext
     case transactionError(String)
     case syncReceiveFailed(String)
+    /// attach() failed — repeat attach of the same database is NOT an error
+    /// (idempotent); this carries schema mismatches, alias collisions with a
+    /// different path, and closed-handle attaches. Catchable: the C++
+    /// exception no longer crosses the interop boundary.
+    case attachFailed(String)
+    case detachFailed(String)
 }
 
 public struct IsolationWeakRef: @unchecked Sendable {
@@ -855,6 +861,9 @@ public struct Lattice {
     }
 
     internal var schema: _Schema?
+    /// (backend identity, schema) per attached lattice — lets detach rebuild
+    /// the merged schema from the remaining attachments.
+    internal var attachedSchemas: [(ObjectIdentifier, any _Schema)] = []
 
 //    /// Initialize Lattice with model types.
 //    ///
@@ -1623,12 +1632,32 @@ public struct Lattice {
         return value
     }
     
-    public mutating func attach(lattice: Lattice) {
-        backend.attach(lattice.backend)
+    public mutating func attach(lattice: Lattice) throws {
+        try backend.attach(lattice.backend)
+        // Keyed by backend identity: value-type Lattice copies share one
+        // backend, so any copy of the attached lattice can detach it.
+        attachedSchemas.append((ObjectIdentifier(lattice.backend), lattice.schema!))
         schema = schema?.merge(typeErased: lattice.schema!)
     }
-    
-    public func attaching(lattice: Lattice) -> Lattice {
+
+    /// Remove a previously attached lattice: drops its union/passthrough
+    /// views, DETACHes the database, and rebuilds this handle's merged
+    /// schema from the remaining attachments. Idempotent — detaching a
+    /// lattice that isn't attached is a no-op.
+    public mutating func detach(lattice: Lattice) throws {
+        try backend.detach(lattice.backend)
+        if let idx = attachedSchemas.firstIndex(where: { $0.0 == ObjectIdentifier(lattice.backend) }) {
+            attachedSchemas.remove(at: idx)
+        }
+        // Rebuild the merged schema from the base + remaining attachments.
+        var rebuilt: any _Schema = SchemaCompat(modelTypes: modelTypes)
+        for (_, attached) in attachedSchemas {
+            rebuilt = rebuilt.merge(typeErased: attached)
+        }
+        schema = rebuilt
+    }
+
+    public func attaching(lattice: Lattice) throws -> Lattice {
         // Build a query-only config: strip IPC/WSS to avoid duplicate socket
         // bind and unnecessary sync on a connection used only for UNION ALL reads.
         var queryConfig = configuration
@@ -1640,7 +1669,11 @@ public struct Lattice {
         // `_requireLatticeRef` unwraps the FRT-optional / value-non-optional gap.
         let newCxxLattice = _requireLatticeRef(LatticeCxx.swift_lattice_ref.create(swiftConfig: cxxConfig,
                                                                 schemas: modelTypes.cxxSchema))
-        newCxxLattice.attach(lattice.cxxLatticeRef)
+        guard newCxxLattice.attach(lattice.cxxLatticeRef) else {
+            let reason = newCxxLattice.last_attach_error()
+            throw LatticeError.attachFailed(
+                reason.__convertToBool() ? String(reason.pointee) : "unknown attach failure")
+        }
         // Construct directly: this query-only connection is intentionally a
         // distinct impl (its config differs from ours), so a cache lookup by
         // ref would miss. Register it so trampolines on the attached

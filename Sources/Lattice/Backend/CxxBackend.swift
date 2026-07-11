@@ -344,11 +344,29 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
 
     // Attach another lattice's underlying handle (cloud-relay / multi-db).
-    func attach(_ other: any LatticeBackend) {
+    // Idempotent; failures (schema mismatch, alias collision, closed handle)
+    // throw instead of crossing the interop boundary as C++ exceptions.
+    func attach(_ other: any LatticeBackend) throws {
         guard let otherRef = other.asCxxLatticeRef else {
             fatalError("CxxBackend.attach requires a C++ backend on both sides")
         }
-        ref.attach(otherRef)
+        guard ref.attach(otherRef) else {
+            throw LatticeError.attachFailed(lastAttachError() ?? "unknown attach failure")
+        }
+    }
+
+    func detach(_ other: any LatticeBackend) throws {
+        guard let otherRef = other.asCxxLatticeRef else {
+            fatalError("CxxBackend.detach requires a C++ backend on both sides")
+        }
+        guard ref.detach(otherRef) else {
+            throw LatticeError.detachFailed(lastAttachError() ?? "unknown detach failure")
+        }
+    }
+
+    private func lastAttachError() -> String? {
+        let e = ref.last_attach_error()
+        return e.__convertToBool() ? String(e.pointee) : nil
     }
 
     // Sync data ingestion — returns the affected globalId strings; the caller

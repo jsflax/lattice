@@ -1952,7 +1952,7 @@ class LatticeTests: BaseTest {
         }
     }
     
-    @Test func test_Attach() {
+    @Test func test_Attach() throws {
         var lattice1 = try! testLattice(Restaurant.self, Person.self)
         let lattice2 = try! testLattice(Museum.self)
 
@@ -1962,7 +1962,7 @@ class LatticeTests: BaseTest {
         lattice1.add(restaurant)
         lattice2.add(museum)
 
-        lattice1.attach(lattice: lattice2)
+        try lattice1.attach(lattice: lattice2)
 
         #expect(lattice1.objects(Museum.self).count == 1)
         #expect(lattice1.objects(Restaurant.self).count == 1)
@@ -2000,7 +2000,7 @@ class LatticeTests: BaseTest {
         #expect(lattice2.objects(Person.self).count == 1)
         #expect(lattice2.objects(Person.self).first?.name == "Bob")
 
-        lattice1.attach(lattice: lattice2)
+        try lattice1.attach(lattice: lattice2)
 
         // After attach: lattice1 should see both Alice and Bob
         let results = lattice1.objects(Person.self)
