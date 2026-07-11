@@ -668,7 +668,7 @@ actor IPCSyncTests {
     /// - Connection B queries nearest() on a different actor (truly concurrent)
     /// - Connection B's vec0 index is stale → count mismatch → reconciliation
     /// - Reconciliation contends with Connection A's writes → lock storm
-    @Test(.timeLimit(.minutes(2)))
+    @Test(.timeLimit(.minutes(5)))
     func test_MultiConnection_Vec0LockStorm() async throws {
         Lattice.setLogLevel(.error)
         defer { Lattice.setLogLevel(.warn) }
