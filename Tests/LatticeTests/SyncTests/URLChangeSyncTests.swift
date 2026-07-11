@@ -132,7 +132,7 @@ actor URLChangeSyncTests {
     /// reaches server B (the new URL); writes that pre-dated the open of B
     /// reach server A (the old URL) — confirming the kick happened only AT
     /// the moment of B's open.
-    @Test(.timeLimit(.minutes(5)))
+    @Test(.disabled(if: isMacOSCI, "Darwin CI hang class — await never resumes and .timeLimit cannot interrupt on macOS; runs locally and on Linux CI. Owner: 1.0 item D1b/D2"), .disabled(if: isMacOSCI, "Darwin CI hang class — await never resumes and .timeLimit cannot interrupt on macOS; runs locally and on Linux CI. Owner: 1.0 item D1b/D2"), .timeLimit(.minutes(5)))
     func laterOpenWithDifferentURLTakesOverSync() async throws {
         let urlA = URL(string: "http://localhost:\(portA)/test")!
         let urlB = URL(string: "http://localhost:\(portB)/test")!

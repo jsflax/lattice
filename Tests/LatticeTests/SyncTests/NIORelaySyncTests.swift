@@ -249,7 +249,7 @@ actor NIORelaySyncTests {
 
     /// Core test: Two Lattice clients sync through a raw NIO WebSocket relay.
     /// Lattice1 inserts data → relay receives & broadcasts → Lattice2 should see it.
-    @Test(.timeLimit(.minutes(5))) func test_NIORelayBasicSync() async throws {
+    @Test(.disabled(if: isMacOSCI, "Darwin CI hang class — await never resumes and .timeLimit cannot interrupt on macOS; runs locally and on Linux CI. Owner: 1.0 item D1b/D2"), .timeLimit(.minutes(5))) func test_NIORelayBasicSync() async throws {
         let relay = try NIOSyncRelay(config: serverLatticeConfig)
         let (serverChannel, port, eventLoopGroup) = try await startNIOServer(relay: relay)
         defer {

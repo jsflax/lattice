@@ -230,7 +230,7 @@ actor FilteredSyncTests {
     // =========================================================================
     // Test 1: Only configured tables sync
     // =========================================================================
-    @Test(.timeLimit(.minutes(5)))
+    @Test(.disabled(if: isMacOSCI, "Darwin CI hang class — await never resumes and .timeLimit cannot interrupt on macOS; runs locally and on Linux CI. Owner: 1.0 item D1b/D2"), .disabled(if: isMacOSCI, "Darwin CI hang class — await never resumes and .timeLimit cannot interrupt on macOS; runs locally and on Linux CI. Owner: 1.0 item D1b/D2"), .disabled(if: isMacOSCI, "Darwin CI hang class — await never resumes and .timeLimit cannot interrupt on macOS; runs locally and on Linux CI. Owner: 1.0 item D1b/D2"), .timeLimit(.minutes(5)))
     func test_FilteredSync_TableWhitelist() async throws {
         var filter = Lattice.SyncFilter()
         filter.include(FilteredNote.self)

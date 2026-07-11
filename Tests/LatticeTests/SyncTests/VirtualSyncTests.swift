@@ -192,7 +192,7 @@ extension SyncTests {
     // MARK: - Cascade Delete Sync (WSS)
 
     /// Deleting a child object should cascade-remove link table entries and sync both deletions.
-    @Test(.timeLimit(.minutes(5))) func test_VirtualListCascadeDeleteSync() async throws {
+    @Test(.disabled(if: isMacOSCI, "Darwin CI hang class — await never resumes and .timeLimit cannot interrupt on macOS; runs locally and on Linux CI. Owner: 1.0 item D1b/D2"), .timeLimit(.minutes(5))) func test_VirtualListCascadeDeleteSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
 
