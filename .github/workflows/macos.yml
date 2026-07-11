@@ -16,5 +16,22 @@ jobs:
       - name: Build
         run: swift build
 
+      # A known intermittent Darwin hang (never-resuming await in the relay
+      # test family; .timeLimit cannot interrupt it) occasionally wedges the
+      # run until timeout-minutes kills it. The watchdog samples the test
+      # process at 20 minutes so a cancelled run leaves the stuck stacks in
+      # the log instead of nothing.
       - name: Test
-        run: swift test
+        run: |
+          (
+            sleep 1200
+            PID=$(pgrep -f LatticePackageTests | head -1)
+            if [ -n "$PID" ]; then
+              echo "=== HANG WATCHDOG: test process $PID still alive at 20min — sampling ==="
+              sample "$PID" 5 -file /tmp/hang-sample.txt 2>/dev/null || true
+              cat /tmp/hang-sample.txt || true
+            fi
+          ) &
+          WATCHDOG=$!
+          swift test
+          kill $WATCHDOG 2>/dev/null || true

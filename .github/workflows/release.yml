@@ -16,8 +16,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build
         run: swift build
+      # Watchdog: sample the test process at 20min so a hang leaves stacks
+      # in the log (Darwin .timeLimit cannot interrupt the stuck await).
       - name: Test
-        run: swift test
+        run: |
+          (
+            sleep 1200
+            PID=$(pgrep -f LatticePackageTests | head -1)
+            if [ -n "$PID" ]; then
+              echo "=== HANG WATCHDOG: sampling $PID at 20min ==="
+              sample "$PID" 5 -file /tmp/hang-sample.txt 2>/dev/null || true
+              cat /tmp/hang-sample.txt || true
+            fi
+          ) &
+          WATCHDOG=$!
+          swift test
+          kill $WATCHDOG 2>/dev/null || true
 
   test-linux:
     runs-on: ubuntu-latest
