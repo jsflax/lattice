@@ -160,3 +160,103 @@ final class SocketStore: @unchecked Sendable {
         return result
     }
 }
+
+/// Internal `UncheckedSendable` twin (the source one is internal to Lattice).
+struct TestUncheckedSendable<T>: @unchecked Sendable { let value: T }
+
+// MARK: - TestSyncServer (1.0 item D1b)
+
+/// Shared in-process relay server for sync tests. Replaces the four
+/// copy-pasted inline Vapor handlers that opened a FRESH `Lattice` per
+/// incoming frame inside `Task.detached` (unordered application, one
+/// connection churn per frame) and another per connection for catch-up.
+///
+/// Shape (mirrors NIOSyncRelay): ONE server-lifetime `Lattice`, created
+/// before the route is registered; ACK + broadcast run synchronously on the
+/// event loop (no DB work); persistence runs OFF the event loop but IN
+/// COMMIT-ARRIVAL ORDER through a single-consumer AsyncStream pipeline.
+final class TestSyncServer: @unchecked Sendable {
+    let app: Application
+    let lattice: Lattice
+    let sockets: SocketStore
+    private(set) var port: Int = 0
+    private let frameContinuation: AsyncStream<Data>.Continuation
+    private var consumer: Task<Void, Never>?
+
+    /// - Parameters:
+    ///   - models: model types the server-side lattice registers.
+    ///   - configuration: the server lattice's configuration (no sync endpoint).
+    ///   - path: WebSocket route path (default "test", matching the old inline servers).
+    init(models: [any Model.Type],
+         configuration: Lattice.Configuration,
+         path: String = "test",
+         label: String = "TestSyncServer") async throws {
+        // Server-lifetime lattice — constructed BEFORE any handler can fire.
+        self.lattice = try Lattice(for: models, configuration: configuration)
+        self.sockets = SocketStore(label: label)
+
+        var env = try Environment.detect()
+        env.arguments = ["vapor"]
+        self.app = try await Application.make(env)
+        app.http.server.configuration.port = 0
+
+        let (stream, continuation) = AsyncStream<Data>.makeStream()
+        self.frameContinuation = continuation
+        let serverLattice = TestUncheckedSendable(value: lattice)
+        // Single consumer: frames apply in arrival order, off the event loop.
+        self.consumer = Task.detached {
+            for await data in stream {
+                _ = try? serverLattice.value.receive(data)
+            }
+        }
+
+        let sockets = self.sockets
+        app.webSocket(.constant(path), maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 500 * 1024 * 1024)) { req, ws in
+            sockets.append(ws)
+            ws.onBinary { ws, bb in
+                let data = Data(buffer: bb)
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let kind = json["kind"] as? String else { return }
+                if kind == "auditLog" {
+                    // ACK immediately (before persistence) and forward to the
+                    // other clients — synchronous, no DB work on the event loop.
+                    if let auditLogs = json["auditLog"] as? [[String: Any]] {
+                        let globalIds = auditLogs.compactMap { $0["globalId"] as? String }
+                            .compactMap(UUID.init(uuidString:))
+                        ws.send(try! JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
+                    }
+                    for socket in sockets.others(excluding: ws) {
+                        socket.send(bb)
+                    }
+                }
+                continuation.yield(data)
+            }
+
+            // Catch-up from the SHARED lattice (old code opened a fresh one).
+            let events = serverLattice.value.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
+            let count = events.count
+            for i in stride(from: 0, to: count, by: 1000) {
+                let page = events[i..<min(count, i + 1000)]
+                let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
+                ws.send(ByteBuffer(data: encoded))
+            }
+        }
+
+        try await app.startup()
+        guard let localAddress = app.http.server.shared.localAddress,
+              let assignedPort = localAddress.port else {
+            throw TestSyncServerError.noPort
+        }
+        self.port = assignedPort
+    }
+
+    var endpoint: URL { URL(string: "http://localhost:\(port)/test")! }
+
+    func shutdown() {
+        frameContinuation.finish()
+        consumer?.cancel()
+        app.shutdown()
+    }
+
+    enum TestSyncServerError: Error { case noPort }
+}

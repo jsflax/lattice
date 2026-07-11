@@ -14,7 +14,7 @@ import Vapor
 
 @Suite("Sync Tests", .serialized)
 actor SyncTests {
-    let app: Application
+    let server: TestSyncServer
     let syncLatticeURL = FileManager.default.temporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     let lattice1URL = FileManager.default.temporaryDirectory
@@ -30,82 +30,29 @@ actor SyncTests {
     var localLattice2Configuration: Lattice.Configuration
     
     deinit {
-        app.shutdown()
+        server.shutdown()
         try? Lattice.delete(for: localLattice1Configuration)
         try? Lattice.delete(for: localLattice2Configuration)
         try? Lattice.delete(for: syncedLatticeConfiguration)
     }
-    private let sockets = SocketStore(label: "SyncTests")
-    private func launchServer() async throws {
-        let syncedLatticeConfiguration = self.syncedLatticeConfiguration
-        app.webSocket("test", maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 500 * 1024 * 1024)) { req, ws in
-            self.sockets.append(ws)
-            ws.onBinary { ws, bb in
-                let data = Data(buffer: bb)
-                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let kind = json["kind"] as? String else { return }
-
-                if kind == "auditLog" {
-                    // Extract globalIds and send ACK immediately (before DB persistence)
-                    if let auditLogs = json["auditLog"] as? [[String: Any]] {
-                        let globalIds = auditLogs.compactMap { $0["globalId"] as? String }
-                            .compactMap(UUID.init(uuidString:))
-                        ws.send(try! JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
-                    }
-                    // Forward to other clients immediately
-                    for socket in self.sockets.others(excluding: ws) {
-                        socket.send(bb)
-                    }
-                }
-                // Persist to server DB in background (for eventsAfter catch-up support).
-                // Must not block the EventLoop — NIO only flushes queued ws.send()
-                // writes when the callback returns and the EventLoop processes I/O.
-                Task.detached {
-                    let lattice = try Lattice(configuration: syncedLatticeConfiguration)
-                    _ = try? lattice.receive(data)
-                }
-            }
-
-            let lattice = try! Lattice(configuration: syncedLatticeConfiguration)
-            let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-            let count = events.count
-            for i in stride(from: 0, to: count, by: 1000) {
-                let page = events[i..<min(count, i + 1000)]
-                let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
-                ws.send(ByteBuffer(data: encoded))
-            }
-        }
-    }
-    
     enum SyncTestError: Error {
         case noPort
     }
 
     init() async throws {
         lattice_set_log_level(lattice.log_level.warn)
-        var env = try Environment.detect()
-        env.arguments = ["vapor"]
-        self.app = try await Application.make(env)
         self.localLattice1Configuration = .init(fileURL: lattice1URL)
         self.localLattice2Configuration = .init(fileURL: lattice2URL)
         self.syncedLatticeConfiguration = .init(fileURL: syncLatticeURL)
 
-        // Use port 0 to let the OS assign a free port
-        app.http.server.configuration.port = 0
-
-        // Start the server-side lattice (no sync endpoint)
-        syncedLattice = try Lattice(for: [SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self, SyncVectorObject.self, SyncGeoObject.self, SyncEmbeddedObject.self, TestDog.self, TestCat.self, TestPersonWithPets.self, TestPersonWithPet.self],
-                                    configuration: syncedLatticeConfiguration)
-
-        try await launchServer()
-        try await app.startup()
-
-        // Read back the OS-assigned port
-        guard let localAddress = app.http.server.shared.localAddress,
-              let assignedPort = localAddress.port else {
-            throw SyncTestError.noPort
-        }
-        self.port = assignedPort
+        // D1b: shared TestSyncServer — one server-lifetime lattice, ordered
+        // persistence (replaces the inline fresh-Lattice-per-frame handler).
+        self.server = try await TestSyncServer(
+            models: [SimpleSyncObject.self, SequenceSyncObject.self, SyncParent.self, SyncChild.self, SyncVectorObject.self, SyncGeoObject.self, SyncEmbeddedObject.self, TestDog.self, TestCat.self, TestPersonWithPets.self, TestPersonWithPet.self],
+            configuration: syncedLatticeConfiguration,
+            label: "SyncTests")
+        syncedLattice = server.lattice
+        self.port = server.port
 
         // Now create configs with the correct port
         localLattice1Configuration = Lattice.Configuration(
@@ -227,7 +174,7 @@ actor SyncTests {
     func test_DeletingLinkedChild_OptionalGoesToNilOnPeer() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
-        await sockets.waitForCount(2)
+        await server.sockets.waitForCount(2)
 
         // Phase 1: insert parent + child, link them, wait for the
         // SyncParent INSERT to land on lattice2 (the parent is the last
@@ -316,7 +263,7 @@ actor SyncTests {
     func test_LinkTableDeleteAudit_RidesOverSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
-        await sockets.waitForCount(2)
+        await server.sockets.waitForCount(2)
 
         let localLattice2Configuration = self.localLattice2Configuration
         var task: Task<Void, any Error>?
