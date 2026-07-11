@@ -107,7 +107,7 @@ final class CloseGuardTests: BaseTest {
     /// Hammer reads on a background thread while the owning thread closes the
     /// handle. The close() refcount drain must let any in-flight read finish on
     /// a live connection before `db_`/`read_db_` are reset — no SIGSEGV.
-    @Test(.timeLimit(.minutes(5)))
+    @Test(.disabled(if: isMacOSCI, "cooperative-pool starvation on small CI runners: the test blocks pool threads on DispatchSemaphore.wait inside observer closures; with ~3 pool threads the signaling tasks never schedule. Runs locally + Linux CI. Owner: 1.0 test hygiene (item F)"), .timeLimit(.minutes(5)))
     func test_ConcurrentReadsDuringClose_NoCrash() throws {
         // Deliberately shared across reader threads — the close-during-read
         // race IS the subject under test (Linux 6.3 enforces the Sendable

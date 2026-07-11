@@ -48,7 +48,7 @@ class ObserveCloseRaceTests: BaseTest {
     /// its own per-isolation `Lattice` via `sendableReference` so
     /// the read survives the close on main.
     @MainActor
-    @Test(.timeLimit(.minutes(5)))
+    @Test(.disabled(if: isMacOSCI, "cooperative-pool starvation on small CI runners: the test blocks pool threads on DispatchSemaphore.wait inside observer closures; with ~3 pool threads the signaling tasks never schedule. Runs locally + Linux CI. Owner: 1.0 test hygiene (item F)"), .timeLimit(.minutes(5)))
     func test_PerIsolationResolve_SurvivesCloseOnMain() async throws {
         let lattice = try testLattice(path: path, Person.self)
         Self.seed(lattice: lattice, count: 500)
@@ -92,7 +92,7 @@ class ObserveCloseRaceTests: BaseTest {
 
     /// Same race, attaching isolation pinned to a custom `actor`
     /// (the shape used by ClaudeCodeIRC's `RoomSyncServer`).
-    @Test(.timeLimit(.minutes(5)))
+    @Test(.disabled(if: isMacOSCI, "cooperative-pool starvation on small CI runners: the test blocks pool threads on DispatchSemaphore.wait inside observer closures; with ~3 pool threads the signaling tasks never schedule. Runs locally + Linux CI. Owner: 1.0 test hygiene (item F)"), .timeLimit(.minutes(5)))
     func test_PerIsolationResolve_SurvivesCloseOnCustomActor() async throws {
         nonisolated(unsafe) var enteredContinuation: CheckedContinuation<Void, Never>?
         nonisolated(unsafe) var exitedContinuation: CheckedContinuation<Void, Never>?
