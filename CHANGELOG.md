@@ -21,6 +21,12 @@ frame-drop race this version fixes; rolled forward per policy.)
   `Data.init(Sequence)` (production read path for Data/Vector fields), the
   Linux geo shim ported across two refactors it slept through, an
   unguarded Combine import, and a strict-concurrency capture.
+- CI reliability: hang-catcher time limits sized for 25x-slower runners;
+  the cooperative-pool-starvation tests (semaphore-blocking observer
+  orchestration) and the D1b/D2 relay set are gated off macOS CI
+  specifically — full coverage remains locally and on Linux CI, where
+  hangs surface as interruptible failures; a 20-minute watchdog samples
+  the test process so any future hang leaves stacks in the job log.
 - CI: containers to swift:6.3-noble (6.2 refused the 6.3 manifest at parse
   time); 30-minute job timeouts so a hang fails fast instead of zombieing.
 
