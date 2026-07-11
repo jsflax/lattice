@@ -317,7 +317,7 @@ actor FilteredSyncTests {
     // QUARANTINED (Jul 8 2026): pre-existing hang — see the note on
     // test_UpdatesSyncCorrectly (EngramTests.swift); verified at bb34cad
     // against remote LatticeCore 0.10.3.
-    @Test(.disabled("non-INSERT relay delivery defect — owner: 1.0 item D2 (UPDATE/reconcile-DELETE never reach the peer; frame-drop half fixed by the connect-window buffer, this half is the apply/classify path)"), .timeLimit(.minutes(5)))
+    @Test(.disabled("non-INSERT relay delivery defect, NARROWED by D1b (Jul 11): UPDATE delivery through the ordered TestSyncServer now works (test_UpdatesSyncCorrectly un-quarantined), but this test still hangs idle after the runtime filter update — synchronizer sits at pending=0 with the narrowed filter never producing the expected exclusion. Owner: 1.0 item D2 (filter-update path: update_sync_filter → reconcile/classify)"), .timeLimit(.minutes(5)))
     func test_FilteredSync_RuntimeFilterNarrowing() async throws {
         // Start with filter that includes all notes
         var filter = Lattice.SyncFilter()
