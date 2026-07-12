@@ -22,12 +22,12 @@ final class TestMemory {
 
         // Add to lattice A
         let original = TestMemory(content: "test memory", project: "proj")
-        latticeA.add(original)
+        try latticeA.add(original)
         let originalGlobalId = original.globalId!
 
         // Migrate to lattice B preserving globalId
         let copy = TestMemory(content: original.content, project: original.project)
-        latticeB.add(copy, preservingGlobalId: originalGlobalId)
+        try latticeB.add(copy, preservingGlobalId: originalGlobalId)
 
         // Verify globalId preserved
         #expect(copy.globalId == originalGlobalId)
@@ -43,7 +43,7 @@ final class TestMemory {
 
         let specificId = UUID()
         let obj = TestMemory(content: "specific id", project: "test")
-        lattice.add(obj, preservingGlobalId: specificId)
+        try lattice.add(obj, preservingGlobalId: specificId)
 
         #expect(obj.globalId == specificId)
     }
@@ -52,7 +52,7 @@ final class TestMemory {
         let lattice = try Lattice(TestMemory.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
 
         let obj = TestMemory(content: "auto id", project: "test")
-        lattice.add(obj)
+        try lattice.add(obj)
 
         #expect(obj.globalId != nil)
     }

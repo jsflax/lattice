@@ -63,10 +63,10 @@ final class RebindTests: BaseTest {
     @Test(.timeLimit(.minutes(5)))
     func test_SwapLattice_RebindsToNewHandle() throws {
         let a = try testLattice(path: "\(String.random(length: 32)).sqlite", Person.self)
-        for name in ["A1", "A2"] { let p = Person(); p.name = name; p.age = 1; a.add(p) }
+        for name in ["A1", "A2"] { let p = Person(); p.name = name; p.age = 1; try a.add(p) }
 
         let b = try testLattice(path: "\(String.random(length: 32)).sqlite", Person.self)
-        for name in ["B1", "B2", "B3"] { let p = Person(); p.name = name; p.age = 1; b.add(p) }
+        for name in ["B1", "B2", "B3"] { let p = Person(); p.name = name; p.age = 1; try b.add(p) }
 
         let probe = CountProbe()
         let host = NSHostingView(rootView: AnyView(ProbeView(probe: probe).environment(\.lattice, a)))

@@ -101,7 +101,7 @@ actor IPCCloudRelayTests {
         let task = await waitForChange(on: serverConfig, table: "IPCNote", operation: .insert)
 
         // Insert on local — should flow: local →IPC→ synced →WSS→ server
-        local.add(IPCNote(title: "relayed note", isPublic: true))
+        try local.add(IPCNote(title: "relayed note", isPublic: true))
 
         try await task.value
 
@@ -146,7 +146,7 @@ actor IPCCloudRelayTests {
         let task = await waitForChange(on: localConfig, table: "IPCNote", operation: .insert)
 
         // Insert on cloud device → WSS → server → relay to synced → IPC → local
-        cloudDevice.add(IPCNote(title: "from the cloud", isPublic: true))
+        try cloudDevice.add(IPCNote(title: "from the cloud", isPublic: true))
 
         try await task.value
 

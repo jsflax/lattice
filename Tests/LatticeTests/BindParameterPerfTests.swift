@@ -24,12 +24,12 @@ class BindParameterPerfTests: BaseTest {
         let allURLs = (0..<totalArticles).map { i in
             "https://financialmodelingprep.com/api/v3/stock_news/\(i)?source=fmp&t=\(String.random(length: 32))"
         }
-        lattice.transaction {
+        try lattice.transaction {
             for (i, url) in allURLs.enumerated() {
                 let article = Article()
                 article.url = url
                 article.symbol = symbols[i % symbols.count]
-                lattice.add(article)
+                try lattice.add(article)
             }
         }
         print("Inserted \(totalArticles) articles")

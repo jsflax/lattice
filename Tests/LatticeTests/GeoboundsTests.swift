@@ -53,7 +53,7 @@ class GeoboundsTests: BaseTest {
         restaurant.category = "cafe"
         restaurant.location = sf
 
-        lattice.add(restaurant)
+        try lattice.add(restaurant)
 
         let restaurants = lattice.objects(Restaurant.self).snapshot()
         #expect(restaurants.count == 1)
@@ -74,7 +74,7 @@ class GeoboundsTests: BaseTest {
         dest.name = "SF Bay Area"
         dest.region = MKCoordinateRegion(center: center, span: span)
 
-        lattice.add(dest)
+        try lattice.add(dest)
 
         let destinations = lattice.objects(Destination.self).snapshot()
         #expect(destinations.count == 1)
@@ -105,7 +105,7 @@ class GeoboundsTests: BaseTest {
             r.name = name
             r.category = "restaurant"
             r.location = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            lattice.add(r)
+            try lattice.add(r)
         }
 
         // Query for Bay Area (should include SF, Oakland, San Jose)
@@ -144,7 +144,7 @@ class GeoboundsTests: BaseTest {
             r.name = name
             r.category = "restaurant"
             r.location = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            lattice.add(r)
+            try lattice.add(r)
         }
 
         // Find 3 nearest restaurants to SF within 100km
@@ -190,7 +190,7 @@ class GeoboundsTests: BaseTest {
             r.name = name
             r.category = category
             r.location = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            lattice.add(r)
+            try lattice.add(r)
         }
 
         // Find nearest cafes only
@@ -221,13 +221,13 @@ class GeoboundsTests: BaseTest {
         r1.name = "SF"
         r1.category = "test"
         r1.location = sf
-        lattice.add(r1)
+        try lattice.add(r1)
 
         let r2 = Restaurant()
         r2.name = "Oakland"
         r2.category = "test"
         r2.location = oakland
-        lattice.add(r2)
+        try lattice.add(r2)
 
         // Query in meters
         let metersResult = lattice.objects(Restaurant.self)
@@ -275,7 +275,7 @@ class GeoboundsTests: BaseTest {
             r.name = name
             r.category = "test"
             r.location = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            lattice.add(r)
+            try lattice.add(r)
         }
 
         // Query without sorting - should still return objects within radius
@@ -310,7 +310,7 @@ class GeoboundsTests: BaseTest {
             r.name = name
             r.category = "test"
             r.location = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            lattice.add(r)
+            try lattice.add(r)
         }
 
         // Query with 1km radius
@@ -350,7 +350,7 @@ class GeoboundsTests: BaseTest {
         let oakland = CLLocationCoordinate2D(latitude: 37.8044, longitude: -122.2712)
         let berkeley = CLLocationCoordinate2D(latitude: 37.8716, longitude: -122.2727)
 
-        lattice.add(route)
+        try lattice.add(route)
 
         route.waypoints.append(sf)
         route.waypoints.append(oakland)
@@ -386,7 +386,7 @@ class GeoboundsTests: BaseTest {
         let plan = TravelPlan()
         plan.name = "California Trip"
 
-        lattice.add(plan)
+        try lattice.add(plan)
 
         // Add regions
         let bayArea = MKCoordinateRegion(
@@ -440,7 +440,7 @@ class GeoboundsTests: BaseTest {
             let lattice = try Lattice(Route.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
             let route = Route()
             route.name = "Test Route"
-            lattice.add(route)
+            try lattice.add(route)
 
             route.waypoints.append(CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194))
             route.waypoints.append(CLLocationCoordinate2D(latitude: 34.0522, longitude: -118.2437))
@@ -467,7 +467,7 @@ class GeoboundsTests: BaseTest {
         let lattice = try testLattice(Route.self)
         let route = Route()
         route.name = "Multi-Stop Route"
-        lattice.add(route)
+        try lattice.add(route)
 
         let stops = [
             CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
@@ -497,7 +497,7 @@ class GeoboundsTests: BaseTest {
         let startPoint = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060) // NYC
         trip.startLocation = startPoint
 
-        lattice.add(trip)
+        try lattice.add(trip)
 
         // Add some stops to the list
         let stop1 = CLLocationCoordinate2D(latitude: 39.9526, longitude: -75.1652) // Philadelphia
@@ -543,7 +543,7 @@ class GeoboundsTests: BaseTest {
             restaurant.name = "Test Restaurant"
             restaurant.category = "Italian"
             restaurant.location = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
-            lattice.add(restaurant)
+            try lattice.add(restaurant)
 
             // Verify data is there
             #expect(lattice.objects(Restaurant.self).count == 1)
@@ -584,33 +584,33 @@ class GeoboundsTests: BaseTest {
         r1.name = "Italian Place 1"
         r1.category = "Italian"
         r1.location = CLLocationCoordinate2D(latitude: 37.775, longitude: -122.419)
-        lattice.add(r1)
+        try lattice.add(r1)
 
         let r2 = Restaurant()
         r2.name = "Italian Place 2"
         r2.category = "Italian"
         r2.location = CLLocationCoordinate2D(latitude: 37.776, longitude: -122.420)
-        lattice.add(r2)
+        try lattice.add(r2)
 
         // Multiple Mexican restaurants nearby
         let r3 = Restaurant()
         r3.name = "Mexican Place 1"
         r3.category = "Mexican"
         r3.location = CLLocationCoordinate2D(latitude: 37.774, longitude: -122.418)
-        lattice.add(r3)
+        try lattice.add(r3)
 
         let r4 = Restaurant()
         r4.name = "Mexican Place 2"
         r4.category = "Mexican"
         r4.location = CLLocationCoordinate2D(latitude: 37.773, longitude: -122.417)
-        lattice.add(r4)
+        try lattice.add(r4)
 
         // One Chinese restaurant
         let r5 = Restaurant()
         r5.name = "Chinese Place"
         r5.category = "Chinese"
         r5.location = CLLocationCoordinate2D(latitude: 37.772, longitude: -122.416)
-        lattice.add(r5)
+        try lattice.add(r5)
 
         // Without group by - should get all 5
         let allNearby = lattice.objects(Restaurant.self)
@@ -641,19 +641,19 @@ class GeoboundsTests: BaseTest {
         r1.name = "Cafe 1"
         r1.category = "Cafe"
         r1.location = CLLocationCoordinate2D(latitude: 37.78, longitude: -122.41)
-        lattice.add(r1)
+        try lattice.add(r1)
 
         let r2 = Restaurant()
         r2.name = "Cafe 2"
         r2.category = "Cafe"
         r2.location = CLLocationCoordinate2D(latitude: 37.79, longitude: -122.42)
-        lattice.add(r2)
+        try lattice.add(r2)
 
         let r3 = Restaurant()
         r3.name = "Bar 1"
         r3.category = "Bar"
         r3.location = CLLocationCoordinate2D(latitude: 37.77, longitude: -122.40)
-        lattice.add(r3)
+        try lattice.add(r3)
 
         // Query within bounds, then group
         let grouped = lattice.objects(Restaurant.self)

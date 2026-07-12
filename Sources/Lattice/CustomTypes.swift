@@ -23,8 +23,15 @@ extension ClosedRange: EmbeddedModel, Codable, DefaultInitializable, CxxListMana
     }
     
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Self) {
-        let jsonStr = String(data: try! JSONEncoder().encode(value), encoding: .utf8)!
-        storage._ref.setString(named: name, jsonStr)
+        // Write path traps: an in-memory range that cannot JSON-encode is a
+        // programmer error in the Bound's Codable conformance.
+        let jsonData: Data
+        do {
+            jsonData = try JSONEncoder().encode(value)
+        } catch {
+            fatalError("ClosedRange<\(String(describing: Bound.self))> failed to JSON-encode for field '\(name)': \(error)")
+        }
+        storage._ref.setString(named: name, String(data: jsonData, encoding: .utf8)!)
     }
     
     public static var defaultValue: Self {

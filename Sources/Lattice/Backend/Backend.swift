@@ -275,9 +275,14 @@ public protocol LatticeBackend: AnyObject, Sendable {
     var path: String { get }
 
     // CRUD
+    // All three insert paths `throw` for contract stability. Today only
+    // `add` has a detectable failure signal from the Cxx bridge (a cxx_error
+    // out-param); the preserving-globalId and bulk paths surface no error
+    // and their conformances simply never throw — the requirement is throwing
+    // so backends CAN report failures without another surface break.
     func add(_ object: any ObjectBackend) throws
-    func addPreservingGlobalId(_ object: any ObjectBackend, globalId: UUID)
-    func addBulk(_ objects: [any ObjectBackend])
+    func addPreservingGlobalId(_ object: any ObjectBackend, globalId: UUID) throws
+    func addBulk(_ objects: [any ObjectBackend]) throws
     @discardableResult func remove(_ object: any ObjectBackend) -> Bool
 
     // Fetch single

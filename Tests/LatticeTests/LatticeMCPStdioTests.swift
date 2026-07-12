@@ -29,9 +29,9 @@ final class LatticeMCPStdioTests {
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         do {
             let lattice = try Lattice(DynPerson.self, DynDog.self, configuration: .init(fileURL: url))
-            let dog = DynDog(); dog.name = "Rex"; lattice.add(dog)
+            let dog = DynDog(); dog.name = "Rex"; try lattice.add(dog)
             let alice = DynPerson(); alice.name = "Alice"; alice.age = 34
-            lattice.add(alice); alice.dog = dog
+            try lattice.add(alice); alice.dog = dog
             lattice.checkpoint()
             lattice.close()
         }

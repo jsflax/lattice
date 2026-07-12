@@ -18,7 +18,7 @@ class NamedMemoryTests {
         let a = try Lattice(MemItem.self, configuration: .init(storage: .memory(named: name)))
         let b = try Lattice(MemItem.self, configuration: .init(storage: .memory(named: name)))
 
-        a.add(MemItem(name: "from-a"))
+        try a.add(MemItem(name: "from-a"))
         #expect(b.objects(MemItem.self).count == 1)
         #expect(b.objects(MemItem.self).first?.name == "from-a")
     }
@@ -27,7 +27,7 @@ class NamedMemoryTests {
         let a = try Lattice(MemItem.self, configuration: .init(storage: .memory(named: "iso_a_\(String.random(length: 8))")))
         let b = try Lattice(MemItem.self, configuration: .init(storage: .memory(named: "iso_b_\(String.random(length: 8))")))
 
-        a.add(MemItem(name: "only-in-a"))
+        try a.add(MemItem(name: "only-in-a"))
         #expect(b.objects(MemItem.self).count == 0)
     }
 
@@ -36,7 +36,7 @@ class NamedMemoryTests {
         // sharing (the old global-`:memory:` registry-leak class).
         let a = try Lattice(MemItem.self, configuration: .init(storage: .memory()))
         let b = try Lattice(MemItem.self, configuration: .init(storage: .memory()))
-        a.add(MemItem(name: "private"))
+        try a.add(MemItem(name: "private"))
         #expect(a.objects(MemItem.self).count == 1)
         #expect(b.objects(MemItem.self).count == 0)
     }
@@ -47,7 +47,7 @@ class NamedMemoryTests {
         let config = Lattice.Configuration(storage: .memory())
         let a = try Lattice(MemItem.self, configuration: config)
         let b = try Lattice(MemItem.self, configuration: config)
-        a.add(MemItem(name: "shared-config"))
+        try a.add(MemItem(name: "shared-config"))
         #expect(b.objects(MemItem.self).count == 1)
     }
 
@@ -57,7 +57,7 @@ class NamedMemoryTests {
     @Test func sameName_crossActor_twoHandles() async throws {
         let name = "xactor_\(String.random(length: 16))"
         let main = try Lattice(MemItem.self, configuration: .init(storage: .memory(named: name)))
-        main.add(MemItem(name: "from-main"))
+        try main.add(MemItem(name: "from-main"))
 
         let count = try await Task.detached {
             let bg = try Lattice(MemItem.self, configuration: .init(storage: .memory(named: name)))
@@ -77,7 +77,7 @@ class NamedMemoryTests {
         }
         defer { _ = token }
 
-        writer.add(MemItem(name: "observed"))
+        try writer.add(MemItem(name: "observed"))
         try await waitFor { counter.count >= 1 }
         // Catch late duplicates before asserting exactly-once.
         try await Task.sleep(for: .milliseconds(200))

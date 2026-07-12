@@ -12,12 +12,12 @@ class VirtualLinkTests: BaseTest {
         let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPet.self)
         let person = TestPersonWithPet()
         person.label = "Alice"
-        lattice.add(person)
+        try lattice.add(person)
 
         let dog = TestDog()
         dog.name = "Rex"
         dog.breed = "Lab"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         person.favoritePet = dog as any Animal
         #expect(person.favoritePet?.name == "Rex")
@@ -27,22 +27,22 @@ class VirtualLinkTests: BaseTest {
     @Test func testNil() async throws {
         let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPet.self)
         let person = TestPersonWithPet()
-        lattice.add(person)
+        try lattice.add(person)
         #expect(person.favoritePet == nil)
     }
 
     @Test func testOverwrite() async throws {
         let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPet.self)
         let person = TestPersonWithPet()
-        lattice.add(person)
+        try lattice.add(person)
 
         let dog = TestDog()
         dog.name = "Rex"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         let cat = TestCat()
         cat.name = "Whiskers"
-        lattice.add(cat)
+        try lattice.add(cat)
 
         person.favoritePet = dog as any Animal
         #expect(person.favoritePet?.name == "Rex")
@@ -55,11 +55,11 @@ class VirtualLinkTests: BaseTest {
     @Test func testClearLink() async throws {
         let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPet.self)
         let person = TestPersonWithPet()
-        lattice.add(person)
+        try lattice.add(person)
 
         let dog = TestDog()
         dog.name = "Rex"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         person.favoritePet = dog as any Animal
         #expect(person.favoritePet != nil)
@@ -77,7 +77,7 @@ class VirtualLinkTests: BaseTest {
 
         // Add via existential (any VirtualModel) overload
         let animal: any Animal = dog
-        lattice.add(animal)
+        try lattice.add(animal)
 
         #expect(lattice.objects(TestDog.self).count == 1)
         #expect(lattice.objects(TestDog.self).first?.name == "Rex")
@@ -89,7 +89,7 @@ class VirtualLinkTests: BaseTest {
 
         let cat = TestCat()
         cat.name = "Whiskers"
-        lattice.add(cat)
+        try lattice.add(cat)
         #expect(lattice.objects(TestCat.self).count == 1)
 
         // Delete via existential (any VirtualModel) overload
@@ -108,7 +108,7 @@ class VirtualLinkTests: BaseTest {
         ]
 
         for animal in animals {
-            lattice.add(animal)
+            try lattice.add(animal)
         }
 
         #expect(lattice.objects(TestDog.self).count == 2)
@@ -124,11 +124,11 @@ class VirtualLinkTests: BaseTest {
         let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPet.self)
         let person = TestPersonWithPet()
         person.label = "Bob"
-        lattice.add(person)
+        try lattice.add(person)
 
         let cat = TestCat()
         cat.name = "Mittens"
-        lattice.add(cat)
+        try lattice.add(cat)
 
         person.favoritePet = cat as any Animal
 

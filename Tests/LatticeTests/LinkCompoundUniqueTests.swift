@@ -93,10 +93,10 @@ class LinkCompoundUniqueTests: BaseTest {
 
         let pet = LinkCompoundUnique.Pet(); pet.name = "Fido"
         let owner = LinkCompoundUnique.Owner(); owner.name = "Alice"
-        lattice.add(pet); lattice.add(owner)
+        try lattice.add(pet); try lattice.add(owner)
 
         let first = LinkCompoundUnique.Adoption(); first.pet = pet; first.owner = owner
-        lattice.add(first)
+        try lattice.add(first)
 
         // Clear the links on the first adoption — shadow cols should reset to NULL.
         first.pet = nil
@@ -104,7 +104,7 @@ class LinkCompoundUniqueTests: BaseTest {
 
         // A second adoption with the same pair is now free to insert.
         let second = LinkCompoundUnique.Adoption(); second.pet = pet; second.owner = owner
-        lattice.add(second)
+        try lattice.add(second)
 
         #expect(lattice.objects(LinkCompoundUnique.Adoption.self).count == 2)
     }
@@ -122,11 +122,11 @@ class LinkCompoundUniqueTests: BaseTest {
             let pet = LinkCompoundUnique.Pet(); pet.name = "Fido"
             let alice = LinkCompoundUnique.Owner(); alice.name = "Alice"
             let bob = LinkCompoundUnique.Owner(); bob.name = "Bob"
-            lattice.add(pet); lattice.add(alice); lattice.add(bob)
+            try lattice.add(pet); try lattice.add(alice); try lattice.add(bob)
 
             let a = LinkCompoundUnique.Adoption(); a.pet = pet; a.owner = alice
             let b = LinkCompoundUnique.Adoption(); b.pet = pet; b.owner = bob
-            lattice.add(a); lattice.add(b)
+            try lattice.add(a); try lattice.add(b)
             lattice.close()
         }
 
@@ -174,39 +174,39 @@ class LinkCompoundUniqueTests: BaseTest {
             LinkCompoundUpsert.TrainedModel.self,
             LinkCompoundUpsert.Row.self)
 
-        let m = LinkCompoundUpsert.TrainedModel(); m.name = "M"; lattice.add(m)
+        let m = LinkCompoundUpsert.TrainedModel(); m.name = "M"; try lattice.add(m)
         let d = Date(timeIntervalSinceReferenceDate: 1_000)
 
         let r1 = LinkCompoundUpsert.Row()
         r1.symbol = "NVDA"; r1.date = d; r1.interval = "oneDay"; r1.model = m; r1.payload = 1
-        lattice.add(r1)   // pre-fix: fatalError "no such column: model"
+        try lattice.add(r1)   // pre-fix: fatalError "no such column: model"
         #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 1)
 
         // Same (symbol, date, interval, model) → upsert: count stays 1, payload replaced.
         let r2 = LinkCompoundUpsert.Row()
         r2.symbol = "NVDA"; r2.date = d; r2.interval = "oneDay"; r2.model = m; r2.payload = 2
-        lattice.add(r2)
+        try lattice.add(r2)
         #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 1)
         #expect(lattice.objects(LinkCompoundUpsert.Row.self).first?.payload == 2)
 
         // Different model on the same scalars → distinct row.
-        let m2 = LinkCompoundUpsert.TrainedModel(); m2.name = "M2"; lattice.add(m2)
+        let m2 = LinkCompoundUpsert.TrainedModel(); m2.name = "M2"; try lattice.add(m2)
         let r3 = LinkCompoundUpsert.Row()
         r3.symbol = "NVDA"; r3.date = d; r3.interval = "oneDay"; r3.model = m2; r3.payload = 3
-        lattice.add(r3)
+        try lattice.add(r3)
         #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 2)
 
         // Same model, different date → distinct row.
         let r4 = LinkCompoundUpsert.Row()
         r4.symbol = "NVDA"; r4.date = Date(timeIntervalSinceReferenceDate: 2_000)
         r4.interval = "oneDay"; r4.model = m; r4.payload = 4
-        lattice.add(r4)
+        try lattice.add(r4)
         #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 3)
 
         // Upsert the (m, d) row once more — still 3 rows, that row's payload is 5.
         let r5 = LinkCompoundUpsert.Row()
         r5.symbol = "NVDA"; r5.date = d; r5.interval = "oneDay"; r5.model = m; r5.payload = 5
-        lattice.add(r5)
+        try lattice.add(r5)
         #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 3)
         #expect(Set(lattice.objects(LinkCompoundUpsert.Row.self).snapshot().map(\.payload)) == [5, 3, 4])
     }
@@ -227,11 +227,11 @@ class LinkCompoundUniqueTests: BaseTest {
                 LinkCompoundUpsert.TrainedModel.self,
                 LinkCompoundUpsertV1.Row.self,
                 configuration: .init(fileURL: dbPath))
-            let m = LinkCompoundUpsert.TrainedModel(); m.name = "M"; lattice.add(m)
+            let m = LinkCompoundUpsert.TrainedModel(); m.name = "M"; try lattice.add(m)
             let r = LinkCompoundUpsertV1.Row()
             r.symbol = "NVDA"; r.date = Date(timeIntervalSinceReferenceDate: 1_000)
             r.interval = "oneDay"; r.model = m; r.payload = 1
-            lattice.add(r)
+            try lattice.add(r)
             #expect(lattice.objects(LinkCompoundUpsertV1.Row.self).count == 1)
             lattice.close()
         }
@@ -250,14 +250,14 @@ class LinkCompoundUniqueTests: BaseTest {
             let r2 = LinkCompoundUpsert.Row()
             r2.symbol = "NVDA"; r2.date = Date(timeIntervalSinceReferenceDate: 2_000)
             r2.interval = "oneDay"; r2.model = m; r2.payload = 2
-            lattice.add(r2)
+            try lattice.add(r2)
             #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 2)
 
             // Upsert the migrated row (same (symbol, date, interval, model) as the V1 row).
             let r3 = LinkCompoundUpsert.Row()
             r3.symbol = "NVDA"; r3.date = Date(timeIntervalSinceReferenceDate: 1_000)
             r3.interval = "oneDay"; r3.model = m; r3.payload = 99
-            lattice.add(r3)
+            try lattice.add(r3)
             #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 2)
             #expect(Set(lattice.objects(LinkCompoundUpsert.Row.self).snapshot().map(\.payload)) == [99, 2])
         }
@@ -273,7 +273,7 @@ class LinkCompoundUniqueTests: BaseTest {
             let r4 = LinkCompoundUpsert.Row()
             r4.symbol = "NVDA"; r4.date = Date(timeIntervalSinceReferenceDate: 3_000)
             r4.interval = "oneDay"; r4.model = m; r4.payload = 3
-            lattice.add(r4)
+            try lattice.add(r4)
             #expect(lattice.objects(LinkCompoundUpsert.Row.self).count == 3)
         }
 
@@ -294,12 +294,12 @@ class LinkCompoundUniqueTests: BaseTest {
             let pet = LinkCompoundUnique.Pet(); pet.name = "Fido"
             let alice = LinkCompoundUnique.Owner(); alice.name = "Alice"
             let bob = LinkCompoundUnique.Owner(); bob.name = "Bob"
-            lattice.add(pet); lattice.add(alice); lattice.add(bob)
+            try lattice.add(pet); try lattice.add(alice); try lattice.add(bob)
 
             let a1 = LinkCompoundUniqueV1.Adoption(); a1.pet = pet; a1.owner = alice
             let a2 = LinkCompoundUniqueV1.Adoption(); a2.pet = pet; a2.owner = alice // dup pair
             let a3 = LinkCompoundUniqueV1.Adoption(); a3.pet = pet; a3.owner = bob
-            lattice.add(a1); lattice.add(a2); lattice.add(a3)
+            try lattice.add(a1); try lattice.add(a2); try lattice.add(a3)
             #expect(lattice.objects(LinkCompoundUniqueV1.Adoption.self).count == 3)
             lattice.close()
         }

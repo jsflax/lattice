@@ -59,10 +59,10 @@ extension SyncTests {
         cat.name = "Whiskers"
         cat.indoor = true
 
-        lattice.transaction {
-            lattice.add(person)
-            lattice.add(dog)
-            lattice.add(cat)
+        try lattice.transaction {
+            try lattice.add(person)
+            try lattice.add(dog)
+            try lattice.add(cat)
             person.pets.append(dog as any Animal)
             person.pets.append(cat as any Animal)
         }
@@ -148,9 +148,9 @@ extension SyncTests {
         cat.name = "Mittens"
         cat.indoor = false
 
-        lattice.transaction {
-            lattice.add(person)
-            lattice.add(cat)
+        try lattice.transaction {
+            try lattice.add(person)
+            try lattice.add(cat)
             person.favoritePet = cat as any Animal
         }
 
@@ -237,10 +237,10 @@ extension SyncTests {
         cat.name = "Whiskers"
         cat.indoor = true
 
-        lattice.transaction {
-            lattice.add(person)
-            lattice.add(dog)
-            lattice.add(cat)
+        try lattice.transaction {
+            try lattice.add(person)
+            try lattice.add(dog)
+            try lattice.add(cat)
             person.pets.append(dog as any Animal)
             person.pets.append(cat as any Animal)
         }
@@ -364,10 +364,10 @@ actor IPCVirtualCascadeDeleteTests {
         cat.name = "Mittens"
         cat.indoor = false
 
-        source.transaction {
-            source.add(person)
-            source.add(dog)
-            source.add(cat)
+        try source.transaction {
+            try source.add(person)
+            try source.add(dog)
+            try source.add(cat)
             person.pets.append(dog as any Animal)
             person.pets.append(cat as any Animal)
         }

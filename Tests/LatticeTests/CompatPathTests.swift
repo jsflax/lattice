@@ -50,11 +50,11 @@ final class CompatPathTests: BaseTest {
         try testLattice(CompatRestaurant.self, CompatMuseum.self)
     }
 
-    private func seed(_ lattice: Lattice) {
-        lattice.add(CompatRestaurant(name: "Le Bernardin", country: "United States"))
-        lattice.add(CompatRestaurant(name: "Noma", country: "Denmark"))
-        lattice.add(CompatMuseum(name: "The Louvre", country: "France", exhibitCount: 35_000))
-        lattice.add(CompatMuseum(name: "MoMA", country: "United States", exhibitCount: 200_000))
+    private func seed(_ lattice: Lattice) throws {
+        try lattice.add(CompatRestaurant(name: "Le Bernardin", country: "United States"))
+        try lattice.add(CompatRestaurant(name: "Noma", country: "Denmark"))
+        try lattice.add(CompatMuseum(name: "The Louvre", country: "France", exhibitCount: 35_000))
+        try lattice.add(CompatMuseum(name: "MoMA", country: "United States", exhibitCount: 200_000))
     }
 
     /// Runs `body` on the natural path, then again on the forced-compat path.
@@ -67,7 +67,7 @@ final class CompatPathTests: BaseTest {
 
     @Test func test_ForcedCompat_SelectsCompatType() throws {
         let lattice = try makeLattice()
-        seed(lattice)
+        try seed(lattice)
         onBothPaths { forced in
             let results = lattice.objects(CompatPOI.self)
             let typeName = String(describing: type(of: results))
@@ -81,7 +81,7 @@ final class CompatPathTests: BaseTest {
 
     @Test func test_UnionCountAndSnapshot_BothPaths() throws {
         let lattice = try makeLattice()
-        seed(lattice)
+        try seed(lattice)
         onBothPaths { _ in
             let results = lattice.objects(CompatPOI.self)
             #expect(results.count == 4)
@@ -92,7 +92,7 @@ final class CompatPathTests: BaseTest {
 
     @Test func test_Where_BothPaths() throws {
         let lattice = try makeLattice()
-        seed(lattice)
+        try seed(lattice)
         onBothPaths { _ in
             var results = lattice.objects(CompatPOI.self)
             results = results.where { $0.country == "France" }
@@ -106,7 +106,7 @@ final class CompatPathTests: BaseTest {
 
     @Test func test_Where_AcrossBothTables_BothPaths() throws {
         let lattice = try makeLattice()
-        seed(lattice)
+        try seed(lattice)
         onBothPaths { _ in
             var results = lattice.objects(CompatPOI.self)
             results = results.where { $0.country == "United States" }
@@ -118,7 +118,7 @@ final class CompatPathTests: BaseTest {
 
     @Test func test_SnapshotLimitOffset_BothPaths() throws {
         let lattice = try makeLattice()
-        seed(lattice)
+        try seed(lattice)
         onBothPaths { _ in
             let results = lattice.objects(CompatPOI.self)
             #expect(results.snapshot(limit: 2, offset: nil).count == 2)
@@ -130,7 +130,7 @@ final class CompatPathTests: BaseTest {
 
     @Test func test_PolymorphicHydration_BothPaths() throws {
         let lattice = try makeLattice()
-        seed(lattice)
+        try seed(lattice)
         onBothPaths { _ in
             let results = lattice.objects(CompatPOI.self).snapshot()
             let restaurants = results.compactMap { $0 as? CompatRestaurant }

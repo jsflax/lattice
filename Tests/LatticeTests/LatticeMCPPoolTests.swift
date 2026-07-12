@@ -14,7 +14,7 @@ final class LatticeMCPPoolTests {
             .appending(path: "mcppool_\(UUID().uuidString).sqlite")
         let l = try Lattice(DynPerson.self, DynDog.self, configuration: .init(fileURL: url))
         let p = DynPerson(); p.name = "Ada"; p.age = 42
-        l.add(p)
+        try l.add(p)
         l.checkpoint(); l.close()
         return url
     }

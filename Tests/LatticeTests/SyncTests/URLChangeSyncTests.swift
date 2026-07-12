@@ -111,7 +111,7 @@ actor URLChangeSyncTests {
                     .first(where: { $0.value == preKickValue }) != nil { break }
             }
         }
-        latticeA.add(SimpleSyncObject(value: preKickValue, floatValue: 1.0))
+        try latticeA.add(SimpleSyncObject(value: preKickValue, floatValue: 1.0))
         try await preKickArrived.value
 
         // Open B with a different URL on the same path. The fix kicks A
@@ -139,7 +139,7 @@ actor URLChangeSyncTests {
                     .first(where: { $0.value == postKickValue }) != nil { break }
             }
         }
-        latticeB.add(SimpleSyncObject(value: postKickValue, floatValue: 7.0))
+        try latticeB.add(SimpleSyncObject(value: postKickValue, floatValue: 7.0))
         try await postKickArrived.value
 
         // Server A should NOT have received the post-kick write.
@@ -182,7 +182,7 @@ actor URLChangeSyncTests {
                     .first(where: { $0.value == 42 }) != nil { break }
             }
         }
-        latticeA1.add(SimpleSyncObject(value: 42, floatValue: 4.2))
+        try latticeA1.add(SimpleSyncObject(value: 42, floatValue: 4.2))
         try await writeArrived.value
 
         #expect(latticeA1.isSyncConnected, "A1 must NOT be kicked by same-URL A2")

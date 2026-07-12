@@ -52,6 +52,14 @@ public enum LatticeError: Error {
     /// exception no longer crosses the interop boundary.
     case attachFailed(String)
     case detachFailed(String)
+    /// `add` was called with an object that is already managed by a Lattice.
+    /// Re-adding is a state error, not a programmer invariant — callers can
+    /// race a sync insert or double-fire a save path — so it throws instead
+    /// of trapping. Catch and treat as "already persisted".
+    case alreadyManaged
+    /// The backend rejected an insert (constraint violation, closed handle,
+    /// I/O failure). Carries the underlying database message.
+    case addFailed(String)
 }
 
 public struct IsolationWeakRef: @unchecked Sendable {
@@ -618,6 +626,23 @@ public struct Lattice {
             hasher.combine(syncTuning)
         }
 
+        /// Directory for the default (unnamed) database file: the user
+        /// documents directory, falling back to the current working directory
+        /// where none exists (headless Linux daemons, some sandboxed utility
+        /// processes). A missing documents directory is an environment
+        /// condition, not a programmer error — it must not trap.
+        private static func defaultDatabaseDirectory() -> URL {
+            do {
+                return try FileManager.default.url(for: .documentDirectory,
+                                                   in: .userDomainMask,
+                                                   appropriateFor: nil,
+                                                   create: false)
+            } catch {
+                Logger.db.warning("Configuration: no documents directory (\(String(describing: error))) — falling back to the current working directory")
+                return URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+            }
+        }
+
         public init(storage: Storage? = nil, fileURL: URL? = nil,
                     authorizationToken: String? = nil, wssEndpoint: URL? = nil,
                     isReadOnly: Bool = false, migration: [Int: Migration]? = nil,
@@ -625,12 +650,8 @@ public struct Lattice {
                     syncTuning: SyncTuning? = nil) {
             // storage wins; fileURL is the long-standing convenience spelling;
             // neither → the default documents-directory database.
-            self.storage = storage ?? .file(fileURL ?? (try! FileManager.default
-                .url(for: .documentDirectory,
-                     in: .userDomainMask,
-                     appropriateFor: nil,
-                     create: false)
-                .appendingPathComponent("lattice\(wssEndpoint != nil ? "_ws" : "").sqlite")))
+            self.storage = storage ?? .file(fileURL ?? Self.defaultDatabaseDirectory()
+                .appendingPathComponent("lattice\(wssEndpoint != nil ? "_ws" : "").sqlite"))
             self.authorizationToken = authorizationToken
             self.wssEndpoint = wssEndpoint
             self.scheduler = Scheduler()
@@ -1143,35 +1164,58 @@ public struct Lattice {
     }
     
     // MARK: Add
-    public func add<T: Model>(_ object: borrowing T) {
+    /// Inserts an unmanaged object.
+    /// - Throws: `LatticeError.alreadyManaged` if the object is already
+    ///   managed by a Lattice; `LatticeError.addFailed` if the backend
+    ///   rejects the insert (constraint violation, closed handle, I/O).
+    public func add<T: Model>(_ object: borrowing T) throws {
         guard !object.isManaged else {
-            fatalError()
+            throw LatticeError.alreadyManaged
         }
-        do { try backend.add(object._dynamicObject._ref) } catch { fatalError("\(error)") }
+        try backend.add(object._dynamicObject._ref)
         // Register for cross-instance observation now that the object has a primaryKey
         object._registerIfNeeded()
     }
 
-    public func add<T: Model>(_ object: borrowing T, preservingGlobalId globalId: UUID) {
+    /// Inserts an unmanaged object, preserving the given globalId.
+    /// - Throws: `LatticeError.alreadyManaged` if the object is already
+    ///   managed by a Lattice. The backend bridge exposes no failure signal
+    ///   for this path today; the `throws` is for contract stability.
+    public func add<T: Model>(_ object: borrowing T, preservingGlobalId globalId: UUID) throws {
         guard !object.isManaged else {
-            fatalError()
+            throw LatticeError.alreadyManaged
         }
-        backend.addPreservingGlobalId(object._dynamicObject._ref, globalId: globalId)
+        try backend.addPreservingGlobalId(object._dynamicObject._ref, globalId: globalId)
         object._registerIfNeeded()
     }
-    
-    public func add<S: Sequence>(contentsOf newElements: S) where S.Element: Model {
-        backend.addBulk(newElements.map { $0._dynamicObject._ref })
+
+    /// Bulk-inserts unmanaged objects.
+    /// - Throws: `LatticeError.alreadyManaged` if any element is already
+    ///   managed by a Lattice (checked up front — nothing is inserted). The
+    ///   backend bridge exposes no failure signal for the bulk path today;
+    ///   the `throws` is for contract stability.
+    public func add<S: Sequence>(contentsOf newElements: S) throws where S.Element: Model {
+        let refs = try newElements.map { element -> any ObjectBackend in
+            guard !element.isManaged else {
+                throw LatticeError.alreadyManaged
+            }
+            return element._dynamicObject._ref
+        }
+        try backend.addBulk(refs)
     }
 
     // MARK: Add/Delete for VirtualModel (existential)
 
-    public func add(_ object: any VirtualModel) {
+    /// Inserts an unmanaged virtual-model object.
+    /// - Throws: `LatticeError.alreadyManaged` / `LatticeError.addFailed`
+    ///   (same contract as `add(_:)`). A `VirtualModel` that does not also
+    ///   conform to `Model` is a programmer error and still traps.
+    public func add(_ object: any VirtualModel) throws {
         guard let model = object as? any Model else {
             fatalError("VirtualModel type must also conform to Model")
         }
-        guard !model.isManaged else { fatalError() }
-        try? backend.add(model._dynamicObject._ref)
+        guard !model.isManaged else { throw LatticeError.alreadyManaged }
+        try backend.add(model._dynamicObject._ref)
         model._registerIfNeeded()
     }
 
@@ -1381,7 +1425,17 @@ public struct Lattice {
                 // Cross-process path: observe AuditLog changes via Darwin notifications.
                 // queryLattice is only touched from the serial observer callback;
                 // wrap it for capture by the @Sendable observer closure.
-                let queryLattice = UncheckedSendable(try! Lattice(for: modelTypes, configuration: configuration))
+                // Opening the query Lattice is IO — a failure here (deleted
+                // file, exhausted descriptors) degrades to an empty stream
+                // instead of crashing the host process from a background path.
+                let queryLattice: UncheckedSendable<Lattice>
+                do {
+                    queryLattice = UncheckedSendable(try Lattice(for: modelTypes, configuration: configuration))
+                } catch {
+                    Logger.sync.error("syncProgressStream: failed to open query Lattice (\(String(describing: error))) — finishing stream")
+                    continuation.finish()
+                    return
+                }
                 // nonisolated(unsafe): mutated only from the serial AuditLog
                 // observer callback (no concurrent access), captured by the
                 // @Sendable observer closure.

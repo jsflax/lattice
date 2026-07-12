@@ -319,7 +319,7 @@ class MigrationTests: BaseTest {
             let person = M1Person()
             person.name = "Foo"
             person.age = "30"
-            lattice.add(person)
+            try lattice.add(person)
         }
 
         try autoreleasepool {
@@ -363,7 +363,7 @@ class MigrationTests: BaseTest {
             restaurant.name = "McDonald's"
             restaurant.latitude = 37.7749
             restaurant.longitude = -122.4194
-            lattice.add(restaurant)
+            try lattice.add(restaurant)
         }
 
         try autoreleasepool {
@@ -417,8 +417,8 @@ class MigrationTests: BaseTest {
             bob.name = "Bob"
             bob.bestFriend = alice
 
-            lattice.add(alice)
-            lattice.add(bob)
+            try lattice.add(alice)
+            try lattice.add(bob)
 
             // Verify link works in V1
             #expect(bob.bestFriend?.name == "Alice")
@@ -482,7 +482,7 @@ class MigrationTests: BaseTest {
             team.members.append(player1)
             team.members.append(player2)
 
-            lattice.add(team)
+            try lattice.add(team)
 
             // Verify link list works in V1
             #expect(team.members.count == 2)
@@ -543,7 +543,7 @@ class MigrationTests: BaseTest {
             doc.title = "Test Document"
             doc.embedding = FloatVector(originalEmbedding)
 
-            lattice.add(doc)
+            try lattice.add(doc)
 
             // Verify vector is stored correctly in V1
             let docs = lattice.objects(M1Document.self)
@@ -596,7 +596,7 @@ class MigrationTests: BaseTest {
             let route = V1Route()
             route.name = "Bay Area Tour"
             route.startLocation = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
-            lattice.add(route)
+            try lattice.add(route)
 
             #expect(lattice.objects(V1Route.self).count == 1)
         }
@@ -644,7 +644,7 @@ class MigrationTests: BaseTest {
             let lattice = try testLattice(path: dbPath, V1Journey.self)
             let journey = V1Journey()
             journey.name = "Cross Country"
-            lattice.add(journey)
+            try lattice.add(journey)
 
             // Add stops to the list
             journey.stops.append(CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060))  // NYC
@@ -694,7 +694,7 @@ class MigrationTests: BaseTest {
             let lattice = try testLattice(path: dbPath, V1Trip.self)
             let trip = V1Trip()
             trip.title = "Southwest Adventure"
-            lattice.add(trip)
+            try lattice.add(trip)
 
             for waypoint in originalWaypoints {
                 trip.waypoints.append(waypoint)
@@ -756,7 +756,7 @@ class MigrationTests: BaseTest {
             let lattice = try testLattice(path: dbPath, V1Expedition.self)
             let expedition = V1Expedition()
             expedition.name = "California Expedition"
-            lattice.add(expedition)
+            try lattice.add(expedition)
 
             for region in originalRegions {
                 expedition.plannedRoute.append(region)
@@ -820,25 +820,25 @@ class MigrationTests: BaseTest {
 
             let parent = V1Parent()
             parent.name = "Alice"
-            lattice.add(parent)
+            try lattice.add(parent)
 
             let parentPK = parent.primaryKey!
 
             let child1 = V1Child()
             child1.name = "Bob"
             child1.parentId = Int(parentPK)
-            lattice.add(child1)
+            try lattice.add(child1)
 
             let child2 = V1Child()
             child2.name = "Charlie"
             child2.parentId = Int(parentPK)
-            lattice.add(child2)
+            try lattice.add(child2)
 
             // Orphan child (no parent)
             let child3 = V1Child()
             child3.name = "Dave"
             child3.parentId = 0
-            lattice.add(child3)
+            try lattice.add(child3)
 
             #expect(lattice.objects(V1Parent.self).count == 1)
             #expect(lattice.objects(V1Child.self).count == 3)
@@ -901,19 +901,19 @@ class MigrationTests: BaseTest {
 
             let category = V1Category()
             category.name = "Electronics"
-            lattice.add(category)
+            try lattice.add(category)
 
             let catPK = Int(category.primaryKey!)
 
             let item1 = V1Item()
             item1.name = "Phone"
             item1.categoryId = catPK
-            lattice.add(item1)
+            try lattice.add(item1)
 
             let item2 = V1Item()
             item2.name = "Laptop"
             item2.categoryId = catPK
-            lattice.add(item2)
+            try lattice.add(item2)
 
             #expect(lattice.objects(V1Category.self).count == 1)
             #expect(lattice.objects(V1Item.self).count == 2)
@@ -973,15 +973,15 @@ class MigrationTests: BaseTest {
 
             let nodeA = V1Node()
             nodeA.label = "A"
-            lattice.add(nodeA)
+            try lattice.add(nodeA)
 
             let nodeB = V1Node()
             nodeB.label = "B"
-            lattice.add(nodeB)
+            try lattice.add(nodeB)
 
             let nodeC = V1Node()
             nodeC.label = "C"
-            lattice.add(nodeC)
+            try lattice.add(nodeC)
 
             // Record globalIds for verification
             nodeGlobalIds[nodeA.primaryKey!] = nodeA.globalId!
@@ -993,13 +993,13 @@ class MigrationTests: BaseTest {
             edgeAB.sourceId = nodeA.primaryKey!
             edgeAB.targetId = nodeB.primaryKey!
             edgeAB.weight = 1.5
-            lattice.add(edgeAB)
+            try lattice.add(edgeAB)
 
             let edgeBC = V1Edge()
             edgeBC.sourceId = nodeB.primaryKey!
             edgeBC.targetId = nodeC.primaryKey!
             edgeBC.weight = 2.0
-            lattice.add(edgeBC)
+            try lattice.add(edgeBC)
 
             #expect(lattice.objects(V1Node.self).count == 3)
             #expect(lattice.objects(V1Edge.self).count == 2)
@@ -1079,17 +1079,17 @@ class MigrationTests: BaseTest {
             let mem1 = V1Memory()
             mem1.content = "First memory"
             mem1.topic = "test"
-            lattice.add(mem1)
+            try lattice.add(mem1)
 
             let mem2 = V1Memory()
             mem2.content = "Second memory"
             mem2.topic = "test"
-            lattice.add(mem2)
+            try lattice.add(mem2)
 
             let mem3 = V1Memory()
             mem3.content = "Third memory"
             mem3.topic = "test"
-            lattice.add(mem3)
+            try lattice.add(mem3)
 
             // Record globalIds for verification
             memoryGlobalIds[mem1.primaryKey!] = mem1.globalId!
@@ -1102,14 +1102,14 @@ class MigrationTests: BaseTest {
             edge12.targetId = mem2.primaryKey!
             edge12.relation = "relates_to"
             edge12.createdAt = Date(timeIntervalSince1970: 1000000)
-            lattice.add(edge12)
+            try lattice.add(edge12)
 
             let edge23 = V1Edge()
             edge23.sourceId = mem2.primaryKey!
             edge23.targetId = mem3.primaryKey!
             edge23.relation = "part_of"
             edge23.createdAt = Date(timeIntervalSince1970: 2000000)
-            lattice.add(edge23)
+            try lattice.add(edge23)
 
             #expect(lattice.objects(V1Memory.self).count == 3)
             #expect(lattice.objects(V1Edge.self).count == 2)
@@ -1204,12 +1204,12 @@ class MigrationTests: BaseTest {
             let mem1 = V1Memory()
             mem1.content = "First"
             mem1.topic = "test"
-            lattice.add(mem1)
+            try lattice.add(mem1)
 
             let mem2 = V1Memory()
             mem2.content = "Second"
             mem2.topic = "test"
-            lattice.add(mem2)
+            try lattice.add(mem2)
 
             memoryGlobalIds[mem1.primaryKey!] = mem1.globalId!
             memoryGlobalIds[mem2.primaryKey!] = mem2.globalId!
@@ -1218,7 +1218,7 @@ class MigrationTests: BaseTest {
             edge.sourceId = mem1.primaryKey!
             edge.targetId = mem2.primaryKey!
             edge.relation = "relates_to"
-            lattice.add(edge)
+            try lattice.add(edge)
         }
 
         // Phase 2: Open with V2 schema — Memory now has isPrivate (new column).
@@ -1334,19 +1334,19 @@ class MigrationTests: BaseTest {
             let mem1 = V1Memory()
             mem1.content = "Alpha"
             mem1.topic = "test"
-            lattice.add(mem1)
+            try lattice.add(mem1)
 
             let mem2 = V1Memory()
             mem2.content = "Beta"
             mem2.topic = "test"
-            lattice.add(mem2)
+            try lattice.add(mem2)
 
             let edge = V1Edge()
             edge.sourceId = mem1.primaryKey!
             edge.targetId = mem2.primaryKey!
             edge.relation = "relates_to"
             edge.createdAt = Date()
-            lattice.add(edge)
+            try lattice.add(edge)
         }
 
         // Phase 2: Simulate a partial migration — manually rebuild Edge table
@@ -1456,7 +1456,7 @@ class MigrationTests: BaseTest {
             let person = M1Person()
             person.name = "Alice"
             person.age = "25"
-            lattice.add(person)
+            try lattice.add(person)
         }
         try autoreleasepool {
             let _ = try testLattice(path: dbPath, M2Person.self, M2Dog.self, migration: migration)
@@ -1491,7 +1491,7 @@ class MigrationTests: BaseTest {
 //            let person = M1Person()
 //            person.name = "Bob"
 //            person.age = "30"
-//            lattice.add(person)
+//            try lattice.add(person)
 //        }
 //        try autoreleasepool {
 //            let _ = try testLattice(path: dbPath, M2Person.self, M2Dog.self, migration: [
@@ -1552,7 +1552,7 @@ class MigrationTests: BaseTest {
                 let person = M1Person()
                 person.name = "Person \(i)"
                 person.age = "\(20 + i)"
-                lattice.add(person)
+                try lattice.add(person)
             }
         }
 
@@ -1609,7 +1609,7 @@ class EnumMigrationV2 {
             let config = EnumMigrationV1.Config()
             config.name = "test"
             config.enabled = true
-            lattice.add(config)
+            try lattice.add(config)
             #expect(lattice.objects(EnumMigrationV1.Config.self).count == 1)
         }
 

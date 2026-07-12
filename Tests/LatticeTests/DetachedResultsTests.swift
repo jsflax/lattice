@@ -30,13 +30,13 @@ final class DetachedResultsTests: BaseTest {
         #expect(results.items.isEmpty)
 
         let a = DRItem(); a.name = "a"; a.rank = 1
-        lattice.transaction { lattice.add(a) }
+        try lattice.transaction { try lattice.add(a) }
         await wait { results.items.count == 1 }
         #expect(results.items.first?.value?.name == "a")
 
         // Inserted out of order → must land sorted (order 0 before order 1).
         let b = DRItem(); b.name = "b"; b.rank = 0
-        lattice.transaction { lattice.add(b) }
+        try lattice.transaction { try lattice.add(b) }
         await wait { results.items.count == 2 }
         #expect(results.items.compactMap { $0.value?.name } == ["b", "a"])
 
@@ -67,7 +67,7 @@ final class DetachedResultsTests: BaseTest {
     @Test func detachOfPersistedRowIsStable() throws {
         let lattice = try testLattice(DRItem.self)
         let a = DRItem(); a.name = "x"; a.rank = 3
-        lattice.transaction { lattice.add(a) }
+        try lattice.transaction { try lattice.add(a) }
         // The actual contract: value-identical snapshots.
         #expect(a.detached() == a.detached())
         // Byte stability under deterministic key ordering.

@@ -22,7 +22,7 @@ class ResultsTests: BaseTest {
                 token?.cancel()
                 continuation.resume()
             }
-            lattice.add(Person())
+            try! lattice.add(Person())
         }
         #expect(results.count == 1)
     }
@@ -30,7 +30,7 @@ class ResultsTests: BaseTest {
     @Test func test_ObjectWillChange_FiresOnDelete() async throws {
         let lattice = try testLattice(Person.self, Dog.self)
         let person = Person()
-        lattice.add(person)
+        try lattice.add(person)
 
         let results = lattice.objects(Person.self)
         #expect(results.count == 1)
@@ -50,7 +50,7 @@ class ResultsTests: BaseTest {
         let lattice = try testLattice(Person.self, Dog.self)
         let person = Person()
         person.age = 10
-        lattice.add(person)
+        try lattice.add(person)
         #expect(lattice.objects(Person.self).where {
             $0.age.in([5, 10, 15])
         }.count == 1)
@@ -69,7 +69,7 @@ class ResultsTests: BaseTest {
         let lattice = try testLattice(SequenceSyncObject.self)
         let objects = (0..<100_000).map { _ in SequenceSyncObject() }
         lattice.transaction {
-            lattice.add(contentsOf: objects)
+            try lattice.add(contentsOf: objects)
         }
 
         let results = lattice.objects(SequenceSyncObject.self)
@@ -110,8 +110,8 @@ class ResultsTests: BaseTest {
         let lattice = try testLattice(SequenceSyncObject.self)
         let config = lattice.configuration
         let objects = (0..<1000).map { _ in SequenceSyncObject() }
-        lattice.transaction {
-            lattice.add(contentsOf: objects)
+        try lattice.transaction {
+            try lattice.add(contentsOf: objects)
         }
 
         func doWork(isolation: isolated (any Actor)? = #isolation) throws {
@@ -147,11 +147,11 @@ class ResultsTests: BaseTest {
         let lattice = try testLattice(Person.self, Dog.self)
         let person = Person()
         person.age = 10
-        lattice.add(person)
+        try lattice.add(person)
         
         let person2 = Person()
         person2.age = 20
-        lattice.add(person2)
+        try lattice.add(person2)
         
         let results = lattice.objects(Person.self).where {
             $0.age.in([5, 10, 15])
@@ -174,7 +174,7 @@ class ResultsTests: BaseTest {
         for i in 0..<5 {
             let p = Person()
             p.age = i
-            lattice.add(p)
+            try lattice.add(p)
             people.append(p)
         }
 
@@ -234,7 +234,7 @@ class SubqueryInTests: BaseTest {
         let alphaItems = (0..<3).map { SQItem(name: "a\($0)", category: "alpha", isPublic: true) }
         let betaItems  = (0..<2).map { SQItem(name: "b\($0)", category: "beta",  isPublic: true) }
         let privateItem = SQItem(name: "secret", category: "alpha", isPublic: false)
-        lattice.add(contentsOf: alphaItems + betaItems + [privateItem])
+        try lattice.add(contentsOf: alphaItems + betaItems + [privateItem])
 
         // Create links: alpha↔alpha, alpha↔beta, beta↔beta
         let alphaAlpha = SQLink(sourceGlobalId: alphaItems[0].globalId!,
@@ -246,7 +246,7 @@ class SubqueryInTests: BaseTest {
         // Link involving the private item
         let alphaPrivate = SQLink(sourceGlobalId: alphaItems[0].globalId!,
                                   targetGlobalId: privateItem.globalId!,  label: "ap")
-        lattice.add(contentsOf: [alphaAlpha, alphaBeta, betaBeta, alphaPrivate])
+        try lattice.add(contentsOf: [alphaAlpha, alphaBeta, betaBeta, alphaPrivate])
 
         // Query: links where BOTH endpoints are public alpha items
         let alphaPredicate: @Sendable (Query<SQItem>) -> Query<Bool> = { item in
@@ -281,9 +281,9 @@ class SubqueryInTests: BaseTest {
         let lattice = try testLattice(SQItem.self, SQLink.self)
 
         let item = SQItem(name: "only", category: "gamma", isPublic: true)
-        lattice.add(item)
+        try lattice.add(item)
         let link = SQLink(sourceGlobalId: item.globalId!, targetGlobalId: item.globalId!, label: "self")
-        lattice.add(link)
+        try lattice.add(link)
 
         // No items match category "nonexistent" → subquery returns empty → no links match
         let results = lattice.objects(SQLink.self).where { link in
@@ -299,12 +299,12 @@ class SubqueryInTests: BaseTest {
         let cats = SQItem(name: "c0", category: "cats", isPublic: true)
         let dogs = SQItem(name: "d0", category: "dogs", isPublic: true)
         let fish = SQItem(name: "f0", category: "fish", isPublic: true)
-        lattice.add(contentsOf: [cats, dogs, fish])
+        try lattice.add(contentsOf: [cats, dogs, fish])
 
         let cdLink = SQLink(sourceGlobalId: cats.globalId!, targetGlobalId: dogs.globalId!, label: "cd")
         let cfLink = SQLink(sourceGlobalId: cats.globalId!, targetGlobalId: fish.globalId!, label: "cf")
         let dfLink = SQLink(sourceGlobalId: dogs.globalId!, targetGlobalId: fish.globalId!, label: "df")
-        lattice.add(contentsOf: [cdLink, cfLink, dfLink])
+        try lattice.add(contentsOf: [cdLink, cfLink, dfLink])
 
         // Combined predicate: source in (cats OR dogs), target in (cats OR dogs)
         let petPredicate: @Sendable (Query<SQItem>) -> Query<Bool> = { item in

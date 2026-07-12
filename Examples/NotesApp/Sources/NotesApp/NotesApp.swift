@@ -178,8 +178,12 @@ struct ContentView: View {
     private func addNote() {
         guard !noteText.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         let note = Note(text: noteText, createdAt: Date())
-        lattice.add(note)
-        noteText = ""
+        do {
+            try lattice.add(note)
+            noteText = ""
+        } catch {
+            print("[Notes] Failed to save note: \(error)")
+        }
     }
 
     @MainActor

@@ -27,17 +27,17 @@ class VirtualListTests: BaseTest {
 
         let person = TestPersonWithPets()
         person.label = "Alice"
-        lattice.add(person)
+        try lattice.add(person)
 
         let dog = TestDog()
         dog.name = "Rex"
         dog.breed = "Lab"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         let cat = TestCat()
         cat.name = "Whiskers"
         cat.indoor = true
-        lattice.add(cat)
+        try lattice.add(cat)
 
         person.pets.append(dog as any Animal)
         person.pets.append(cat as any Animal)
@@ -54,16 +54,16 @@ class VirtualListTests: BaseTest {
 
         let person = TestPersonWithPets()
         person.label = "Bob"
-        lattice.add(person)
+        try lattice.add(person)
 
         let dog = TestDog()
         dog.name = "Buddy"
         dog.breed = "Golden"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         let cat = TestCat()
         cat.name = "Mittens"
-        lattice.add(cat)
+        try lattice.add(cat)
 
         person.pets.append(dog as any Animal)
         person.pets.append(cat as any Animal)
@@ -79,15 +79,15 @@ class VirtualListTests: BaseTest {
         let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPets.self)
 
         let person = TestPersonWithPets()
-        lattice.add(person)
+        try lattice.add(person)
 
         let dog = TestDog()
         dog.name = "Rex"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         let cat = TestCat()
         cat.name = "Whiskers"
-        lattice.add(cat)
+        try lattice.add(cat)
 
         person.pets.append(dog as any Animal)
         person.pets.append(cat as any Animal)
@@ -105,17 +105,17 @@ class VirtualListTests: BaseTest {
 
         let person = TestPersonWithPets()
         person.label = "Alice"
-        lattice.add(person)
+        try lattice.add(person)
 
         let dog = TestDog()
         dog.name = "Rex"
         dog.breed = "Lab"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         let cat = TestCat()
         cat.name = "Whiskers"
         cat.indoor = true
-        lattice.add(cat)
+        try lattice.add(cat)
 
         person.pets.append(dog as any Animal)
         person.pets.append(cat as any Animal)
@@ -134,15 +134,15 @@ class VirtualListTests: BaseTest {
         let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPets.self)
 
         let person = TestPersonWithPets()
-        lattice.add(person)
+        try lattice.add(person)
 
         let dog = TestDog()
         dog.name = "Rex"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         let cat = TestCat()
         cat.name = "Whiskers"
-        lattice.add(cat)
+        try lattice.add(cat)
 
         person.pets.append(dog as any Animal)
         person.pets.append(cat as any Animal)
@@ -161,17 +161,17 @@ class VirtualListTests: BaseTest {
 
         let person = TestPersonWithPets()
         person.label = "Alice"
-        lattice.add(person)
+        try lattice.add(person)
 
         let dog = TestDog()
         dog.name = "Rex"
         dog.breed = "Lab"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         let cat = TestCat()
         cat.name = "Whiskers"
         cat.indoor = true
-        lattice.add(cat)
+        try lattice.add(cat)
 
         person.pets.append(dog as any Animal)
         person.pets.append(cat as any Animal)
@@ -189,15 +189,15 @@ class VirtualListTests: BaseTest {
         let lattice = try testLattice(TestDog.self, TestCat.self, TestPersonWithPets.self)
 
         let person = TestPersonWithPets()
-        lattice.add(person)
+        try lattice.add(person)
 
         let dog = TestDog()
         dog.name = "Rex"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         let cat = TestCat()
         cat.name = "Whiskers"
-        lattice.add(cat)
+        try lattice.add(cat)
 
         person.pets.append(dog as any Animal)
         person.pets.append(cat as any Animal)

@@ -138,6 +138,11 @@ private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "Frame
 }
 
 public struct LatticeEnvironmentKey: EnvironmentKey {
+    // try! is acceptable here per the 1.0 error policy: `.memory()` opens a
+    // fresh private in-memory database with no schema — construction is
+    // guaranteed-valid (no file IO, no schema to mismatch), so a failure
+    // would be a programmer error inside Lattice itself, not a data/IO
+    // condition.
     nonisolated(unsafe) public static var defaultValue: Lattice = try! Lattice(configuration: .init(storage: .memory()))
 }
 public struct LatticeSchemaEnvironmentKey: EnvironmentKey {
@@ -193,7 +198,9 @@ struct TestView: View {
     let lattice = try! Lattice(Person.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("preview_lattice.sqlite")))
     let person = {
         var person = Person()
-        lattice.add(person)
+        // Preview-only scaffolding (DEBUG): a fresh unmanaged object into a
+        // fresh temp-file lattice — try! keeps the preview body non-throwing.
+        try! lattice.add(person)
         Task.detached { [ref = person.sendableReference] in
             let lattice = try! Lattice(Person.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("preview_lattice.sqlite")))
             let person = ref.resolve(on: lattice)!

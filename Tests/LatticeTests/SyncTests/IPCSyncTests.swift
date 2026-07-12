@@ -33,9 +33,9 @@ private actor Vec0Writer {
         self.lattice = l
     }
 
-    func seed(count: Int) {
+    func seed(count: Int) throws {
         for i in 0..<count {
-            lattice.add(SyncVectorObject(
+            try lattice.add(SyncVectorObject(
                 label: "seed-\(i)",
                 embedding: [Float(i) / Float(count), Float(count - i) / Float(count), 0.5]))
         }
@@ -43,7 +43,7 @@ private actor Vec0Writer {
 
     func writeDocuments(count: Int) async throws {
         for i in 0..<count {
-            lattice.add(SyncVectorObject(
+            try lattice.add(SyncVectorObject(
                 label: "doc-\(i)",
                 embedding: [Float(i) / Float(count), Float(count - i) / Float(count), 0.1]))
             try await Task.sleep(for: .milliseconds(10))
@@ -140,7 +140,7 @@ actor IPCSyncTests {
         let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
 
         let note = IPCNote(title: "hello from source", isPublic: true)
-        source.add(note)
+        try source.add(note)
 
         try await task.value
 
@@ -164,7 +164,7 @@ actor IPCSyncTests {
 
         // Phase 1: source → target
         let task1 = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "from source"))
+        try source.add(IPCNote(title: "from source"))
         try await task1.value
 
         #expect(target.objects(IPCNote.self).count == 1)
@@ -172,7 +172,7 @@ actor IPCSyncTests {
 
         // Phase 2: target → source
         let task2 = await waitForChange(on: sourceConfig, table: "IPCNote", operation: .insert)
-        target.add(IPCNote(title: "from target"))
+        try target.add(IPCNote(title: "from target"))
         try await task2.value
 
         let sourceNotes = source.objects(IPCNote.self).snapshot()
@@ -200,8 +200,8 @@ actor IPCSyncTests {
         let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
 
         // Add both public and private notes
-        source.add(IPCNote(title: "public note", isPublic: true))
-        source.add(IPCNote(title: "private note", isPublic: false))
+        try source.add(IPCNote(title: "public note", isPublic: true))
+        try source.add(IPCNote(title: "private note", isPublic: false))
 
         try await task.value
 
@@ -230,7 +230,7 @@ actor IPCSyncTests {
         // Insert a public note — should sync
         let task1 = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
         let note = IPCNote(title: "will go private", isPublic: true)
-        source.add(note)
+        try source.add(note)
         try await task1.value
         #expect(target.objects(IPCNote.self).count == 1)
 
@@ -259,7 +259,7 @@ actor IPCSyncTests {
 
         // Insert a private note — should NOT sync (filtered out)
         let note = IPCNote(title: "was private", isPublic: false)
-        source.add(note)
+        try source.add(note)
 
         // Update note to public — should trigger full-state INSERT on target.
         // The sync entries are ordered, so by the time this INSERT arrives,
@@ -305,13 +305,13 @@ actor IPCSyncTests {
         // Add public note first — syncs to both channels
         let taskA = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
         let taskB1 = await waitForChange(on: targetBConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "public note", isPublic: true))
+        try source.add(IPCNote(title: "public note", isPublic: true))
         try await taskA.value
         try await taskB1.value
 
         // Add private note — only syncs to channel B (unfiltered)
         let taskB2 = await waitForChange(on: targetBConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "private note", isPublic: false))
+        try source.add(IPCNote(title: "private note", isPublic: false))
         try await taskB2.value
 
         // Target A: only public note (filtered)
@@ -338,7 +338,7 @@ actor IPCSyncTests {
         let target = try Lattice(IPCNote.self, configuration: targetConfig)
 
         let task1 = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "before restart"))
+        try source.add(IPCNote(title: "before restart"))
         try await task1.value
         #expect(target.objects(IPCNote.self).count == 1)
 
@@ -351,7 +351,7 @@ actor IPCSyncTests {
         source = try Lattice(IPCNote.self, configuration: sourceConfig)
 
         let task2 = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "after restart"))
+        try source.add(IPCNote(title: "after restart"))
         try await task2.value
 
         let targetTitles = target.objects(IPCNote.self).map(\.title).sorted()
@@ -377,8 +377,8 @@ actor IPCSyncTests {
 
         // Add both public and private notes
         let task1 = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "public note", isPublic: true))
-        source.add(IPCNote(title: "private note", isPublic: false))
+        try source.add(IPCNote(title: "public note", isPublic: true))
+        try source.add(IPCNote(title: "private note", isPublic: false))
         try await task1.value
 
         // Both entries processed in one batch — private was filtered out
@@ -415,11 +415,11 @@ actor IPCSyncTests {
 
         // Add both notes — both should sync
         let task1 = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "public note", isPublic: true))
+        try source.add(IPCNote(title: "public note", isPublic: true))
         try await task1.value
 
         let task2 = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "private note", isPublic: false))
+        try source.add(IPCNote(title: "private note", isPublic: false))
         try await task2.value
         #expect(target.objects(IPCNote.self).count == 2)
 
@@ -445,7 +445,7 @@ actor IPCSyncTests {
         sourceConfig.ipcTargets = [.init(channel: channel)]
         let source = try Lattice(IPCNote.self, configuration: sourceConfig)
         let note = IPCNote(title: "will be deleted", isPublic: true)
-        source.add(note)
+        try source.add(note)
         source.delete(note)
 
         // Target connects — initial catchup processes AuditLog with INSERT
@@ -457,7 +457,7 @@ actor IPCSyncTests {
         // INSERT arrives, the initial catchup (INSERT+DELETE for the deleted
         // note) has already completed on the target.
         let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "alive note", isPublic: true))
+        try source.add(IPCNote(title: "alive note", isPublic: true))
         try await task.value
 
         // Only the alive note should exist — the deleted note's INSERT+DELETE
@@ -516,7 +516,7 @@ actor IPCSyncTests {
 
         targetConfig.ipcTargets = [.init(channel: channel)]
         let target = try Lattice(IPCNote.self, configuration: targetConfig)
-        source.add(IPCNote(title: "survived stale socket", isPublic: true))
+        try source.add(IPCNote(title: "survived stale socket", isPublic: true))
         try await task.value
 
         #expect(target.objects(IPCNote.self).count == 1)
@@ -552,7 +552,7 @@ actor IPCSyncTests {
         // Insert an object with a FloatVector (BLOB) field
         let embedding: [Float] = [1.0, 2.0, 3.0, 4.5, -0.5]
         let obj = SyncVectorObject(label: "blob test", embedding: embedding)
-        source.add(obj)
+        try source.add(obj)
 
         try await task.value
 
@@ -580,7 +580,7 @@ actor IPCSyncTests {
         // on the target's own connection
         if nearest.isEmpty {
             let localObj = SyncVectorObject(label: "local", embedding: [0.0, 0.0, 0.0, 0.0, 0.0])
-            target.add(localObj)
+            try target.add(localObj)
             let localNearest = target.objects(SyncVectorObject.self)
                 .nearest(to: FloatVector([0.0, 0.0, 0.0, 0.0, 0.0]), on: \.embedding, limit: 5)
             print("[VEC0] nearest after local insert: \(localNearest.count) results")
@@ -627,14 +627,14 @@ actor IPCSyncTests {
         let target = try Lattice(SyncVectorObject.self, configuration: tgtCfg)
 
         // Seed one object so vec0 table exists on source
-        source.add(SyncVectorObject(label: "seed", embedding: [1.0, 0.0, 0.0]))
+        try source.add(SyncVectorObject(label: "seed", embedding: [1.0, 0.0, 0.0]))
 
         // Wait for seed to arrive at target
         try await Task.sleep(for: .seconds(1))
 
         // Bulk-add 50 objects with embeddings on source — IPC syncs them to target
         for i in 0..<50 {
-            source.add(SyncVectorObject(
+            try source.add(SyncVectorObject(
                 label: "doc-\(i)",
                 embedding: [Float(i) / 50.0, Float(50 - i) / 50.0, 0.1]))
         }
@@ -681,7 +681,7 @@ actor IPCSyncTests {
         // Create the initial Lattice + seed data
         let base = try Lattice(SyncVectorObject.self, configuration: config)
         for i in 0..<10 {
-            base.add(SyncVectorObject(
+            try base.add(SyncVectorObject(
                 label: "seed-\(i)",
                 embedding: [Float(i) / 10.0, Float(10 - i) / 10.0, 0.1]))
         }
@@ -743,13 +743,13 @@ actor IPCSyncTests {
         let a1 = SQItem(name: "a1", category: "alpha", isPublic: true)
         let b0 = SQItem(name: "b0", category: "beta",  isPublic: true)
         let secret = SQItem(name: "secret", category: "alpha", isPublic: false)
-        source.add(contentsOf: [a0, a1, b0, secret])
+        try source.add(contentsOf: [a0, a1, b0, secret])
 
         // Create links
         let aaLink = SQLink(sourceGlobalId: a0.globalId!, targetGlobalId: a1.globalId!, label: "aa")
         let abLink = SQLink(sourceGlobalId: a0.globalId!, targetGlobalId: b0.globalId!, label: "ab")
         let asLink = SQLink(sourceGlobalId: a0.globalId!, targetGlobalId: secret.globalId!, label: "as")
-        source.add(contentsOf: [aaLink, abLink, asLink])
+        try source.add(contentsOf: [aaLink, abLink, asLink])
 
         _ = try await task.value
 

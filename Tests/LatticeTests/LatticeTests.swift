@@ -223,7 +223,7 @@ class LatticeTests: BaseTest {
         person.name = "John"
         person.age = 30
         #expect(person.age == 30)
-        manager.add(person)
+        try manager.add(person)
         
         person.age = 31
         #expect(person.age == 31)
@@ -293,7 +293,7 @@ class LatticeTests: BaseTest {
         obj.embeddedArrayOpt = [Embedded(bar: "optArr1")]
 
         // MARK: - Persist
-        lattice.add(obj)
+        try lattice.add(obj)
 
         // MARK: - Retrieve and verify
         let results = lattice.objects(AllTypesObject.self)
@@ -371,7 +371,7 @@ class LatticeTests: BaseTest {
         obj2.embedded = Embedded(bar: "")
         // Leave all optionals as nil
 
-        lattice.add(obj2)
+        try lattice.add(obj2)
 
         let results2 = lattice.objects(AllTypesObject.self)
         #expect(results2.count == 2)
@@ -455,9 +455,9 @@ class LatticeTests: BaseTest {
         
         #expect(persons.count == 0)
         
-        lattice.add(person1)
-        lattice.add(person2)
-        lattice.add(person3)
+        try lattice.add(person1)
+        try lattice.add(person2)
+        try lattice.add(person3)
         
         #expect(persons.count == 3)
         
@@ -484,9 +484,9 @@ class LatticeTests: BaseTest {
         
         #expect(persons.count == 0)
         
-        lattice.add(person1)
-        lattice.add(person2)
-        lattice.add(person3)
+        try lattice.add(person1)
+        try lattice.add(person2)
+        try lattice.add(person3)
         
         #expect(persons.count == 3)
     }
@@ -500,7 +500,7 @@ class LatticeTests: BaseTest {
 //    @Test func testLattice_ObservableRegistrar() async throws {
 //        let lattice = try testLattice(path: path, Person.self)
 //        let person = Person()
-//        lattice.add(person)
+//        try lattice.add(person)
 //        person.dog = .init()
 //        person.dog?.name = "Spot"
 //        // Person and Dog should have observers registered
@@ -584,7 +584,7 @@ class LatticeTests: BaseTest {
             checkedContinuation = continuation
             cancellable = lattice.objects(Person.self).observe(block)
             autoreleasepool {
-                lattice.add(person)
+                try! lattice.add(person)
             }
         }
         cancellable?.cancel()
@@ -620,7 +620,7 @@ class LatticeTests: BaseTest {
                     insertHitCount += 1
                 }
             autoreleasepool {
-                lattice.add(person2)
+                try! lattice.add(person2)
             }
         }
         cancellable?.cancel()
@@ -681,7 +681,7 @@ class LatticeTests: BaseTest {
             checkedContinuation = continuation
             cancellable = lattice.observe(block)
             autoreleasepool {
-                lattice.add(person)
+                try! lattice.add(person)
             }
         }
         cancellable?.cancel()
@@ -718,7 +718,7 @@ class LatticeTests: BaseTest {
             checkedContinuation = continuation
             cancellable = lattice.observe(block)
             autoreleasepool {
-                lattice.add(person)
+                try! lattice.add(person)
             }
         }
         cancellable?.cancel()
@@ -738,7 +738,7 @@ class LatticeTests: BaseTest {
         let person1 = Person()
         person1.name = "Alice"
         person1.age = 30
-        lattice.add(person1)
+        try lattice.add(person1)
 
         // Get a second reference to the same row
         let person2 = lattice.object(Person.self, primaryKey: person1.primaryKey!)!
@@ -783,7 +783,7 @@ class LatticeTests: BaseTest {
         let person1 = Person()
         person1.name = "Alice"
         person1.age = 30
-        lattice.add(person1)
+        try lattice.add(person1)
 
         let person2 = lattice.object(Person.self, primaryKey: person1.primaryKey!)!
         #expect(person1 !== person2)
@@ -817,7 +817,7 @@ class LatticeTests: BaseTest {
         let person = Person()
         person.name = "Alice"
         person.age = 30
-        lattice.add(person)
+        try lattice.add(person)
 
         var receivedProperties: [String] = []
         let token = person.observe { propertyName in
@@ -837,7 +837,7 @@ class LatticeTests: BaseTest {
         let person = Person()
         person.name = "Alice"
         person.age = 30
-        lattice.add(person)
+        try lattice.add(person)
 
         var receivedAges: [Int] = []
         let token = person.observe(\.age) { newAge in
@@ -867,7 +867,7 @@ class LatticeTests: BaseTest {
         let person1 = Person()
         person1.name = "Alice"
         person1.age = 30
-        lattice.add(person1)
+        try lattice.add(person1)
 
         let person2 = lattice.object(Person.self, primaryKey: person1.primaryKey!)!
 
@@ -892,7 +892,7 @@ class LatticeTests: BaseTest {
         let person = Person()
         person.name = "Alice"
         person.age = 30
-        lattice.add(person)
+        try lattice.add(person)
 
         var count = 0
         let token = person.observe { _ in
@@ -913,7 +913,7 @@ class LatticeTests: BaseTest {
             let lattice = try testLattice(path: path, ModelWithEmbeddedModelObject.self)
             let object = ModelWithEmbeddedModelObject()
             object.bar = .init(bar: "hi")
-            lattice.add(object)
+            try lattice.add(object)
 
             let objects = lattice.objects(ModelWithEmbeddedModelObject.self).where {
                 $0.bar.bar == "hi"
@@ -926,7 +926,7 @@ class LatticeTests: BaseTest {
         let lattice = try testLattice(path: path, ModelWithNonNullEmbeddedModelObject.self)
         let object = ModelWithNonNullEmbeddedModelObject()
         object.bar = .init(bar: "hi")
-        lattice.add(object)
+        try lattice.add(object)
         let objects = lattice.objects(ModelWithNonNullEmbeddedModelObject.self).where {
             $0.bar.bar == "hi"
         }
@@ -960,7 +960,7 @@ class LatticeTests: BaseTest {
         object.embedded = Embedded(bar: "")
         // Test Data
         object.data = Data([1, 2, 3])
-        lattice.add(object)
+        try lattice.add(object)
         #expect(lattice.objects(AllTypesObject.self).first?.data == Data([1, 2, 3]))
     }
     
@@ -989,12 +989,12 @@ class LatticeTests: BaseTest {
         try autoreleasepool {
             let personv1 = MigrationV1.Person()
             let lattice = try testLattice(path: path, MigrationV1.Person.self)
-            lattice.add(personv1)
+            try lattice.add(personv1)
         }
         try autoreleasepool {
             let person = MigrationV2.Person()
             let lattice = try testLattice(path: path, MigrationV2.Person.self)
-            lattice.add(person)
+            try lattice.add(person)
             #expect(person.city == "")
             person.city = "New York"
             #expect(person.city == "New York")
@@ -1002,7 +1002,7 @@ class LatticeTests: BaseTest {
         try autoreleasepool {
             let person = MigrationV3.Person()
             let lattice = try testLattice(path: path, MigrationV3.Person.self)
-            lattice.add(person)
+            try lattice.add(person)
             person.contacts["email"] = "john@example.com"
             #expect(person.contacts["email"] == "john@example.com")
         }
@@ -1014,7 +1014,7 @@ class LatticeTests: BaseTest {
             let lattice = try testLattice(path: path, MigrationV1.Person.self)
             let p = MigrationV1.Person()
             p.name = "Alice"
-            lattice.add(p)
+            try lattice.add(p)
         }
 
         // Phase 2: Reopen with V2 schema — drops `otherPerson`, adds `age`+`city`.
@@ -1039,7 +1039,7 @@ class LatticeTests: BaseTest {
         person.age = 25
         await withCheckedContinuation { continuation in
             checkedContinuation.withLock { $0 = continuation }
-            lattice.add(person)
+            try! lattice.add(person)
         }
 
         cancellable.cancel()
@@ -1054,7 +1054,7 @@ class LatticeTests: BaseTest {
         // add person with no link
         let person = Person()
         #expect(person.dog == nil)
-        lattice.add(person)
+        try lattice.add(person)
         #expect(person.dog == nil)
         
         // add link to live object
@@ -1073,7 +1073,7 @@ class LatticeTests: BaseTest {
         #expect(person2.dog?.name == "max")
         #expect(person.dog?.primaryKey == person2.dog?.primaryKey)
         
-        lattice.add(person2)
+        try lattice.add(person2)
         
         #expect(person2.dog?.name == "max")
         
@@ -1093,7 +1093,7 @@ class LatticeTests: BaseTest {
         let bella = Dog()
         bella.name = "bella"
         dog.puppies.append(contentsOf: [fido, spot, bella])
-        lattice.add(dog)
+        try lattice.add(dog)
         #expect(dog.puppies.count == 3)
         #expect(dog.puppies[0].name == "fido")
         #expect(dog.puppies[1].name == "spot")
@@ -1138,7 +1138,7 @@ class LatticeTests: BaseTest {
         dog.puppies.append(fido)
         dog.puppies.append(spot)
         dog.puppies.append(bella)
-        lattice.add(dog)
+        try lattice.add(dog)
 
         let fetched = lattice.objects(Dog.self).where { $0.name == "rex" }.first!
         #expect(fetched.puppies.count == 3)
@@ -1156,7 +1156,7 @@ class LatticeTests: BaseTest {
 
         let person = PersonWithDogs()
         person.name = "Owner"
-        lattice.add(person)
+        try lattice.add(person)
 
         // Create unmanaged dog with nested list
         let dog = Dog()
@@ -1187,7 +1187,7 @@ class LatticeTests: BaseTest {
         let children = [Child(), Child(), Child()]
         for child in children {
             child.parent = parent
-            lattice.add(child)
+            try lattice.add(child)
         }
 
         #expect(parent.children.count == 3)
@@ -1197,8 +1197,8 @@ class LatticeTests: BaseTest {
         let lattice = try testLattice(path: path, Parent.self, Child.self)
         let parent1 = Parent()
         let parent2 = Parent()
-        lattice.add(parent1)
-        lattice.add(parent2)
+        try lattice.add(parent1)
+        try lattice.add(parent2)
 
         let child1 = Child()
         child1.parent = parent1
@@ -1207,7 +1207,7 @@ class LatticeTests: BaseTest {
         let child3 = Child()
         child3.parent = parent2
 
-        lattice.add(contentsOf: [child1, child2, child3])
+        try lattice.add(contentsOf: [child1, child2, child3])
 
         // Test querying by link's primary key
         let parent1PK = parent1.primaryKey!
@@ -1226,8 +1226,8 @@ class LatticeTests: BaseTest {
         parent1.name = "Alice"
         let parent2 = Parent()
         parent2.name = "Bob"
-        lattice.add(parent1)
-        lattice.add(parent2)
+        try lattice.add(parent1)
+        try lattice.add(parent2)
 
         // Create children linked to parents
         let child1 = Child()
@@ -1240,7 +1240,7 @@ class LatticeTests: BaseTest {
         child3.name = "Child3"
         child3.parent = parent2
 
-        lattice.add(contentsOf: [child1, child2, child3])
+        try lattice.add(contentsOf: [child1, child2, child3])
 
         // Test querying by link's property (not just primaryKey)
         let childrenOfAlice = lattice.objects(Child.self).where {
@@ -1260,8 +1260,8 @@ class LatticeTests: BaseTest {
         grandparent1.name = "GrandpaSmith"
         let grandparent2 = Grandparent()
         grandparent2.name = "GrandpaJones"
-        lattice.add(grandparent1)
-        lattice.add(grandparent2)
+        try lattice.add(grandparent1)
+        try lattice.add(grandparent2)
 
         // Create parents linked to grandparents
         let parent1 = Parent()
@@ -1273,7 +1273,7 @@ class LatticeTests: BaseTest {
         let parent3 = Parent()
         parent3.name = "Charlie"
         parent3.grandparent = grandparent1
-        lattice.add(contentsOf: [parent1, parent2, parent3])
+        try lattice.add(contentsOf: [parent1, parent2, parent3])
 
         // Create children linked to parents
         let child1 = Child()
@@ -1285,7 +1285,7 @@ class LatticeTests: BaseTest {
         let child3 = Child()
         child3.name = "Child3"
         child3.parent = parent3
-        lattice.add(contentsOf: [child1, child2, child3])
+        try lattice.add(contentsOf: [child1, child2, child3])
 
         // Test querying through multiple levels: child -> parent -> grandparent
         let smithGrandchildren = lattice.objects(Child.self).where {
@@ -1305,7 +1305,7 @@ class LatticeTests: BaseTest {
             age += 1
         }
         let lattice = try testLattice(path: path, Person.self, Dog.self)
-        lattice.add(contentsOf: people)
+        try lattice.add(contentsOf: people)
         #expect(lattice.objects(Person.self).count == 1000)
         age = 0
         lattice.objects(Person.self).sortedBy(.init(\.age, order: .forward)).forEach {
@@ -1329,7 +1329,7 @@ class LatticeTests: BaseTest {
 //        let person = Person()
 //        person.name = "Jay"
 //        person.age = 25
-//        lattice1.add(person)
+//        try lattice1.add(person)
 //        
 //        #expect(lattice1.objects(Person.self).count == 1)
 //        #expect(lattice2.objects(Person.self).count == 0)
@@ -1363,7 +1363,7 @@ class LatticeTests: BaseTest {
 //        let model = ModelWithEmbeddedModelObject()
 //        model.bar = .init(bar: "baz")
 //        
-//        lattice1.add(model)
+//        try lattice1.add(model)
 //        
 //        #expect(lattice1.objects(ModelWithEmbeddedModelObject.self).count == 1)
 //        #expect(lattice2.objects(ModelWithEmbeddedModelObject.self).count == 0)
@@ -1390,7 +1390,7 @@ class LatticeTests: BaseTest {
         model.date = date
         model.email = "invalid"
         
-        lattice.add(model)
+        try lattice.add(model)
         let globalId = model.globalId
         
         #expect(lattice.objects(ModelWithConstraints.self).count == 1)
@@ -1401,7 +1401,7 @@ class LatticeTests: BaseTest {
         model.date = date
         model.email = "invalid"
         
-        lattice.add(model)
+        try lattice.add(model)
         
         #expect(lattice.objects(ModelWithConstraints.self).count == 1)
         #expect(lattice.objects(ModelWithConstraints.self).first?.name == "Bob")
@@ -1414,7 +1414,7 @@ class LatticeTests: BaseTest {
             model.date = date
             model.email = "invalid"
         }
-        lattice.add(contentsOf: modelsToAdd)
+        try lattice.add(contentsOf: modelsToAdd)
         
         #expect(lattice.objects(ModelWithConstraints.self).count == 1)
         #expect(lattice.objects(ModelWithConstraints.self).first?.name == "Mary")
@@ -1431,7 +1431,7 @@ class LatticeTests: BaseTest {
         original.age = 30
         original.date = date
         original.email = "alice@test.com"
-        lattice.add(original)
+        try lattice.add(original)
 
         let originalGlobalId = original.globalId
         #expect(lattice.objects(ModelWithConstraints.self).count == 1)
@@ -1442,7 +1442,7 @@ class LatticeTests: BaseTest {
         updated.age = 30
         updated.date = date
         updated.email = "alice@test.com"
-        lattice.add(updated)
+        try lattice.add(updated)
 
         // Should still be 1 row, with updated name, same globalId
         #expect(lattice.objects(ModelWithConstraints.self).count == 1)
@@ -1456,7 +1456,7 @@ class LatticeTests: BaseTest {
         distinct.age = 30
         distinct.date = date
         distinct.email = "bob@test.com"
-        lattice.add(distinct)
+        try lattice.add(distinct)
 
         #expect(lattice.objects(ModelWithConstraints.self).count == 2)
 
@@ -1469,7 +1469,7 @@ class LatticeTests: BaseTest {
             m.email = "alice@test.com"
             return m
         }
-        lattice.add(contentsOf: bulk)
+        try lattice.add(contentsOf: bulk)
 
         // Still 2 rows total (alice's key upserted, bob's untouched)
         #expect(lattice.objects(ModelWithConstraints.self).count == 2)
@@ -1481,7 +1481,7 @@ class LatticeTests: BaseTest {
     @Test func testNestedSchemaDiscoveryForList() throws {
         let lattice = try testLattice(path: path, PersonWithDogs.self)
         let person = PersonWithDogs()
-        lattice.add(person)
+        try lattice.add(person)
         person.dogs.append(Dog())
     }
 
@@ -1516,8 +1516,8 @@ class LatticeTests: BaseTest {
         objFilled.dict = [:]
         objFilled.embedded = Embedded(bar: "")
 
-        lattice.add(objEmpty)
-        lattice.add(objFilled)
+        try lattice.add(objEmpty)
+        try lattice.add(objFilled)
 
         // Test isEmpty on non-optional string
         let emptyResults = lattice.objects(AllTypesObject.self).where {
@@ -1567,8 +1567,8 @@ class LatticeTests: BaseTest {
         objWithValue.dict = [:]
         objWithValue.embedded = Embedded(bar: "")
 
-        lattice.add(objWithNull)
-        lattice.add(objWithValue)
+        try lattice.add(objWithNull)
+        try lattice.add(objWithValue)
 
         // Test querying for null (IS NULL)
         let nullResults = lattice.objects(AllTypesObject.self).where {
@@ -1618,8 +1618,8 @@ class LatticeTests: BaseTest {
         objFilled.dict = [:]
         objFilled.embedded = Embedded(bar: "")
 
-        lattice.add(objEmpty)
-        lattice.add(objFilled)
+        try lattice.add(objEmpty)
+        try lattice.add(objFilled)
 
         // Test isEmpty query
         let emptyResults = lattice.objects(AllTypesObject.self).where {
@@ -1683,9 +1683,9 @@ class LatticeTests: BaseTest {
         let obj1 = makeAllTypesObject(string: "hello world")
         let obj2 = makeAllTypesObject(string: "goodbye world")
         let obj3 = makeAllTypesObject(string: "hello there")
-        lattice.add(obj1)
-        lattice.add(obj2)
-        lattice.add(obj3)
+        try lattice.add(obj1)
+        try lattice.add(obj2)
+        try lattice.add(obj3)
 
         let results = lattice.objects(AllTypesObject.self).where {
             $0.string.contains("world")
@@ -1699,9 +1699,9 @@ class LatticeTests: BaseTest {
         let obj1 = makeAllTypesObject(string: "hello world")
         let obj2 = makeAllTypesObject(string: "goodbye world")
         let obj3 = makeAllTypesObject(string: "hello there")
-        lattice.add(obj1)
-        lattice.add(obj2)
-        lattice.add(obj3)
+        try lattice.add(obj1)
+        try lattice.add(obj2)
+        try lattice.add(obj3)
 
         let results = lattice.objects(AllTypesObject.self).where {
             $0.string.starts(with: "hello")
@@ -1715,9 +1715,9 @@ class LatticeTests: BaseTest {
         let obj1 = makeAllTypesObject(string: "hello world")
         let obj2 = makeAllTypesObject(string: "goodbye world")
         let obj3 = makeAllTypesObject(string: "hello there")
-        lattice.add(obj1)
-        lattice.add(obj2)
-        lattice.add(obj3)
+        try lattice.add(obj1)
+        try lattice.add(obj2)
+        try lattice.add(obj3)
 
         let results = lattice.objects(AllTypesObject.self).where {
             $0.string.ends(with: "world")
@@ -1731,9 +1731,9 @@ class LatticeTests: BaseTest {
         let obj1 = makeAllTypesObject(string: "hello world")
         let obj2 = makeAllTypesObject(string: "hello there")
         let obj3 = makeAllTypesObject(string: "goodbye world")
-        lattice.add(obj1)
-        lattice.add(obj2)
-        lattice.add(obj3)
+        try lattice.add(obj1)
+        try lattice.add(obj2)
+        try lattice.add(obj3)
 
         let results = lattice.objects(AllTypesObject.self).where {
             $0.string.like("hello%")
@@ -1746,8 +1746,8 @@ class LatticeTests: BaseTest {
 
         let obj1 = makeAllTypesObject(string: "it's a test")
         let obj2 = makeAllTypesObject(string: "no apostrophe")
-        lattice.add(obj1)
-        lattice.add(obj2)
+        try lattice.add(obj1)
+        try lattice.add(obj2)
 
         let results = lattice.objects(AllTypesObject.self).where {
             $0.string == "it's a test"
@@ -1761,8 +1761,8 @@ class LatticeTests: BaseTest {
 
         let obj1 = makeAllTypesObject(string: "active", bool: true)
         let obj2 = makeAllTypesObject(string: "inactive", bool: false)
-        lattice.add(obj1)
-        lattice.add(obj2)
+        try lattice.add(obj1)
+        try lattice.add(obj2)
 
         let trueResults = lattice.objects(AllTypesObject.self).where {
             $0.bool == true
@@ -1787,9 +1787,9 @@ class LatticeTests: BaseTest {
         let obj1 = makeAllTypesObject(string: "yesterday", date: yesterday)
         let obj2 = makeAllTypesObject(string: "now", date: now)
         let obj3 = makeAllTypesObject(string: "tomorrow", date: tomorrow)
-        lattice.add(obj1)
-        lattice.add(obj2)
-        lattice.add(obj3)
+        try lattice.add(obj1)
+        try lattice.add(obj2)
+        try lattice.add(obj3)
 
         let results = lattice.objects(AllTypesObject.self).where {
             $0.date > now.addingTimeInterval(-1)
@@ -1808,9 +1808,9 @@ class LatticeTests: BaseTest {
         let obj1 = makeAllTypesObject(string: "pi", double: 3.14159)
         let obj2 = makeAllTypesObject(string: "e", double: 2.71828)
         let obj3 = makeAllTypesObject(string: "ten", double: 10.0)
-        lattice.add(obj1)
-        lattice.add(obj2)
-        lattice.add(obj3)
+        try lattice.add(obj1)
+        try lattice.add(obj2)
+        try lattice.add(obj3)
 
         let results = lattice.objects(AllTypesObject.self).where {
             $0.double > 3.0
@@ -1836,9 +1836,9 @@ class LatticeTests: BaseTest {
         let p3 = Person()
         p3.name = "Charlie"
         p3.age = 30
-        lattice.add(p1)
-        lattice.add(p2)
-        lattice.add(p3)
+        try lattice.add(p1)
+        try lattice.add(p2)
+        try lattice.add(p3)
 
         #expect(lattice.objects(Person.self).where { $0.age >= 20 }.count == 2)
         #expect(lattice.objects(Person.self).where { $0.age <= 20 }.count == 2)
@@ -1859,9 +1859,9 @@ class LatticeTests: BaseTest {
         let p3 = Person()
         p3.name = "Alice"
         p3.age = 35
-        lattice.add(p1)
-        lattice.add(p2)
-        lattice.add(p3)
+        try lattice.add(p1)
+        try lattice.add(p2)
+        try lattice.add(p3)
 
         let andResults = lattice.objects(Person.self).where {
             $0.name == "Alice" && $0.age > 30
@@ -1892,9 +1892,9 @@ class LatticeTests: BaseTest {
         let p3 = Person()
         p3.name = "Charlie"
         p3.age = 30
-        lattice.add(p1)
-        lattice.add(p2)
-        lattice.add(p3)
+        try lattice.add(p1)
+        try lattice.add(p2)
+        try lattice.add(p3)
 
         let results = lattice.objects(Person.self).where {
             $0.age.contains(15...25)
@@ -1915,9 +1915,9 @@ class LatticeTests: BaseTest {
         let p3 = Person()
         p3.name = "Charlie"
         p3.age = 30
-        lattice.add(p1)
-        lattice.add(p2)
-        lattice.add(p3)
+        try lattice.add(p1)
+        try lattice.add(p2)
+        try lattice.add(p3)
 
         let results = lattice.objects(Person.self).where {
             $0.age.contains(10..<30)
@@ -1937,8 +1937,8 @@ class LatticeTests: BaseTest {
         person2.name = "Bob"
         person2.age = 25
 
-        lattice.add(person1)
-        lattice.add(person2)
+        try lattice.add(person1)
+        try lattice.add(person2)
 
         // Get the globalId of person1
         let globalId = person1.globalId
@@ -1988,8 +1988,8 @@ class LatticeTests: BaseTest {
         let museum = Museum(name: "The Louvre", country: "France")
         let restaurant = Restaurant(name: "Le Bernardin", country: "United States")
 
-        lattice1.add(restaurant)
-        lattice2.add(museum)
+        try lattice1.add(restaurant)
+        try lattice2.add(museum)
 
         try lattice1.attach(lattice: lattice2)
 
@@ -2016,12 +2016,12 @@ class LatticeTests: BaseTest {
         let alice = Person()
         alice.name = "Alice"
         alice.age = 30
-        lattice1.add(alice)
+        try lattice1.add(alice)
 
         let bob = Person()
         bob.name = "Bob"
         bob.age = 25
-        lattice2.add(bob)
+        try lattice2.add(bob)
 
         // Before attach: verify each DB has the correct data
         #expect(lattice1.objects(Person.self).count == 1)
@@ -2063,11 +2063,11 @@ class LatticeTests: BaseTest {
         let lattice = try testLattice(Listing.self)
 
         // Add listings with duplicate destinations
-        lattice.add(Listing(title: "Beach House", destination: "Hawaii", price: 200))
-        lattice.add(Listing(title: "Mountain Cabin", destination: "Colorado", price: 150))
-        lattice.add(Listing(title: "Surf Shack", destination: "Hawaii", price: 100))
-        lattice.add(Listing(title: "Ski Lodge", destination: "Colorado", price: 300))
-        lattice.add(Listing(title: "City Loft", destination: "New York", price: 250))
+        try lattice.add(Listing(title: "Beach House", destination: "Hawaii", price: 200))
+        try lattice.add(Listing(title: "Mountain Cabin", destination: "Colorado", price: 150))
+        try lattice.add(Listing(title: "Surf Shack", destination: "Hawaii", price: 100))
+        try lattice.add(Listing(title: "Ski Lodge", destination: "Colorado", price: 300))
+        try lattice.add(Listing(title: "City Loft", destination: "New York", price: 250))
 
         // Without group by - should get all 5
         let allListings = lattice.objects(Listing.self).snapshot()
@@ -2085,11 +2085,11 @@ class LatticeTests: BaseTest {
     @Test func test_GroupBy_Count() async throws {
         let lattice = try testLattice(Listing.self)
 
-        lattice.add(Listing(title: "A", destination: "Hawaii", price: 100))
-        lattice.add(Listing(title: "B", destination: "Hawaii", price: 200))
-        lattice.add(Listing(title: "C", destination: "Colorado", price: 150))
-        lattice.add(Listing(title: "D", destination: "Colorado", price: 250))
-        lattice.add(Listing(title: "E", destination: "Colorado", price: 350))
+        try lattice.add(Listing(title: "A", destination: "Hawaii", price: 100))
+        try lattice.add(Listing(title: "B", destination: "Hawaii", price: 200))
+        try lattice.add(Listing(title: "C", destination: "Colorado", price: 150))
+        try lattice.add(Listing(title: "D", destination: "Colorado", price: 250))
+        try lattice.add(Listing(title: "E", destination: "Colorado", price: 350))
 
         // Count without group by
         #expect(lattice.objects(Listing.self).count == 5)
@@ -2101,11 +2101,11 @@ class LatticeTests: BaseTest {
     @Test func test_GroupBy_WithWhere() async throws {
         let lattice = try testLattice(Listing.self)
 
-        lattice.add(Listing(title: "Cheap Hawaii", destination: "Hawaii", price: 50))
-        lattice.add(Listing(title: "Expensive Hawaii", destination: "Hawaii", price: 500))
-        lattice.add(Listing(title: "Cheap Colorado", destination: "Colorado", price: 75))
-        lattice.add(Listing(title: "Expensive Colorado", destination: "Colorado", price: 400))
-        lattice.add(Listing(title: "Mid New York", destination: "New York", price: 200))
+        try lattice.add(Listing(title: "Cheap Hawaii", destination: "Hawaii", price: 50))
+        try lattice.add(Listing(title: "Expensive Hawaii", destination: "Hawaii", price: 500))
+        try lattice.add(Listing(title: "Cheap Colorado", destination: "Colorado", price: 75))
+        try lattice.add(Listing(title: "Expensive Colorado", destination: "Colorado", price: 400))
+        try lattice.add(Listing(title: "Mid New York", destination: "New York", price: 200))
 
         // Filter to expensive listings (price > 100), then group by destination
         let expensiveGrouped = lattice.objects(Listing.self)
@@ -2129,9 +2129,9 @@ class LatticeTests: BaseTest {
     @Test func test_GroupBy_WithSort() async throws {
         let lattice = try testLattice(Listing.self)
 
-        lattice.add(Listing(title: "Z Hawaii", destination: "Hawaii", price: 100))
-        lattice.add(Listing(title: "A Colorado", destination: "Colorado", price: 200))
-        lattice.add(Listing(title: "M New York", destination: "New York", price: 150))
+        try lattice.add(Listing(title: "Z Hawaii", destination: "Hawaii", price: 100))
+        try lattice.add(Listing(title: "A Colorado", destination: "Colorado", price: 200))
+        try lattice.add(Listing(title: "M New York", destination: "New York", price: 150))
 
         // Group by destination, sorted by title ascending
         let sorted = lattice.objects(Listing.self)
@@ -2159,9 +2159,9 @@ class LatticeTests: BaseTest {
         let lattice = try testLattice(Listing.self)
 
         // All listings have the same destination
-        lattice.add(Listing(title: "A", destination: "Hawaii", price: 100))
-        lattice.add(Listing(title: "B", destination: "Hawaii", price: 200))
-        lattice.add(Listing(title: "C", destination: "Hawaii", price: 300))
+        try lattice.add(Listing(title: "A", destination: "Hawaii", price: 100))
+        try lattice.add(Listing(title: "B", destination: "Hawaii", price: 200))
+        try lattice.add(Listing(title: "C", destination: "Hawaii", price: 300))
 
         let grouped = lattice.objects(Listing.self).group(by: \.destination).snapshot()
         #expect(grouped.count == 1)
@@ -2172,9 +2172,9 @@ class LatticeTests: BaseTest {
         let lattice = try testLattice(Listing.self)
 
         // All listings have unique destinations
-        lattice.add(Listing(title: "A", destination: "Hawaii", price: 100))
-        lattice.add(Listing(title: "B", destination: "Colorado", price: 200))
-        lattice.add(Listing(title: "C", destination: "New York", price: 300))
+        try lattice.add(Listing(title: "A", destination: "Hawaii", price: 100))
+        try lattice.add(Listing(title: "B", destination: "Colorado", price: 200))
+        try lattice.add(Listing(title: "C", destination: "New York", price: 300))
 
         let grouped = lattice.objects(Listing.self).group(by: \.destination).snapshot()
         #expect(grouped.count == 3) // Same as ungrouped
@@ -2183,11 +2183,11 @@ class LatticeTests: BaseTest {
     @Test func test_GroupBy_Chaining() async throws {
         let lattice = try testLattice(Listing.self)
 
-        lattice.add(Listing(title: "A", destination: "Hawaii", price: 50))
-        lattice.add(Listing(title: "B", destination: "Hawaii", price: 150))
-        lattice.add(Listing(title: "C", destination: "Colorado", price: 200))
-        lattice.add(Listing(title: "D", destination: "Colorado", price: 250))
-        lattice.add(Listing(title: "E", destination: "New York", price: 300))
+        try lattice.add(Listing(title: "A", destination: "Hawaii", price: 50))
+        try lattice.add(Listing(title: "B", destination: "Hawaii", price: 150))
+        try lattice.add(Listing(title: "C", destination: "Colorado", price: 200))
+        try lattice.add(Listing(title: "D", destination: "Colorado", price: 250))
+        try lattice.add(Listing(title: "E", destination: "New York", price: 300))
 
         // Chain: where -> group -> sort
         let result = lattice.objects(Listing.self)
@@ -2244,8 +2244,8 @@ class LatticeTests: BaseTest {
 
         let p1 = Person(); p1.name = "Alice"; p1.age = 30
         let p2 = Person(); p2.name = "Bob"; p2.age = 25
-        lattice.add(p1)
-        lattice.add(p2)
+        try lattice.add(p1)
+        try lattice.add(p2)
 
         // Update to create more audit entries
         p1.name = "Alice Updated"
@@ -2271,7 +2271,7 @@ class LatticeTests: BaseTest {
         let lattice = try testLattice(path: path, Person.self)
 
         let p = Person(); p.name = "Test"; p.age = 1
-        lattice.add(p)
+        try lattice.add(p)
 
         // Should not crash
         lattice.checkpoint()
@@ -2287,7 +2287,7 @@ class LatticeTests: BaseTest {
         // Add objects then delete to create reclaimable space
         for i in 0..<100 {
             let p = Person(); p.name = "Person \(i)"; p.age = i
-            lattice.add(p)
+            try lattice.add(p)
         }
         lattice.delete(Person.self)
         lattice.delete(AuditLog.self)
@@ -2297,7 +2297,7 @@ class LatticeTests: BaseTest {
 
         // DB should still be functional after vacuum
         let p = Person(); p.name = "After Vacuum"; p.age = 99
-        lattice.add(p)
+        try lattice.add(p)
         #expect(lattice.count(Person.self) == 1)
         #expect(lattice.object(Person.self, primaryKey: p.primaryKey!)?.name == "After Vacuum")
     }
@@ -2317,10 +2317,10 @@ class LatticeTests: BaseTest {
         let m2 = UpsertModel()
         m2.name = "m1"
         
-        lattice.add(m1)
+        try lattice.add(m1)
         #expect(m1.name == "m1")
         #expect(m1.lattice != nil)
-        lattice.add(m2)
+        try lattice.add(m2)
         #expect(m2.name == "m1")
         #expect(m2.lattice != nil)
     }
@@ -2331,10 +2331,10 @@ class LatticeTests: BaseTest {
             guard let lattice = tsr.resolve() else {
                 return #expect(Bool(false))
             }
-            
-            lattice.transaction {
+
+            try lattice.transaction {
                 for _ in 0..<100 {
-                    lattice.add(Person())
+                    try lattice.add(Person())
                 }
             }
         }
@@ -2342,14 +2342,14 @@ class LatticeTests: BaseTest {
             guard let lattice = tsr.resolve() else {
                 return #expect(Bool(false))
             }
-            lattice.transaction {
+            try lattice.transaction {
                 for _ in 0..<100 {
-                    lattice.add(Person())
+                    try lattice.add(Person())
                 }
             }
         }
-        
-        await t1.value
-        await t2.value
+
+        try await t1.value
+        try await t2.value
     }
 }

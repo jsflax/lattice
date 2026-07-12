@@ -544,8 +544,15 @@ extension Array: CxxManaged where Element: CxxListManaged, Element: Codable {
     }
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Array<Element>) {
-        try! storage._ref.setString(named: name,
-                              String(data: JSONEncoder().encode(value), encoding: .utf8)!)
+        // Write path traps: an in-memory array that cannot JSON-encode is a
+        // programmer error in Element's Codable conformance.
+        let jsonData: Data
+        do {
+            jsonData = try JSONEncoder().encode(value)
+        } catch {
+            fatalError("Array<\(String(describing: Element.self))> failed to JSON-encode for field '\(name)': \(error)")
+        }
+        storage._ref.setString(named: name, String(data: jsonData, encoding: .utf8)!)
     }
 }
 
@@ -582,8 +589,15 @@ extension Set: CxxManaged where Element: CxxListManaged, Element: Codable {
     }
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Set<Element>) {
-        try! storage._ref.setString(named: name,
-                              String(data: JSONEncoder().encode(value), encoding: .utf8)!)
+        // Write path traps: an in-memory set that cannot JSON-encode is a
+        // programmer error in Element's Codable conformance.
+        let jsonData: Data
+        do {
+            jsonData = try JSONEncoder().encode(value)
+        } catch {
+            fatalError("Set<\(String(describing: Element.self))> failed to JSON-encode for field '\(name)': \(error)")
+        }
+        storage._ref.setString(named: name, String(data: jsonData, encoding: .utf8)!)
     }
 }
 

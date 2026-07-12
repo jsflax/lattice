@@ -78,7 +78,7 @@ actor ReplicationSlotTests {
 
         // Write + sync to confirm connection is established
         let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "slot test", isPublic: true))
+        try source.add(IPCNote(title: "slot test", isPublic: true))
         try await task.value
 
         // Both source and target should have registered their IPC slots.
@@ -105,9 +105,9 @@ actor ReplicationSlotTests {
 
         // Write several entries and wait for sync
         let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert, count: 3)
-        source.add(IPCNote(title: "a1", isPublic: true))
-        source.add(IPCNote(title: "a2", isPublic: true))
-        source.add(IPCNote(title: "a3", isPublic: true))
+        try source.add(IPCNote(title: "a1", isPublic: true))
+        try source.add(IPCNote(title: "a2", isPublic: true))
+        try source.add(IPCNote(title: "a3", isPublic: true))
         try await task.value
 
         // Wait for ACKs to propagate
@@ -140,15 +140,15 @@ actor ReplicationSlotTests {
 
         // Write and sync some entries
         let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert, count: 2)
-        source.add(IPCNote(title: "m1", isPublic: true))
-        source.add(IPCNote(title: "m2", isPublic: true))
+        try source.add(IPCNote(title: "m1", isPublic: true))
+        try source.add(IPCNote(title: "m2", isPublic: true))
         try await task.value
 
         // Wait for ACKs
         try await Task.sleep(for: .seconds(1))
 
         // Write more entries (these may not be synced yet to all slots)
-        source.add(IPCNote(title: "m3", isPublic: true))
+        try source.add(IPCNote(title: "m3", isPublic: true))
 
         // Safe compact should NOT delete entries that haven't been confirmed by all slots
         let deleted = source.compactHistory()
@@ -170,7 +170,7 @@ actor ReplicationSlotTests {
         let standalone = try Lattice(IPCNote.self, configuration: .init(fileURL: standaloneURL))
         defer { try? Lattice.delete(for: .init(fileURL: standaloneURL)) }
 
-        standalone.add(IPCNote(title: "lone", isPublic: true))
+        try standalone.add(IPCNote(title: "lone", isPublic: true))
         let auditBefore = standalone.count(AuditLog.self)
         #expect(auditBefore > 0, "Should have audit entries")
 
@@ -197,7 +197,7 @@ actor ReplicationSlotTests {
 
         // Write + sync
         let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "f1", isPublic: true))
+        try source.add(IPCNote(title: "f1", isPublic: true))
         try await task.value
         try await Task.sleep(for: .seconds(1))
 
@@ -235,7 +235,7 @@ actor ReplicationSlotTests {
 
         // Establish connection and sync
         let task = await waitForChange(on: targetConfig, table: "IPCNote", operation: .insert)
-        source.add(IPCNote(title: "s1", isPublic: true))
+        try source.add(IPCNote(title: "s1", isPublic: true))
         try await task.value
 
         // Safe compact without eviction — slots exist
@@ -275,7 +275,7 @@ actor ReplicationSlotTests {
         let lattice = try Lattice(SimpleSyncObject.self, configuration: config)
 
         for i in 0..<5 {
-            lattice.add(SimpleSyncObject(value: i, floatValue: Float(i)))
+            try lattice.add(SimpleSyncObject(value: i, floatValue: Float(i)))
         }
 
         // Get events through the same path the server uses

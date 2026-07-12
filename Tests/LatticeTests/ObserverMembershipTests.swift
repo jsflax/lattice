@@ -37,7 +37,7 @@ class ObserverMembershipTests: BaseTest {
         let person = Person()
         person.name = "A"
         person.age = 30
-        lattice.add(person)
+        try lattice.add(person)
 
         let counter = FireCounter()
         // Predicate on `age`; mutate `name` — a member row changing a column
@@ -59,7 +59,7 @@ class ObserverMembershipTests: BaseTest {
         let person = Person()
         person.name = "A"
         person.age = 30
-        lattice.add(person)
+        try lattice.add(person)
 
         let counter = FireCounter()
         let token = lattice.objects(Person.self)
@@ -84,7 +84,7 @@ class ObserverMembershipTests: BaseTest {
         let person = Person()
         person.name = "A"
         person.age = 30
-        lattice.add(person)
+        try lattice.add(person)
 
         let fired = try await waitForFire(counter)
         #expect(fired, "insert of a matching row did not fire the filtered observer")

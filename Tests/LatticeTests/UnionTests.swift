@@ -32,7 +32,7 @@ class UnionTests: BaseTest {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
         let feed = TestFeed()
         feed.item = .empty
-        lattice.add(feed)
+        try lattice.add(feed)
 
         let fetched = lattice.objects(TestFeed.self).first!
         if case .empty = fetched.item {
@@ -46,7 +46,7 @@ class UnionTests: BaseTest {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
         let feed = TestFeed()
         feed.item = .note(name: "hello", date: 42)
-        lattice.add(feed)
+        try lattice.add(feed)
 
         let fetched = lattice.objects(TestFeed.self).first!
         if case .note(let name, let date) = fetched.item {
@@ -61,11 +61,11 @@ class UnionTests: BaseTest {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
         let dog = TestDogU()
         dog.name = "Rex"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         let feed = TestFeed()
         feed.item = .dog(dog)
-        lattice.add(feed)
+        try lattice.add(feed)
 
         let fetched = lattice.objects(TestFeed.self).first!
         if case .dog(let fetchedDog) = fetched.item {
@@ -80,7 +80,7 @@ class UnionTests: BaseTest {
 
         let feed = TestFeed()
         feed.item = .note(name: "first", date: 1)
-        lattice.add(feed)
+        try lattice.add(feed)
 
         // Switch from .note to .empty
         feed.item = .empty
@@ -98,11 +98,11 @@ class UnionTests: BaseTest {
 
         let dog = TestDogU()
         dog.name = "Rex"
-        lattice.add(dog)
+        try lattice.add(dog)
 
         let feed = TestFeed()
         feed.item = .dog(dog)
-        lattice.add(feed)
+        try lattice.add(feed)
 
         // Verify dog case
         if case .dog(let d) = feed.item {
@@ -125,7 +125,7 @@ class UnionTests: BaseTest {
         // Switch back to .dog — the note columns should be NULLed
         let dog2 = TestDogU()
         dog2.name = "Buddy"
-        lattice.add(dog2)
+        try lattice.add(dog2)
         feed.item = .dog(dog2)
 
         let fetched2 = lattice.objects(TestFeed.self).first!
@@ -166,8 +166,8 @@ class UnionTests: BaseTest {
 
     @Test func test_queryNonUnionField() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
-        let feed1 = TestFeed(); feed1.label = "alpha"; feed1.item = .empty; lattice.add(feed1)
-        let feed2 = TestFeed(); feed2.label = "beta"; feed2.item = .empty; lattice.add(feed2)
+        let feed1 = TestFeed(); feed1.label = "alpha"; feed1.item = .empty; try lattice.add(feed1)
+        let feed2 = TestFeed(); feed2.label = "beta"; feed2.item = .empty; try lattice.add(feed2)
 
         let results = lattice.objects(TestFeed.self).where { $0.label == "alpha" }
         #expect(results.count == 1)
@@ -175,8 +175,8 @@ class UnionTests: BaseTest {
 
     @Test func test_queryNonUnionFieldOnUnionModel() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
-        let feed1 = TestFeed(); feed1.label = "alpha"; feed1.item = .note(name: "x", date: 1); lattice.add(feed1)
-        let feed2 = TestFeed(); feed2.label = "beta"; feed2.item = .note(name: "y", date: 2); lattice.add(feed2)
+        let feed1 = TestFeed(); feed1.label = "alpha"; feed1.item = .note(name: "x", date: 1); try lattice.add(feed1)
+        let feed2 = TestFeed(); feed2.label = "beta"; feed2.item = .note(name: "y", date: 2); try lattice.add(feed2)
 
         let results = lattice.objects(TestFeed.self).where { $0.label == "alpha" }
         #expect(results.count == 1)
@@ -184,9 +184,9 @@ class UnionTests: BaseTest {
 
     @Test func test_querySwitchSingleCase() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
-        let feed1 = TestFeed(); feed1.item = .note(name: "hello", date: 1); lattice.add(feed1)
-        let feed2 = TestFeed(); feed2.item = .note(name: "world", date: 2); lattice.add(feed2)
-        let feed3 = TestFeed(); feed3.item = .empty; lattice.add(feed3)
+        let feed1 = TestFeed(); feed1.item = .note(name: "hello", date: 1); try lattice.add(feed1)
+        let feed2 = TestFeed(); feed2.item = .note(name: "world", date: 2); try lattice.add(feed2)
+        let feed3 = TestFeed(); feed3.item = .empty; try lattice.add(feed3)
 
         let results = lattice.objects(TestFeed.self).where { q in
             switch q.item {
@@ -199,10 +199,10 @@ class UnionTests: BaseTest {
 
     @Test func test_querySwitchMultipleCases() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
-        let dog = TestDogU(); dog.name = "Rex"; lattice.add(dog)
-        let feed1 = TestFeed(); feed1.item = .dog(dog); lattice.add(feed1)
-        let feed2 = TestFeed(); feed2.item = .note(name: "hi", date: 1); lattice.add(feed2)
-        let feed3 = TestFeed(); feed3.item = .empty; lattice.add(feed3)
+        let dog = TestDogU(); dog.name = "Rex"; try lattice.add(dog)
+        let feed1 = TestFeed(); feed1.item = .dog(dog); try lattice.add(feed1)
+        let feed2 = TestFeed(); feed2.item = .note(name: "hi", date: 1); try lattice.add(feed2)
+        let feed3 = TestFeed(); feed3.item = .empty; try lattice.add(feed3)
 
         let results = lattice.objects(TestFeed.self).where { q in
             switch q.item {
@@ -216,9 +216,9 @@ class UnionTests: BaseTest {
 
     @Test func test_queryCaseOnly() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
-        let feed1 = TestFeed(); feed1.item = .note(name: "a", date: 1); lattice.add(feed1)
-        let feed2 = TestFeed(); feed2.item = .note(name: "b", date: 2); lattice.add(feed2)
-        let feed3 = TestFeed(); feed3.item = .empty; lattice.add(feed3)
+        let feed1 = TestFeed(); feed1.item = .note(name: "a", date: 1); try lattice.add(feed1)
+        let feed2 = TestFeed(); feed2.item = .note(name: "b", date: 2); try lattice.add(feed2)
+        let feed3 = TestFeed(); feed3.item = .empty; try lattice.add(feed3)
 
         let results = lattice.objects(TestFeed.self).where { q in
             switch q.item {
@@ -239,8 +239,8 @@ class UnionTests: BaseTest {
 
     @Test func test_queryNoMatchingCase() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
-        let feed1 = TestFeed(); feed1.item = .note(name: "a", date: 1); lattice.add(feed1)
-        let feed2 = TestFeed(); feed2.item = .empty; lattice.add(feed2)
+        let feed1 = TestFeed(); feed1.item = .note(name: "a", date: 1); try lattice.add(feed1)
+        let feed2 = TestFeed(); feed2.item = .empty; try lattice.add(feed2)
 
         let results = lattice.objects(TestFeed.self).where { q in
             switch q.item {
@@ -253,8 +253,8 @@ class UnionTests: BaseTest {
 
     @Test func test_queryIfCaseLet() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
-        let feed1 = TestFeed(); feed1.item = .note(name: "hello", date: 1); lattice.add(feed1)
-        let feed2 = TestFeed(); feed2.item = .empty; lattice.add(feed2)
+        let feed1 = TestFeed(); feed1.item = .note(name: "hello", date: 1); try lattice.add(feed1)
+        let feed2 = TestFeed(); feed2.item = .empty; try lattice.add(feed2)
 
         let results = lattice.objects(TestFeed.self).where { q in
             if case .note(let name, _) = q.item {
@@ -267,9 +267,9 @@ class UnionTests: BaseTest {
 
     @Test func test_queryGuardCaseLet() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
-        let dog = TestDogU(); dog.name = "Rex"; lattice.add(dog)
-        let feed1 = TestFeed(); feed1.item = .dog(dog); lattice.add(feed1)
-        let feed2 = TestFeed(); feed2.item = .empty; lattice.add(feed2)
+        let dog = TestDogU(); dog.name = "Rex"; try lattice.add(dog)
+        let feed1 = TestFeed(); feed1.item = .dog(dog); try lattice.add(feed1)
+        let feed2 = TestFeed(); feed2.item = .empty; try lattice.add(feed2)
 
         let results = lattice.objects(TestFeed.self).where { q in
             guard case .dog(let dog) = q.item else { return false }
@@ -280,9 +280,9 @@ class UnionTests: BaseTest {
 
     @Test func test_queryNonUnionPredicateOutsideSwitch() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
-        let feed1 = TestFeed(); feed1.label = "a"; feed1.item = .note(name: "hello", date: 1); lattice.add(feed1)
-        let feed2 = TestFeed(); feed2.label = "b"; feed2.item = .note(name: "hello", date: 2); lattice.add(feed2)
-        let feed3 = TestFeed(); feed3.label = "a"; feed3.item = .empty; lattice.add(feed3)
+        let feed1 = TestFeed(); feed1.label = "a"; feed1.item = .note(name: "hello", date: 1); try lattice.add(feed1)
+        let feed2 = TestFeed(); feed2.label = "b"; feed2.item = .note(name: "hello", date: 2); try lattice.add(feed2)
+        let feed3 = TestFeed(); feed3.label = "a"; feed3.item = .empty; try lattice.add(feed3)
 
         let results = lattice.objects(TestFeed.self).where { q in
             let labelMatch = q.label == "a"
@@ -296,9 +296,9 @@ class UnionTests: BaseTest {
 
     @Test func test_queryMultipleFieldPredicates() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
-        let feed1 = TestFeed(); feed1.item = .note(name: "hello", date: 1); lattice.add(feed1)
-        let feed2 = TestFeed(); feed2.item = .note(name: "hello", date: 99); lattice.add(feed2)
-        let feed3 = TestFeed(); feed3.item = .note(name: "other", date: 99); lattice.add(feed3)
+        let feed1 = TestFeed(); feed1.item = .note(name: "hello", date: 1); try lattice.add(feed1)
+        let feed2 = TestFeed(); feed2.item = .note(name: "hello", date: 99); try lattice.add(feed2)
+        let feed3 = TestFeed(); feed3.item = .note(name: "other", date: 99); try lattice.add(feed3)
 
         let results = lattice.objects(TestFeed.self).where { q in
             switch q.item {
@@ -311,8 +311,8 @@ class UnionTests: BaseTest {
 
     @Test func test_queryChainedWhere() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
-        let feed1 = TestFeed(); feed1.label = "x"; feed1.item = .note(name: "a", date: 1); lattice.add(feed1)
-        let feed2 = TestFeed(); feed2.label = "y"; feed2.item = .note(name: "b", date: 2); lattice.add(feed2)
+        let feed1 = TestFeed(); feed1.label = "x"; feed1.item = .note(name: "a", date: 1); try lattice.add(feed1)
+        let feed2 = TestFeed(); feed2.label = "y"; feed2.item = .note(name: "b", date: 2); try lattice.add(feed2)
 
         let results = lattice.objects(TestFeed.self)
             .where { q in
@@ -328,9 +328,9 @@ class UnionTests: BaseTest {
     @Test func test_queryUnionCount() async throws {
         let lattice = try testLattice(TestFeed.self, TestDogU.self, TestCatU.self)
         for i in 0..<5 {
-            let feed = TestFeed(); feed.item = .note(name: "n\(i)", date: i); lattice.add(feed)
+            let feed = TestFeed(); feed.item = .note(name: "n\(i)", date: i); try lattice.add(feed)
         }
-        let feed6 = TestFeed(); feed6.item = .empty; lattice.add(feed6)
+        let feed6 = TestFeed(); feed6.item = .empty; try lattice.add(feed6)
 
         let count = lattice.objects(TestFeed.self).where { q in
             switch q.item {
@@ -390,15 +390,15 @@ class UnionSchemaEvolutionTests: BaseTest {
                 configuration: .init(fileURL: dbPath))
 
             let dog = UnionSchemaV1.Dog(); dog.name = "Rex"
-            lattice.add(dog)
+            try lattice.add(dog)
 
             let feed1 = UnionSchemaV1.Feed()
             feed1.item = .dog(dog)
-            lattice.add(feed1)
+            try lattice.add(feed1)
 
             let feed2 = UnionSchemaV1.Feed()
             feed2.item = .note(name: "hello", date: 42)
-            lattice.add(feed2)
+            try lattice.add(feed2)
 
             #expect(lattice.objects(UnionSchemaV1.Feed.self).count == 2)
         }
@@ -428,7 +428,7 @@ class UnionSchemaEvolutionTests: BaseTest {
             // Write data using the new V2 case
             let feed3 = UnionSchemaV2.Feed()
             feed3.item = .tagged(label: "important", score: 9.5)
-            lattice.add(feed3)
+            try lattice.add(feed3)
 
             #expect(lattice.objects(UnionSchemaV2.Feed.self).count == 3)
         }
@@ -447,19 +447,19 @@ class UnionSchemaEvolutionTests: BaseTest {
                 configuration: .init(fileURL: dbPath))
 
             let cat = UnionSchemaV2.Cat(); cat.name = "Whiskers"
-            lattice.add(cat)
+            try lattice.add(cat)
 
             let feed1 = UnionSchemaV2.Feed()
             feed1.item = .cat(cat)
-            lattice.add(feed1)
+            try lattice.add(feed1)
 
             let feed2 = UnionSchemaV2.Feed()
             feed2.item = .note(name: "hello", date: 42)
-            lattice.add(feed2)
+            try lattice.add(feed2)
 
             let feed3 = UnionSchemaV2.Feed()
             feed3.item = .tagged(label: "important", score: 9.5)
-            lattice.add(feed3)
+            try lattice.add(feed3)
 
             #expect(lattice.objects(UnionSchemaV2.Feed.self).count == 3)
         }

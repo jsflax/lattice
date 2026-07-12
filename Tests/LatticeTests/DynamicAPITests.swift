@@ -30,10 +30,10 @@ final class DynamicAPITests {
             let lattice = try Lattice(DynPerson.self, DynDog.self,
                                       configuration: .init(fileURL: url))
             let dog = DynDog(); dog.name = "Rex"; dog.breed = "Husky"
-            lattice.add(dog)
+            try lattice.add(dog)
             let p = DynPerson(); p.name = "Alice"; p.age = 34; p.score = 9.5
             p.nicknames = ["Al", "Ali"]
-            lattice.add(p)
+            try lattice.add(p)
             p.dog = dog
             lattice.checkpoint()
             lattice.close()
@@ -88,7 +88,7 @@ final class DynamicAPITests {
                                       configuration: .init(fileURL: url))
             let alice = DynPerson(); alice.name = "Alice"; alice.age = 34
             let bob = DynPerson(); bob.name = "Bob"; bob.age = 20
-            lattice.add(alice); lattice.add(bob)
+            try lattice.add(alice); try lattice.add(bob)
             lattice.checkpoint()
             lattice.close()
         }
@@ -134,10 +134,10 @@ final class DynamicAPITests {
             let lattice = try Lattice(DynPerson.self, DynDog.self,
                                       configuration: .init(fileURL: url))
             let dog = DynDog(); dog.name = "Rex"; dog.breed = "Husky"
-            lattice.add(dog)
+            try lattice.add(dog)
             let p = DynPerson(); p.name = "Alice"; p.age = 34; p.score = 9.5
             p.nicknames = ["Al", "Ali"]
-            lattice.add(p)
+            try lattice.add(p)
             p.dog = dog
             lattice.checkpoint()
             lattice.close()
@@ -178,7 +178,7 @@ final class DynamicAPITests {
             let lattice = try Lattice(DynPerson.self, DynDog.self,
                                       configuration: .init(fileURL: url))
             let p = DynPerson(); p.name = "Loner"; p.age = 50  // no dog
-            lattice.add(p)
+            try lattice.add(p)
             lattice.checkpoint()
             lattice.close()
         }

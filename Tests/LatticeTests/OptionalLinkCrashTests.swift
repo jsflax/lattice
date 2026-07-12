@@ -46,7 +46,7 @@ struct OptionalLinkCrashTests {
 
         let parent = Parent()
         parent.name = "team"
-        lattice.add(parent)
+        try lattice.add(parent)
 
         let child = Child()
         child.name = "alice"
@@ -70,7 +70,7 @@ struct OptionalLinkCrashTests {
 
         let parent = Parent()
         parent.name = "team"
-        lattice.add(parent)
+        try lattice.add(parent)
 
         let child = Child()
         child.name = "bob"
@@ -87,11 +87,11 @@ struct OptionalLinkCrashTests {
 
         let parent = Parent()
         parent.name = "team"
-        lattice.add(parent)
+        try lattice.add(parent)
 
         let child = Child()
         child.name = "carol"
-        lattice.add(child)  // managed via direct add, not list
+        try lattice.add(child)  // managed via direct add, not list
 
         // This should also crash since child is managed
         parent.favorite = child

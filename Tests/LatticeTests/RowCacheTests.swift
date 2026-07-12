@@ -21,11 +21,11 @@ final class RcNote {
 @Suite("Row cache (materialized reads)", .serialized)
 final class RowCacheTests: BaseTest {
 
-    private func makeNote(_ lattice: Lattice) -> RcNote {
+    private func makeNote(_ lattice: Lattice) throws -> RcNote {
         let n = RcNote()
         n.title = "T"; n.body = "B"; n.views = 7; n.rating = 4.5; n.pinned = true
         n.subtitle = "S"
-        lattice.add(n)
+        try lattice.add(n)
         return n
     }
 
@@ -33,7 +33,7 @@ final class RowCacheTests: BaseTest {
     //    The same reads on a live object issue at least one statement each.
     @Test func materializedReadsAreStatementFree() throws {
         let lattice = try testLattice(RcNote.self)
-        _ = makeNote(lattice)
+        _ = try makeNote(lattice)
 
         let fetched = try #require(lattice.objects(RcNote.self).first)
         fetched.materialize()
@@ -61,7 +61,7 @@ final class RowCacheTests: BaseTest {
     // 2. Write-through: the DB row updates AND the materialized read sees it.
     @Test func writeThroughKeepsReadYourWrites() throws {
         let lattice = try testLattice(RcNote.self)
-        _ = makeNote(lattice)
+        _ = try makeNote(lattice)
 
         let m = try #require(lattice.objects(RcNote.self).first).materialize()
         m.views = 8
@@ -81,7 +81,7 @@ final class RowCacheTests: BaseTest {
     // 3. Snapshot semantics + refresh + dematerialize fallthrough.
     @Test func snapshotIsStaleUntilRefreshed() throws {
         let lattice = try testLattice(RcNote.self)
-        _ = makeNote(lattice)
+        _ = try makeNote(lattice)
 
         let m = try #require(lattice.objects(RcNote.self).first).materialize()
         #expect(m.views == 7)
@@ -103,7 +103,7 @@ final class RowCacheTests: BaseTest {
     //    would be silent corruption.
     @Test func optionalNilRoundTrip() throws {
         let lattice = try testLattice(RcNote.self)
-        _ = makeNote(lattice)
+        _ = try makeNote(lattice)
 
         let m = try #require(lattice.objects(RcNote.self).first).materialize()
         #expect(m.subtitle == "S")
@@ -117,7 +117,7 @@ final class RowCacheTests: BaseTest {
     //    read-time freshness for live objects.
     @Test func detachedIsCheapAndFresh() throws {
         let lattice = try testLattice(RcNote.self)
-        _ = makeNote(lattice)
+        _ = try makeNote(lattice)
 
         let live = try #require(lattice.objects(RcNote.self).first)
         // External write BEFORE detaching: detached() must see it (freshness).
@@ -143,7 +143,7 @@ final class RowCacheTests: BaseTest {
     // 6. increment(): atomic SQL-side bump; materialized reads never go stale.
     @Test func incrementIsAtomicAndCacheCoherent() throws {
         let lattice = try testLattice(RcNote.self)
-        _ = makeNote(lattice)
+        _ = try makeNote(lattice)
 
         let m = try #require(lattice.objects(RcNote.self).first).materialize()
         #expect(m.views == 7)
@@ -161,7 +161,7 @@ final class RowCacheTests: BaseTest {
         let lattice = try testLattice(RcNote.self)
         for i in 0..<10 {
             let n = RcNote(); n.title = "n\(i)"; n.views = i
-            lattice.add(n)
+            try lattice.add(n)
         }
         let all = lattice.objects(RcNote.self).materializedSnapshot()
         #expect(all.count == 10)

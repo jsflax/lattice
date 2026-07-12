@@ -199,8 +199,8 @@ actor FilteredSyncTests {
 
         let note = FilteredNote(title: "public note", isPublic: true)
         let tag = FilteredTag(name: "private-tag")
-        sender.add(note)
-        sender.add(tag)
+        try sender.add(note)
+        try sender.add(tag)
 
         try await task.value
 
@@ -226,8 +226,8 @@ actor FilteredSyncTests {
 
         let publicNote = FilteredNote(title: "visible", isPublic: true)
         let privateNote = FilteredNote(title: "hidden", isPublic: false)
-        sender.add(publicNote)
-        sender.add(privateNote)
+        try sender.add(publicNote)
+        try sender.add(privateNote)
 
         try await task.value
 
@@ -248,7 +248,7 @@ actor FilteredSyncTests {
         // Phase 1: add public note → syncs
         let insertTask = await startListeningForReceiver(table: "FilteredNote", operation: .insert)
         let note = FilteredNote(title: "was-public", isPublic: true)
-        sender.add(note)
+        try sender.add(note)
         try await insertTask.value
         #expect(receiver.objects(FilteredNote.self).count == 1)
 
@@ -271,7 +271,7 @@ actor FilteredSyncTests {
 
         // Add a private note → should NOT sync
         let note = FilteredNote(title: "was-private", isPublic: false)
-        sender.add(note)
+        try sender.add(note)
         try await Task.sleep(for: .seconds(1))
         #expect(receiver.objects(FilteredNote.self).count == 0)
 
@@ -297,8 +297,8 @@ actor FilteredSyncTests {
         let insertTask1 = await startListeningForReceiver(table: "FilteredNote", operation: .insert)
         let pub = FilteredNote(title: "public", isPublic: true)
         let priv = FilteredNote(title: "private", isPublic: false)
-        sender.add(pub)
-        sender.add(priv)
+        try sender.add(pub)
+        try sender.add(priv)
         try await insertTask1.value
         #expect(receiver.objects(FilteredNote.self).count == 1)
 
@@ -328,12 +328,12 @@ actor FilteredSyncTests {
         // Add one public, one private — both should sync
         let insertTask1 = await startListeningForReceiver(table: "FilteredNote", operation: .insert)
         let pub = FilteredNote(title: "public", isPublic: true)
-        sender.add(pub)
+        try sender.add(pub)
         try await insertTask1.value
 
         let insertTask2 = await startListeningForReceiver(table: "FilteredNote", operation: .insert)
         let priv = FilteredNote(title: "private", isPublic: false)
-        sender.add(priv)
+        try sender.add(priv)
         try await insertTask2.value
         #expect(receiver.objects(FilteredNote.self).count == 2)
 
@@ -358,8 +358,8 @@ actor FilteredSyncTests {
         let task = await startListeningForReceiver(table: "FilteredNote", operation: .insert)
         let note = FilteredNote(title: "unfiltered", isPublic: false)
         let tag = FilteredTag(name: "unfiltered-tag")
-        sender.add(note)
-        sender.add(tag)
+        try sender.add(note)
+        try sender.add(tag)
         try await task.value
 
         // Give a moment for tag to sync too
@@ -378,7 +378,7 @@ actor FilteredSyncTests {
         try await Task.sleep(for: .milliseconds(500))
 
         let note = FilteredNote(title: "blocked", isPublic: true)
-        sender.add(note)
+        try sender.add(note)
 
         try await assertNothingReceived(table: "FilteredNote")
         #expect(receiver.objects(FilteredNote.self).count == 0)
@@ -394,7 +394,7 @@ actor FilteredSyncTests {
 
         let task = await startListeningForReceiver(table: "FilteredNote", operation: .insert)
         let note = FilteredNote(title: "from-sender", isPublic: false)
-        sender.add(note)
+        try sender.add(note)
         try await task.value
 
         #expect(receiver.objects(FilteredNote.self).count == 1)

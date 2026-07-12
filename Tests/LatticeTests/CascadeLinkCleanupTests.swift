@@ -45,11 +45,11 @@ class CascadeLinkCleanupTests: BaseTest {
 
         let user = CascadeUser()
         user.nick = "alice"
-        lattice.add(user)
+        try lattice.add(user)
 
         let room = CascadeRoom()
         room.code = "abc"
-        lattice.add(room)
+        try lattice.add(room)
         room.owner = user
 
         // Sanity: link table has the row before delete.
@@ -81,11 +81,11 @@ class CascadeLinkCleanupTests: BaseTest {
 
         let user = CascadeUser()
         user.nick = "alice"
-        lattice.add(user)
+        try lattice.add(user)
 
         let room = CascadeRoom()
         room.code = "abc"
-        lattice.add(room)
+        try lattice.add(room)
         room.owner = user
 
         #expect(room.owner?.nick == "alice")
@@ -112,11 +112,11 @@ class CascadeLinkCleanupTests: BaseTest {
 
         let user = CascadeUser()
         user.nick = "alice"
-        lattice.add(user)
+        try lattice.add(user)
 
         let room = CascadeRoom()
         room.code = "abc"
-        lattice.add(room)
+        try lattice.add(room)
         room.owner = user
 
         lattice.delete(user)
@@ -147,16 +147,16 @@ class CascadeLinkCleanupTests: BaseTest {
 
         let user = CascadeUser()
         user.nick = "alice"
-        lattice.add(user)
+        try lattice.add(user)
 
         let room = CascadeRoom()
         room.code = "r1"
-        lattice.add(room)
+        try lattice.add(room)
         room.owner = user
 
         let post = CascadePost()
         post.text = "hi"
-        lattice.add(post)
+        try lattice.add(post)
         post.author = user
 
         let latticeRef = lattice.sendableReference
@@ -217,15 +217,15 @@ class CascadeLinkCleanupTests: BaseTest {
 
         let user = CascadeUser()
         user.nick = "alice"
-        lattice.add(user)
+        try lattice.add(user)
 
         let room = CascadeRoom()
         room.code = "r1"
-        lattice.add(room)
+        try lattice.add(room)
         room.owner = user
 
-        let post1 = CascadePost(); post1.text = "hi"; lattice.add(post1); post1.author = user
-        let post2 = CascadePost(); post2.text = "bye"; lattice.add(post2); post2.author = user
+        let post1 = CascadePost(); post1.text = "hi"; try lattice.add(post1); post1.author = user
+        let post2 = CascadePost(); post2.text = "bye"; try lattice.add(post2); post2.author = user
 
         lattice.delete(user)
 
@@ -273,12 +273,12 @@ class CascadeUnionCleanupTests: BaseTest {
 
         let article = CascadeArticle()
         article.title = "lattice deep dive"
-        lattice.add(article)
+        try lattice.add(article)
 
         let item = CascadeFeedItem()
         item.label = "today"
         item.topic = .article(article)
-        lattice.add(item)
+        try lattice.add(item)
 
         if case .article(let a) = item.topic {
             #expect(a?.title == "lattice deep dive")
@@ -315,12 +315,12 @@ class CascadeUnionCleanupTests: BaseTest {
 
         let article = CascadeArticle()
         article.title = "post"
-        lattice.add(article)
+        try lattice.add(article)
 
         let item = CascadeFeedItem()
         item.label = "today"
         item.topic = .article(article)
-        lattice.add(item)
+        try lattice.add(item)
 
         // Capture the union table name from the INSERT audit row so the
         // test isn't brittle against the macro's naming convention. The

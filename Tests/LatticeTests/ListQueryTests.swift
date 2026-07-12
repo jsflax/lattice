@@ -26,16 +26,16 @@ class ListQueryTests: BaseTest {
     typealias Band = ListQueryFixtures.Band
     typealias Album = ListQueryFixtures.Album
 
-    private func makeBand(_ lattice: Lattice) -> Band {
+    private func makeBand(_ lattice: Lattice) throws -> Band {
         let band = Band()
         band.name = "Zeppelin"
-        lattice.add(band)
+        try lattice.add(band)
         for (title, year) in [("IV", 1971), ("Houses of the Holy", 1973), ("Physical Graffiti", 1975)] {
             let album = Album()
             album.title = title
             album.year = year
             album.band = band
-            lattice.add(album)
+            try lattice.add(album)
             band.albums.append(album)
         }
         return band
@@ -43,7 +43,7 @@ class ListQueryTests: BaseTest {
 
     @Test func snapshotReturnsAllElementsInOrder() throws {
         let lattice = try testLattice(Band.self, Album.self)
-        let band = makeBand(lattice)
+        let band = try makeBand(lattice)
         let snap = band.albums.snapshot()
         #expect(snap.count == 3)
         #expect(snap.map(\.title) == ["IV", "Houses of the Holy", "Physical Graffiti"])
@@ -52,7 +52,7 @@ class ListQueryTests: BaseTest {
     // Mirrors Results.snapshot(limit:offset:) — same windowing semantics.
     @Test func snapshotWithLimitAndOffsetWindows() throws {
         let lattice = try testLattice(Band.self, Album.self)
-        let band = makeBand(lattice)
+        let band = try makeBand(lattice)
 
         #expect(band.albums.snapshot(limit: 2).map(\.title)
                 == ["IV", "Houses of the Holy"])
@@ -64,7 +64,7 @@ class ListQueryTests: BaseTest {
 
     @Test func snapshotWindowClampsToBounds() throws {
         let lattice = try testLattice(Band.self, Album.self)
-        let band = makeBand(lattice)
+        let band = try makeBand(lattice)
 
         #expect(band.albums.snapshot(offset: 10).isEmpty)
         #expect(band.albums.snapshot(limit: 10).count == 3)
@@ -75,7 +75,7 @@ class ListQueryTests: BaseTest {
 
     @Test func sliceSnapshotWithLimitAndOffsetWindows() throws {
         let lattice = try testLattice(Band.self, Album.self)
-        let band = makeBand(lattice)
+        let band = try makeBand(lattice)
 
         // Windows apply AFTER the view's predicate/sort.
         let newestFirst = band.albums.sortedBy(.init(\.year, order: .reverse))
@@ -90,7 +90,7 @@ class ListQueryTests: BaseTest {
 
     @Test func sortedByOrdersElements() throws {
         let lattice = try testLattice(Band.self, Album.self)
-        let band = makeBand(lattice)
+        let band = try makeBand(lattice)
         let newestFirst = band.albums.sortedBy(.init(\.year, order: .reverse))
         #expect(newestFirst.map(\.year) == [1975, 1973, 1971])
         let oldestFirst = band.albums.sortedBy(.init(\.year, order: .forward))
@@ -99,7 +99,7 @@ class ListQueryTests: BaseTest {
 
     @Test func firstWhereFindsMatch() throws {
         let lattice = try testLattice(Band.self, Album.self)
-        let band = makeBand(lattice)
+        let band = try makeBand(lattice)
         // Regression: first(where:) used to ignore the predicate and return
         // element 0 — assert on a non-first element.
         let match = band.albums.first(where: { $0.year == 1973 })
@@ -108,7 +108,7 @@ class ListQueryTests: BaseTest {
 
     @Test func firstWhereNoMatchReturnsNil() throws {
         let lattice = try testLattice(Band.self, Album.self)
-        let band = makeBand(lattice)
+        let band = try makeBand(lattice)
         #expect(band.albums.first(where: { $0.year == 1999 }) == nil)
     }
 
@@ -116,14 +116,14 @@ class ListQueryTests: BaseTest {
         let lattice = try testLattice(Band.self, Album.self)
         let band = Band()
         band.name = "Empty"
-        lattice.add(band)
+        try lattice.add(band)
         // Regression: used to call get(at: 0) unconditionally.
         #expect(band.albums.first(where: { $0.year == 1971 }) == nil)
     }
 
     @Test func whereFiltersInListOrder() throws {
         let lattice = try testLattice(Band.self, Album.self)
-        let band = makeBand(lattice)
+        let band = try makeBand(lattice)
         let seventies = band.albums.where({ $0.year > 1971 })
         #expect(seventies.map(\.title) == ["Houses of the Holy", "Physical Graffiti"])
         #expect(band.albums.where({ $0.year > 1980 }).isEmpty)
@@ -131,7 +131,7 @@ class ListQueryTests: BaseTest {
 
     @Test func whereAndSortedByCompose() throws {
         let lattice = try testLattice(Band.self, Album.self)
-        let band = makeBand(lattice)
+        let band = try makeBand(lattice)
         // Chained lazy views: one combined SQL query; `.first` hydrates one.
         let newestSeventies = band.albums
             .where({ $0.year > 1971 })
@@ -179,11 +179,11 @@ class MigrationDispatchTests: BaseTest {
             let doc = DispatchV1.Doc()
             doc.title = "spec"
             doc.pageCountRaw = "42"
-            v1.add(doc)
+            try v1.add(doc)
             let memo = DispatchV1.Memo()
             memo.subject = "standup"
             memo.priorityRaw = "7"
-            v1.add(memo)
+            try v1.add(memo)
             v1.close()
         }
 
@@ -250,17 +250,17 @@ class MigrationChildrenTests: BaseTest {
             let v1 = try testLattice(path: path, ChildrenFKV1.Library.self, ChildrenFKV1.Book.self)
             let library = ChildrenFKV1.Library()
             library.name = "Central"
-            v1.add(library)
+            try v1.add(library)
 
             for title in ["Dune", "Hyperion"] {
                 let book = ChildrenFKV1.Book()
                 book.title = title
                 book.library = library
-                v1.add(book)
+                try v1.add(book)
             }
             let orphan = ChildrenFKV1.Book()
             orphan.title = "Unshelved"
-            v1.add(orphan)
+            try v1.add(orphan)
             v1.close()
         }
 

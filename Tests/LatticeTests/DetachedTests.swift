@@ -29,7 +29,7 @@ final class DetachedTests: BaseTest {
         let lattice = try testLattice(DPerson.self, DDog.self)
         let p = DPerson()
         p.name = "Ada"; p.age = 36; p.nickname = "A"; p.tags = ["x", "y"]
-        lattice.add(p)
+        try lattice.add(p)
 
         let snap = p.detached()
         #expect(snap.name == "Ada")
@@ -48,7 +48,7 @@ final class DetachedTests: BaseTest {
     @Test func optionalScalarNilVsSet() throws {
         let lattice = try testLattice(DPerson.self, DDog.self)
         let p = DPerson(); p.name = "NoNick"
-        lattice.add(p)
+        try lattice.add(p)
         #expect(p.detached().nickname == nil)
 
         p.nickname = "Set"
@@ -58,9 +58,9 @@ final class DetachedTests: BaseTest {
     // 2. To-one + to-many expand within depth.
     @Test func toOneAndToManyExpand() throws {
         let lattice = try testLattice(DPerson.self, DDog.self)
-        let p = DPerson(); p.name = "Ada"; lattice.add(p)
-        let rex = DDog(); rex.name = "Rex"; lattice.add(rex)
-        let fido = DDog(); fido.name = "Fido"; lattice.add(fido)
+        let p = DPerson(); p.name = "Ada"; try lattice.add(p)
+        let rex = DDog(); rex.name = "Rex"; try lattice.add(rex)
+        let fido = DDog(); fido.name = "Fido"; try lattice.add(fido)
         p.dog = rex
         p.dogs.append(rex)
         p.dogs.append(fido)
@@ -75,8 +75,8 @@ final class DetachedTests: BaseTest {
     // 3. At the depth boundary, links drop to nil / empty.
     @Test func depthBoundaryCutsLinks() throws {
         let lattice = try testLattice(DPerson.self, DDog.self)
-        let p = DPerson(); p.name = "Ada"; lattice.add(p)
-        let rex = DDog(); rex.name = "Rex"; lattice.add(rex)
+        let p = DPerson(); p.name = "Ada"; try lattice.add(p)
+        let rex = DDog(); rex.name = "Rex"; try lattice.add(rex)
         p.dog = rex
         p.dogs.append(rex)
 
@@ -89,8 +89,8 @@ final class DetachedTests: BaseTest {
     // 3b. Cycles terminate and cut the back-edge.
     @Test func cycleIsCut() throws {
         let lattice = try testLattice(DPerson.self, DDog.self)
-        let p = DPerson(); p.name = "Ada"; lattice.add(p)
-        let rex = DDog(); rex.name = "Rex"; lattice.add(rex)
+        let p = DPerson(); p.name = "Ada"; try lattice.add(p)
+        let rex = DDog(); rex.name = "Rex"; try lattice.add(rex)
         p.dog = rex
         rex.owner = p                 // Ada → Rex → Ada cycle
 
@@ -102,8 +102,8 @@ final class DetachedTests: BaseTest {
     // 3c. A shared node reached twice (diamond, not a cycle) still expands both times.
     @Test func diamondStillExpands() throws {
         let lattice = try testLattice(DPerson.self, DDog.self)
-        let p = DPerson(); p.name = "Ada"; lattice.add(p)
-        let rex = DDog(); rex.name = "Rex"; lattice.add(rex)
+        let p = DPerson(); p.name = "Ada"; try lattice.add(p)
+        let rex = DDog(); rex.name = "Rex"; try lattice.add(rex)
         p.dog = rex
         p.dogs.append(rex)            // same Rex via two paths
 
@@ -117,11 +117,11 @@ final class DetachedTests: BaseTest {
     //    order-dependent shallow-cut regression from a shared depth counter).
     @Test func toManySiblingsExpandToEqualDepth() throws {
         let lattice = try testLattice(DPerson.self, DDog.self)
-        let p = DPerson(); p.name = "Ada"; lattice.add(p)
-        let d1 = DDog(); d1.name = "D1"; lattice.add(d1)
-        let d2 = DDog(); d2.name = "D2"; lattice.add(d2)
-        let b1 = DDog(); b1.name = "B1"; lattice.add(b1)
-        let b2 = DDog(); b2.name = "B2"; lattice.add(b2)
+        let p = DPerson(); p.name = "Ada"; try lattice.add(p)
+        let d1 = DDog(); d1.name = "D1"; try lattice.add(d1)
+        let d2 = DDog(); d2.name = "D2"; try lattice.add(d2)
+        let b1 = DDog(); b1.name = "B1"; try lattice.add(b1)
+        let b2 = DDog(); b2.name = "B2"; try lattice.add(b2)
         d1.buddy = b1; d2.buddy = b2
         p.dogs.append(d1); p.dogs.append(d2)
 
@@ -134,8 +134,8 @@ final class DetachedTests: BaseTest {
     // 5. Sendable: a detached value crosses an isolation boundary on its own.
     @Test func detachedValueIsSendableAcrossTask() async throws {
         let lattice = try testLattice(DPerson.self, DDog.self)
-        let p = DPerson(); p.name = "Ada"; lattice.add(p)
-        let rex = DDog(); rex.name = "Rex"; lattice.add(rex)
+        let p = DPerson(); p.name = "Ada"; try lattice.add(p)
+        let rex = DDog(); rex.name = "Rex"; try lattice.add(rex)
         p.dog = rex
 
         let snap = p.detached()
@@ -146,8 +146,8 @@ final class DetachedTests: BaseTest {
     // 6. Codable round-trip preserves present/absent links.
     @Test func codableRoundTrip() throws {
         let lattice = try testLattice(DPerson.self, DDog.self)
-        let p = DPerson(); p.name = "Ada"; p.tags = ["t1"]; lattice.add(p)
-        let rex = DDog(); rex.name = "Rex"; lattice.add(rex)
+        let p = DPerson(); p.name = "Ada"; p.tags = ["t1"]; try lattice.add(p)
+        let rex = DDog(); rex.name = "Rex"; try lattice.add(rex)
         p.dog = rex
         p.dogs.append(rex)
 
@@ -168,7 +168,7 @@ final class DetachedTests: BaseTest {
         // Build a buddy chain c0 → c1 → … → c6.
         var chain: [DDog] = []
         for i in 0...6 {
-            let d = DDog(); d.name = "C\(i)"; lattice.add(d)
+            let d = DDog(); d.name = "C\(i)"; try lattice.add(d)
             chain.append(d)
         }
         for i in 0..<6 { chain[i].buddy = chain[i + 1] }

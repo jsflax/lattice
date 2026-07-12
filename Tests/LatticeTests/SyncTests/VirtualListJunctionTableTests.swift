@@ -87,10 +87,10 @@ class VirtualListJunctionTableTests: BaseTest {
         cat.name = "Whiskers"
         cat.indoor = true
 
-        latticeA.transaction {
-            latticeA.add(person)
-            latticeA.add(dog)
-            latticeA.add(cat)
+        try latticeA.transaction {
+            try latticeA.add(person)
+            try latticeA.add(dog)
+            try latticeA.add(cat)
             person.pets.append(dog as any Animal)
             person.pets.append(cat as any Animal)
         }
@@ -151,9 +151,9 @@ class VirtualListJunctionTableTests: BaseTest {
         dog.name = "Buddy"
         dog.breed = "Golden"
 
-        source.transaction {
-            source.add(person)
-            source.add(dog)
+        try source.transaction {
+            try source.add(person)
+            try source.add(dog)
             person.pets.append(dog as any Animal)
         }
 

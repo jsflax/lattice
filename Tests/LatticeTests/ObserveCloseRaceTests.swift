@@ -51,7 +51,7 @@ class ObserveCloseRaceTests: BaseTest {
     @Test(.disabled(if: isMacOSCI, "cooperative-pool starvation on small CI runners: the test blocks pool threads on DispatchSemaphore.wait inside observer closures; with ~3 pool threads the signaling tasks never schedule. Runs locally + Linux CI. Owner: 1.0 test hygiene (item F)"), .timeLimit(.minutes(5)))
     func test_PerIsolationResolve_SurvivesCloseOnMain() async throws {
         let lattice = try testLattice(path: path, Person.self)
-        Self.seed(lattice: lattice, count: 500)
+        try Self.seed(lattice: lattice, count: 500)
 
         nonisolated(unsafe) var enteredContinuation: CheckedContinuation<Void, Never>?
         nonisolated(unsafe) var exitedContinuation: CheckedContinuation<Void, Never>?
@@ -78,7 +78,7 @@ class ObserveCloseRaceTests: BaseTest {
             let trigger = Person()
             trigger.name = "trigger"
             trigger.age = 0
-            lattice.add(trigger)
+            try! lattice.add(trigger)
         }
 
         await withCheckedContinuation { continuation in
@@ -100,7 +100,7 @@ class ObserveCloseRaceTests: BaseTest {
 
         let owner = LatticeOwner()
         try await owner.open(path: path)
-        await owner.seed(count: 500)
+        try await owner.seed(count: 500)
         let ref = await owner.sendableReference()
         await owner.attachObserver { _ in
             enteredContinuation?.resume()
@@ -115,7 +115,7 @@ class ObserveCloseRaceTests: BaseTest {
 
         await withCheckedContinuation { continuation in
             enteredContinuation = continuation
-            Task { await owner.fireTrigger() }
+            Task { try! await owner.fireTrigger() }
         }
 
         await withCheckedContinuation { continuation in
@@ -125,7 +125,7 @@ class ObserveCloseRaceTests: BaseTest {
         }
     }
 
-    private static func seed(lattice: Lattice, count: Int) {
+    private static func seed(lattice: Lattice, count: Int) throws {
         // 500 rows so each snapshot iteration takes long enough
         // to overlap with `close()`. With the safe pattern the
         // overlap is harmless; without it the run crashes.
@@ -133,7 +133,7 @@ class ObserveCloseRaceTests: BaseTest {
             let p = Person()
             p.name = "person-\(i)"
             p.age = i
-            lattice.add(p)
+            try lattice.add(p)
         }
     }
 }
@@ -154,12 +154,12 @@ private actor LatticeOwner {
             configuration: .init(fileURL: url))
     }
 
-    func seed(count: Int) {
+    func seed(count: Int) throws {
         for i in 0..<count {
             let p = Person()
             p.name = "person-\(i)"
             p.age = i
-            lattice.add(p)
+            try lattice.add(p)
         }
     }
 
@@ -171,11 +171,11 @@ private actor LatticeOwner {
         token = lattice.objects(Person.self).observe(body)
     }
 
-    func fireTrigger() {
+    func fireTrigger() throws {
         let p = Person()
         p.name = "trigger"
         p.age = 0
-        lattice.add(p)
+        try lattice.add(p)
     }
 
     func close() {

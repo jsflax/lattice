@@ -85,7 +85,7 @@ class CombinedQueryTests: BaseTest {
                   embedding: [1.0, 0.9, 0.0]),  // Most Italian, most cozy, but far
         ]
 
-        lattice.add(contentsOf: places)
+        try lattice.add(contentsOf: places)
 
         let sfLocation = (latitude: 37.7749, longitude: -122.4194)
         let cozyItalianQuery = FloatVector([0.9, 0.9, 0.0])  // Italian + cozy
@@ -136,7 +136,7 @@ class CombinedQueryTests: BaseTest {
                   embedding: [0.0, 1.0, 0.1]),  // Most Victorian, but outside bounds
         ]
 
-        lattice.add(contentsOf: houses)
+        try lattice.add(contentsOf: houses)
 
         // Query for Victorian-style houses in Mission District
         let victorianQuery = FloatVector([0.1, 0.9, 0.1])
@@ -187,7 +187,7 @@ class CombinedQueryTests: BaseTest {
                    textEmbedding: [0.5, 0.8, 0.1]),      // Electronics/Furniture
         ]
 
-        lattice.add(contentsOf: products)
+        try lattice.add(contentsOf: products)
 
         // Query: red item (image) that's furniture (text)
         let imageQuery = FloatVector([0.9, 0.0, 0.0])  // Red
@@ -244,7 +244,7 @@ class CombinedQueryTests: BaseTest {
                   embedding: []),
         ]
 
-        lattice.add(contentsOf: gyms)
+        try lattice.add(contentsOf: gyms)
 
         let home = (latitude: 37.7749, longitude: -122.4194)
         let work = (latitude: 37.8044, longitude: -122.2712)
@@ -293,7 +293,7 @@ class CombinedQueryTests: BaseTest {
                      inventory: [0.9, 0.8, 0.1]),  // Best electronics match, but far
         ]
 
-        lattice.add(contentsOf: warehouses)
+        try lattice.add(contentsOf: warehouses)
 
         let deliveryAddress = (latitude: 37.7800, longitude: -122.4050)
         let orderEmbedding = FloatVector([0.9, 0.2, 0.0])  // Electronics order
@@ -329,7 +329,7 @@ class CombinedQueryTests: BaseTest {
             Place(name: "Place A", category: "test", lat: 37.7, lon: -122.4, embedding: [1, 0]),
             Place(name: "Place B", category: "test", lat: 37.8, lon: -122.3, embedding: [0, 1]),
         ]
-        lattice.add(contentsOf: places)
+        try lattice.add(contentsOf: places)
 
         // This won't compile without at least one proximity constraint
         // since NearestResults requires an initial proximity
@@ -347,7 +347,7 @@ class CombinedQueryTests: BaseTest {
             Place(name: "Cafe B", category: "cafe", lat: 37.7755, lon: -122.4190, embedding: [0.1, 0.9]),
             Place(name: "Bar A", category: "bar", lat: 37.7753, lon: -122.4185, embedding: [0.9, 0.1]),
         ]
-        lattice.add(contentsOf: places)
+        try lattice.add(contentsOf: places)
 
         let sfLocation = (latitude: 37.7749, longitude: -122.4194)
         let query = FloatVector([0.9, 0.0])
@@ -372,7 +372,7 @@ class CombinedQueryTests: BaseTest {
         let place = Place(name: "Test Place", category: "test",
                          lat: 37.7800, lon: -122.4100,
                          embedding: [0.5, 0.5])
-        lattice.add(place)
+        try lattice.add(place)
 
         let location = (latitude: 37.7749, longitude: -122.4194)
         let query = FloatVector([1.0, 0.0])
@@ -408,7 +408,7 @@ class CombinedQueryTests: BaseTest {
             Place(name: "Close", category: "test", lat: 37.78, lon: -122.41, embedding: [1, 0]),    // ~1km
             Place(name: "Medium", category: "test", lat: 37.82, lon: -122.35, embedding: [1, 0]),   // ~7km
         ]
-        lattice.add(contentsOf: places)
+        try lattice.add(contentsOf: places)
 
         let sf = (latitude: 37.7749, longitude: -122.4194)
 
@@ -438,7 +438,7 @@ class CombinedQueryTests: BaseTest {
             Place(name: "Close", category: "test", lat: 37.78, lon: -122.41, embedding: [1, 0]),
             Place(name: "Medium", category: "test", lat: 37.82, lon: -122.35, embedding: [1, 0]),
         ]
-        lattice.add(contentsOf: places)
+        try lattice.add(contentsOf: places)
 
         let sf = (latitude: 37.7749, longitude: -122.4194)
 
@@ -469,7 +469,7 @@ class CombinedQueryTests: BaseTest {
             Place(name: "Close", category: "test", lat: 37.7, lon: -122.4, embedding: [0.9, 0.1]),  // Very similar
             Place(name: "Medium", category: "test", lat: 37.7, lon: -122.4, embedding: [0.5, 0.5]), // Moderate
         ]
-        lattice.add(contentsOf: places)
+        try lattice.add(contentsOf: places)
 
         let query = FloatVector([1.0, 0.0])
 
@@ -498,7 +498,7 @@ class CombinedQueryTests: BaseTest {
             Place(name: "Close", category: "test", lat: 37.7, lon: -122.4, embedding: [0.9, 0.1]),
             Place(name: "Medium", category: "test", lat: 37.7, lon: -122.4, embedding: [0.5, 0.5]),
         ]
-        lattice.add(contentsOf: places)
+        try lattice.add(contentsOf: places)
 
         let query = FloatVector([1.0, 0.0])
 
@@ -528,7 +528,7 @@ class CombinedQueryTests: BaseTest {
             Place(name: "Far but similar", category: "test", lat: 37.85, lon: -122.30, embedding: [0.9, 0.1]),
             Place(name: "Medium both", category: "test", lat: 37.80, lon: -122.38, embedding: [0.5, 0.5]),
         ]
-        lattice.add(contentsOf: places)
+        try lattice.add(contentsOf: places)
 
         let sf = (latitude: 37.7749, longitude: -122.4194)
         let query = FloatVector([1.0, 0.0])
@@ -554,7 +554,7 @@ class CombinedQueryTests: BaseTest {
             Place(name: "Far but similar", category: "test", lat: 37.85, lon: -122.30, embedding: [0.9, 0.1]),
             Place(name: "Medium both", category: "test", lat: 37.80, lon: -122.38, embedding: [0.5, 0.5]),
         ]
-        lattice.add(contentsOf: places)
+        try lattice.add(contentsOf: places)
 
         let sf = (latitude: 37.7749, longitude: -122.4194)
         let query = FloatVector([1.0, 0.0])
@@ -580,7 +580,7 @@ class CombinedQueryTests: BaseTest {
             Place(name: "Cafe Close", category: "cafe", lat: 37.78, lon: -122.41, embedding: [1, 0]),
             Place(name: "Bar Close", category: "bar", lat: 37.775, lon: -122.42, embedding: [1, 0]),
         ]
-        lattice.add(contentsOf: places)
+        try lattice.add(contentsOf: places)
 
         let sf = (latitude: 37.7749, longitude: -122.4194)
 

@@ -108,7 +108,7 @@ actor SyncTests {
         }
 
         let object = SimpleSyncObject(value: 42, floatValue: 42.42)
-        lattice.add(object)
+        try lattice.add(object)
 
         try await taskForSynchronization?.value
         try await task?.value
@@ -196,9 +196,9 @@ actor SyncTests {
         }
 
         let child = SyncChild(name: "alice")
-        lattice.add(child)
+        try lattice.add(child)
         let parent = SyncParent(name: "room")
-        lattice.add(parent)
+        try lattice.add(parent)
         parent.favorite = child
 
         try await task?.value
@@ -282,9 +282,9 @@ actor SyncTests {
         }
 
         let child = SyncChild(name: "alice")
-        lattice.add(child)
+        try lattice.add(child)
         let parent = SyncParent(name: "room")
-        lattice.add(parent)
+        try lattice.add(parent)
         parent.favorite = child
         try await task?.value
 
@@ -351,7 +351,7 @@ actor SyncTests {
 //        }
 //        let objects = (0..<100_000).map { _ in SequenceSyncObject() }
 //        lattice.transaction {
-//            lattice.add(contentsOf: objects)
+//            try lattice.add(contentsOf: objects)
 //        }
 //        try await task?.value
 //        
@@ -412,8 +412,8 @@ actor SyncTests {
         let child1 = SyncChild(name: "Child1")
         let child2 = SyncChild(name: "Child2")
 
-        lattice.transaction {
-            lattice.add(parent)
+        try lattice.transaction {
+            try lattice.add(parent)
             parent.children.append(child1)
             parent.children.append(child2)
         }
@@ -514,7 +514,7 @@ actor SyncTests {
         }
 
         let obj = SyncVectorObject(label: "test-vector", embedding: embedding)
-        lattice.add(obj)
+        try lattice.add(obj)
 
         try await syncTask?.value
         try await task?.value
@@ -591,7 +591,7 @@ actor SyncTests {
         }
 
         let obj = SyncGeoObject(name: "NYC", latitude: 40.7128, longitude: -74.0060)
-        lattice.add(obj)
+        try lattice.add(obj)
 
         try await syncTask?.value
         try await task?.value
@@ -663,7 +663,7 @@ actor SyncTests {
         }
 
         let obj = SyncEmbeddedObject(name: "test", metadata: SyncEmbedded(detail: "hello"))
-        lattice.add(obj)
+        try lattice.add(obj)
 
         try await syncTask?.value
         try await task?.value
@@ -716,7 +716,7 @@ actor SyncTests {
         }
 
         let obj1 = SimpleSyncObject(value: 111, floatValue: 1.1)
-        lattice.add(obj1)
+        try lattice.add(obj1)
         try await task?.value
         #expect(lattice2.objects(SimpleSyncObject.self).count >= 1, "Lattice2 should receive from lattice1")
 
@@ -736,7 +736,7 @@ actor SyncTests {
         }
 
         let obj2 = SimpleSyncObject(value: 222, floatValue: 2.2)
-        lattice2.add(obj2)
+        try lattice2.add(obj2)
         try await task?.value
 
         let l1Values = Set(lattice.objects(SimpleSyncObject.self).map(\.value))
@@ -769,7 +769,7 @@ actor SyncTests {
         }
 
         let obj = SimpleSyncObject(value: 999, floatValue: 9.9)
-        lattice.add(obj)
+        try lattice.add(obj)
         try await serverTask?.value
 
         // Create a fresh client — it should receive the historical data on connect.
@@ -834,7 +834,7 @@ actor SyncTests {
         }
 
         let obj = SimpleSyncObject(value: 555, floatValue: 5.5)
-        lattice.add(obj)
+        try lattice.add(obj)
         try await serverTask?.value
 
         // Step 2: Force compact the server's audit log — replaces all history with INSERT snapshots
@@ -903,7 +903,7 @@ actor SyncTests {
         }
 
         let obj1 = SimpleSyncObject(value: 100, floatValue: 1.0)
-        lattice.add(obj1)
+        try lattice.add(obj1)
         try await receiveTask?.value
         #expect(lattice2.objects(SimpleSyncObject.self).count >= 1, "Initial sync should work")
 
@@ -933,7 +933,7 @@ actor SyncTests {
         }
 
         let obj2 = SimpleSyncObject(value: 200, floatValue: 2.0)
-        lattice.add(obj2)
+        try lattice.add(obj2)
         try await receiveTask2?.value
 
         #expect(lattice2.objects(SimpleSyncObject.self).count >= 2,
@@ -1009,7 +1009,7 @@ actor SyncTests {
             }
 
             // Write through B — should sync to lattice2
-            instanceB.add(SimpleSyncObject(value: 777, floatValue: 7.7))
+            try instanceB.add(SimpleSyncObject(value: 777, floatValue: 7.7))
         }
 
         // Wait for B to exist
@@ -1056,8 +1056,8 @@ actor SyncTests {
         }
 
         let objects = (0..<count).map { SimpleSyncObject(value: $0, floatValue: Float($0)) }
-        lattice.transaction {
-            lattice.add(contentsOf: objects)
+        try lattice.transaction {
+            try lattice.add(contentsOf: objects)
         }
 
         try await task?.value

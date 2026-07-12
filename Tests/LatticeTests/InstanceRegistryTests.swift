@@ -38,7 +38,7 @@ class InstanceRegistryTests: BaseTest {
         for i in 0..<rowCount {
             let w = Widget()
             w.value = i
-            lattice.add(w)
+            try lattice.add(w)
         }
 
         // Set up multiple observers — each callback fetches an object by primary key,
@@ -99,7 +99,7 @@ class InstanceRegistryTests: BaseTest {
 
         let w = Widget()
         w.value = 42
-        lattice.add(w)
+        try lattice.add(w)
         let pk = w.primaryKey!
 
         // Many concurrent tasks all fetching (register) and immediately dropping

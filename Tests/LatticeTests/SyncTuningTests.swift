@@ -38,7 +38,7 @@ class SyncTuningTests: BaseTest {
             fileURL: path,
             syncTuning: .init(chunkSize: 1, stableConnectionMs: 1, uploadCoalesceMs: 50))
         let lattice = try Lattice(TunedItem.self, configuration: config)
-        lattice.add(TunedItem(name: "tuned"))
+        try lattice.add(TunedItem(name: "tuned"))
         #expect(lattice.objects(TunedItem.self).count == 1)
     }
 }
@@ -79,9 +79,9 @@ actor SyncTuningFrameTests {
         // can only come from chunkSize 1 (per-commit dispatch can't explain
         // them away).
         let writes = 5
-        client.transaction {
+        try client.transaction {
             for i in 0..<writes {
-                client.add(TunedItem(name: "tuned-\(i)"))
+                try client.add(TunedItem(name: "tuned-\(i)"))
             }
         }
 

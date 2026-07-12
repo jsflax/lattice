@@ -27,7 +27,7 @@ import Testing
     }
 
     let obj = ModelWithPrivateSet(publicVar: "public", restrictedVar: "restricted")
-    lattice.add(obj)
+    try lattice.add(obj)
 
     let results = lattice.objects(ModelWithPrivateSet.self)
     print("Count:", results.count)

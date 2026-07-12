@@ -41,7 +41,7 @@ class AttachTests: BaseTest {
 
         // INSERT into local should still work (goes to main.PlainItem via db.cpp fix)
         let item = PlainItem(content: "local item", project: "test")
-        local.add(item)
+        try local.add(item)
         #expect(item.primaryKey != nil)
 
         // Visible through both local and query lattice
@@ -58,7 +58,7 @@ class AttachTests: BaseTest {
 
         // INSERT into synced directly (separate connection, no ATTACH)
         let item = PlainItem(content: "synced item", project: "test")
-        synced.add(item)
+        try synced.add(item)
         #expect(item.primaryKey != nil)
 
         // Visible through synced and query lattice
@@ -72,8 +72,8 @@ class AttachTests: BaseTest {
 
         let query = try local.attaching(lattice: synced)
 
-        local.add(PlainItem(content: "local item", project: "local"))
-        synced.add(PlainItem(content: "synced item", project: "synced"))
+        try local.add(PlainItem(content: "local item", project: "local"))
+        try synced.add(PlainItem(content: "synced item", project: "synced"))
 
         // Query should see both via UNION ALL
         #expect(query.objects(PlainItem.self).count == 2)
@@ -95,7 +95,7 @@ class AttachTests: BaseTest {
         // INSERT into local with a vector field
         // This triggers: INSERT INTO main.VecItem + trigger INSERT INTO _VecItem_embedding_vec
         let item = VecItem(content: "local vec item", project: "test", embedding: [0.1, 0.2, 0.3, 0.4, 0.5])
-        local.add(item)
+        try local.add(item)
         #expect(item.primaryKey != nil)
     }
 
@@ -107,7 +107,7 @@ class AttachTests: BaseTest {
 
         // INSERT into synced directly (no ATTACH views, should work)
         let item = VecItem(content: "synced vec item", project: "test", embedding: [0.1, 0.2, 0.3, 0.4, 0.5])
-        synced.add(item)
+        try synced.add(item)
         #expect(item.primaryKey != nil)
     }
 
@@ -116,8 +116,8 @@ class AttachTests: BaseTest {
         let synced = try testLattice(VecItem.self)
 
         // Pre-populate both DBs before attaching
-        local.add(VecItem(content: "local doc", project: "local", embedding: [1.0, 0.0, 0.0, 0.0, 0.0]))
-        synced.add(VecItem(content: "synced doc", project: "synced", embedding: [0.0, 1.0, 0.0, 0.0, 0.0]))
+        try local.add(VecItem(content: "local doc", project: "local", embedding: [1.0, 0.0, 0.0, 0.0, 0.0]))
+        try synced.add(VecItem(content: "synced doc", project: "synced", embedding: [0.0, 1.0, 0.0, 0.0, 0.0]))
 
         let query = try local.attaching(lattice: synced)
 
@@ -137,10 +137,10 @@ class AttachTests: BaseTest {
         let query = try local.attaching(lattice: synced)
 
         // Insert into synced (safe, no TEMP views)
-        synced.add(VecItem(content: "synced A", project: "synced", embedding: [1.0, 0.0, 0.0, 0.0, 0.0]))
+        try synced.add(VecItem(content: "synced A", project: "synced", embedding: [1.0, 0.0, 0.0, 0.0, 0.0]))
 
         // Insert into local (potentially crashes due to vec TEMP VIEW)
-        local.add(VecItem(content: "local A", project: "local", embedding: [0.0, 1.0, 0.0, 0.0, 0.0]))
+        try local.add(VecItem(content: "local A", project: "local", embedding: [0.0, 1.0, 0.0, 0.0, 0.0]))
 
         // Nearest on query lattice
         let results = query.objects(VecItem.self)
@@ -156,7 +156,7 @@ class AttachTests: BaseTest {
         let local = try testLattice(PlainItem.self)
         let synced = try testLattice(PlainItem.self)
 
-        synced.add(PlainItem(content: "to delete", project: "synced"))
+        try synced.add(PlainItem(content: "to delete", project: "synced"))
 
         let query = try local.attaching(lattice: synced)
 
@@ -176,7 +176,7 @@ class AttachTests: BaseTest {
         let synced = try testLattice(PlainItem.self)
 
         let item = PlainItem(content: "original", project: "synced")
-        synced.add(item)
+        try synced.add(item)
 
         let query = try local.attaching(lattice: synced)
 
@@ -199,7 +199,7 @@ extension AttachTests {
         var local = try testLattice(PlainItem.self)
         let syncedPath = "\(String.random(length: 32)).sqlite"
         let synced = try testLattice(path: syncedPath, PlainItem.self)
-        synced.add(PlainItem(content: "x", project: "y"))
+        try synced.add(PlainItem(content: "x", project: "y"))
 
         // Diverge the attached DB's PlainItem schema out-of-band; the
         // pre-attach validation reads columns through synced's live handle,
@@ -214,7 +214,7 @@ extension AttachTests {
             try local.attach(lattice: synced)
         }
         // The failed attach must leave local fully usable, main-only.
-        local.add(PlainItem(content: "still works", project: "post-failure"))
+        try local.add(PlainItem(content: "still works", project: "post-failure"))
         #expect(local.objects(PlainItem.self).count == 1)
     }
     #endif
@@ -223,8 +223,8 @@ extension AttachTests {
         var local = try testLattice(PlainItem.self)
         let synced = try testLattice(PlainItem.self)
 
-        local.add(PlainItem(content: "local item", project: "local"))
-        synced.add(PlainItem(content: "synced item", project: "synced"))
+        try local.add(PlainItem(content: "local item", project: "local"))
+        try synced.add(PlainItem(content: "synced item", project: "synced"))
 
         try local.attach(lattice: synced)
         #expect(local.objects(PlainItem.self).count == 2)
@@ -237,7 +237,7 @@ extension AttachTests {
     @Test func detach_ofUnattachedLatticeIsNoOp() async throws {
         var local = try testLattice(PlainItem.self)
         let never = try testLattice(PlainItem.self)
-        local.add(PlainItem(content: "a", project: "p"))
+        try local.add(PlainItem(content: "a", project: "p"))
         try local.detach(lattice: never)
         #expect(local.objects(PlainItem.self).count == 1)
     }
@@ -245,7 +245,7 @@ extension AttachTests {
     @Test func attachTwice_isIdempotent() async throws {
         var local = try testLattice(PlainItem.self)
         let synced = try testLattice(PlainItem.self)
-        synced.add(PlainItem(content: "s", project: "s"))
+        try synced.add(PlainItem(content: "s", project: "s"))
 
         try local.attach(lattice: synced)
         try local.attach(lattice: synced)
@@ -259,8 +259,8 @@ extension AttachTests {
         var local = try testLattice(PlainItem.self)
         let a = try testLattice(PlainItem.self)
         let b = try testLattice(PlainItem.self)
-        a.add(PlainItem(content: "a", project: "a"))
-        b.add(PlainItem(content: "b", project: "b"))
+        try a.add(PlainItem(content: "a", project: "a"))
+        try b.add(PlainItem(content: "b", project: "b"))
 
         try local.attach(lattice: a)
         try local.attach(lattice: b)
@@ -296,8 +296,8 @@ extension AttachTests {
     @Test func attachTwice_detachOnce_restoresBaseSchemaMembership() async throws {
         var l1 = try testLattice(AttachRestaurant.self)
         let l2 = try testLattice(AttachMuseum.self)
-        l1.add(AttachRestaurant(name: "R"))
-        l2.add(AttachMuseum(name: "M"))
+        try l1.add(AttachRestaurant(name: "R"))
+        try l2.add(AttachMuseum(name: "M"))
 
         try l1.attach(lattice: l2)
         try l1.attach(lattice: l2)  // idempotent — no duplicate schema arms
@@ -316,7 +316,7 @@ extension AttachTests {
         var l1 = try testLattice(AttachRestaurant.self)
         let path = "reopen_detach_\(String.random(length: 16)).sqlite"
         let l2 = try testLattice(path: path, AttachMuseum.self)
-        l2.add(AttachMuseum(name: "M"))
+        try l2.add(AttachMuseum(name: "M"))
 
         try l1.attach(lattice: l2)
         #expect(l1.objects(AttachVenue.self).count == 1)
@@ -334,8 +334,8 @@ extension AttachTests {
     @Test func fileLattice_attachesMemoryLattice() async throws {
         var main = try testLattice(PlainItem.self)
         let mem = try Lattice(PlainItem.self, configuration: .init(storage: .memory(named: "attach_mem_\(String.random(length: 8))")))
-        mem.add(PlainItem(content: "from-memory", project: "m"))
-        main.add(PlainItem(content: "from-file", project: "f"))
+        try mem.add(PlainItem(content: "from-memory", project: "m"))
+        try main.add(PlainItem(content: "from-file", project: "f"))
 
         try main.attach(lattice: mem)
         #expect(main.objects(PlainItem.self).count == 2)
@@ -348,7 +348,7 @@ extension AttachTests {
     @Test func memoryName_withHostileCharacters_staysInMemoryAndDistinct() async throws {
         let a = try Lattice(PlainItem.self, configuration: .init(storage: .memory(named: "cache?v=2")))
         let b = try Lattice(PlainItem.self, configuration: .init(storage: .memory(named: "cache?v=3")))
-        a.add(PlainItem(content: "a", project: "a"))
+        try a.add(PlainItem(content: "a", project: "a"))
         #expect(a.objects(PlainItem.self).count == 1)
         #expect(b.objects(PlainItem.self).count == 0, "distinct hostile names must not collide")
         #expect(!FileManager.default.fileExists(atPath: "cache"), "no on-disk file may appear")

@@ -23,9 +23,9 @@ final class LatticeMCPSearchTests {
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         do {
             let l = try Lattice(Article.self, configuration: .init(fileURL: url))
-            l.add(Article(title: "ML", content: "machine learning and neural networks", embedding: [1, 0, 0, 0]))
-            l.add(Article(title: "Cook", content: "pasta recipes and sauces", embedding: [0, 0, 1, 0]))
-            l.add(Article(title: "DL", content: "deep learning with neural networks", embedding: [0.9, 0.1, 0, 0]))
+            try l.add(Article(title: "ML", content: "machine learning and neural networks", embedding: [1, 0, 0, 0]))
+            try l.add(Article(title: "Cook", content: "pasta recipes and sauces", embedding: [0, 0, 1, 0]))
+            try l.add(Article(title: "DL", content: "deep learning with neural networks", embedding: [0.9, 0.1, 0, 0]))
             l.checkpoint()
             l.close()
         }
@@ -55,10 +55,10 @@ final class LatticeMCPSearchTests {
             let l = try Lattice(GeoPlace.self, configuration: .init(fileURL: url))
             let sf = GeoPlace(); sf.name = "SF"
             sf.location = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
-            l.add(sf)
+            try l.add(sf)
             let nyc = GeoPlace(); nyc.name = "NYC"
             nyc.location = CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060)
-            l.add(nyc)
+            try l.add(nyc)
             l.checkpoint()
             l.close()
         }

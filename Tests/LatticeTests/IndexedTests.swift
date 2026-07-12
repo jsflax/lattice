@@ -24,10 +24,10 @@ class IndexedTests: BaseTest {
     @Test func test_IndexedColumnQuery() async throws {
         let lattice = try testLattice(IndexedProduct.self)
 
-        lattice.add(IndexedProduct(category: "Electronics", price: 999.99, name: "Laptop"))
-        lattice.add(IndexedProduct(category: "Electronics", price: 29.99, name: "Cable"))
-        lattice.add(IndexedProduct(category: "Books", price: 14.99, name: "Novel"))
-        lattice.add(IndexedProduct(category: "Books", price: 39.99, name: "Textbook"))
+        try lattice.add(IndexedProduct(category: "Electronics", price: 999.99, name: "Laptop"))
+        try lattice.add(IndexedProduct(category: "Electronics", price: 29.99, name: "Cable"))
+        try lattice.add(IndexedProduct(category: "Books", price: 14.99, name: "Novel"))
+        try lattice.add(IndexedProduct(category: "Books", price: 39.99, name: "Textbook"))
 
         // Query on indexed column
         let electronics = lattice.objects(IndexedProduct.self)
@@ -42,8 +42,8 @@ class IndexedTests: BaseTest {
     @Test func test_IndexedWithNonIndexedMix() async throws {
         let lattice = try testLattice(IndexedProduct.self)
 
-        lattice.add(IndexedProduct(category: "A", price: 10, name: "Item1"))
-        lattice.add(IndexedProduct(category: "B", price: 20, name: "Item2"))
+        try lattice.add(IndexedProduct(category: "A", price: 10, name: "Item1"))
+        try lattice.add(IndexedProduct(category: "B", price: 20, name: "Item2"))
 
         // Query combining indexed and non-indexed columns
         let result = lattice.objects(IndexedProduct.self)
@@ -55,9 +55,9 @@ class IndexedTests: BaseTest {
     @Test func test_IndexedColumnSort() async throws {
         let lattice = try testLattice(IndexedProduct.self)
 
-        lattice.add(IndexedProduct(category: "C", price: 30, name: "Third"))
-        lattice.add(IndexedProduct(category: "A", price: 10, name: "First"))
-        lattice.add(IndexedProduct(category: "B", price: 20, name: "Second"))
+        try lattice.add(IndexedProduct(category: "C", price: 30, name: "Third"))
+        try lattice.add(IndexedProduct(category: "A", price: 10, name: "First"))
+        try lattice.add(IndexedProduct(category: "B", price: 20, name: "Second"))
 
         let sorted = lattice.objects(IndexedProduct.self)
             .sortedBy(.init(\.price, order: .forward))

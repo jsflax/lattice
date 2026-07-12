@@ -20,9 +20,9 @@ class FullTextSearchTests: BaseTest {
     @Test func test_BasicFullTextSearch() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "ML Intro", content: "Introduction to machine learning and neural networks"))
-        lattice.add(Article(title: "Cooking", content: "How to cook pasta with tomato sauce"))
-        lattice.add(Article(title: "Deep Learning", content: "Deep learning uses neural networks for machine intelligence"))
+        try lattice.add(Article(title: "ML Intro", content: "Introduction to machine learning and neural networks"))
+        try lattice.add(Article(title: "Cooking", content: "How to cook pasta with tomato sauce"))
+        try lattice.add(Article(title: "Deep Learning", content: "Deep learning uses neural networks for machine intelligence"))
 
         let results = lattice.objects(Article.self)
             .matching("machine learning", on: \.content)
@@ -36,9 +36,9 @@ class FullTextSearchTests: BaseTest {
     @Test func test_FTS5WithWhereClause() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "ML Intro", content: "Introduction to machine learning"))
-        lattice.add(Article(title: "ML Advanced", content: "Advanced machine learning techniques"))
-        lattice.add(Article(title: "Cooking", content: "How to cook pasta"))
+        try lattice.add(Article(title: "ML Intro", content: "Introduction to machine learning"))
+        try lattice.add(Article(title: "ML Advanced", content: "Advanced machine learning techniques"))
+        try lattice.add(Article(title: "Cooking", content: "How to cook pasta"))
 
         let results = lattice.objects(Article.self)
             .where { $0.title == "ML Advanced" }
@@ -53,7 +53,7 @@ class FullTextSearchTests: BaseTest {
         let lattice = try testLattice(Article.self)
 
         let article = Article(title: "Test", content: "Original content about databases")
-        lattice.add(article)
+        try lattice.add(article)
 
         // Verify original content is searchable
         let before = lattice.objects(Article.self)
@@ -89,11 +89,11 @@ class FullTextSearchTests: BaseTest {
         let lattice = try testLattice(Article.self)
 
         // Create articles with both text and embeddings
-        lattice.add(Article(title: "ML Paper", content: "Machine learning algorithms for classification",
+        try lattice.add(Article(title: "ML Paper", content: "Machine learning algorithms for classification",
                            embedding: [1.0, 0.0, 0.0, 0.0]))
-        lattice.add(Article(title: "DL Paper", content: "Deep learning with neural networks",
+        try lattice.add(Article(title: "DL Paper", content: "Deep learning with neural networks",
                            embedding: [0.9, 0.1, 0.0, 0.0]))
-        lattice.add(Article(title: "Cooking", content: "Pasta recipes and cooking techniques",
+        try lattice.add(Article(title: "Cooking", content: "Pasta recipes and cooking techniques",
                            embedding: [0.0, 0.0, 1.0, 0.0]))
 
         let queryVec = FloatVector([1.0, 0.0, 0.0, 0.0])
@@ -114,8 +114,8 @@ class FullTextSearchTests: BaseTest {
     @Test func test_FTS5RankScore() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "Relevant", content: "Machine learning machine learning machine learning"))
-        lattice.add(Article(title: "Less Relevant", content: "Introduction to machine learning basics"))
+        try lattice.add(Article(title: "Relevant", content: "Machine learning machine learning machine learning"))
+        try lattice.add(Article(title: "Less Relevant", content: "Introduction to machine learning basics"))
 
         let results = lattice.objects(Article.self)
             .matching("machine learning", on: \.content)
@@ -134,7 +134,7 @@ class FullTextSearchTests: BaseTest {
     @Test func test_FTS5NoResults() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "Test", content: "Some content about databases"))
+        try lattice.add(Article(title: "Test", content: "Some content about databases"))
 
         let results = lattice.objects(Article.self)
             .matching("nonexistentterm", on: \.content)
@@ -148,9 +148,9 @@ class FullTextSearchTests: BaseTest {
     @Test func test_TextQueryAllOf() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "Both", content: "Machine learning algorithms"))
-        lattice.add(Article(title: "One", content: "Machine hardware specs"))
-        lattice.add(Article(title: "Neither", content: "Cooking pasta recipes"))
+        try lattice.add(Article(title: "Both", content: "Machine learning algorithms"))
+        try lattice.add(Article(title: "One", content: "Machine hardware specs"))
+        try lattice.add(Article(title: "Neither", content: "Cooking pasta recipes"))
 
         let results = lattice.objects(Article.self)
             .matching(.allOf("machine", "learning"), on: \.content)
@@ -163,9 +163,9 @@ class FullTextSearchTests: BaseTest {
     @Test func test_TextQueryAnyOf() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "ML", content: "Machine learning algorithms"))
-        lattice.add(Article(title: "Cook", content: "Learning to cook pasta"))
-        lattice.add(Article(title: "Neither", content: "Database optimization tips"))
+        try lattice.add(Article(title: "ML", content: "Machine learning algorithms"))
+        try lattice.add(Article(title: "Cook", content: "Learning to cook pasta"))
+        try lattice.add(Article(title: "Neither", content: "Database optimization tips"))
 
         let results = lattice.objects(Article.self)
             .matching(.anyOf("machine", "cooking"), on: \.content)
@@ -180,8 +180,8 @@ class FullTextSearchTests: BaseTest {
     @Test func test_TextQueryPhrase() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "Phrase", content: "Introduction to machine learning today"))
-        lattice.add(Article(title: "Separate", content: "The machine is not learning anything"))
+        try lattice.add(Article(title: "Phrase", content: "Introduction to machine learning today"))
+        try lattice.add(Article(title: "Separate", content: "The machine is not learning anything"))
 
         // Phrase match: "machine learning" as contiguous words
         let results = lattice.objects(Article.self)
@@ -195,9 +195,9 @@ class FullTextSearchTests: BaseTest {
     @Test func test_TextQueryPrefix() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "Match1", content: "Algorithms for computation"))
-        lattice.add(Article(title: "Match2", content: "Computer science fundamentals"))
-        lattice.add(Article(title: "NoMatch", content: "Pasta recipes and cooking"))
+        try lattice.add(Article(title: "Match1", content: "Algorithms for computation"))
+        try lattice.add(Article(title: "Match2", content: "Computer science fundamentals"))
+        try lattice.add(Article(title: "NoMatch", content: "Pasta recipes and cooking"))
 
         let results = lattice.objects(Article.self)
             .matching(.prefix("comput"), on: \.content)
@@ -214,9 +214,9 @@ class FullTextSearchTests: BaseTest {
     @Test func test_SearchQueryPlainTerms() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "ML", content: "Machine learning algorithms"))
-        lattice.add(Article(title: "Cook", content: "Cooking pasta recipes"))
-        lattice.add(Article(title: "Neither", content: "Database optimization tips"))
+        try lattice.add(Article(title: "ML", content: "Machine learning algorithms"))
+        try lattice.add(Article(title: "Cook", content: "Cooking pasta recipes"))
+        try lattice.add(Article(title: "Neither", content: "Database optimization tips"))
 
         // "mach cook" → mach* OR cook* — prefix match, any term
         let results = lattice.objects(Article.self)
@@ -232,9 +232,9 @@ class FullTextSearchTests: BaseTest {
     @Test func test_SearchQueryWithAND() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "Both", content: "Machine learning algorithms"))
-        lattice.add(Article(title: "One", content: "Machine hardware specs"))
-        lattice.add(Article(title: "Neither", content: "Cooking pasta recipes"))
+        try lattice.add(Article(title: "Both", content: "Machine learning algorithms"))
+        try lattice.add(Article(title: "One", content: "Machine hardware specs"))
+        try lattice.add(Article(title: "Neither", content: "Cooking pasta recipes"))
 
         // "machine AND learn" → machine* AND learn* — both prefixes must match
         let results = lattice.objects(Article.self)
@@ -250,9 +250,9 @@ class FullTextSearchTests: BaseTest {
     @Test func test_SearchQueryWithNOT() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "ML", content: "Machine learning algorithms"))
-        lattice.add(Article(title: "Hardware", content: "Machine hardware specs"))
-        lattice.add(Article(title: "Cook", content: "Cooking pasta recipes"))
+        try lattice.add(Article(title: "ML", content: "Machine learning algorithms"))
+        try lattice.add(Article(title: "Hardware", content: "Machine hardware specs"))
+        try lattice.add(Article(title: "Cook", content: "Cooking pasta recipes"))
 
         // "machine NOT learn" → machine* NOT learn*
         let results = lattice.objects(Article.self)
@@ -268,8 +268,8 @@ class FullTextSearchTests: BaseTest {
     @Test func test_SearchQueryWithQuotedPhrase() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "Phrase", content: "Introduction to machine learning"))
-        lattice.add(Article(title: "Separate", content: "The machine is not learning"))
+        try lattice.add(Article(title: "Phrase", content: "Introduction to machine learning"))
+        try lattice.add(Article(title: "Separate", content: "The machine is not learning"))
 
         // '"machine learning"' → exact phrase, no wildcard
         let results = lattice.objects(Article.self)
@@ -283,9 +283,9 @@ class FullTextSearchTests: BaseTest {
     @Test func test_SearchQueryQuotedWithOperator() async throws {
         let lattice = try testLattice(Article.self)
 
-        lattice.add(Article(title: "Both", content: "Machine learning about cooking pasta"))
-        lattice.add(Article(title: "MLOnly", content: "Machine learning algorithms"))
-        lattice.add(Article(title: "CookOnly", content: "Cooking pasta recipes"))
+        try lattice.add(Article(title: "Both", content: "Machine learning about cooking pasta"))
+        try lattice.add(Article(title: "MLOnly", content: "Machine learning algorithms"))
+        try lattice.add(Article(title: "CookOnly", content: "Cooking pasta recipes"))
 
         // '"machine learning" AND cook' → exact phrase AND prefix
         let results = lattice.objects(Article.self)

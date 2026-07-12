@@ -61,8 +61,8 @@ class ConstraintEvolutionTests: BaseTest {
         // V1: insert data without unique constraint
         try autoreleasepool {
             let lattice = try Lattice(ConstraintV1.Item.self, configuration: .init(fileURL: dbPath))
-            let item1 = ConstraintV1.Item(); item1.name = "alpha"; lattice.add(item1)
-            let item2 = ConstraintV1.Item(); item2.name = "beta"; lattice.add(item2)
+            let item1 = ConstraintV1.Item(); item1.name = "alpha"; try lattice.add(item1)
+            let item2 = ConstraintV1.Item(); item2.name = "beta"; try lattice.add(item2)
             #expect(lattice.objects(ConstraintV1.Item.self).count == 2)
             lattice.close()
         }
@@ -74,7 +74,7 @@ class ConstraintEvolutionTests: BaseTest {
 
             // New unique name inserts fine
             let item3 = ConstraintV2.Item(); item3.name = "gamma"
-            lattice.add(item3)
+            try lattice.add(item3)
             #expect(lattice.objects(ConstraintV2.Item.self).count == 3)
         }
 
@@ -88,9 +88,9 @@ class ConstraintEvolutionTests: BaseTest {
         // V1: insert duplicate data
         try autoreleasepool {
             let lattice = try Lattice(ConstraintV1.Item.self, configuration: .init(fileURL: dbPath))
-            let item1 = ConstraintV1.Item(); item1.name = "alpha"; item1.category = "a"; lattice.add(item1)
-            let item2 = ConstraintV1.Item(); item2.name = "alpha"; item2.category = "b"; lattice.add(item2)
-            let item3 = ConstraintV1.Item(); item3.name = "beta"; item3.category = "c"; lattice.add(item3)
+            let item1 = ConstraintV1.Item(); item1.name = "alpha"; item1.category = "a"; try lattice.add(item1)
+            let item2 = ConstraintV1.Item(); item2.name = "alpha"; item2.category = "b"; try lattice.add(item2)
+            let item3 = ConstraintV1.Item(); item3.name = "beta"; item3.category = "c"; try lattice.add(item3)
             #expect(lattice.objects(ConstraintV1.Item.self).count == 3)
             lattice.close()
         }
@@ -120,7 +120,7 @@ class ConstraintEvolutionTests: BaseTest {
                 let item = ConstraintV1.Item()
                 item.name = "dup"
                 item.category = "cat-\(i)"
-                lattice.add(item)
+                try lattice.add(item)
             }
             #expect(lattice.objects(ConstraintV1.Item.self).count == 10)
             lattice.close()
@@ -143,7 +143,7 @@ class ConstraintEvolutionTests: BaseTest {
         try autoreleasepool {
             let lattice = try Lattice(ConstraintV2.Item.self, configuration: .init(fileURL: dbPath))
             let item1 = ConstraintV2.Item(); item1.name = "alpha"; item1.category = "original"
-            lattice.add(item1)
+            try lattice.add(item1)
             #expect(lattice.objects(ConstraintV2.Item.self).count == 1)
             lattice.close()
         }
@@ -155,7 +155,7 @@ class ConstraintEvolutionTests: BaseTest {
 
             // Duplicate name should upsert (replace), not crash
             let dup = ConstraintV2Upsert.Item(); dup.name = "alpha"; dup.category = "updated"
-            lattice.add(dup)
+            try lattice.add(dup)
 
             let items = lattice.objects(ConstraintV2Upsert.Item.self)
             #expect(items.count == 1)
@@ -199,8 +199,8 @@ class ConstraintEvolutionTests: BaseTest {
             return c
         }
 
-        lattice.transaction {
-            lattice.add(contentsOf: dups)
+        try lattice.transaction {
+            try lattice.add(contentsOf: dups)
         }
 
         print("Bulk upsert attempted on \(dups.count) rows — no throw")
@@ -232,8 +232,8 @@ class ConstraintEvolutionTests: BaseTest {
             mixed.append(c)
         }
 
-        lattice.transaction {
-            lattice.add(contentsOf: mixed)
+        try lattice.transaction {
+            try lattice.add(contentsOf: mixed)
         }
         print("Mixed bulk upsert: \(mixed.count) rows — no throw")
 
@@ -247,8 +247,8 @@ class ConstraintEvolutionTests: BaseTest {
             c.close = Float(100 + i)
             return c
         }
-        lattice.transaction {
-            lattice.add(contentsOf: internalDups)
+        try lattice.transaction {
+            try lattice.add(contentsOf: internalDups)
         }
         print("Internal dup bulk upsert: \(internalDups.count) rows — no throw")
     }
@@ -266,7 +266,7 @@ class ConstraintEvolutionTests: BaseTest {
             c.close = Double(100 + i)
             return c
         }
-        lattice.add(contentsOf: batch1)
+        try lattice.add(contentsOf: batch1)
         #expect(lattice.objects(Candle.self).count == 5)
 
         // Second batch with overlapping (date, symbol, interval) — should upsert
@@ -278,7 +278,7 @@ class ConstraintEvolutionTests: BaseTest {
             c.close = Double(200 + i)
             return c
         }
-        lattice.add(contentsOf: batch2)
+        try lattice.add(contentsOf: batch2)
 
         let all = lattice.objects(Candle.self)
         #expect(all.count == 8)  // 0,1,2 from batch1; 3,4 upserted; 5,6,7 new

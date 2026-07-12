@@ -28,7 +28,7 @@ class CrossProcessChildRunner: XCTestCase {
                 let p = Person()
                 p.name = "FromOtherProcess"
                 p.age = 42
-                lattice.add(p)
+                try lattice.add(p)
             }
         case "update_audit":
             var db: OpaquePointer?
@@ -44,7 +44,7 @@ class CrossProcessChildRunner: XCTestCase {
             if let owner = lattice.objects(PersonWithDogs.self).where({ $0.name == "DogOwner" }).first {
                 let dog = Dog()
                 dog.name = "Buddy"
-                lattice.add(dog)
+                try lattice.add(dog)
                 owner.dogs.append(dog)
             }
         case "append_to_virtual_list":
@@ -56,7 +56,7 @@ class CrossProcessChildRunner: XCTestCase {
                 let dog = TestDog()
                 dog.name = "Buddy"
                 dog.breed = "Lab"
-                lattice.add(dog)
+                try lattice.add(dog)
                 owner.pets.append(dog as any Animal)
             }
         case "multi_row_transaction":
@@ -64,12 +64,12 @@ class CrossProcessChildRunner: XCTestCase {
                 for: [Person.self, Dog.self],
                 configuration: .init(fileURL: fileURL)
             )
-            lattice.transaction {
+            try lattice.transaction {
                 for i in 0..<3 {
                     let p = Person()
                     p.name = "MultiRow_\(i)"
                     p.age = i
-                    lattice.add(p)
+                    try lattice.add(p)
                 }
             }
         default:
@@ -80,7 +80,7 @@ class CrossProcessChildRunner: XCTestCase {
             let p = Person()
             p.name = "FromOtherProcess"
             p.age = 42
-            lattice.add(p)
+            try lattice.add(p)
         }
     }
 }
@@ -197,7 +197,7 @@ struct CrossProcessTests {
         let seed = Person()
         seed.name = "ExistingPerson"
         seed.age = 1
-        lattice.add(seed)
+        try lattice.add(seed)
 
         let person = lattice.objects(Person.self).where { $0.name == "ExistingPerson" }.first!
 
@@ -245,7 +245,7 @@ struct CrossProcessTests {
                 let p = Person()
                 p.name = "FromOtherProcess"
                 p.age = 42
-                lattice.add(p)
+                try lattice.add(p)
             }
             return
         }
@@ -264,7 +264,7 @@ struct CrossProcessTests {
         let initial = Person()
         initial.name = "ExistingPerson"
         initial.age = 1
-        lattice.add(initial)
+        try lattice.add(initial)
 
         guard let (execURL, childArgs) = childProcessConfig() else {
             Issue.record("Could not determine child process configuration")
@@ -326,7 +326,7 @@ struct CrossProcessTests {
             let p = Person()
             p.name = "LocalPerson"
             p.age = 10
-            lattice.add(p)
+            try! lattice.add(p)
         }
 
         // Wait a bit to ensure no spurious duplicate notifications arrive
@@ -368,7 +368,7 @@ struct CrossProcessTests {
         let seed = Person()
         seed.name = "ExistingPerson"
         seed.age = 1
-        lattice.add(seed)
+        try lattice.add(seed)
 
         let person = lattice.objects(Person.self).where { $0.name == "ExistingPerson" }.first!
 
@@ -425,7 +425,7 @@ struct CrossProcessTests {
         let initial = Person()
         initial.name = "ExistingPerson"
         initial.age = 1
-        lattice.add(initial)
+        try lattice.add(initial)
 
         guard let (execURL, childArgs) = childProcessConfig(filter: "crossProcessUpdateObservation") else {
             Issue.record("Could not determine child process configuration")
@@ -488,7 +488,7 @@ struct CrossProcessTests {
         let p = Person()
         p.name = "SeedPerson"
         p.age = 1
-        lattice.add(p)
+        try lattice.add(p)
 
         var syncFilter = Lattice.SyncFilter()
         syncFilter.include(Person.self)
@@ -532,7 +532,7 @@ struct CrossProcessTests {
             if let owner = lattice.objects(PersonWithDogs.self).where({ $0.name == "DogOwner" }).first {
                 let dog = Dog()
                 dog.name = "Buddy"
-                lattice.add(dog)
+                try lattice.add(dog)
                 owner.dogs.append(dog)
             }
             return
@@ -554,7 +554,7 @@ struct CrossProcessTests {
         let owner = PersonWithDogs()
         owner.name = "DogOwner"
         owner.age = 30
-        lattice.add(owner)
+        try lattice.add(owner)
 
         guard let (execURL, childArgs) = childProcessConfig(filter: "crossProcessListAppend") else {
             Issue.record("Could not determine child process configuration")
@@ -597,7 +597,7 @@ struct CrossProcessTests {
                 let dog = TestDog()
                 dog.name = "Buddy"
                 dog.breed = "Lab"
-                lattice.add(dog)
+                try lattice.add(dog)
                 owner.pets.append(dog as any Animal)
             }
             return
@@ -616,7 +616,7 @@ struct CrossProcessTests {
 
         let owner = TestPersonWithPets()
         owner.label = "PetOwner"
-        lattice.add(owner)
+        try lattice.add(owner)
 
         guard let (execURL, childArgs) = childProcessConfig(filter: "crossProcessVirtualListAppend") else {
             Issue.record("Could not determine child process configuration")
@@ -681,12 +681,12 @@ struct CrossProcessTests {
             // each `add` would commit separately — yielding 3 cross-process
             // notifications, each with 1 audit row, which sidesteps the
             // dedup bug (it only triggers for batches of >1 audit row).
-            lattice.transaction {
+            try lattice.transaction {
                 for i in 0..<3 {
                     let p = Person()
                     p.name = "MultiRow_\(i)"
                     p.age = i
-                    lattice.add(p)
+                    try lattice.add(p)
                 }
             }
             return

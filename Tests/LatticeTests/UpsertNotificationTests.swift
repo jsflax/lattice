@@ -22,7 +22,7 @@ final class UpsertNotificationTests: BaseTest {
         let first = UpsertNotify()
         first.key = "a"
         first.value = 1
-        lattice.add(first)
+        try lattice.add(first)
         #expect(lattice.objects(UpsertNotify.self).count == 1)
 
         // Wire a changeStream observer that returns as soon as it sees an
@@ -47,7 +47,7 @@ final class UpsertNotificationTests: BaseTest {
         let second = UpsertNotify()
         second.key = "a"
         second.value = 2
-        lattice.add(second)
+        try lattice.add(second)
 
         let op = await observation.value
 
@@ -74,7 +74,7 @@ final class UpsertNotificationTests: BaseTest {
         let first = UpsertNotify()
         first.key = "a"
         first.value = 1
-        lattice.add(first)
+        try lattice.add(first)
 
         nonisolated(unsafe) var continuation: CheckedContinuation<Void, Never>?
         let token = first.observe { _ in
@@ -89,7 +89,7 @@ final class UpsertNotificationTests: BaseTest {
 
         await withCheckedContinuation { c in
             continuation = c
-            lattice.add(second)
+            try! lattice.add(second)
         }
         token.cancel()
 
@@ -107,7 +107,7 @@ final class UpsertNotificationTests: BaseTest {
         let first = UpsertNotify()
         first.key = "a"
         first.value = 1
-        lattice.add(first)
+        try lattice.add(first)
 
         nonisolated(unsafe) var continuation: CheckedContinuation<Void, Never>?
         let token = first.observe { _ in
@@ -125,7 +125,7 @@ final class UpsertNotificationTests: BaseTest {
 
         await withCheckedContinuation { c in
             continuation = c
-            lattice.add(contentsOf: [collide, fresh])
+            try! lattice.add(contentsOf: [collide, fresh])
         }
         token.cancel()
 

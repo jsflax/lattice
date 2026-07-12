@@ -67,7 +67,7 @@ class VectorSearchTests: BaseTest {
         print("Before add - embedding dimensions: \(doc.embedding.dimensions)")
         print("Before add - embedding data size: \(doc.embedding.toData().count)")
 
-        lattice.add(doc)
+        try lattice.add(doc)
 
         // Retrieve and verify
         let docs = lattice.objects(Document.self)
@@ -92,11 +92,11 @@ class VectorSearchTests: BaseTest {
 
         // Insert a document with a real vector — creates vec0 table + triggers
         let doc1 = Document(title: "Has Embedding", embedding: [1.0, 0.0, 0.0])
-        lattice.add(doc1)
+        try lattice.add(doc1)
 
         // Insert a document with an empty/default vector — should NOT crash vec0
         let doc2 = Document(title: "No Embedding")
-        lattice.add(doc2)
+        try lattice.add(doc2)
 
         // Query nearest — previously crashed with "zero-length vectors are not supported"
         let query = FloatVector([1.0, 0.0, 0.0])
@@ -112,7 +112,7 @@ class VectorSearchTests: BaseTest {
         let lattice = try testLattice(Document.self)
 
         // Insert a document with a real vector
-        lattice.add(Document(title: "Has Embedding", embedding: [1.0, 0.0, 0.0]))
+        try lattice.add(Document(title: "Has Embedding", embedding: [1.0, 0.0, 0.0]))
 
         // Query with an empty vector — should not crash
         let emptyQuery = FloatVector([])
@@ -182,7 +182,7 @@ class VectorSearchTests: BaseTest {
             Document(title: "Doc D", embedding: [0.5, 0.5, 0.0]),
         ]
 
-        lattice.add(contentsOf: docs)
+        try lattice.add(contentsOf: docs)
 
         let results = lattice.objects(Document.self)
         #expect(results.count == 4)
@@ -215,7 +215,7 @@ class VectorSearchTests: BaseTest {
             Document(title: "Doc E", embedding: [0.9, 0.1, 0.0]),  // Very close to A
         ]
 
-        lattice.add(contentsOf: docs)
+        try lattice.add(contentsOf: docs)
 
         // Query for nearest neighbors to [1, 0, 0]
         let query = FloatVector([1.0, 0.0, 0.0])
@@ -251,7 +251,7 @@ class VectorSearchTests: BaseTest {
             Document(title: "Orthogonal", embedding: [0.0, 1.0, 0.0]),
         ]
 
-        lattice.add(contentsOf: docs)
+        try lattice.add(contentsOf: docs)
 
         let query = FloatVector([5.0, 0.0, 0.0])
         let nearest = lattice.objects(Document.self)
@@ -291,7 +291,7 @@ class VectorSearchTests: BaseTest {
             }
             let floatVector = vector.map { Float($0) }
             let doc = Document(title: word, embedding: floatVector)
-            lattice.add(doc)
+            try lattice.add(doc)
         }
 
         let storedCount = lattice.objects(Document.self).count
@@ -365,7 +365,7 @@ class VectorSearchTests: BaseTest {
             CategorizedDocument(title: "B3", category: "B", embedding: [0.2, 0.8, 0.0]),
         ]
 
-        lattice.add(contentsOf: docs)
+        try lattice.add(contentsOf: docs)
 
         // Query: find nearest to [1, 0, 0] (most similar to category A)
         let query = FloatVector([1.0, 0.0, 0.0])
@@ -441,7 +441,7 @@ class Vec0OrphanTests: BaseTest {
 
         // Insert 5 documents with embeddings
         for i in 0..<5 {
-            lattice.add(Document(
+            try lattice.add(Document(
                 title: "doc-\(i)",
                 embedding: [Float(i), Float(5 - i), 0.5]))
         }
@@ -511,7 +511,7 @@ class Vec0OrphanTests: BaseTest {
 
         // Insert 5 docs into local
         for i in 0..<5 {
-            local.add(Document(
+            try local.add(Document(
                 title: "doc-\(i)",
                 embedding: [Float(i), Float(5 - i), 0.5]))
         }
@@ -558,7 +558,7 @@ class Vec0OrphanTests: BaseTest {
         let dbPath = lattice.configuration.fileURL.path(percentEncoded: false)
 
         for i in 0..<5 {
-            lattice.add(Document(
+            try lattice.add(Document(
                 title: "doc-\(i)",
                 embedding: [Float(i), Float(5 - i), 0.5]))
         }
@@ -595,7 +595,7 @@ class Vec0OrphanTests: BaseTest {
 
         // Insert on connection A
         for i in 0..<5 {
-            connA.add(Document(
+            try connA.add(Document(
                 title: "doc-\(i)",
                 embedding: [Float(i), Float(5 - i), 0.5]))
         }
@@ -645,12 +645,12 @@ class Vec0OrphanTests: BaseTest {
 
         // Insert 3 docs in local, 5 docs in synced
         for i in 0..<3 {
-            local.add(Document(
+            try local.add(Document(
                 title: "local-\(i)",
                 embedding: [Float(i), 0.0, 1.0]))
         }
         for i in 0..<5 {
-            synced.add(Document(
+            try synced.add(Document(
                 title: "synced-\(i)",
                 embedding: [0.0, Float(i), 1.0]))
         }
@@ -736,7 +736,7 @@ class Vec0LockStormTests: BaseTest {
 
         // Seed initial data
         for i in 0..<10 {
-            lattice.add(Document(
+            try lattice.add(Document(
                 title: "initial-\(i)",
                 embedding: [Float(i) / 10.0, Float(10 - i) / 10.0, 0.5]))
         }
@@ -749,7 +749,7 @@ class Vec0LockStormTests: BaseTest {
         for i in 0..<100 {
             if i % 2 == 0 {
                 // Add a document (triggers vec0 INSERT trigger)
-                lattice.add(Document(
+                try lattice.add(Document(
                     title: "rapid-\(i)",
                     embedding: [Float.random(in: 0...1), Float.random(in: 0...1), Float.random(in: 0...1)]))
                 addSuccesses += 1
@@ -782,7 +782,7 @@ class Vec0LockStormTests: BaseTest {
         let docCount = 5000
         for i in 0..<docCount {
             let embedding = (0..<dims).map { _ in Float.random(in: -1...1) }
-            lattice.add(Document(title: "doc-\(i)", embedding: embedding))
+            try lattice.add(Document(title: "doc-\(i)", embedding: embedding))
         }
 
         let k = 1000
@@ -805,7 +805,7 @@ class Vec0LockStormTests: BaseTest {
         let endIndexBefore = avg { _ = nearest.endIndex }
         let snapshotBefore = avg { _ = nearest.snapshot().count }
         let insertBefore = avg(50) {
-            lattice.add(Document(title: "x", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try! lattice.add(Document(title: "x", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
 
         print("=== BEFORE IVF training (brute-force) ===")
@@ -829,7 +829,7 @@ class Vec0LockStormTests: BaseTest {
         let snapshotAfter = avg { _ = nearest.snapshot().count }
         let insertAfter = lattice.transaction {
             avg(50) {
-                lattice.add(Document(title: "x", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+                try! lattice.add(Document(title: "x", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
             }
         }
         print("=== AFTER IVF training ===")
@@ -856,7 +856,7 @@ class Vec0LockStormTests: BaseTest {
         // Insert documents with known embeddings
         for i in 0..<1000 {
             let embedding = (0..<dims).map { _ in Float.random(in: -1...1) }
-            lattice.add(Document(title: "doc-\(i)", embedding: embedding))
+            try lattice.add(Document(title: "doc-\(i)", embedding: embedding))
         }
 
         let query = FloatVector((0..<dims).map { _ in Float.random(in: -1...1) })
@@ -908,7 +908,7 @@ class Vec0LockStormTests: BaseTest {
         let dims = 32
 
         for i in 0..<50 {
-            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
 
         // No training — all vectors in unassigned pool, brute-force scan
@@ -924,14 +924,14 @@ class Vec0LockStormTests: BaseTest {
         let dims = 32
 
         for i in 0..<100 {
-            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
 
         lattice.trainVectorIndexes()
 
         // Insert after training — should auto-assign to centroid
         for i in 0..<20 {
-            lattice.add(Document(title: "post-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice.add(Document(title: "post-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
 
         let total = lattice.objects(Document.self).count
@@ -950,7 +950,7 @@ class Vec0LockStormTests: BaseTest {
         let dims = 32
 
         for i in 0..<100 {
-            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
 
         // Vacuum triggers rebuild + train
@@ -968,12 +968,12 @@ class Vec0LockStormTests: BaseTest {
         let dims = 32
 
         for i in 0..<50 {
-            lattice.add(CategorizedDocument(
+            try lattice.add(CategorizedDocument(
                 title: "catA-\(i)", category: "A",
                 embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
         for i in 0..<50 {
-            lattice.add(CategorizedDocument(
+            try lattice.add(CategorizedDocument(
                 title: "catB-\(i)", category: "B",
                 embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
@@ -1000,10 +1000,10 @@ class Vec0LockStormTests: BaseTest {
         let dims = 32
 
         for i in 0..<30 {
-            lattice1.add(Document(title: "db1-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice1.add(Document(title: "db1-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
         for i in 0..<30 {
-            lattice2.add(Document(title: "db2-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice2.add(Document(title: "db2-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
 
         // Attach should not crash
@@ -1027,10 +1027,10 @@ class Vec0LockStormTests: BaseTest {
         let dims = 32
 
         for i in 0..<50 {
-            lattice1.add(Document(title: "db1-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice1.add(Document(title: "db1-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
         for i in 0..<50 {
-            lattice2.add(Document(title: "db2-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice2.add(Document(title: "db2-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
 
         lattice1.trainVectorIndexes()
@@ -1053,14 +1053,14 @@ class Vec0LockStormTests: BaseTest {
         let dims = 32
 
         for i in 0..<100 {
-            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
 
         lattice.trainVectorIndexes()
 
         // Bulk insert after training — should not get SQLITE_BUSY_SNAPSHOT
         for i in 0..<100 {
-            lattice.add(Document(title: "post-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice.add(Document(title: "post-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
 
         let total = lattice.objects(Document.self).count
@@ -1073,7 +1073,7 @@ class Vec0LockStormTests: BaseTest {
         let dims = 32
 
         for i in 0..<50 {
-            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
 
         lattice.trainVectorIndexes()
@@ -1091,7 +1091,7 @@ class Vec0LockStormTests: BaseTest {
 
         let dims = 32
         for i in 0..<50 {
-            lattice.add(MemoryLike(
+            try lattice.add(MemoryLike(
                 content: "memory-\(i)",
                 topic: i % 2 == 0 ? "architecture" : "debugging",
                 embedding: (0..<dims).map { _ in Float.random(in: -1...1) },
@@ -1136,7 +1136,7 @@ class Vec0LockStormTests: BaseTest {
         // Also test with attaching (Engram uses localLattice.attaching(lattice: syncedLattice))
         let lattice2 = try testLattice(MemoryLike.self)
         for i in 0..<20 {
-            lattice2.add(MemoryLike(
+            try lattice2.add(MemoryLike(
                 content: "synced-\(i)", topic: "synced",
                 embedding: (0..<dims).map { _ in Float.random(in: -1...1) }
             ))
@@ -1167,7 +1167,7 @@ class Vec0LockStormTests: BaseTest {
             let lattice = try Lattice(Document.self, configuration: .init(fileURL: path))
             let dims = 32
             for i in 0..<50 {
-                lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+                try lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
             }
             lattice.trainVectorIndexes()
 
@@ -1212,7 +1212,7 @@ class Vec0LockStormTests: BaseTest {
             let lattice = try Lattice(Document.self, configuration: .init(fileURL: path))
             let dims = 32
             for i in 0..<50 {
-                lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+                try lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
             }
             lattice.trainVectorIndexes()
         }
@@ -1226,7 +1226,7 @@ class Vec0LockStormTests: BaseTest {
                 let embedding = (0..<dims).map { _ in Float.random(in: -1...1) }
                 var data = Data()
                 for f in embedding { withUnsafeBytes(of: f) { data.append(contentsOf: $0) } }
-                lattice.add(Document(title: "synced-\(i)", embedding: embedding))
+                try lattice.add(Document(title: "synced-\(i)", embedding: embedding))
             }
         }
 
@@ -1259,7 +1259,7 @@ class Vec0LockStormTests: BaseTest {
         let dims = 32
 
         for i in 0..<100 {
-            lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
+            try lattice.add(Document(title: "doc-\(i)", embedding: (0..<dims).map { _ in Float.random(in: -1...1) }))
         }
 
         lattice.trainVectorIndexes()
@@ -1292,7 +1292,7 @@ class Vec0LockStormTests: BaseTest {
             let doc = Document(
                 title: "doc-\(i)",
                 embedding: [Float(i) / 50.0, Float(50 - i) / 50.0, 0.1])
-            lattice.add(doc)
+            try lattice.add(doc)
             docs.append(doc)
         }
 
@@ -1314,7 +1314,7 @@ class Vec0LockStormTests: BaseTest {
 
         // Re-add 25 new docs
         for i in 0..<25 {
-            lattice.add(Document(
+            try lattice.add(Document(
                 title: "new-\(i)",
                 embedding: [Float.random(in: 0...1), Float.random(in: 0...1), Float.random(in: 0...1)]))
         }
@@ -1349,9 +1349,9 @@ class Vec0LockStormTests: BaseTest {
         let synced = try Lattice(Document.self, configuration: .init(fileURL: syncedPath))
 
         // Insert docs in both DBs
-        local.add(Document(title: "local-1", embedding: [1.0, 0.0, 0.0]))
-        local.add(Document(title: "local-2", embedding: [0.0, 1.0, 0.0]))
-        synced.add(Document(title: "synced-1", embedding: [0.0, 0.0, 1.0]))
+        try local.add(Document(title: "local-1", embedding: [1.0, 0.0, 0.0]))
+        try local.add(Document(title: "local-2", embedding: [0.0, 1.0, 0.0]))
+        try synced.add(Document(title: "synced-1", embedding: [0.0, 0.0, 1.0]))
 
         // Create attached view (UNION ALL) — same as Engram's readLattice()
         let combined = try local.attaching(lattice: synced)

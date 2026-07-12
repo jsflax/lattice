@@ -90,7 +90,7 @@ actor SyncProgressTests {
 
         // Add objects to trigger upload
         for i in 0..<5 {
-            lattice.add(SimpleSyncObject(value: i, floatValue: Float(i)))
+            try lattice.add(SimpleSyncObject(value: i, floatValue: Float(i)))
         }
 
         let progress = try await progressTask!.value
@@ -111,7 +111,7 @@ actor SyncProgressTests {
                     continuation.resume(returning: progress)
                 }
             }
-            lattice.add(SimpleSyncObject(value: 99, floatValue: 99.0))
+            try! lattice.add(SimpleSyncObject(value: 99, floatValue: 99.0))
         }
 
         #expect(acked.acked > 0)
@@ -145,7 +145,7 @@ actor SyncProgressTests {
             }
             print("[DownloadTracking] Handler registered, adding value 77 to lattice1")
             // Callback registered; trigger the sync.
-            lattice.add(SimpleSyncObject(value: 77, floatValue: 77.0))
+            try! lattice.add(SimpleSyncObject(value: 77, floatValue: 77.0))
             print("[DownloadTracking] Value 77 added to lattice1")
         }
 
@@ -178,8 +178,8 @@ actor SyncProgressTests {
             }
         }
 
-        lattice.add(SimpleSyncObject(value: 1, floatValue: 1.0))
-        lattice.add(SimpleSyncObject(value: 2, floatValue: 2.0))
+        try lattice.add(SimpleSyncObject(value: 1, floatValue: 1.0))
+        try lattice.add(SimpleSyncObject(value: 2, floatValue: 2.0))
 
         let progress = try await callbackFired!.value
         #expect(progress.totalUpload > 0)
@@ -210,7 +210,7 @@ actor SyncProgressTests {
             }
         }
 
-        lattice.add(SimpleSyncObject(value: 42, floatValue: 42.0))
+        try lattice.add(SimpleSyncObject(value: 42, floatValue: 42.0))
 
         let result = try await isBackgroundTask!.value
         #expect(result == true, "Progress callback should fire on a background thread")

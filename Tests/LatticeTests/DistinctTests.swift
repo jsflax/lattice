@@ -10,7 +10,7 @@ class DistinctTests: BaseTest {
     @Test func distinct_globalId_keyPathTracking() async throws {
         let lattice = try testLattice(PlainItem.self)
         let item = PlainItem(content: "test", project: "test")
-        lattice.add(item)
+        try lattice.add(item)
 
         // Verify _name(for:) resolves globalId to "globalId"
         let results = lattice.objects(PlainItem.self)
@@ -26,9 +26,9 @@ class DistinctTests: BaseTest {
         let lattice = try testLattice(PlainItem.self)
 
         // Insert items with duplicate project values
-        lattice.add(PlainItem(content: "a", project: "alpha"))
-        lattice.add(PlainItem(content: "b", project: "alpha"))
-        lattice.add(PlainItem(content: "c", project: "beta"))
+        try lattice.add(PlainItem(content: "a", project: "alpha"))
+        try lattice.add(PlainItem(content: "b", project: "alpha"))
+        try lattice.add(PlainItem(content: "c", project: "beta"))
 
         // Without distinct: 3 items
         #expect(lattice.objects(PlainItem.self).count == 3)
@@ -46,11 +46,11 @@ class DistinctTests: BaseTest {
     @Test func distinct_count_singleDB() async throws {
         let lattice = try testLattice(PlainItem.self)
 
-        lattice.add(PlainItem(content: "a", project: "alpha"))
-        lattice.add(PlainItem(content: "b", project: "alpha"))
-        lattice.add(PlainItem(content: "c", project: "beta"))
-        lattice.add(PlainItem(content: "d", project: "beta"))
-        lattice.add(PlainItem(content: "e", project: "gamma"))
+        try lattice.add(PlainItem(content: "a", project: "alpha"))
+        try lattice.add(PlainItem(content: "b", project: "alpha"))
+        try lattice.add(PlainItem(content: "c", project: "beta"))
+        try lattice.add(PlainItem(content: "d", project: "beta"))
+        try lattice.add(PlainItem(content: "e", project: "gamma"))
 
         // Without distinct: 5
         #expect(lattice.objects(PlainItem.self).count == 5)
@@ -62,11 +62,11 @@ class DistinctTests: BaseTest {
     @Test func distinct_preservesWhereClause() async throws {
         let lattice = try testLattice(PlainItem.self)
 
-        lattice.add(PlainItem(content: "a", project: "alpha"))
-        lattice.add(PlainItem(content: "b", project: "alpha"))
-        lattice.add(PlainItem(content: "c", project: "beta"))
-        lattice.add(PlainItem(content: "d", project: "beta"))
-        lattice.add(PlainItem(content: "e", project: "gamma"))
+        try lattice.add(PlainItem(content: "a", project: "alpha"))
+        try lattice.add(PlainItem(content: "b", project: "alpha"))
+        try lattice.add(PlainItem(content: "c", project: "beta"))
+        try lattice.add(PlainItem(content: "d", project: "beta"))
+        try lattice.add(PlainItem(content: "e", project: "gamma"))
 
         // WHERE + distinct: only "alpha" project items, deduplicated
         let results = lattice.objects(PlainItem.self)
@@ -83,17 +83,17 @@ class DistinctTests: BaseTest {
 
         // Simulate overlapping memories across two DBs
         let shared1 = PlainItem(content: "memory1", project: "alpha")
-        local.add(shared1)
+        try local.add(shared1)
         let gid1 = shared1.globalId!
-        synced.add(PlainItem(content: "memory1", project: "alpha"), preservingGlobalId: gid1)
+        try synced.add(PlainItem(content: "memory1", project: "alpha"), preservingGlobalId: gid1)
 
         let shared2 = PlainItem(content: "memory2", project: "beta")
-        local.add(shared2)
+        try local.add(shared2)
         let gid2 = shared2.globalId!
-        synced.add(PlainItem(content: "memory2", project: "beta"), preservingGlobalId: gid2)
+        try synced.add(PlainItem(content: "memory2", project: "beta"), preservingGlobalId: gid2)
 
         // Unique to synced
-        synced.add(PlainItem(content: "memory3", project: "alpha"))
+        try synced.add(PlainItem(content: "memory3", project: "alpha"))
 
         let query = try local.attaching(lattice: synced)
 
@@ -124,11 +124,11 @@ class DistinctTests: BaseTest {
 
         // Simulate the same item existing in both DBs (same globalId)
         let item = PlainItem(content: "shared item", project: "test")
-        local.add(item)
+        try local.add(item)
         let globalId = item.globalId!
 
         // Insert with same globalId into synced DB
-        synced.add(PlainItem(content: "shared item", project: "test"), preservingGlobalId: globalId)
+        try synced.add(PlainItem(content: "shared item", project: "test"), preservingGlobalId: globalId)
 
         // Without distinct, UNION ALL returns both
         let query = try local.attaching(lattice: synced)
@@ -147,17 +147,17 @@ class DistinctTests: BaseTest {
 
         // 2 items in local, 1 overlapping + 1 unique in synced
         let item1 = PlainItem(content: "shared", project: "test")
-        local.add(item1)
+        try local.add(item1)
         let gid1 = item1.globalId!
 
         let item2 = PlainItem(content: "local only", project: "test")
-        local.add(item2)
+        try local.add(item2)
 
         // Same globalId as item1
-        synced.add(PlainItem(content: "shared", project: "test"), preservingGlobalId: gid1)
+        try synced.add(PlainItem(content: "shared", project: "test"), preservingGlobalId: gid1)
 
         // Unique to synced
-        synced.add(PlainItem(content: "synced only", project: "test"))
+        try synced.add(PlainItem(content: "synced only", project: "test"))
 
         let query = try local.attaching(lattice: synced)
 
@@ -174,14 +174,14 @@ class DistinctTests: BaseTest {
 
         // Overlapping item
         let shared = PlainItem(content: "shared", project: "alpha")
-        local.add(shared)
+        try local.add(shared)
         let gid = shared.globalId!
 
-        synced.add(PlainItem(content: "shared", project: "alpha"), preservingGlobalId: gid)
+        try synced.add(PlainItem(content: "shared", project: "alpha"), preservingGlobalId: gid)
 
         // Non-overlapping
-        local.add(PlainItem(content: "local beta", project: "beta"))
-        synced.add(PlainItem(content: "synced beta", project: "beta"))
+        try local.add(PlainItem(content: "local beta", project: "beta"))
+        try synced.add(PlainItem(content: "synced beta", project: "beta"))
 
         let query = try local.attaching(lattice: synced)
 
@@ -203,9 +203,9 @@ class DistinctTests: BaseTest {
     @Test func distinct_chainingPreserved_throughSortedBy() async throws {
         let lattice = try testLattice(PlainItem.self)
 
-        lattice.add(PlainItem(content: "a", project: "alpha"))
-        lattice.add(PlainItem(content: "b", project: "alpha"))
-        lattice.add(PlainItem(content: "c", project: "beta"))
+        try lattice.add(PlainItem(content: "a", project: "alpha"))
+        try lattice.add(PlainItem(content: "b", project: "alpha"))
+        try lattice.add(PlainItem(content: "c", project: "beta"))
 
         let results = lattice.objects(PlainItem.self)
             .distinct(by: \.project)
@@ -220,9 +220,9 @@ class DistinctTests: BaseTest {
     @Test func distinct_noEffect_whenAlreadyUnique() async throws {
         let lattice = try testLattice(PlainItem.self)
 
-        lattice.add(PlainItem(content: "a", project: "alpha"))
-        lattice.add(PlainItem(content: "b", project: "beta"))
-        lattice.add(PlainItem(content: "c", project: "gamma"))
+        try lattice.add(PlainItem(content: "a", project: "alpha"))
+        try lattice.add(PlainItem(content: "b", project: "beta"))
+        try lattice.add(PlainItem(content: "c", project: "gamma"))
 
         // All projects unique — distinct should return same count
         let results = lattice.objects(PlainItem.self)

@@ -321,7 +321,7 @@ actor NIORelaySyncTests {
         // Insert on lattice1 (via a separate instance sharing the same DB)
         let inserter = try Lattice(SimpleSyncObject.self, configuration: c1)
         let obj = SimpleSyncObject(value: 42, floatValue: 3.14)
-        inserter.add(obj)
+        try inserter.add(obj)
         print("[NIORelaySyncTests] Inserted SimpleSyncObject(value: 42) on lattice1\n")
 
         // Wait for receiver to see the synced insert (with timeout)
@@ -356,7 +356,7 @@ actor NIORelaySyncTests {
         // Pre-populate the relay with data
         await relay.seed { lattice in
             let seedObj = SimpleSyncObject(value: 99, floatValue: 1.23)
-            lattice.add(seedObj)
+            try! lattice.add(seedObj)
         }
         let eventCount = try await relay.eventCount()
         print("[NIORelaySyncTests] Server seeded with \(eventCount) events\n")

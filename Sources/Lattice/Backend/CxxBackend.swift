@@ -223,13 +223,18 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         guard let cxx = object as? CxxObjectBackend else { preconditionFailure("CxxBackend requires CxxObjectBackend") }
         var err = lattice.cxx_error()
         ref.add(cxx.ref, &err)
-        if !err.msg.empty() { throw Lattice.Error.databaseError(String(err.msg)) }
+        if !err.msg.empty() { throw LatticeError.addFailed(String(err.msg)) }
     }
-    func addPreservingGlobalId(_ object: any ObjectBackend, globalId: UUID) {
+    // No cxx_error out-param on this bridge overload — a C++ failure here is
+    // not detectable from Swift. `throws` satisfies the (throwing) protocol
+    // requirement; this conformance never actually throws today.
+    func addPreservingGlobalId(_ object: any ObjectBackend, globalId: UUID) throws {
         guard let cxx = object as? CxxObjectBackend else { preconditionFailure() }
         ref.add_preserving_global_id(cxx.ref, std.string(globalId.uuidString))
     }
-    func addBulk(_ objects: [any ObjectBackend]) {
+    // Same as addPreservingGlobalId: the bulk bridge overload exposes no
+    // failure signal, so this conformance never actually throws today.
+    func addBulk(_ objects: [any ObjectBackend]) throws {
         var vec = lattice.DynamicObjectRefPtrVector()
         for o in objects {
             guard let cxx = o as? CxxObjectBackend else { preconditionFailure() }

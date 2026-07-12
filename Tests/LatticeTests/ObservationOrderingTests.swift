@@ -31,7 +31,7 @@ class ObservationOrderingTests: BaseTest {
 
         let writes = 25
         for i in 0..<writes {
-            lattice.add(OrderedItem(seq: i))
+            try lattice.add(OrderedItem(seq: i))
         }
 
         try await waitUntil { collector.snapshot().count >= writes }
@@ -61,7 +61,7 @@ class ObservationOrderingTests: BaseTest {
 
         let writes = 25
         for i in 0..<writes {
-            lattice.add(OrderedItem(seq: i))
+            try lattice.add(OrderedItem(seq: i))
         }
 
         try await waitUntil { collector.snapshot().count >= writes }
@@ -89,7 +89,7 @@ class ObservationOrderingTests: BaseTest {
 
         let writes = 25
         for i in 0..<writes {
-            writer.add(OrderedItem(seq: i))
+            try writer.add(OrderedItem(seq: i))
         }
 
         try await waitUntil { collector.snapshot().count >= writes }

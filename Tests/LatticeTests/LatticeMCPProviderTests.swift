@@ -15,11 +15,11 @@ final class LatticeMCPProviderTests {
             .appending(path: "mcp_\(UUID().uuidString).sqlite")
         let lattice = try Lattice(DynPerson.self, DynDog.self, configuration: .init(fileURL: url))
         let dog = DynDog(); dog.name = "Rex"; dog.breed = "Husky"
-        lattice.add(dog)
+        try lattice.add(dog)
         let alice = DynPerson(); alice.name = "Alice"; alice.age = 34
-        lattice.add(alice); alice.dog = dog
+        try lattice.add(alice); alice.dog = dog
         let bob = DynPerson(); bob.name = "Bob"; bob.age = 20
-        lattice.add(bob)
+        try lattice.add(bob)
         lattice.checkpoint()
         lattice.close()
         return url

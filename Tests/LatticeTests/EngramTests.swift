@@ -187,7 +187,7 @@ actor EngramIntegrationTests {
                     importance: (memoryIndex % 5) + 1,
                     isPrivate: false
                 )
-                local.add(memory)
+                try local.add(memory)
             }
             // Yield after each project batch so the actor's scheduler can
             // process queued upload_pending_changes dispatches
@@ -411,7 +411,7 @@ actor EngramSyncRealismTests {
                     importance: (memoryIndex % 5) + 1,
                     isPrivate: false
                 )
-                local.add(memory)
+                try local.add(memory)
                 projectGlobalIds.append(memory.globalId!)
             }
             globalIdsByProject[projectName] = projectGlobalIds
@@ -423,7 +423,7 @@ actor EngramSyncRealismTests {
                     targetGlobalId: projectGlobalIds[edgeIndex + 1],
                     relation: "relates_to"
                 )
-                local.add(edge)
+                try local.add(edge)
             }
         }
         print("[TEST] All data inserted. Local has \(local.objects(EngramMemory.self).count) memories, \(local.objects(EngramEdge.self).count) edges")
@@ -532,7 +532,7 @@ actor EngramSyncRealismTests {
 
         // Insert 50 memories
         for i in 0..<50 {
-            local.add(EngramMemory(
+            try local.add(EngramMemory(
                 content: "Mem \(i)",
                 project: syncedProject,
                 embedding: [Float(i)]
@@ -555,7 +555,7 @@ actor EngramSyncRealismTests {
 
         // Insert 20 more while sync is off — these should NOT reach server
         for i in 50..<70 {
-            local.add(EngramMemory(
+            try local.add(EngramMemory(
                 content: "Mem \(i)",
                 project: syncedProject,
                 embedding: [Float(i)]
@@ -629,12 +629,12 @@ actor EngramSyncRealismTests {
 
         // Insert mix of private and public
         for i in 0..<30 {
-            local.add(EngramMemory(
+            try local.add(EngramMemory(
                 content: "Public \(i)", project: "myproject", isPrivate: false
             ))
         }
         for i in 0..<20 {
-            local.add(EngramMemory(
+            try local.add(EngramMemory(
                 content: "Private \(i)", project: "myproject", isPrivate: true
             ))
         }
@@ -688,15 +688,15 @@ actor EngramSyncRealismTests {
         // Insert across synced + unsynced projects
         for project in syncedProjects {
             for i in 0..<perProject {
-                local.add(EngramMemory(content: "\(project)-\(i)", project: project))
+                try local.add(EngramMemory(content: "\(project)-\(i)", project: project))
             }
         }
         // Also insert into projects NOT in filter
         for i in 0..<perProject {
-            local.add(EngramMemory(content: "unsynced-\(i)", project: "unsynced-project"))
+            try local.add(EngramMemory(content: "unsynced-\(i)", project: "unsynced-project"))
         }
         for i in 0..<perProject {
-            local.add(EngramMemory(content: "private-proj-\(i)", project: "private-only"))
+            try local.add(EngramMemory(content: "private-proj-\(i)", project: "private-only"))
         }
         print("[TEST] Inserted \(syncedProjects.count * perProject) synced + \(2 * perProject) unsynced")
 
@@ -753,7 +753,7 @@ actor EngramSyncRealismTests {
 
         // Insert 10 memories
         for i in 0..<10 {
-            local.add(EngramMemory(content: "Original \(i)", project: "myproject", importance: 1))
+            try local.add(EngramMemory(content: "Original \(i)", project: "myproject", importance: 1))
         }
         let _ = try await observerTask.value
         print("[TEST] Initial 10 synced")
