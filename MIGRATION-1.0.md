@@ -13,3 +13,4 @@ ledger becomes the consumer migration guide and the 1.0.0 CHANGELOG body.
 - `EmbeddedModel` reads are now tolerant: `getField` returns the type's default value (with an error log) on empty or undecodable stored JSON instead of trapping; JSON *encode* failures on the write path still trap, now with a message naming the type.
 - `Configuration.init` no longer traps when no documents directory exists (headless Linux/daemon contexts): the default database location falls back to the current working directory with a warning log.
 - `syncProgressStream` no longer crashes the process if its background query Lattice fails to open (cross-process path) — it logs and finishes the stream.
+- `Lattice.transaction { }` now ROLLS BACK on throw and rethrows (previously a throw left the write transaction open, wedging the connection until the busy timeout killed the process). New `rollbackTransaction()` alongside begin/commit; `LatticeBackend` gains a `rollback()` requirement.

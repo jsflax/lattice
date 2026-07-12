@@ -1789,12 +1789,27 @@ public struct Lattice {
         backend.commit()
     }
     
+    public func rollbackTransaction(isolation: isolated (any Actor)? = #isolation) {
+        backend.rollback()
+    }
+
+    /// Runs `block` inside an explicit transaction. On throw the transaction
+    /// is ROLLED BACK and the error rethrown — the block's writes are
+    /// discarded and the connection is immediately usable. (Previously a
+    /// throw left the transaction OPEN: the next beginTransaction blocked on
+    /// the busy timeout and killed the process — far more reachable now that
+    /// the `add` family throws.)
     public func transaction<T>(isolation: isolated (any Actor)? = #isolation,
                                _ block: () throws -> T) rethrows -> T {
         beginTransaction()
-        let value = try block()
-        commitTransaction()
-        return value
+        do {
+            let value = try block()
+            commitTransaction()
+            return value
+        } catch {
+            backend.rollback()
+            throw error
+        }
     }
     
     public mutating func attach(lattice: Lattice) throws {

@@ -288,6 +288,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func optimize() { ref.optimize() }
     func beginTransaction() { ref.begin_transaction() }
     func commit() { ref.commit() }
+    func rollback() { ref.rollback() }
     func close() { ref.close() }
 
     // Sync status

@@ -369,6 +369,7 @@ public protocol LatticeBackend: AnyObject, Sendable {
 
     // Transactions
     func beginTransaction()
+    func rollback()
     func commit()
 
     // Lifecycle
