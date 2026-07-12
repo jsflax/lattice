@@ -1496,8 +1496,12 @@ public struct Lattice {
 
     /// Delivery-ordering contract (1.0): payload-bearing change streams — this
     /// AuditLog observer and the table/collection observers — guarantee that
-    /// every committed change is delivered exactly once and that each BATCH
-    /// is walked synchronously in commit order. Cross-batch ARRIVAL order is
+    /// every committed change from a SAME-PROCESS writer is delivered exactly
+    /// once and that each BATCH is walked synchronously in commit order.
+    /// Cross-PROCESS delivery is best-effort: a race between the writer's
+    /// cursor advance and the notifier's scan can drop a remote commit's
+    /// notification (the data itself is durable and readable — only the
+    /// wakeup can be lost; poll or re-query on reconnect for guarantees). Cross-batch ARRIVAL order is
     /// best-effort: near-simultaneous commits can interleave under CPU
     /// contention (delivery hops threads between the C++ notify path and the
     /// callback), so consumers needing a total order must sort by AuditLog
