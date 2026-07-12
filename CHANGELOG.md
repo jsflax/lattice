@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.9] - 2026-07-12
+
+### Fixed
+- **attach failure semantics under LatticeCore >= 0.10.5**: the core's
+  exception-safe attach (bool + `last_attach_error()`) silently turned a
+  schema-mismatch/alias-collision attach into a NO-OP for this release line
+  (the historical behavior was a crash from the C++ exception; the bool
+  result was ignored). `attach` now fails fast with the actual reason.
+  LatticeCore floor raised to 0.10.8, which also delivers the URI-capable
+  connections, path-exact detach, and attach SQL-escaping fixes to 0.10.x
+  consumers.
+
 ## [Unreleased]
 
 ## [0.10.8] - 2026-07-10

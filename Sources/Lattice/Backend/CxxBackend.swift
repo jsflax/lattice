@@ -348,7 +348,16 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         guard let otherRef = other.asCxxLatticeRef else {
             fatalError("CxxBackend.attach requires a C++ backend on both sides")
         }
-        ref.attach(otherRef)
+        // Core >= 0.10.5 reports attach failure via Bool instead of letting
+        // the C++ exception terminate the process. 0.10.x attach is
+        // non-throwing, so restore the historical fail-fast contract — but
+        // with the actual reason instead of an interop terminate. (1.0's
+        // attach throws LatticeError.attachFailed instead.)
+        guard ref.attach(otherRef) else {
+            let e = ref.last_attach_error()
+            let reason = e.__convertToBool() ? String(e.pointee) : "unknown attach failure"
+            fatalError("Lattice.attach failed: \(reason)")
+        }
     }
 
     // Sync data ingestion — returns the affected globalId strings; the caller
