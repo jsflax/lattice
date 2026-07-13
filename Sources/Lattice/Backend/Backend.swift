@@ -42,6 +42,21 @@ public struct TableChangeEvent: Sendable, Equatable {
     }
 }
 
+/// Why a synchronous invalidation fired (item A §2.3). Raw values mirror the
+/// bridge's `invalidation_reason` codes.
+public enum InvalidationReason: Int32, Sendable, Equatable {
+    /// A settled commit. The payload names the batch's changed tables (empty
+    /// for bookkeeping-only commits — the epoch bump is table-agnostic §2.3).
+    case commit = 0
+    /// A rolled-back transaction. No change batch is delivered by design, so
+    /// any state captured while the transaction was open may be poisoned —
+    /// re-capture at the next access (§4.1).
+    case rollback = 1
+    /// A generation-advance request (§3.3/§3.4): content did not change;
+    /// facades re-pin at the next access so the WAL can rewind/truncate.
+    case advance = 2
+}
+
 /// One sync-filter rule: a table plus an optional WHERE-fragment limiting which
 /// rows upload. Replaces lattice.sync_filter_entry on the neutral surface.
 public struct SyncFilterParam: Sendable, Equatable {
@@ -398,6 +413,97 @@ public protocol LatticeBackend: AnyObject, Sendable {
         _ callback: @escaping @Sendable ([TableChangeEvent]) -> Void
     ) -> UInt64
     func removeTableObserver(table: String, observerId: UInt64)
+
+    // MARK: Item A — synchronous invalidation + read generations (Commit 5)
+
+    /// Register a SYNCHRONOUS invalidation hook (§2.3). The callback runs
+    /// INLINE on the writer's thread — for file DBs inside SQLite's
+    /// post-commit C hook frame — once per settled top-level transaction,
+    /// BEFORE the scheduler-dispatched observer fan-out, fanned to every
+    /// alive same-path core instance. The §2.3 restrictions apply to the
+    /// callback body verbatim: atomic epoch increments / dirty-flag stores
+    /// under LEAF locks only. No SQL, no allocation-heavy work, nothing that
+    /// can throw, no lock any thread ever holds across a SQL statement.
+    func addInvalidationHook(
+        _ callback: @escaping @Sendable (_ changedTables: [String], _ reason: InvalidationReason) -> Void
+    ) -> UInt64
+    func removeInvalidationHook(token: UInt64)
+
+    /// Acquire a read generation (a pooled read-only connection holding an
+    /// open read transaction — one MVCC snapshot, §1.1). Returns 0 when this
+    /// storage refuses keepers (memory family, Emscripten, closed instance)
+    /// or the store cannot be pinned — treat 0 as "no keeper" and use the
+    /// non-generation path.
+    func acquireReadGeneration() -> UInt64
+    /// Add a logical hold on a live generation (iterators). false = already
+    /// retired or retiring — re-resolve.
+    func retainReadGeneration(_ generationID: UInt64) -> Bool
+    /// Drop a hold; at refcount 0 the keeper COMMITs and its connection
+    /// returns to the pool. Releasing an already-retired id is a no-op.
+    func releaseReadGeneration(_ generationID: UInt64)
+    /// Force-retire every live generation on this instance (§3.4 protocol;
+    /// §3.6 lifecycle contract).
+    func retireAllReadGenerations()
+    /// Live generations across every alive same-path core instance (§3.3).
+    func readGenerationsOutstanding() -> Int
+    /// Live generations held by THIS instance only.
+    func localReadGenerationsOutstanding() -> Int
+    /// §3.2 maintenance tick: TTL retire, absolute age cap, pending
+    /// WAL-threshold evictions. The Swift coordinator's maintenance timer is
+    /// the actor of record for EVERY storage/config.
+    func runReadPoolMaintenance()
+
+    // Pool tunables (§1.7 ResultsTuning — forwarded per-Lattice at open).
+    func setReadGenerationTTLMs(_ ms: Int64)
+    func setReadGenerationMaxAgeMs(_ ms: Int64)
+    func setWALKeeperEvictionThresholdBytes(_ bytes: Int64)
+    /// Diagnostics/tests: an armed-but-unserviced WAL threshold eviction.
+    func walEvictionPending() -> Bool
+
+    // Generation-scoped reads (§2.2; tolerant-ladder sentinels on failure).
+    /// `objects` executed at a held read generation. EMPTY +
+    /// `lastGenerationReadStale()` when the generation is no longer live or
+    /// the read failed; an empty result with the flag clear is genuine.
+    func objectsAt(
+        generation: UInt64,
+        table: String,
+        where whereClause: String?,
+        orderBy: String?,
+        limit: Int64?,
+        offset: Int64?,
+        groupBy: String?,
+        distinctBy: String?
+    ) -> [any ObjectBackend]
+    /// `count` executed at a held read generation. -1 + stale flag on
+    /// failure; 0 is a genuine zero.
+    func countAt(
+        generation: UInt64,
+        table: String,
+        where whereClause: String?,
+        groupBy: String?,
+        distinctBy: String?
+    ) -> Int64
+    /// `objectsWithinBBox` executed at a held read generation. EMPTY + stale
+    /// flag on failure.
+    func objectsWithinBBoxAt(
+        generation: UInt64,
+        table: String, geoColumn: String,
+        minLat: Double, maxLat: Double, minLon: Double, maxLon: Double,
+        where whereClause: String?, orderBy: String?,
+        limit: Int64?, offset: Int64?, groupBy: String?
+    ) -> [any ObjectBackend]
+    /// §4.1 materialized-id capture (memory family): `SELECT id FROM T
+    /// [WHERE …] [ORDER BY …]` inside a capture transaction under the
+    /// per-store write gate, with a bounded LOCKED retry. NOT
+    /// generation-scoped. EMPTY + stale flag after the retry budget.
+    func queryIDs(table: String, where whereClause: String?, orderBy: String?) -> [Int64]
+    /// `PRAGMA data_version` on the dedicated non-transaction cross-process
+    /// read connection (Commit-6 belt). -1 on failure.
+    func dataVersion() -> Int64
+    /// Whether the LAST generation-scoped read on THIS thread returned a
+    /// sentinel because it could not be served. Check on the same thread,
+    /// immediately after the read, before trusting an empty/-1 result.
+    func lastGenerationReadStale() -> Bool
 
     // Sync callbacks — optional closures; nil clears (matches nullptr branch)
     func setOnSyncProgress(

@@ -37,6 +37,17 @@ final class QueryShapeState: @unchecked Sendable {
         /// Epoch at which `count`/`pages` were last known valid. 0 = never.
         var validatedEpoch: UInt64 = 0
         var cachedCount: Int?
+        /// §4.1 materialized-id generation (memory family): the id vector
+        /// captured at `validatedEpoch`. `count == ids.count`; `subscript(i)`
+        /// hydrates `ids[i]` by primary key. Rotated out with the pages when
+        /// a write invalidates the shape; carried over (retagged) across
+        /// epochs that did not touch this table (§2.2).
+        var ids: ContiguousArray<Int64>?
+        /// The last count any successful count/capture produced — survives
+        /// revalidation. Tolerant-ladder standby for a memory-family capture
+        /// that exhausted its LOCKED-retry budget (§4.1 mechanism 3:
+        /// "previous vector, else empty + stale flag" — count flavor).
+        var lastKnownCount: Int?
         /// pageIndex → hydrated elements (stored as AnyObject — every cached
         /// element is a Model class instance; readers downcast and treat a
         /// mismatch as a miss).
@@ -88,6 +99,7 @@ final class QueryShapeState: @unchecked Sendable {
         state.pages = [:]
         state.pageLRU = []
         state.cachedCount = nil
+        state.ids = nil
         state.validatedEpoch = epoch
     }
 
@@ -103,11 +115,43 @@ final class QueryShapeState: @unchecked Sendable {
     /// Publish a freshly counted value, unless a write landed while the
     /// statement ran (`currentFloor > epoch` — serve it, don't cache it).
     func publishCount(_ count: Int, epoch: UInt64, floor: UInt64, currentFloor: UInt64) {
-        guard currentFloor <= epoch else { return }
         lock.withLockUnchecked { state in
+            state.lastKnownCount = count
+            guard currentFloor <= epoch else { return }
             Self.revalidate(&state, epoch: epoch, floor: floor)
             state.cachedCount = count
         }
+    }
+
+    // MARK: Materialized-id generations (§4.1, memory family — Commit 5)
+
+    /// The id vector valid for the batch-pinned `(epoch, floor)`, or nil
+    /// (caller captures via `queryIDs` — a gated capture transaction — and
+    /// publishes).
+    func ids(epoch: UInt64, floor: UInt64) -> ContiguousArray<Int64>? {
+        lock.withLockUnchecked { state in
+            Self.revalidate(&state, epoch: epoch, floor: floor)
+            return state.ids
+        }
+    }
+
+    /// Publish a captured id vector (and the count it implies), unless a
+    /// write landed while the capture ran — serve it, don't cache it.
+    func publishIDs(_ ids: ContiguousArray<Int64>, epoch: UInt64, floor: UInt64, currentFloor: UInt64) {
+        lock.withLockUnchecked { state in
+            state.lastKnownCount = ids.count
+            guard currentFloor <= epoch else { return }
+            Self.revalidate(&state, epoch: epoch, floor: floor)
+            state.ids = ids
+            state.cachedCount = ids.count
+        }
+    }
+
+    /// Tolerant-ladder standby: the last successfully captured/counted count
+    /// (survives revalidation). Served when a capture returns the stale
+    /// sentinel; corrected at the next successful epoch.
+    func lastKnownCountValue() -> Int? {
+        lock.withLockUnchecked { $0.lastKnownCount }
     }
 
     /// Cached page for the batch-pinned `(epoch, floor)`.

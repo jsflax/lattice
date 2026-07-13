@@ -2,6 +2,9 @@ import Foundation
 #if canImport(CoreFoundation) && canImport(os)
 import CoreFoundation
 #endif
+#if canImport(UIKit) && !os(watchOS)
+import UIKit
+#endif
 
 // MARK: - ResultsTuning (item A §1.7)
 //
@@ -10,71 +13,105 @@ import CoreFoundation
 // NOT `Duration`, which is iOS 16+ and cannot be availability-gated in a
 // stored property; the package floor is iOS 15 / macOS 14).
 //
-// Knobs active as of Commit 1 (shared shape cache + epochs + never-trap):
-//   `pageSize`, `maxCachedPages`, `maxCachedShapes`.
-// The remaining knobs are part of the item-A public surface but are consumed
-// by later commits: `crossProcessBeltIntervalMs` (Commit 6, data_version
-// belt), `generationTTLSeconds` / `keeperPoolSize` /
-// `walKeeperEvictionThresholdBytes` (Commits 3/5, keeper generations + WAL
-// retention policy).
+// Knobs active as of Commit 5: `pageSize`, `maxCachedPages`,
+// `maxCachedShapes` (Commit 1); `generationTTLSeconds` and
+// `walKeeperEvictionThresholdBytes` (forwarded to the core read-pool
+// tunables at open — §3.2/§3.4); `keeperPoolSize` documents the core pool
+// capacity (the core cap is currently fixed at its default 3 — the bridge
+// exposes no per-instance setter). `crossProcessBeltIntervalMs` is consumed
+// by Commit 6 (data_version belt).
 public struct ResultsTuning: Sendable, Equatable, Hashable {
     public var pageSize: Int = 100
     /// LRU bound, per query shape.
     public var maxCachedPages: Int = 16
     /// Cross-process freshness belt floor interval; nil disables. (Commit 6.)
     public var crossProcessBeltIntervalMs: Int? = 500
-    /// Idle generation self-retire. (Commits 3/5.)
+    /// Idle generation self-retire (§3.2). Forwarded to the core pool TTL at
+    /// open; enforced by the coordinator's maintenance timer.
     public var generationTTLSeconds: TimeInterval = 30
-    /// Read-generation keeper pool size. (Commits 3/5.)
+    /// Read-generation keeper pool size (§2.5). Documents the core pool
+    /// capacity; the core cap is its default (3) in 1.0.
     public var keeperPoolSize: Int = 3
     /// Registry LRU bound (query shapes per lattice).
     public var maxCachedShapes: Int = 64
     /// WAL size at which ALL keepers are force-retired to open a reader gap
-    /// so the log can rewind/truncate (§3.4). (Commits 3/5.)
+    /// so the log can rewind/truncate (§3.4). The hard WAL bound. Forwarded
+    /// to the core WAL-hook threshold at open.
     public var walKeeperEvictionThresholdBytes: Int = 16 << 20   // 16 MB
 
     public init() {}
 }
 
-// MARK: - GenerationCoordinator (item A §2.1/§2.2, Commit-1 slice)
+// MARK: - Generation value types (item A §1.1)
+
+/// One minted generation: the coordinator epoch it serves plus the core
+/// keeper generation id. `id == 0` means "no keeper" — the memory family
+/// (§4.1 materialized-id generations) or a file store that could not be
+/// pinned (falls back to live reads for that epoch).
+struct GenerationRef: Equatable {
+    let epoch: UInt64
+    let id: UInt64
+}
+
+/// What `resolve(table:)` hands a facade for one top-level access: the
+/// batch-pinned epoch, the staleness floor for the access's table, and the
+/// keeper generation id to route generation-scoped reads through (0 = no
+/// keeper — memory-family materialized-id or live-read path).
+struct GenerationContext {
+    let epoch: UInt64
+    let floor: UInt64
+    let generationID: UInt64
+}
+
+// MARK: - GenerationCoordinator (item A §2.1/§2.2, Commit-5 slice)
 //
 // One coordinator per Lattice identity (`backend.identityHash`), held in a
 // process-global registry, created lazily on the first live-Results access
 // and torn down on `close()` / registry eviction.
 //
-// COMMIT-1 STAGING NOTE (per spec §7 "Commit 1 … logical epochs only, all
-// storages"): a "generation" here is a *logical epoch* — a monotone counter —
-// NOT yet a pinned read snapshot. Generation-scoped reads fall back to live
-// reads through the existing neutral backend surface until the keeper pool
-// and the generation-scoped bridge surface land (Commits 3–5). What this
-// commit does provide:
+// COMMIT-5 STATE: a generation is now a REAL pinned read snapshot on file
+// (WAL) databases — a core keeper connection holding an open read
+// transaction, acquired through the Commit-4 bridge surface — and a
+// materialized-id vector per query shape on the memory family (§4.1; the
+// vectors live in `QueryShapeState`, captured via `queryIDs`). Invalidation
+// is the SYNCHRONOUS core hook (§2.3): registered per coordinator on its
+// backend, fired INLINE on the writer's thread for every settled commit on
+// the store — fanned per path across core instances, so cross-handle writes
+// (a second app-side `Lattice`, sync-applied chunks, TSR-resolved handles)
+// bump this coordinator's epoch before the write call returns. The interim
+// scheduler-dispatched `addTableObserver` freshness signal from Commit 1 is
+// REMOVED — the trampoline remains the UI-repaint signal only (§1.5).
 //
-//   * Same-handle read-your-writes, exact: `Lattice.add()` / `transaction()`
-//     / `delete()` / managed-property setters bump the epoch synchronously on
-//     the writer's thread, after the backend write returns (§1.3 Layer 1).
-//   * Cross-handle / cross-process freshness, interim: the coordinator
-//     subscribes to the existing `backend.addTableObserver` trampoline for
-//     every table with a live shape. That trampoline is scheduler-dispatched
-//     (`notify_changes_batched` routes through `scheduler_->invoke`), so its
-//     delivery can land *after* the write call returns — it is explicitly
-//     NOT read-your-writes and remains an interim freshness signal only,
-//     replaced by the synchronous core invalidation hook in Commits 3–5
-//     (§2.3: `lattice_db::add_invalidation_hook`, fanned per path via
-//     `instance_registry::for_each_alive`).
-//   * The render-batch generation pin (§1.3): epoch resolution is pinned per
-//     main-thread runloop tick so one render batch serves one epoch;
-//     same-thread write bumps clear the pin immediately (same-thread RYW
-//     stays exact); other threads resolve per top-level access.
+//   * Same-handle read-your-writes stays exact via BOTH layers (§1.3):
+//     Swift write paths bump directly after the backend returns (Layer 1),
+//     and the core hook bumps inline during the write (Layer 2). The double
+//     bump is harmless (mint happens per access, not per bump).
+//   * The render-batch generation pin (§1.3) now pins the RESOLVED
+//     GENERATION, not just the epoch: one main-thread runloop tick serves
+//     one pinned `GenerationRef`, so a cross-thread commit mid-frame cannot
+//     tear the frame (identity diffed and rows hydrated at one snapshot —
+//     §8.6, pinned by T8). Same-thread write bumps clear the pin
+//     immediately (same-thread RYW stays exact).
+//   * Superseded/unpinned generations are RELEASED off the hook frame
+//     (§2.2): the hook only moves ids into `pendingRetire` (state stores —
+//     hook-frame legal); the actual core release (keeper COMMIT — SQL) runs
+//     on the next resolve, the maintenance tick, or teardown.
 //
 // LOCKING INVARIANT (§2.3, pinned by test T10): the coordinator lock and
 // every `QueryShapeState` lock are LEAF locks — no thread may hold them
 // across any SQL statement, backend call, or operation that can block on a
 // connection mutex. Registry/shape lookups snapshot state under the lock,
 // release it, run SQL, then re-validate the epoch before publishing.
+// Keeper acquisition/release and all generation-scoped reads run with NO
+// coordinator lock held (two-phase).
 final class GenerationCoordinator: @unchecked Sendable {
     let identityHash: Int64
     let path: String
     let tuning: ResultsTuning
+    /// §4.1: memory-family stores (private `:memory:`, named shared-cache —
+    /// SQLite URI forms) never hold keepers; their generations are
+    /// materialized-id vectors. Mirrors the core's `path_is_memory`.
+    let isMemoryFamily: Bool
     /// Weak: the coordinator must not keep a closed/released backend alive
     /// (the Lattice cache itself is weak for exactly this reason).
     private(set) weak var backend: (any LatticeBackend)?
@@ -84,23 +121,45 @@ final class GenerationCoordinator: @unchecked Sendable {
         /// "unvalidated" shape (validatedEpoch == 0) is always stale.
         var epoch: UInt64 = 1
         /// Last epoch at which each table saw a write (write-path bump or
-        /// interim observer delivery). Shapes over untouched tables keep
-        /// their caches across epoch bumps (§2.2 carry-over).
+        /// hook delivery). Shapes over untouched tables keep their caches
+        /// across epoch bumps (§2.2 carry-over).
         var tableWriteEpochs: [String: UInt64] = [:]
         /// Last epoch of a write whose table set is unknown (explicit
-        /// `transaction()` commits, `refresh()`): invalidates every shape.
+        /// `transaction()` commits, `refresh()`, rollback re-capture §2.3):
+        /// invalidates every shape.
         var allTablesWriteEpoch: UInt64 = 0
-        /// Render-batch pin (§1.3): the epoch the current main-thread runloop
-        /// tick is pinned to. Main-thread-only; cleared on `.beforeWaiting`
-        /// and by same-thread (main) write bumps.
-        var mainPin: UInt64?
+        /// The coordinator's current generation — minted lazily at the first
+        /// top-level access batch whose facade observes a stale/absent
+        /// current (§2.2 "mints": never inside the invalidation hook frame).
+        var current: GenerationRef?
+        /// Render-batch pin (§1.3): the generation the current main-thread
+        /// runloop tick is pinned to. Main-thread-only; cleared on
+        /// `.beforeWaiting` and by same-thread write bumps. While set, its
+        /// keeper id is never released.
+        var mainPin: GenerationRef?
         var mainPinObserverInstalled = false
+        /// Keeper ids whose coordinator hold should be released — superseded
+        /// generations, cleared pins, stale-read casualties. Drained OFF the
+        /// hook frame (§2.2: the keeper COMMIT is SQL) by resolve /
+        /// maintenance / teardown.
+        var pendingRetire: [UInt64] = []
+        /// Synchronous invalidation hook registration (§2.3).
+        var hookRegistered = false
+        var hookToken: UInt64?
+        /// Maintenance timer (§3.2) armed flag — armed only while
+        /// generations are outstanding or work is pending.
+        var maintenanceArmed = false
+        /// §4.2/§2.5: attach exposes union tables as per-connection TEMP
+        /// views on `db_`/`read_db_` ONLY — pool (keeper) connections do not
+        /// carry them, so a keeper-routed read on an attach-parent handle
+        /// would silently serve base-table rows. While this path is an
+        /// attach parent, keepers are suppressed: attached/union shapes get
+        /// logical-epoch caching with live reads (their §4.2 1.0 contract).
+        var keepersSuppressed = false
         /// Live query shapes for this lattice, LRU-bounded by
         /// `tuning.maxCachedShapes`.
         var shapes: [QueryShapeKey: QueryShapeState] = [:]
         var shapeLRU: [QueryShapeKey] = []
-        /// table → interim observer id (0 while registration is in flight).
-        var observedTables: [String: UInt64] = [:]
     }
 
     private let lock: UnfairLock<State>
@@ -114,35 +173,184 @@ final class GenerationCoordinator: @unchecked Sendable {
         self.path = path
         self.tuning = tuning
         self.backend = backend
+        self.isMemoryFamily = Self.pathIsMemory(path)
         self.lock = UnfairLock(initialState: State())
     }
 
-    // MARK: Epoch resolution (render-batch pinned, §1.3)
+    /// Swift mirror of the core's `configuration::path_is_memory`: URI forms
+    /// are only URI-parsed by SQLite when they start with `file:`.
+    static func pathIsMemory(_ path: String) -> Bool {
+        if path.isEmpty || path == ":memory:" { return true }
+        guard path.hasPrefix("file:") else { return false }
+        if path.contains(":memory:") { return true }
+        guard let query = path.range(of: "?") else { return false }
+        return path[query.upperBound...].contains("mode=memory")
+    }
 
-    /// Resolve the epoch this top-level access serves, plus the staleness
-    /// floor for `table` (the last write epoch affecting it, clamped to the
-    /// pinned epoch so a mid-batch cross-thread bump takes effect at the next
-    /// batch boundary, never mid-frame).
-    func resolve(table: String) -> (epoch: UInt64, floor: UInt64) {
+    // MARK: Synchronous invalidation hook (§2.3)
+
+    /// Register the core invalidation hook. Called by the registry AFTER its
+    /// own lock is released (hook registration is a backend call — never
+    /// made under a registry/coordinator lock). Idempotent.
+    func activate() {
+        let needsRegistration: Bool = lock.withLockUnchecked { state in
+            guard !state.hookRegistered else { return false }
+            state.hookRegistered = true
+            return true
+        }
+        guard needsRegistration, let backend else { return }
+        // The callback body runs INLINE in the writer's hook frame — for
+        // file DBs inside SQLite's post-commit C frame (§2.3). It is
+        // restricted to leaf-lock state stores: `noteWrite` is an O(1)
+        // counter/flag update under the coordinator leaf lock — no SQL, no
+        // keeper release (that is deferred via `pendingRetire`), nothing
+        // that can throw.
+        let token = backend.addInvalidationHook { [weak self] tables, reason in
+            guard let self else { return }
+            switch reason {
+            case .commit:
+                // Epoch bump is table-agnostic (every settled commit — §2.3,
+                // keeper retirement depends on it); the changed-table payload
+                // only refines which shapes drop caches. An EMPTY payload is
+                // a bookkeeping-only commit: bump, keep every cache.
+                self.noteWrite(tables: tables)
+            case .rollback:
+                // No change batch is delivered for a rollback by design —
+                // any capture that raced the transaction may be poisoned
+                // (§4.1 dirty-read belt), so every shape re-captures.
+                self.noteWrite(tables: nil)
+            case .advance:
+                // §3.3/§3.4: content did not change — facades re-pin at the
+                // next access (fresh keeper behind the truncated log);
+                // epoch-keyed caches survive (floors untouched).
+                self.noteWrite(tables: [])
+            }
+        }
+        lock.withLockUnchecked { state in
+            state.hookToken = token
+        }
+    }
+
+    // MARK: Generation resolution (render-batch pinned, §1.3)
+
+    /// Resolve the generation this top-level access serves: the batch-pinned
+    /// epoch, the staleness floor for `table` (clamped to the pinned epoch so
+    /// a mid-batch cross-thread bump takes effect at the next batch boundary,
+    /// never mid-frame), and the keeper generation id (0 = no keeper).
+    ///
+    /// Two-phase (§2.3): pin/cache decisions under the leaf lock; keeper
+    /// acquisition (BEGIN + pin statement — SQL) with NO lock held, published
+    /// under epoch re-validation. A write landing during acquisition retries
+    /// the mint (bounded) so a writer's own next access never serves a
+    /// snapshot that predates its commit (read-your-writes, §1.3).
+    func resolve(table: String) -> GenerationContext {
         var installObserver = false
-        let result: (UInt64, UInt64) = lock.withLockUnchecked { state in
-            var epoch = state.epoch
-            if Thread.isMainThread {
-                if let pinned = state.mainPin {
-                    epoch = pinned
-                } else {
-                    state.mainPin = epoch
-                    if !state.mainPinObserverInstalled {
-                        state.mainPinObserverInstalled = true
-                        installObserver = true
+        var attempts = 0
+        defer {
+            if installObserver { installMainPinObserver() }
+            drainPendingRetires()
+        }
+        while true {
+            enum Step {
+                case serve(GenerationContext)
+                case mint(epoch: UInt64)
+            }
+            let step: Step = lock.withLockUnchecked { state in
+                if Thread.isMainThread, let pinned = state.mainPin {
+                    return .serve(GenerationContext(epoch: pinned.epoch,
+                                                    floor: Self.floorFor(state, table: table, epoch: pinned.epoch),
+                                                    generationID: pinned.id))
+                }
+                let epoch = state.epoch
+                if let current = state.current, current.epoch == epoch {
+                    Self.pinIfMainThread(&state, current, installObserver: &installObserver)
+                    return .serve(GenerationContext(epoch: epoch,
+                                                    floor: Self.floorFor(state, table: table, epoch: epoch),
+                                                    generationID: current.id))
+                }
+                if isMemoryFamily || state.keepersSuppressed {
+                    // §4.1: no keepers on the memory family — the generation
+                    // is the per-shape materialized-id vector (captured by
+                    // the facade). §4.2: no keepers while this path is an
+                    // attach parent (TEMP views live on `db_`/`read_db_`
+                    // only). Publish a keeperless current so the batch pin
+                    // has a stable ref.
+                    let fresh = GenerationRef(epoch: epoch, id: 0)
+                    Self.supersede(&state, with: fresh)
+                    Self.pinIfMainThread(&state, fresh, installObserver: &installObserver)
+                    return .serve(GenerationContext(epoch: epoch,
+                                                    floor: Self.floorFor(state, table: table, epoch: epoch),
+                                                    generationID: 0))
+                }
+                return .mint(epoch: epoch)
+            }
+            switch step {
+            case .serve(let context):
+                return context
+            case .mint(let epochAtStart):
+                attempts += 1
+                // SQL (BEGIN + pin) — NO locks held.
+                let acquired = backend?.acquireReadGeneration() ?? 0
+                var redundant: UInt64 = 0
+                let published: GenerationContext? = lock.withLockUnchecked { state in
+                    if let current = state.current, current.epoch == state.epoch {
+                        // Another thread minted for this epoch — serve theirs.
+                        redundant = acquired
+                        Self.pinIfMainThread(&state, current, installObserver: &installObserver)
+                        return GenerationContext(epoch: current.epoch,
+                                                 floor: Self.floorFor(state, table: table, epoch: current.epoch),
+                                                 generationID: current.id)
+                    }
+                    guard state.epoch == epochAtStart else {
+                        // A write landed while pinning: the snapshot may
+                        // predate it — do not publish (RYW); retry fresh.
+                        redundant = acquired
+                        return nil
+                    }
+                    let fresh = GenerationRef(epoch: epochAtStart, id: acquired)
+                    Self.supersede(&state, with: fresh)
+                    Self.pinIfMainThread(&state, fresh, installObserver: &installObserver)
+                    return GenerationContext(epoch: epochAtStart,
+                                             floor: Self.floorFor(state, table: table, epoch: epochAtStart),
+                                             generationID: acquired)
+                }
+                if redundant != 0 {
+                    backend?.releaseReadGeneration(redundant)   // SQL — no locks held
+                }
+                if let published {
+                    if published.generationID != 0 { armMaintenanceTimer() }
+                    return published
+                }
+                if attempts >= 3 {
+                    // Write storm: serve the freshest epoch keeperless this
+                    // once (live-read fallback); the next batch re-pins.
+                    return lock.withLockUnchecked { state in
+                        GenerationContext(epoch: state.epoch,
+                                          floor: Self.floorFor(state, table: table, epoch: state.epoch),
+                                          generationID: 0)
                     }
                 }
             }
-            let tableFloor = max(state.tableWriteEpochs[table] ?? 0, state.allTablesWriteEpoch)
-            return (epoch, min(tableFloor, epoch))
         }
-        if installObserver { installMainPinObserver() }
-        return result
+    }
+
+    /// A generation-scoped read at `failedGeneration` came back stale
+    /// (force-retired keeper, thrown core read — §3.4 protocol). Drop the
+    /// dead generation (and any pin on it) and re-resolve, minting fresh.
+    func resolveAfterStaleRead(failedGeneration: UInt64, table: String) -> GenerationContext {
+        guard failedGeneration != 0 else { return resolve(table: table) }
+        lock.withLockUnchecked { state in
+            if state.current?.id == failedGeneration {
+                state.current = nil
+            }
+            if state.mainPin?.id == failedGeneration {
+                state.mainPin = nil
+            }
+            if !state.pendingRetire.contains(failedGeneration) {
+                state.pendingRetire.append(failedGeneration)
+            }
+        }
+        return resolve(table: table)
     }
 
     /// Current effective floor for `table` against the *live* epoch — used to
@@ -151,6 +359,32 @@ final class GenerationCoordinator: @unchecked Sendable {
         lock.withLockUnchecked { state in
             max(state.tableWriteEpochs[table] ?? 0, state.allTablesWriteEpoch)
         }
+    }
+
+    private static func floorFor(_ state: State, table: String, epoch: UInt64) -> UInt64 {
+        min(max(state.tableWriteEpochs[table] ?? 0, state.allTablesWriteEpoch), epoch)
+    }
+
+    private static func pinIfMainThread(_ state: inout State, _ generation: GenerationRef,
+                                        installObserver: inout Bool) {
+        guard Thread.isMainThread else { return }
+        state.mainPin = generation
+        if !state.mainPinObserverInstalled {
+            state.mainPinObserverInstalled = true
+            installObserver = true
+        }
+    }
+
+    /// Replace `current`, queuing the superseded keeper for off-frame release
+    /// unless the render-batch pin still references it (§2.2: the pool
+    /// overlap that lets an in-flight render drain on N while N+1 serves).
+    private static func supersede(_ state: inout State, with fresh: GenerationRef) {
+        if let old = state.current, old.id != 0, old.id != fresh.id,
+           state.mainPin?.id != old.id,
+           !state.pendingRetire.contains(old.id) {
+            state.pendingRetire.append(old.id)
+        }
+        state.current = fresh
     }
 
     /// The render-batch boundary: on the main thread the batch is the runloop
@@ -185,22 +419,46 @@ final class GenerationCoordinator: @unchecked Sendable {
     }
 
     private func clearMainPin() {
-        lock.withLockUnchecked { state in
-            state.mainPin = nil
+        let hasPending: Bool = lock.withLockUnchecked { state in
+            Self.clearPinLocked(&state)
+            return !state.pendingRetire.isEmpty
+        }
+        // The batch is over — release anything the pin was keeping alive,
+        // off the main runloop (§2.2: keeper COMMITs run on reader/utility
+        // threads; the frame boundary should cost no SQL).
+        if hasPending {
+            Self.maintenanceQueue.async { [weak self] in
+                self?.drainPendingRetires()
+            }
         }
     }
 
-    // MARK: Write-path epoch bumps (§1.3 Layer 1)
+    /// Clear the render-batch pin. If the pinned generation was superseded
+    /// while pinned (a cross-thread bump mid-batch), the pin was its last
+    /// reference — queue its keeper for release. State stores only
+    /// (hook-frame legal; `noteWrite` uses this on same-thread bumps).
+    private static func clearPinLocked(_ state: inout State) {
+        if let pinned = state.mainPin, pinned.id != 0, pinned.id != state.current?.id,
+           !state.pendingRetire.contains(pinned.id) {
+            state.pendingRetire.append(pinned.id)
+        }
+        state.mainPin = nil
+    }
+
+    // MARK: Write-path epoch bumps (§1.3 Layer 1 + §2.3 hook Layer 2)
 
     /// Record a settled write. `tables == nil` means the touched table set is
-    /// unknown (an explicit transaction commit) — every shape is invalidated.
+    /// unknown (an explicit transaction commit, a rollback re-capture) —
+    /// every shape is invalidated. `tables == []` bumps the epoch without
+    /// invalidating any shape (bookkeeping-only commits, advance requests).
     /// A bump performed by the main thread clears the render-batch pin
     /// immediately, keeping same-thread read-your-writes exact (§1.3).
     ///
     /// Callback-restriction note (§2.3): this is an O(1) counter update under
-    /// a leaf lock — no SQL, no allocation-heavy work, nothing that can
-    /// throw — so it is safe from every write path, including (in later
-    /// commits) the synchronous core invalidation hook frame.
+    /// a leaf lock — no SQL, no keeper release (deferred via
+    /// `pendingRetire`), nothing that can throw — so it is safe from every
+    /// write path INCLUDING the synchronous core invalidation hook frame
+    /// (for file DBs, SQLite's post-commit C frame on the writer's thread).
     func noteWrite(tables: [String]?) {
         lock.withLockUnchecked { state in
             state.epoch &+= 1
@@ -213,8 +471,11 @@ final class GenerationCoordinator: @unchecked Sendable {
                 state.allTablesWriteEpoch = epoch
             }
             if Thread.isMainThread {
-                state.mainPin = nil
+                Self.clearPinLocked(&state)
             }
+            // The superseded `current` is NOT retired here — no SQL in the
+            // hook frame. The next resolve mints fresh and supersedes it
+            // (§2.2: release scheduled off-frame).
         }
     }
 
@@ -224,6 +485,120 @@ final class GenerationCoordinator: @unchecked Sendable {
         noteWrite(tables: nil)
     }
 
+    /// §4.2: toggle keeper suppression (this path became / stopped being an
+    /// attach parent). Suppressing queues the held keeper for release —
+    /// facades re-resolve keeperless at the next access; the attach path's
+    /// own `noteWrite(tables: nil)` forces the refill.
+    func setKeepersSuppressed(_ suppressed: Bool) {
+        lock.withLockUnchecked { state in
+            guard state.keepersSuppressed != suppressed else { return }
+            state.keepersSuppressed = suppressed
+            guard suppressed else { return }
+            if let current = state.current, current.id != 0,
+               state.mainPin?.id != current.id,
+               !state.pendingRetire.contains(current.id) {
+                state.pendingRetire.append(current.id)
+            }
+            state.current = nil
+        }
+        drainPendingRetires()
+    }
+
+    // MARK: Keeper release (off the hook frame, §2.2)
+
+    /// Release every keeper hold queued by supersession/pin-clears/stale
+    /// reads. Runs SQL (keeper COMMIT at refcount 0) — called only from
+    /// reader/utility contexts (resolve, runloop batch boundary, maintenance
+    /// tick, teardown), NEVER from the invalidation hook frame.
+    func drainPendingRetires() {
+        guard let backend else { return }
+        let ids: [UInt64] = lock.withLockUnchecked { state in
+            guard !state.pendingRetire.isEmpty else { return [] }
+            let ids = state.pendingRetire
+            state.pendingRetire = []
+            return ids
+        }
+        for id in ids {
+            backend.releaseReadGeneration(id)
+        }
+    }
+
+    // MARK: Maintenance timer (§3.2)
+
+    /// The §3.2 enforcement actor for EVERY storage/config (non-sync
+    /// lattices have no pacer thread — the timer is the actor of record; a
+    /// sync pacer is only ever a second caller). Low-frequency, utility QoS,
+    /// armed only while generations are outstanding or retires are pending.
+    /// Each tick drains pending releases and drives the core maintenance
+    /// entry (TTL retire with the in-flight-statement "active reads"
+    /// definition, absolute age re-pin, pending WAL-threshold evictions).
+    private static let maintenanceQueue = DispatchQueue(
+        label: "lattice.results.generation-maintenance", qos: .utility)
+
+    /// Tick cadence derived from the TTL knob: fast enough that a TTL
+    /// expiry is observed within ~half a TTL, floored/capped so ms-granular
+    /// test tunings compress time and production tunings stay low-frequency.
+    var maintenanceTickInterval: TimeInterval {
+        min(max(tuning.generationTTLSeconds / 2, 0.025), 5.0)
+    }
+
+    private func armMaintenanceTimer() {
+        let arm: Bool = lock.withLockUnchecked { state in
+            guard !state.maintenanceArmed else { return false }
+            state.maintenanceArmed = true
+            return true
+        }
+        guard arm else { return }
+        Self.maintenanceQueue.asyncAfter(deadline: .now() + maintenanceTickInterval) { [weak self] in
+            self?.maintenanceTick()
+        }
+    }
+
+    private func maintenanceTick() {
+        drainPendingRetires()
+        guard let backend else {
+            lock.withLockUnchecked { $0.maintenanceArmed = false }
+            return
+        }
+        backend.runReadPoolMaintenance()
+        // Re-arm while there is anything left to police: outstanding keepers
+        // (TTL/age caps), queued releases, or an unserviced WAL-threshold
+        // eviction. Otherwise disarm; the next mint re-arms.
+        let outstanding = backend.localReadGenerationsOutstanding()
+        let pending: Bool = lock.withLockUnchecked { state in
+            if outstanding > 0 || !state.pendingRetire.isEmpty || backend.walEvictionPending() {
+                return true
+            }
+            state.maintenanceArmed = false
+            return false
+        }
+        if pending {
+            Self.maintenanceQueue.asyncAfter(deadline: .now() + maintenanceTickInterval) { [weak self] in
+                self?.maintenanceTick()
+            }
+        }
+    }
+
+    // MARK: Lifecycle (§3.6)
+
+    /// Retire every open read generation now: force-COMMIT keeper
+    /// transactions (§3.4 protocol, core-side), return pooled connections,
+    /// drop the coordinator's current/pinned refs. Facades re-pin lazily at
+    /// the next access; epoch-keyed caches survive if no invalidation
+    /// arrived meanwhile. Called by `Lattice.retireAllGenerations()` and the
+    /// platform lifecycle observers (backgrounding — 0xdead10cc contract).
+    func retireAllGenerations() {
+        lock.withLockUnchecked { state in
+            // The core retire-all force-commits EVERY live generation on the
+            // instance — our per-id holds become no-op releases, so the
+            // queue can simply be dropped alongside current/pin.
+            state.current = nil
+            state.mainPin = nil
+            state.pendingRetire = []
+        }
+        backend?.retireAllReadGenerations()
+    }
+
     // MARK: Shape registry (two-phase, §2.3)
 
     /// Look up (or create) the shared shape state for `key`, touching the
@@ -231,8 +606,7 @@ final class GenerationCoordinator: @unchecked Sendable {
     /// never held across SQL; the caller runs its query lock-free and
     /// re-validates before publishing into the returned state.
     func shape(for key: QueryShapeKey) -> QueryShapeState {
-        var needsObserver = false
-        let state: QueryShapeState = lock.withLockUnchecked { state in
+        lock.withLockUnchecked { state in
             if let existing = state.shapes[key] {
                 // LRU touch.
                 if let idx = state.shapeLRU.firstIndex(of: key) {
@@ -251,16 +625,8 @@ final class GenerationCoordinator: @unchecked Sendable {
                 let evicted = state.shapeLRU.removeFirst()
                 state.shapes.removeValue(forKey: evicted)
             }
-            if state.observedTables[key.table] == nil {
-                state.observedTables[key.table] = 0   // registration in flight
-                needsObserver = true
-            }
             return created
         }
-        if needsObserver {
-            registerInterimObserver(table: key.table)
-        }
-        return state
     }
 
     /// Number of live shapes (diagnostics / test pin for the LRU bound).
@@ -268,41 +634,37 @@ final class GenerationCoordinator: @unchecked Sendable {
         lock.withLockUnchecked { $0.shapes.count }
     }
 
-    /// INTERIM cross-handle freshness signal (Commit 1 only): ride the
-    /// existing table-observer trampoline so writes arriving through *other*
-    /// handles to the same store — a second app-side `Lattice`, sync-applied
-    /// chunks, cross-process notifier wakeups — eventually bump the epoch.
-    /// This delivery is scheduler-dispatched (it can land after the write
-    /// call returns), so it is a freshness signal, NOT read-your-writes;
-    /// Commit 3's synchronous core invalidation hook replaces it (§2.3).
-    /// Same-handle Swift write paths bump synchronously via `noteWrite` and
-    /// merely double-bump here, which is harmless (an extra cache drop).
-    private func registerInterimObserver(table: String) {
-        guard let backend else { return }
-        let observerId = backend.addTableObserver(table: table) { [weak self] _ in
-            self?.noteWrite(tables: [table])
-        }
-        lock.withLockUnchecked { state in
-            state.observedTables[table] = observerId
-        }
-    }
-
     // MARK: Teardown
 
-    /// Remove interim observers and drop all shape caches. Called from the
-    /// registry on `Lattice.close()` / `Lattice.delete(for:)`.
+    /// Remove the invalidation hook, release every keeper hold, and drop all
+    /// shape caches. Called from the registry on `Lattice.close()` /
+    /// `Lattice.delete(for:)` — BEFORE the backend closes (§4.6 ordering;
+    /// the core close additionally retires its whole pool).
     func tearDown() {
-        let observers: [String: UInt64] = lock.withLockUnchecked { state in
-            let observed = state.observedTables
-            state.observedTables = [:]
+        let cleanup: (token: UInt64?, generations: [UInt64]) = lock.withLockUnchecked { state in
+            let token = state.hookToken
+            state.hookToken = nil
+            state.hookRegistered = true   // never re-register on a dying coordinator
+            var generations = state.pendingRetire
+            state.pendingRetire = []
+            if let current = state.current, current.id != 0, !generations.contains(current.id) {
+                generations.append(current.id)
+            }
+            state.current = nil
+            if let pinned = state.mainPin, pinned.id != 0, !generations.contains(pinned.id) {
+                generations.append(pinned.id)
+            }
+            state.mainPin = nil
             state.shapes = [:]
             state.shapeLRU = []
-            state.mainPin = nil
-            return observed
+            return (token, generations)
         }
         if let backend {
-            for (table, observerId) in observers where observerId != 0 {
-                backend.removeTableObserver(table: table, observerId: observerId)
+            if let token = cleanup.token {
+                backend.removeInvalidationHook(token: token)
+            }
+            for id in cleanup.generations {
+                backend.releaseReadGeneration(id)
             }
         }
         #if canImport(CoreFoundation) && canImport(os)
@@ -331,51 +693,86 @@ final class GenerationCoordinator: @unchecked Sendable {
 // MARK: - Process-global coordinator registry (§2.2)
 
 /// Process-global registry of coordinators, keyed by `backend.identityHash`,
-/// with a secondary path index so write-path bumps reach every same-path
-/// coordinator in this process — the Swift-side stand-in for the per-path
-/// fan-out the Commit-3 core hook performs via
-/// `instance_registry::for_each_alive` (§2.3).
+/// with a secondary path index so Swift write-path bumps reach every
+/// same-path coordinator in this process. (The synchronous core hook — §2.3 —
+/// already fans per path across CORE instances; the Swift-side path index
+/// additionally propagates attach-relationships, which the core hook does
+/// not know about, and serves the Layer-1 write-path bumps.)
 enum GenerationCoordinatorRegistry {
     private struct State {
         var byIdentity: [Int64: GenerationCoordinator] = [:]
         var byPath: [String: Set<Int64>] = [:]
         /// attached store path → parent store paths whose handles union it
         /// (`Lattice.attach`). While linked, a write on the attached store
-        /// invalidates the parents' shapes too (Commit-1 stand-in for §4.2's
-        /// hook-driven member-table invalidation).
+        /// invalidates the parents' shapes too (§4.2: attached/union shapes
+        /// get logical-epoch caching only).
         var attachedToParents: [String: Set<String>] = [:]
+        /// §3.6 lifecycle observers installed once per process.
+        var lifecycleObserversInstalled = false
     }
     private static let lock = UnfairLock<State>(initialState: State())
 
+    /// Whether `path` is currently an attach PARENT (its handles expose
+    /// union TEMP views) — keeper suppression predicate (§4.2/§2.5).
+    private static func isAttachParent(_ state: State, path: String) -> Bool {
+        state.attachedToParents.values.contains { $0.contains(path) }
+    }
+
     /// Record that handles over `parent` now union rows from `attached`.
+    /// Keepers over `parent` are suppressed while the link exists: attach
+    /// TEMP views live on `db_`/`read_db_` only — a keeper-routed read
+    /// would silently serve base-table rows (§4.2/§2.5).
     static func linkAttachedPaths(parent: String, attached: String) {
-        lock.withLockUnchecked { state in
+        let coordinators: [GenerationCoordinator] = lock.withLockUnchecked { state in
             state.attachedToParents[attached, default: []].insert(parent)
+            guard let hashes = state.byPath[parent] else { return [] }
+            return hashes.compactMap { state.byIdentity[$0] }
+        }
+        for coordinator in coordinators {
+            coordinator.setKeepersSuppressed(true)
         }
     }
 
     static func unlinkAttachedPaths(parent: String, attached: String) {
-        lock.withLockUnchecked { state in
+        let coordinators: [GenerationCoordinator] = lock.withLockUnchecked { state in
             state.attachedToParents[attached]?.remove(parent)
             if state.attachedToParents[attached]?.isEmpty == true {
                 state.attachedToParents.removeValue(forKey: attached)
             }
+            // Re-enable keepers only when NO remaining attachment names this
+            // path as parent.
+            guard !Self.isAttachParent(state, path: parent),
+                  let hashes = state.byPath[parent] else { return [] }
+            return hashes.compactMap { state.byIdentity[$0] }
+        }
+        for coordinator in coordinators {
+            coordinator.setKeepersSuppressed(false)
         }
     }
 
     /// Coordinator for a live backend — created lazily on first live-Results
-    /// access (§2.2 "mints").
+    /// access (§2.2 "mints"). Hook registration and lifecycle-observer
+    /// installation happen AFTER the registry lock is released (backend
+    /// calls are never made under a registry lock — §2.3 leaf-lock rule).
     static func coordinator(for backend: any LatticeBackend, tuning: ResultsTuning) -> GenerationCoordinator {
         let identityHash = backend.identityHash
         let path = backend.path
-        return lock.withLockUnchecked { state in
+        var installLifecycleObservers = false
+        let coordinator: GenerationCoordinator = lock.withLockUnchecked { state in
             if let existing = state.byIdentity[identityHash], existing.backend != nil {
                 return existing
             }
             let created = GenerationCoordinator(identityHash: identityHash, path: path,
                                                 tuning: tuning, backend: backend)
+            if Self.isAttachParent(state, path: path) {
+                created.setKeepersSuppressed(true)   // no keeper held yet — state-only
+            }
             state.byIdentity[identityHash] = created
             state.byPath[path, default: []].insert(identityHash)
+            if !state.lifecycleObserversInstalled {
+                state.lifecycleObserversInstalled = true
+                installLifecycleObservers = true
+            }
             // Opportunistic prune of dead-backend entries for this path (a
             // reopened database mints a new identityHash).
             if let hashes = state.byPath[path] {
@@ -388,13 +785,26 @@ enum GenerationCoordinatorRegistry {
             }
             return created
         }
+        coordinator.activate()
+        if installLifecycleObservers {
+            GenerationLifecycleObserver.installIfAvailable()
+        }
+        return coordinator
+    }
+
+    /// The existing coordinator for a backend identity, WITHOUT creating one
+    /// (used by `Lattice.retireAllGenerations()` — retiring must not mint).
+    static func existingCoordinator(identityHash: Int64) -> GenerationCoordinator? {
+        lock.withLockUnchecked { state in
+            state.byIdentity[identityHash]
+        }
     }
 
     /// Same-process write-path bump, fanned out per path (§1.3 Layer 1 for
-    /// the writing handle; a synchronous freshness bonus for sibling handles
-    /// on the same store — the Commit-3 hook makes this per-path fan-out a
-    /// core guarantee). Near-zero cost when no coordinator exists (no
-    /// live-Results usage on the store).
+    /// the writing handle; the Commit-4 core hook is the per-path guarantee
+    /// across core instances — this Swift fan-out additionally walks attach
+    /// links). Near-zero cost when no coordinator exists (no live-Results
+    /// usage on the store).
     static func noteWrite(path: String, tables: [String]?) {
         let coordinators: [GenerationCoordinator] = lock.withLockUnchecked { state in
             // The written store plus (transitively) every store whose handles
@@ -424,6 +834,19 @@ enum GenerationCoordinatorRegistry {
         }
     }
 
+    /// §3.6: retire every open read generation across every coordinator in
+    /// the process (backgrounding / protected-data-unavailable). Suspended
+    /// processes must hold ZERO read transactions and zero WAL read-marks
+    /// (0xdead10cc).
+    static func retireAllGenerationsGlobally() {
+        let coordinators: [GenerationCoordinator] = lock.withLockUnchecked { state in
+            Array(state.byIdentity.values)
+        }
+        for coordinator in coordinators {
+            coordinator.retireAllGenerations()
+        }
+    }
+
     /// Tear down and remove the coordinator for a closing backend.
     static func evict(identityHash: Int64) {
         let coordinator: GenerationCoordinator? = lock.withLockUnchecked { state in
@@ -447,5 +870,41 @@ enum GenerationCoordinatorRegistry {
         for coordinator in coordinators {
             coordinator.tearDown()
         }
+    }
+}
+
+// MARK: - Process lifecycle observers (§3.6)
+
+/// iOS suspension contract (0xdead10cc): a keeper holds WAL read-mark locks
+/// on the `-shm` file for the life of its read transaction, and iOS
+/// terminates suspended apps holding SQLite/file locks in shared (app-group)
+/// containers. Where UIKit is available, the registry installs
+/// NotificationCenter observers for `willResignActive` and
+/// `protectedDataWillBecomeUnavailable` and retires every generation in the
+/// process; re-pin is lazy on the next access after foregrounding (two cheap
+/// statements; epoch-keyed caches survive if no invalidation arrived).
+///
+/// ScenePhase note: SwiftUI apps that never post the UIKit lifecycle
+/// notifications in some host contexts (widgets, previews) — and app
+/// extensions / non-UIKit hosts sharing an app-group container — must call
+/// `Lattice.retireAllGenerations()` from their own lifecycle hook (e.g.
+/// `.onChange(of: scenePhase) { if $0 == .background { … } }`). This is a
+/// REQUIRED contract for app-group deployments (§3.6; MIGRATION line 8).
+enum GenerationLifecycleObserver {
+    static func installIfAvailable() {
+        #if canImport(UIKit) && !os(watchOS)
+        // Observing the notification NAMES is extension-safe (no
+        // UIApplication.shared): in hosts where the notifications never
+        // fire, the observer is inert and the manual contract applies.
+        let center = NotificationCenter.default
+        center.addObserver(forName: UIApplication.willResignActiveNotification,
+                           object: nil, queue: nil) { _ in
+            GenerationCoordinatorRegistry.retireAllGenerationsGlobally()
+        }
+        center.addObserver(forName: UIApplication.protectedDataWillBecomeUnavailableNotification,
+                           object: nil, queue: nil) { _ in
+            GenerationCoordinatorRegistry.retireAllGenerationsGlobally()
+        }
+        #endif
     }
 }

@@ -967,6 +967,13 @@ public struct Lattice {
         // `create` (a foreign reference on iOS 16.4+, a copyable value type
         // below the floor) is boxed into the one stored backend.
         self.backend = CxxBackend(createdRef)
+        // Item A §1.7/§3: forward the per-Lattice read-generation tunables to
+        // the core pool at open (plain atomic stores). `keeperPoolSize`
+        // documents the core pool capacity (no per-instance setter in 1.0);
+        // the absolute age cap keeps its core default (§3.2(b)).
+        let resultsTuning = configuration.resultsTuning
+        self.backend.setReadGenerationTTLMs(Int64((resultsTuning.generationTTLSeconds * 1000).rounded()))
+        self.backend.setWALKeeperEvictionThresholdBytes(Int64(resultsTuning.walKeeperEvictionThresholdBytes))
         let key = CacheKey(self.backend)
         let entry = WeakCacheEntry(self)
         Self.cacheLock.withLockUnchecked { Self.cache[key] = entry }
@@ -1178,12 +1185,16 @@ public struct Lattice {
     /// Item A §1.3 Layer 1 (Commit 1): every Swift write path bumps the
     /// generation coordinator's epoch directly, synchronously, AFTER the
     /// backend write returns — same-handle read-your-writes with zero core
-    /// dependency. The bump fans out to every same-path coordinator in this
-    /// process (the Swift-side stand-in for the Commit-3 core hook's
-    /// per-path fan-out). Cross-handle writers that never pass through these
-    /// Swift paths (sync-applied chunks, other processes) ride the interim
-    /// scheduler-dispatched observer signal until the synchronous core
-    /// invalidation hook lands (Commits 3–5; see GenerationCoordinator).
+    /// dependency (§1.3 Layer 1). The bump fans out to every same-path
+    /// coordinator in this process, walking attach links. Cross-handle
+    /// writers that never pass through these Swift paths (sync-applied
+    /// chunks, second handles) are covered by Layer 2 — the synchronous
+    /// core invalidation hook (§2.3), delivered inline on the writer's
+    /// thread and fanned per path across core instances (see
+    /// GenerationCoordinator). The Layer-1 bump therefore double-bumps with
+    /// the hook for local writes, which is harmless (minting is per access,
+    /// not per bump) and keeps RYW exact even where a storage's hook
+    /// delivery is conditional.
     private func _noteWrite(tables: [String]?) {
         GenerationCoordinatorRegistry.noteWrite(path: backend.path, tables: tables)
     }
@@ -1363,10 +1374,35 @@ public struct Lattice {
     /// If a sibling instance exists for the same database, it will inherit sync responsibility.
     public func close() {
         // Item A §4.6: tear down this identity's generation coordinator
-        // (interim observers, shape caches) before the backend closes; a
-        // reopened database mints a new identityHash and a fresh coordinator.
+        // (invalidation hook, keeper holds, shape caches) before the backend
+        // closes — the core close additionally retires its whole read pool
+        // ahead of connection teardown; a reopened database mints a new
+        // identityHash and a fresh coordinator.
         GenerationCoordinatorRegistry.evict(identityHash: backend.identityHash)
         backend.close()
+    }
+
+    /// Retire every open read generation now (item A §3.6): force-COMMIT
+    /// keeper transactions, return pooled connections. Facades re-pin lazily
+    /// at the next access; caches keyed by epoch survive if no invalidation
+    /// arrived meanwhile.
+    ///
+    /// Called automatically on app backgrounding where UIKit is available
+    /// (`UIApplication.willResignActiveNotification` /
+    /// `protectedDataWillBecomeUnavailableNotification`). REQUIRED manually
+    /// from app extensions and non-UIKit hosts that share an app-group
+    /// container — a suspended process holding WAL read-marks in a shared
+    /// container is terminated with `0xdead10cc`. SwiftUI hosts where the
+    /// UIKit notifications do not fire should call this from a `ScenePhase`
+    /// hook: `.onChange(of: scenePhase) { if $0 == .background {
+    /// lattice.retireAllGenerations() } }`.
+    public func retireAllGenerations() {
+        // Never MINT a coordinator here (retiring must not pin): drop the
+        // coordinator's holds when one exists, then force-retire everything
+        // this instance still holds core-side.
+        GenerationCoordinatorRegistry.existingCoordinator(identityHash: backend.identityHash)?
+            .retireAllGenerations()
+        backend.retireAllReadGenerations()
     }
 
     // MARK: Sync Progress
@@ -1817,21 +1853,46 @@ public struct Lattice {
         }
     }
 
+    // MARK: Thread-local explicit-transaction depth (item A §4.1)
+    //
+    // Memory-family hydration batches take the per-store write gate by
+    // riding the lattice-level transaction entry (TableResults._hydrate).
+    // When the CURRENT THREAD already holds an explicit transaction, a
+    // nested same-connection BEGIN would wait on itself (the core retry
+    // loop waits out "transaction within a transaction") — and the
+    // enclosing transaction already owns the gate — so hydration must skip
+    // its own BEGIN. Thread-local by design: transactions are synchronous
+    // and thread-confined; a DIFFERENT thread's hydration waiting out this
+    // thread's transaction is exactly the §4.1 capture-vs-writer exclusion.
+    private static let _explicitTxnDepthKey = "Lattice._explicitTransactionDepth"
+    internal static var _threadHoldsExplicitTransaction: Bool {
+        ((Thread.current.threadDictionary[_explicitTxnDepthKey] as? Int) ?? 0) > 0
+    }
+    private static func _adjustThreadTxnDepth(by delta: Int) {
+        let current = (Thread.current.threadDictionary[_explicitTxnDepthKey] as? Int) ?? 0
+        Thread.current.threadDictionary[_explicitTxnDepthKey] = max(0, current + delta)
+    }
+
     public func beginTransaction(isolation: isolated (any Actor)? = #isolation) {
         // Start the transaction.
         backend.beginTransaction()
+        Self._adjustThreadTxnDepth(by: 1)
     }
-    
+
     public func commitTransaction(isolation: isolated (any Actor)? = #isolation) {
         backend.commit()
+        Self._adjustThreadTxnDepth(by: -1)
         // §1.3 Layer 1: an explicit transaction can touch any table (managed
         // property setters included) — the touched set is unknown here, so
-        // the settled commit invalidates every shape (tables: nil).
+        // the settled commit invalidates every shape (tables: nil). (The
+        // §2.3 core hook additionally delivers the exact changed-table
+        // batch inline during `commit` — a harmless double bump.)
         _noteWrite(tables: nil)
     }
-    
+
     public func rollbackTransaction(isolation: isolated (any Actor)? = #isolation) {
         backend.rollback()
+        Self._adjustThreadTxnDepth(by: -1)
     }
 
     /// Runs `block` inside an explicit transaction. On throw the transaction
@@ -1848,7 +1909,7 @@ public struct Lattice {
             commitTransaction()
             return value
         } catch {
-            backend.rollback()
+            rollbackTransaction()
             throw error
         }
     }

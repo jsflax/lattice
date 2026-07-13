@@ -410,6 +410,102 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
 
     func pendingSyncEntryCount() -> Int64 { Int64(ref.pending_sync_entry_count()) }
 
+    // MARK: Item A — synchronous invalidation + read generations (Commit 5)
+
+    /// C trampoline over `swift_lattice_ref.add_invalidation_hook`. The thunk
+    /// runs INLINE in the writer's hook frame (§2.3): it copies the C-string
+    /// table names (valid only for the duration of the callback) into Swift
+    /// strings and calls the boxed closure — whose body must obey the §2.3
+    /// restrictions (leaf-lock state stores only; no SQL; nothing that can
+    /// throw).
+    func addInvalidationHook(
+        _ callback: @escaping @Sendable (_ changedTables: [String], _ reason: InvalidationReason) -> Void
+    ) -> UInt64 {
+        let box = _CxxClosureBox(callback)
+        let ptr = Unmanaged.passRetained(box).toOpaque()
+        return ref.add_invalidation_hook(
+            ptr,
+            { ctx, tables, count, reason in
+                guard let ctx else { return }
+                let box = Unmanaged<_CxxClosureBox<@Sendable ([String], InvalidationReason) -> Void>>
+                    .fromOpaque(ctx).takeUnretainedValue()
+                var names: [String] = []
+                if count > 0, let tables {
+                    names.reserveCapacity(count)
+                    for i in 0..<count {
+                        if let t = tables[i] { names.append(String(cString: t)) }
+                    }
+                }
+                box.fn(names, InvalidationReason(rawValue: Int32(reason)) ?? .commit)
+            },
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable ([String], InvalidationReason) -> Void>>
+                    .fromOpaque(ctx).release()
+            }
+        )
+    }
+
+    func removeInvalidationHook(token: UInt64) {
+        ref.remove_invalidation_hook(token)
+    }
+
+    func acquireReadGeneration() -> UInt64 { ref.acquire_read_generation() }
+    func retainReadGeneration(_ generationID: UInt64) -> Bool {
+        ref.retain_read_generation(generationID)
+    }
+    func releaseReadGeneration(_ generationID: UInt64) {
+        ref.release_read_generation(generationID)
+    }
+    func retireAllReadGenerations() { ref.retire_all_read_generations() }
+    func readGenerationsOutstanding() -> Int { Int(ref.read_generations_outstanding()) }
+    func localReadGenerationsOutstanding() -> Int { Int(ref.local_read_generations_outstanding()) }
+    func runReadPoolMaintenance() { ref.run_read_pool_maintenance() }
+
+    func setReadGenerationTTLMs(_ ms: Int64) { ref.set_read_generation_ttl_ms(ms) }
+    func setReadGenerationMaxAgeMs(_ ms: Int64) { ref.set_read_generation_max_age_ms(ms) }
+    func setWALKeeperEvictionThresholdBytes(_ bytes: Int64) {
+        ref.set_wal_keeper_eviction_threshold_bytes(bytes)
+    }
+    func walEvictionPending() -> Bool { ref.wal_eviction_pending() }
+
+    func objectsAt(generation: UInt64, table: String, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?) -> [any ObjectBackend] {
+        let res = ref.objects_at(generation, std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy))
+        var out: [any ObjectBackend] = []
+        out.reserveCapacity(res.size())
+        for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
+        return out
+    }
+
+    func countAt(generation: UInt64, table: String, where whereClause: String?, groupBy: String?, distinctBy: String?) -> Int64 {
+        ref.count_at(generation, std.string(table), optStr(whereClause), optStr(groupBy), optStr(distinctBy))
+    }
+
+    func objectsWithinBBoxAt(generation: UInt64, table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?) -> [any ObjectBackend] {
+        let res = ref.objectsWithinBBoxAt(generation: generation, table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause), orderBy: optStr(orderBy), limit: optInt(limit), offset: optInt(offset), groupBy: optStr(groupBy))
+        var out: [any ObjectBackend] = []
+        out.reserveCapacity(res.size())
+        for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
+        return out
+    }
+
+    func queryIDs(table: String, where whereClause: String?, orderBy: String?) -> [Int64] {
+        // Index loop, NOT map/Collection conformance — see receiveSyncData
+        // (imported-vector Collection witnesses segfault on aarch64 Linux).
+        let vec = ref.query_ids_at(std.string(table), optStr(whereClause), optStr(orderBy))
+        var out: [Int64] = []
+        out.reserveCapacity(vec.size())
+        var i = 0
+        while i < vec.size() {
+            out.append(Int64(vec[i]))
+            i += 1
+        }
+        return out
+    }
+
+    func dataVersion() -> Int64 { ref.data_version() }
+    func lastGenerationReadStale() -> Bool { ref.lastGenerationReadStale() }
+
     // ---- C trampolines: observer / sync callbacks ----
     // Each registers a retained boxed Swift closure as the C++ `void* ctx`, a
     // @convention(c) thunk that unpacks it, and a destroy thunk that releases it.
