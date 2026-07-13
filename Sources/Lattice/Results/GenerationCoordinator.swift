@@ -13,13 +13,13 @@ import UIKit
 // NOT `Duration`, which is iOS 16+ and cannot be availability-gated in a
 // stored property; the package floor is iOS 15 / macOS 14).
 //
-// Knobs active as of Commit 5: `pageSize`, `maxCachedPages`,
+// Knobs active as of Commit 6: `pageSize`, `maxCachedPages`,
 // `maxCachedShapes` (Commit 1); `generationTTLSeconds` and
 // `walKeeperEvictionThresholdBytes` (forwarded to the core read-pool
 // tunables at open — §3.2/§3.4); `keeperPoolSize` documents the core pool
 // capacity (the core cap is currently fixed at its default 3 — the bridge
-// exposes no per-instance setter). `crossProcessBeltIntervalMs` is consumed
-// by Commit 6 (data_version belt).
+// exposes no per-instance setter); `crossProcessBeltIntervalMs` floors the
+// Commit-6 `data_version` belt (nil disables it).
 public struct ResultsTuning: Sendable, Equatable, Hashable {
     public var pageSize: Int = 100
     /// LRU bound, per query shape.
@@ -160,6 +160,23 @@ final class GenerationCoordinator: @unchecked Sendable {
         /// `tuning.maxCachedShapes`.
         var shapes: [QueryShapeKey: QueryShapeState] = [:]
         var shapeLRU: [QueryShapeKey] = []
+        // MARK: data_version belt (§1.3 cross-process, Commit 6)
+        /// Monotonic uptime (ns) of the last belt probe; 0 = never probed.
+        var beltLastProbeUptimeNanos: UInt64 = 0
+        /// Last `PRAGMA data_version` observed on `xproc_read_db_`. nil =
+        /// no baseline yet (the first probe only records; the first access
+        /// mints a fresh generation anyway, so nothing can be missed).
+        var beltLastSeenDataVersion: Int64?
+        /// A same-process write was observed (write-path bump or hook
+        /// delivery) since the last probe. `data_version` changes when ANY
+        /// other connection commits — including this process's own write
+        /// connection as seen from `xproc_read_db_` — so a delta explained
+        /// by a local write re-baselines instead of double-invalidating
+        /// (the hook already bumped precisely, per table).
+        var beltLocalWriteSinceProbe: Bool = false
+        /// Diagnostics (tests): PRAGMA probes issued / foreign bumps seen.
+        var beltProbeCount: UInt64 = 0
+        var beltForeignBumpCount: UInt64 = 0
     }
 
     private let lock: UnfairLock<State>
@@ -244,6 +261,9 @@ final class GenerationCoordinator: @unchecked Sendable {
     /// the mint (bounded) so a writer's own next access never serves a
     /// snapshot that predates its commit (read-your-writes, §1.3).
     func resolve(table: String) -> GenerationContext {
+        // Cross-process freshness belt (§1.3, Commit 6): runs FIRST so a
+        // detected foreign commit bumps the epoch before this access pins.
+        beltCheckIfDue()
         var installObserver = false
         var attempts = 0
         defer {
@@ -353,6 +373,73 @@ final class GenerationCoordinator: @unchecked Sendable {
         return resolve(table: table)
     }
 
+    // MARK: data_version belt (§1.3 cross-process, Commit 6)
+    //
+    // Foreign (out-of-process) writers cannot fire this process's
+    // synchronous invalidation hook — their commits are announced by the
+    // best-effort notifier, which is documented droppable. The belt bounds
+    // the staleness window after a dropped wakeup: at most once per belt
+    // interval, a top-level access batch issues `PRAGMA data_version` on
+    // the dedicated NON-TRANSACTION cross-process read connection
+    // (`xproc_read_db_` — inside a keeper's held read txn the value is
+    // frozen at the snapshot, so the belt must never run on a keeper). The
+    // value changes exactly when another connection committed; a change not
+    // explained by a locally-observed write is a FOREIGN commit with an
+    // unknown table set — bump the epoch and re-capture every shape
+    // (`noteWrite(tables: nil)`, the same advance path the hook's
+    // unknown-table reasons take).
+    //
+    // Batch alignment: `resolve` calls this before pin/serve decisions, so
+    // on the main thread the belt runs only at a render-batch START (a held
+    // pin skips it — a mid-frame foreign bump must not tear the frame,
+    // §1.3); on other threads every top-level access is its own batch,
+    // floored by `crossProcessBeltIntervalMs`. Memory-family stores skip
+    // the belt entirely (no cross-process writers; `xproc_read_db_` has no
+    // meaning there). `nil` interval disables (§1.7).
+    private func beltCheckIfDue() {
+        guard !isMemoryFamily, let intervalMs = tuning.crossProcessBeltIntervalMs else { return }
+        let intervalNanos = UInt64(max(0, intervalMs)) &* 1_000_000
+        let now = DispatchTime.now().uptimeNanoseconds
+        let shouldProbe: Bool = lock.withLockUnchecked { state in
+            // Mid-batch on the main thread: the frame is pinned — the belt
+            // re-checks at the next batch boundary.
+            if Thread.isMainThread, state.mainPin != nil { return false }
+            guard now &- state.beltLastProbeUptimeNanos >= intervalNanos
+                    || state.beltLastProbeUptimeNanos == 0 else { return false }
+            // Claim the probe slot under the lock (≤ 1 PRAGMA per interval
+            // even under concurrent resolves).
+            state.beltLastProbeUptimeNanos = now
+            state.beltProbeCount &+= 1
+            return true
+        }
+        guard shouldProbe, let backend else { return }
+        // SQL — NO locks held (leaf-lock rule).
+        let version = backend.dataVersion()
+        guard version >= 0 else { return }   // -1 = probe failed: no information
+        let foreignBump: Bool = lock.withLockUnchecked { state in
+            defer { state.beltLastSeenDataVersion = version }
+            let localWrite = state.beltLocalWriteSinceProbe
+            state.beltLocalWriteSinceProbe = false
+            guard let lastSeen = state.beltLastSeenDataVersion else { return false }  // baseline
+            guard version != lastSeen else { return false }
+            if localWrite { return false }   // delta explained by a local write (already bumped, per table)
+            state.beltForeignBumpCount &+= 1
+            return true
+        }
+        if foreignBump {
+            // Foreign commit, table set unknown — every shape re-captures.
+            noteWrite(tables: nil)
+            // The bump above was the belt's own: it must not mask the NEXT
+            // foreign delta as a local write.
+            lock.withLockUnchecked { $0.beltLocalWriteSinceProbe = false }
+        }
+    }
+
+    /// Diagnostics (tests): (PRAGMA probes issued, foreign bumps detected).
+    var beltCounters: (probes: UInt64, foreignBumps: UInt64) {
+        lock.withLockUnchecked { ($0.beltProbeCount, $0.beltForeignBumpCount) }
+    }
+
     /// Current effective floor for `table` against the *live* epoch — used to
     /// re-validate before publishing a fill (§2.3 two-phase pattern).
     func currentFloor(table: String) -> UInt64 {
@@ -389,7 +476,8 @@ final class GenerationCoordinator: @unchecked Sendable {
 
     /// The render-batch boundary: on the main thread the batch is the runloop
     /// tick — a `CFRunLoopObserver` on `.beforeWaiting` clears the pin (the
-    /// same batch boundary the Commit-6 `data_version` belt will use). On
+    /// same batch boundary the Commit-6 `data_version` belt keys off: a held
+    /// pin skips the belt; the next batch re-checks). On
     /// platforms without CFRunLoop main-loop semantics (Linux CI) there is no
     /// frame concept: every access is its own batch (no pin is taken —
     /// `installMainPinObserver` clears it immediately below).
@@ -470,6 +558,10 @@ final class GenerationCoordinator: @unchecked Sendable {
             } else {
                 state.allTablesWriteEpoch = epoch
             }
+            // Belt bookkeeping (Commit 6): this locally-observed write will
+            // move `data_version` on `xproc_read_db_` too — the next probe
+            // re-baselines instead of double-invalidating.
+            state.beltLocalWriteSinceProbe = true
             if Thread.isMainThread {
                 Self.clearPinLocked(&state)
             }
