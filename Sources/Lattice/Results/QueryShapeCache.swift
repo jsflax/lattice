@@ -20,10 +20,10 @@ struct QueryShapeKey: Hashable {
     let distinctBy: String?
 }
 
-/// Shared, epoch-keyed cache state for one query shape. Commit-1 contents
-/// (§7): cached `count`, an LRU page cache, `previousPages` (one superseded
-/// generation retained — tolerant-ladder rung (b)), and the lifeboat element
-/// (rung (c)). Keyset anchors join in Commit 2.
+/// Shared, epoch-keyed cache state for one query shape: cached `count`, an
+/// LRU page cache, `previousPages` (one superseded generation retained —
+/// tolerant-ladder rung (b)), the lifeboat element (rung (c)), and — from
+/// Commit 2 — the persistent keyset anchor map (§2.4).
 ///
 /// LOCKING (§2.3, pinned by T10): the internal lock is a LEAF lock. Every
 /// method is O(cached-state) with no SQL, no backend calls, and no other
@@ -48,6 +48,21 @@ final class QueryShapeState: @unchecked Sendable {
         var previousPages: [Int: [AnyObject]] = [:]
         /// Last element any fill returned for this shape (§1.2 rung (c)).
         var lifeboat: AnyObject?
+        /// Persistent keyset anchors (§2.4): pageIndex → the `(sortValue,
+        /// id)` of the LAST row of that filled page (~24 B each). Deliberately
+        /// NOT touched by `revalidate` (anchors survive epoch bumps —
+        /// content-anchored burst refill) nor by page-LRU eviction; they live
+        /// as long as the shape does. A stale anchor is rank-approximate but
+        /// content-exact: the resume predicate is position-free, so a refill
+        /// starts at the same content position and never traps.
+        var anchors: [Int: KeysetAnchor] = [:]
+        /// Diagnostics (tests): how fills were resumed. `offset` counts fills
+        /// that included an OFFSET clause (cold jumps / carve-out shapes);
+        /// `keyset` counts fills resumed by anchor predicate (or page-0
+        /// fills, which need neither). A gap fill (anchor + OFFSET remainder)
+        /// bumps both.
+        var offsetFillCount = 0
+        var keysetFillCount = 0
     }
 
     private let lock: UnfairLock<State>
@@ -109,13 +124,20 @@ final class QueryShapeState: @unchecked Sendable {
     }
 
     /// Publish a fill. Always records the lifeboat (rung (c) serves even
-    /// from a fill we chose not to cache); caches the page only when no
-    /// write landed during the statement (two-phase re-validation).
-    func publishPage(_ pageIndex: Int, rows: [AnyObject], epoch: UInt64, floor: UInt64,
+    /// from a fill we chose not to cache) and the end-of-page keyset anchor
+    /// (anchors are content-positional and epoch-agnostic, §2.4 — a fill
+    /// that raced a write still marks a real content position); caches the
+    /// page only when no write landed during the statement (two-phase
+    /// re-validation).
+    func publishPage(_ pageIndex: Int, rows: [AnyObject], endAnchor: KeysetAnchor? = nil,
+                     epoch: UInt64, floor: UInt64,
                      currentFloor: UInt64, maxCachedPages: Int) {
         lock.withLockUnchecked { state in
             if let last = rows.last {
                 state.lifeboat = last
+            }
+            if let endAnchor {
+                state.anchors[pageIndex] = endAnchor
             }
             guard currentFloor <= epoch else { return }
             Self.revalidate(&state, epoch: epoch, floor: floor)
@@ -143,5 +165,52 @@ final class QueryShapeState: @unchecked Sendable {
         lock.withLockUnchecked { state in
             state.lifeboat
         }
+    }
+
+    // MARK: Keyset anchors (§2.4, Commit 2)
+
+    /// The nearest recorded anchor at or before `pageIndex` (anchors mark
+    /// page *ends*: filling page p resumes from the anchor at p−1 when
+    /// present, else from the nearest earlier boundary plus a small OFFSET
+    /// remainder — still one statement, O(gap) not O(p·pageSize)).
+    func nearestAnchor(atOrBefore pageIndex: Int) -> (page: Int, anchor: KeysetAnchor)? {
+        guard pageIndex >= 0 else { return nil }
+        return lock.withLockUnchecked { state in
+            var best: Int? = nil
+            for page in state.anchors.keys where page <= pageIndex {
+                if best == nil || page > best! { best = page }
+            }
+            guard let best, let anchor = state.anchors[best] else { return nil }
+            return (best, anchor)
+        }
+    }
+
+    /// Record the end-of-page anchor for `pageIndex` (iterator walks record
+    /// boundaries as they stream past; page fills record via `publishPage`).
+    func recordAnchor(_ anchor: KeysetAnchor, endOfPage pageIndex: Int) {
+        lock.withLockUnchecked { state in
+            state.anchors[pageIndex] = anchor
+        }
+    }
+
+    /// Diagnostics (tests): count one fill statement by resume mechanism.
+    func noteFill(usedOffset: Bool, usedKeyset: Bool) {
+        lock.withLockUnchecked { state in
+            if usedOffset { state.offsetFillCount += 1 }
+            if usedKeyset { state.keysetFillCount += 1 }
+        }
+    }
+
+    /// Diagnostics (tests): (fills that paid an OFFSET, fills resumed by
+    /// keyset — page-0 fills count as keyset; a gap fill counts as both).
+    var fillCounts: (offset: Int, keyset: Int) {
+        lock.withLockUnchecked { state in
+            (state.offsetFillCount, state.keysetFillCount)
+        }
+    }
+
+    /// Diagnostics (tests): number of recorded page anchors.
+    var anchorCount: Int {
+        lock.withLockUnchecked { $0.anchors.count }
     }
 }

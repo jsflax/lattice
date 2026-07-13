@@ -147,32 +147,13 @@ public enum DistanceMetric: Int32, Sendable {
     case l1 = 2      // Manhattan distance
 }
 
-public final class Cursor<Element>: IteratorProtocol {
-    // Captures the concrete results' snapshot rather than storing
-    // `any Results<Element>` (a parameterized existential — an iOS-16 runtime
-    // floor). The closure pins the concrete type at construction.
-    private let _snapshot: (_ limit: Int64, _ offset: Int64) -> [Element]
-    private let batchSize: Int64 = 100
-    private var batch: [Element] = []
-    private var batchStart: Int64 = 0
-    private var indexInBatch: Int = 0
-
-    package init(_ results: some Results<Element>) {
-        self._snapshot = { limit, offset in results.snapshot(limit: limit, offset: offset) }
-    }
-
-    public func next() -> Element? {
-        // Fetch in batches to avoid O(n²) OFFSET penalty
-        if indexInBatch >= batch.count {
-            batch = _snapshot(batchSize, batchStart)
-            batchStart += Int64(batch.count)
-            indexInBatch = 0
-        }
-        guard indexInBatch < batch.count else { return nil }
-        defer { indexInBatch += 1 }
-        return batch[indexInBatch]
-    }
-}
+/// Source-compatibility alias (item A §1.4, Commit 2): `KeysetCursor`
+/// replaces the OFFSET-advancing `Cursor` — the old iterator resumed by raw
+/// `OFFSET`, which is O(n²/100) for a full walk and, being positional,
+/// silently *skipped* rows when a concurrent deleter shifted ranks under it.
+/// `Cursor` had no public initializer, so every external spelling
+/// (`Cursor<Element>` in type positions) keeps compiling through this alias.
+public typealias Cursor<Element> = KeysetCursor<Element>
 
 public struct Slice<Element>: RandomAccessCollection, Sequence {
     public var startIndex: Int
@@ -268,8 +249,13 @@ extension Results {
         snapshot(limit: nil, offset: nil)
     }
 
-    public func makeIterator() -> Cursor<Element> {
-        Cursor(self)
+    /// Default iterator: OFFSET-batched walk (the pre-keyset mechanics) for
+    /// conformers without a keyset total order — nearest/virtual/dynamic
+    /// shapes and third-party conformers. `TableResults` overrides this with
+    /// the keyset walk (§1.4/§2.4); grouped/distinct/bbox shapes fall back
+    /// here via the carve-out inside that override.
+    public func makeIterator() -> KeysetCursor<Element> {
+        KeysetCursor(self)
     }
 
     // MARK: Item A additive API defaults (§1.7)

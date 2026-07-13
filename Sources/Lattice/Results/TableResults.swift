@@ -41,29 +41,63 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     // so `@LatticeQuery` re-fetches, `@Relation` property accesses and TSR
     // resolves are thin facades over an already-warm cache (§1.5, §1.4).
     //
-    // COMMIT-1 STAGING: epochs are logical (no pinned read snapshot yet);
-    // cold fills and counts are live OFFSET reads on the existing neutral
-    // backend surface until the keeper pool / generation-scoped bridge reads
-    // land (Commits 3–5). Same-handle writes invalidate synchronously
-    // (read-your-writes, §1.3 Layer 1); cross-handle writes ride the interim
-    // scheduler-dispatched observer signal (see GenerationCoordinator).
+    // COMMIT-2 STAGING: epochs are logical (no pinned read snapshot yet);
+    // cold fills and counts are live reads on the existing neutral backend
+    // surface until the keeper pool / generation-scoped bridge reads land
+    // (Commits 3–5). Fills page by KEYSET with persistent anchors (§2.4):
+    // deterministic total order `(sortColumn userDir, id ASC)`, NULL-aware
+    // resume predicates, one `LIMIT pageSize OFFSET k` per cold random jump
+    // only. Grouped/distinct/bbox shapes keep OFFSET fills (§2.4/§4.5
+    // carve-out — no sound keyset anchor exists for them). Same-handle
+    // writes invalidate synchronously (read-your-writes, §1.3 Layer 1);
+    // cross-handle writes ride the interim scheduler-dispatched observer
+    // signal (see GenerationCoordinator).
 
     /// Memoized shape identity — predicate SQL is built once per facade.
+    /// `orderBySQL` is the EFFECTIVE order (§2.4): the user sort plus the
+    /// deterministic `id ASC` tiebreaker (`id ASC` alone when unsorted).
+    /// `keysetSpec` is non-nil exactly when the shape keyset-pages.
     private struct ShapeDescriptor {
         let key: QueryShapeKey
         let whereSQL: String?
         let orderBySQL: String?
+        let keysetSpec: KeysetSortSpec?
     }
     private let _shapeMemo = UnfairLock<ShapeDescriptor?>(initialState: nil)
     /// Diagnostics (§1.7): the epoch this facade last served from.
     private let _lastServedEpoch = UnfairLock<UInt64>(initialState: 0)
+
+    /// The effective ORDER BY (§2.4): a deterministic total order is
+    /// mandatory for keyset resume, so the user sort always gains an
+    /// `id ASC` tiebreaker and unsorted queries get `ORDER BY id ASC`
+    /// (`id INTEGER PRIMARY KEY AUTOINCREMENT` exists on every model table —
+    /// it aliases the rowid, so the unsorted case adds no sorter, and an
+    /// indexed sort column already yields (key, rowid) order from its
+    /// b-tree). `qualifyTiebreaker` disambiguates `id` on the bbox path,
+    /// whose R*Tree join exposes a second `id` column.
+    private func _effectiveOrderBySQL(qualifyTiebreaker: Bool) -> String {
+        let idColumn = qualifyTiebreaker ? "\(Element.entityName).id" : "id"
+        if let sc = _sortColumn {
+            let dir = sc.order == .forward ? "ASC" : "DESC"
+            if sc.name == "id" { return "\(idColumn) \(dir)" }
+            return "\(sc.name) \(dir), \(idColumn) ASC"
+        }
+        return "\(idColumn) ASC"
+    }
 
     private var _descriptor: ShapeDescriptor {
         if let memoized = _shapeMemo.withLockUnchecked({ $0 }) { return memoized }
         // Build OUTSIDE the memo lock (leaf-lock rule — predicate
         // construction is pure string building, but keep the lock tiny).
         let whereSQL = whereStatement?.predicate
-        let orderBySQL: String? = _sortColumn.map { "\($0.name) \($0.order == .forward ? "ASC" : "DESC")" }
+        let orderBySQL: String? = _effectiveOrderBySQL(qualifyTiebreaker: boundsConstraint != nil)
+        // Keyset paging needs a total order over stored `(col, id)` values:
+        // grouped/distinct rows lack stable `(col, id)` identity and bbox
+        // shapes route through the R*Tree join — those page by OFFSET
+        // (§2.4/§4.5 carve-out), as do sorts on non-primitive columns.
+        let keysetSpec: KeysetSortSpec? = (groupByColumn == nil && distinctByColumn == nil && boundsConstraint == nil)
+            ? KeysetSortSpec.resolve(for: Element.self, sortColumn: _sortColumn)
+            : nil
         // Spatial constraints are folded into the key's whereSQL component:
         // the spec's shape key has no bbox slot, and two shapes differing
         // only in bounding box must not collide (see QueryShapeKey).
@@ -80,7 +114,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                groupBy: groupByColumn,
                                distinctBy: distinctByColumn),
             whereSQL: whereSQL,
-            orderBySQL: orderBySQL)
+            orderBySQL: orderBySQL,
+            keysetSpec: keysetSpec)
         return _shapeMemo.withLockUnchecked { memo in
             if let existing = memo { return existing }
             memo = built
@@ -106,6 +141,12 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         _lastServedEpoch.withLockUnchecked { $0 }
     }
 
+    /// Test hook: the shared shape state behind this facade (fill-mechanism
+    /// counters, persistent anchor map). Internal — reached via @testable.
+    internal var _shapeState: QueryShapeState {
+        _liveContext().shape
+    }
+
     /// Force the next access to advance the generation and drop caches (§1.7).
     public func refresh() {
         GenerationCoordinatorRegistry.coordinator(for: _lattice.backend, tuning: _tuning).forceAdvance()
@@ -118,10 +159,60 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         return Int(_lattice.backend.count(table: Element.entityName, where: descriptor.whereSQL, groupBy: groupByColumn, distinctBy: distinctByColumn))
     }
 
-    /// One page fill — a live OFFSET read (Commit-1 staging; keyset fills
-    /// with persistent anchors replace the interior mechanics in Commit 2,
-    /// generation-scoped routing in Commit 5).
-    private func _fillPage(_ descriptor: ShapeDescriptor, offset: Int, limit: Int) -> [Element] {
+    private struct PageFill {
+        let rows: [Element]
+        /// End-of-page anchor (§2.4), recorded only for FULL pages (a short
+        /// page ends the result set, not a page boundary) on keyset shapes.
+        let endAnchor: KeysetAnchor?
+    }
+
+    /// One page fill (Commit 2, §2.4). Keyset shapes resume from the nearest
+    /// recorded anchor — filling page p from the anchor at p−1 is pure
+    /// keyset, O(log n + pageSize); a farther anchor adds a small OFFSET
+    /// remainder (O(gap), still one statement); no anchor at all is the cold
+    /// random jump, one `LIMIT pageSize OFFSET k` — O(k) once per jump, then
+    /// the neighborhood is anchored. Grouped/distinct/bbox shapes page by
+    /// OFFSET (carve-out). Generation-scoped connection routing lands in
+    /// Commit 5; fills are live reads until then.
+    private func _fillPage(_ descriptor: ShapeDescriptor, shape: QueryShapeState,
+                           pageIndex: Int, pageSize: Int) -> PageFill {
+        let offset = pageIndex * pageSize
+        guard let spec = descriptor.keysetSpec else {
+            let rows = _fillPageOffset(descriptor, offset: offset, limit: pageSize)
+            shape.noteFill(usedOffset: offset > 0, usedKeyset: false)
+            return PageFill(rows: rows, endAnchor: nil)
+        }
+
+        // Anchor lookup is its own (leaf) lock acquisition; the fill below
+        // runs with NO locks held (§2.3 two-phase pattern).
+        var resume: String? = nil
+        var gapOffset = 0
+        if pageIndex > 0 {
+            if let (anchorPage, anchor) = shape.nearestAnchor(atOrBefore: pageIndex - 1) {
+                resume = KeysetSQL.resumePredicate(spec: spec, anchor: anchor)
+                gapOffset = (pageIndex - 1 - anchorPage) * pageSize
+            } else {
+                gapOffset = offset
+            }
+        }
+        let rows = _lattice.backend.objects(
+            table: Element.entityName,
+            where: KeysetSQL.conjoin(where: descriptor.whereSQL, resume: resume),
+            orderBy: descriptor.orderBySQL,
+            limit: Int64(pageSize),
+            offset: gapOffset == 0 ? nil : Int64(gapOffset),
+            groupBy: nil, distinctBy: nil
+        ).map { Element(dynamicObject: $0) }
+        shape.noteFill(usedOffset: gapOffset != 0, usedKeyset: resume != nil || pageIndex == 0)
+        let endAnchor: KeysetAnchor? = rows.count == pageSize
+            ? rows.last.flatMap { KeysetSQL.extractAnchor(from: $0, spec: spec) }
+            : nil
+        return PageFill(rows: rows, endAnchor: endAnchor)
+    }
+
+    /// OFFSET page fill — the §2.4/§4.5 carve-out (grouped/distinct/bbox and
+    /// non-primitive sort columns). Cold pages are O(offset); never traps.
+    private func _fillPageOffset(_ descriptor: ShapeDescriptor, offset: Int, limit: Int) -> [Element] {
         if let bounds = boundsConstraint {
             return _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: descriptor.whereSQL, orderBy: descriptor.orderBySQL, limit: Int64(limit), offset: Int64(offset), groupBy: groupByColumn).map { Element(dynamicObject: $0) }
         }
@@ -151,14 +242,17 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             // through to the stale rungs.
         } else {
             // Cold page: fill with NO locks held (§2.3 two-phase), publish
-            // with epoch re-validation.
-            let rows = _fillPage(descriptor, offset: pageIndex * pageSize, limit: pageSize)
-            shape.publishPage(pageIndex, rows: rows, epoch: epoch, floor: floor,
+            // with epoch re-validation. The end-of-page anchor is recorded
+            // unconditionally (anchors are content-positional and
+            // epoch-agnostic, §2.4).
+            let fill = _fillPage(descriptor, shape: shape, pageIndex: pageIndex, pageSize: pageSize)
+            shape.publishPage(pageIndex, rows: fill.rows, endAnchor: fill.endAnchor,
+                              epoch: epoch, floor: floor,
                               currentFloor: coordinator.currentFloor(table: Element.entityName),
                               maxCachedPages: _tuning.maxCachedPages)
             _noteServed(epoch)
-            if slot < rows.count {
-                return rows[slot]
+            if slot < fill.rows.count {
+                return fill.rows[slot]
             }
         }
 
@@ -205,7 +299,11 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
     // MARK: - Observation infrastructure
 
-    // Helper to build query parameters - always fetches fresh from DB (live results)
+    // Helper to build query parameters - always fetches fresh from DB (live
+    // results). Uses the EFFECTIVE order (§2.4 / MIGRATION line): unsorted
+    // snapshots gain a deterministic implicit `ORDER BY id ASC`, sorted ones
+    // the `id ASC` tiebreaker — so `snapshot()` order ≡ the keyset walk's
+    // total order (pinned by the Commit-2 property matrix).
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
         LatticePerf.bump(.snapshots)
 
@@ -214,13 +312,88 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             return snapshotWithBounds(bounds, limit: limit, offset: offset)
         }
 
-        let orderBy: String? = _sortColumn.map { "\($0.name) \($0.order == .forward ? "ASC" : "DESC")" }
-        return _lattice.backend.objects(table: Element.entityName, where: whereStatement?.predicate, orderBy: orderBy, limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn).map { Element(dynamicObject: $0) }
+        return _lattice.backend.objects(table: Element.entityName, where: whereStatement?.predicate, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false), limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn).map { Element(dynamicObject: $0) }
     }
 
     private func snapshotWithBounds(_ bounds: BoundsConstraint, limit: Int64?, offset: Int64?) -> [Element] {
-        let orderBy: String? = _sortColumn.map { "\($0.name) \($0.order == .forward ? "ASC" : "DESC")" }
-        return _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: whereStatement?.predicate, orderBy: orderBy, limit: limit, offset: offset, groupBy: groupByColumn).map { Element(dynamicObject: $0) }
+        return _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: whereStatement?.predicate, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: true), limit: limit, offset: offset, groupBy: groupByColumn).map { Element(dynamicObject: $0) }
+    }
+
+    // MARK: - Iteration (item A §1.4, Commit 2)
+
+    /// Keyset walk: batches of `pageSize` resumed by NULL-aware anchor
+    /// predicate on the effective total order `(sortColumn userDir, id ASC)`
+    /// — O(n) for a full walk, each key visited at most once, never a trap
+    /// (a shrinking table ends the walk early; the resume predicate is
+    /// value-based, so a deleted anchor row cannot derail it). Batch
+    /// boundaries align with page boundaries (`batchSize == pageSize`), so
+    /// the walk warms the shape's persistent anchor map as it streams (§2.4).
+    /// Carve-out shapes (grouped/distinct/bbox/non-primitive sort) batch by
+    /// OFFSET exactly as the old `Cursor` did.
+    public func makeIterator() -> KeysetCursor<Element> {
+        let descriptor = _descriptor
+        guard let spec = descriptor.keysetSpec else {
+            return KeysetCursor(self)
+        }
+        let (_, shape, _) = _liveContext()
+        let backend = _lattice.backend
+        let table = Element.entityName
+        let batchSize = Swift.max(1, _tuning.pageSize)
+        var anchor: KeysetAnchor? = nil
+        var pageIndex = 0
+        /// Batch boundaries coincide with page boundaries only until a trim
+        /// (below); after that, stop feeding the shared anchor map — the
+        /// walk's own resume anchor stays exact either way.
+        var alignedWithPages = true
+        var finished = false
+        return KeysetCursor(nextBatch: {
+            if finished { return nil }
+            let resume = anchor.map { KeysetSQL.resumePredicate(spec: spec, anchor: $0) }
+            var rows = backend.objects(
+                table: table,
+                where: KeysetSQL.conjoin(where: descriptor.whereSQL, resume: resume),
+                orderBy: descriptor.orderBySQL,
+                limit: Int64(batchSize), offset: nil,
+                groupBy: nil, distinctBy: nil
+            ).map { Element(dynamicObject: $0) }
+            if rows.count < batchSize {
+                // Short batch = end of the result set at fill time.
+                finished = true
+                return rows.isEmpty ? nil : rows
+            }
+            // Full batch: resume from the LAST delivered row. A boundary row
+            // deleted between the fill and the anchor read cannot anchor
+            // (extractAnchor refuses dead rows rather than fabricating a
+            // NULL anchor) — TRIM it and resume from the nearest anchorable
+            // predecessor instead: trimmed rows are re-fetched by the next
+            // batch if still live, so nothing is skipped and nothing is
+            // delivered twice.
+            var end: KeysetAnchor? = nil
+            while let last = rows.last {
+                if let extracted = KeysetSQL.extractAnchor(from: last, spec: spec) {
+                    end = extracted
+                    break
+                }
+                rows.removeLast()
+            }
+            guard let end else {
+                // The entire batch died mid-flight (heavy churn): ending the
+                // walk early is within contract (§1.4 — a shrinking table
+                // ends the walk early; never a trap, never a duplicate).
+                finished = true
+                return nil
+            }
+            anchor = end
+            if rows.count == batchSize, alignedWithPages {
+                // Untrimmed batches end exactly at page boundaries: warm the
+                // shape's persistent anchor map as the walk streams (§2.4).
+                shape.recordAnchor(end, endOfPage: pageIndex)
+            } else if rows.count < batchSize {
+                alignedWithPages = false
+            }
+            pageIndex += 1
+            return rows
+        })
     }
 
     init(_ lattice: Lattice, whereStatement: Query<Bool>? = nil, sortStatement: (any SortComparator)? = nil, boundsConstraint: BoundsConstraint? = nil, groupByColumn: String? = nil, distinctByColumn: String? = nil) {
