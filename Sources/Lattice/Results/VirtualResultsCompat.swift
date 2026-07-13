@@ -71,6 +71,13 @@ public final class _VirtualResultsCompat<Element>: VirtualResults, ObservableObj
         return t
     }
 
+    /// Tolerant-ladder rung (d) witness (item A §1.2): an unmanaged,
+    /// default-valued instance of the first conforming concrete type.
+    /// Nil-safe on an empty type list (no trap).
+    public func _ladderPlaceholder() -> Element? {
+        modelTypes.first?.init(isolation: nil) as? Element
+    }
+
     private var tableNames: [String] {
         modelTypes.map { $0.entityName }
     }

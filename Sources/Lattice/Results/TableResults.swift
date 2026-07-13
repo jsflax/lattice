@@ -33,6 +33,176 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     internal let groupByColumn: String?
     internal let distinctByColumn: String?
 
+    // MARK: - Live generation-cached access (item A, Commit 1)
+    //
+    // `count`/`subscript` serve through the process-global query-shape
+    // registry: one shared `QueryShapeState` per
+    // (lattice identity, table, whereSQL, orderBySQL, groupBy, distinctBy),
+    // so `@LatticeQuery` re-fetches, `@Relation` property accesses and TSR
+    // resolves are thin facades over an already-warm cache (§1.5, §1.4).
+    //
+    // COMMIT-1 STAGING: epochs are logical (no pinned read snapshot yet);
+    // cold fills and counts are live OFFSET reads on the existing neutral
+    // backend surface until the keeper pool / generation-scoped bridge reads
+    // land (Commits 3–5). Same-handle writes invalidate synchronously
+    // (read-your-writes, §1.3 Layer 1); cross-handle writes ride the interim
+    // scheduler-dispatched observer signal (see GenerationCoordinator).
+
+    /// Memoized shape identity — predicate SQL is built once per facade.
+    private struct ShapeDescriptor {
+        let key: QueryShapeKey
+        let whereSQL: String?
+        let orderBySQL: String?
+    }
+    private let _shapeMemo = UnfairLock<ShapeDescriptor?>(initialState: nil)
+    /// Diagnostics (§1.7): the epoch this facade last served from.
+    private let _lastServedEpoch = UnfairLock<UInt64>(initialState: 0)
+
+    private var _descriptor: ShapeDescriptor {
+        if let memoized = _shapeMemo.withLockUnchecked({ $0 }) { return memoized }
+        // Build OUTSIDE the memo lock (leaf-lock rule — predicate
+        // construction is pure string building, but keep the lock tiny).
+        let whereSQL = whereStatement?.predicate
+        let orderBySQL: String? = _sortColumn.map { "\($0.name) \($0.order == .forward ? "ASC" : "DESC")" }
+        // Spatial constraints are folded into the key's whereSQL component:
+        // the spec's shape key has no bbox slot, and two shapes differing
+        // only in bounding box must not collide (see QueryShapeKey).
+        var keyWhere = whereSQL
+        if let b = boundsConstraint {
+            let bboxFragment = "\u{1F}bbox(\(b.propertyName),\(b.minLat),\(b.maxLat),\(b.minLon),\(b.maxLon))"
+            keyWhere = (keyWhere ?? "") + bboxFragment
+        }
+        let built = ShapeDescriptor(
+            key: QueryShapeKey(identityHash: _lattice.backend.identityHash,
+                               table: Element.entityName,
+                               whereSQL: keyWhere,
+                               orderBySQL: orderBySQL,
+                               groupBy: groupByColumn,
+                               distinctBy: distinctByColumn),
+            whereSQL: whereSQL,
+            orderBySQL: orderBySQL)
+        return _shapeMemo.withLockUnchecked { memo in
+            if let existing = memo { return existing }
+            memo = built
+            return built
+        }
+    }
+
+    private var _tuning: ResultsTuning { _lattice.configuration.resultsTuning }
+
+    private func _liveContext() -> (coordinator: GenerationCoordinator, shape: QueryShapeState, descriptor: ShapeDescriptor) {
+        let descriptor = _descriptor
+        let coordinator = GenerationCoordinatorRegistry.coordinator(for: _lattice.backend, tuning: _tuning)
+        let shape = coordinator.shape(for: descriptor.key)
+        return (coordinator, shape, descriptor)
+    }
+
+    private func _noteServed(_ epoch: UInt64) {
+        _lastServedEpoch.withLockUnchecked { $0 = epoch }
+    }
+
+    /// Diagnostics/tests (§1.7): the epoch this facade last served from.
+    public var generationID: UInt64 {
+        _lastServedEpoch.withLockUnchecked { $0 }
+    }
+
+    /// Force the next access to advance the generation and drop caches (§1.7).
+    public func refresh() {
+        GenerationCoordinatorRegistry.coordinator(for: _lattice.backend, tuning: _tuning).forceAdvance()
+    }
+
+    private func _liveCount(_ descriptor: ShapeDescriptor) -> Int {
+        if let bounds = boundsConstraint {
+            return Int(_lattice.backend.countWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: descriptor.whereSQL))
+        }
+        return Int(_lattice.backend.count(table: Element.entityName, where: descriptor.whereSQL, groupBy: groupByColumn, distinctBy: distinctByColumn))
+    }
+
+    /// One page fill — a live OFFSET read (Commit-1 staging; keyset fills
+    /// with persistent anchors replace the interior mechanics in Commit 2,
+    /// generation-scoped routing in Commit 5).
+    private func _fillPage(_ descriptor: ShapeDescriptor, offset: Int, limit: Int) -> [Element] {
+        if let bounds = boundsConstraint {
+            return _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: descriptor.whereSQL, orderBy: descriptor.orderBySQL, limit: Int64(limit), offset: Int64(offset), groupBy: groupByColumn).map { Element(dynamicObject: $0) }
+        }
+        return _lattice.backend.objects(table: Element.entityName, where: descriptor.whereSQL, orderBy: descriptor.orderBySQL, limit: Int64(limit), offset: Int64(offset), groupBy: groupByColumn, distinctBy: distinctByColumn).map { Element(dynamicObject: $0) }
+    }
+
+    /// Non-trapping indexed access (§1.7): tolerant-ladder rungs (a) — the
+    /// current generation's fill result — and (b) — the retained previous
+    /// generation's page. Returns nil instead of rungs (c)/(d) (the lifeboat
+    /// and the invalidated placeholder exist to satisfy the non-optional
+    /// `subscript`; an optional return expresses "no such element" directly).
+    public func element(at index: Int) -> Element? {
+        guard index >= 0 else { return nil }
+        let (coordinator, shape, descriptor) = _liveContext()
+        let (epoch, floor) = coordinator.resolve(table: Element.entityName)
+        let pageSize = Swift.max(1, _tuning.pageSize)
+        let pageIndex = index / pageSize
+        let slot = index % pageSize
+
+        // Rung (a): the current generation's fill result.
+        if let cached = shape.page(pageIndex, epoch: epoch, floor: floor) {
+            _noteServed(epoch)
+            if slot < cached.count, let element = cached[slot] as? Element {
+                return element
+            }
+            // Cached page is short at this epoch — index not present; fall
+            // through to the stale rungs.
+        } else {
+            // Cold page: fill with NO locks held (§2.3 two-phase), publish
+            // with epoch re-validation.
+            let rows = _fillPage(descriptor, offset: pageIndex * pageSize, limit: pageSize)
+            shape.publishPage(pageIndex, rows: rows, epoch: epoch, floor: floor,
+                              currentFloor: coordinator.currentFloor(table: Element.entityName),
+                              maxCachedPages: _tuning.maxCachedPages)
+            _noteServed(epoch)
+            if slot < rows.count {
+                return rows[slot]
+            }
+        }
+
+        // Rung (b): the retained previous generation's page (§1.2 rung 3 —
+        // stale indices are the EXPECTED path under write bursts).
+        if let previous = shape.previousPage(pageIndex), slot < previous.count,
+           let stale = previous[slot] as? Element {
+            return stale
+        }
+        return nil
+    }
+
+    /// Never-trapping subscript (§1.2): the tolerant ladder replaces the old
+    /// `fatalError("Index out of bounds")`. Rungs (a)/(b) via `element(at:)`,
+    /// rung (c) — the lifeboat (last element any fill returned) — and rung
+    /// (d) — a freshly hydrated invalidated placeholder instance (an
+    /// unmanaged default-valued Element; live property reads of a missing
+    /// row return column defaults, never a crash). Rung (d) renders a blank
+    /// row for one frame instead of aborting the process.
+    public subscript(index: Int) -> Element {
+        if let element = element(at: index) {
+            return element
+        }
+        let (_, shape, _) = _liveContext()
+        if let lifeboat = shape.lifeboatElement() as? Element {
+            return lifeboat
+        }
+        return Element.defaultValue
+    }
+
+    /// Tolerant-ladder rung (d) witness: an unmanaged, default-valued
+    /// (invalidated) placeholder instance.
+    public func _ladderPlaceholder() -> Element? {
+        Element.defaultValue
+    }
+
+    /// Statement-fresh single-row read. Shadows `Collection.first` for
+    /// concrete callers: one `LIMIT 1` statement instead of a count + page
+    /// fill — the observer-membership path (`rowMatchesNow`) and one-shot
+    /// `.first` lookups stay fresh and do not populate the shape registry.
+    public var first: Element? {
+        snapshot(limit: 1, offset: nil).first
+    }
+
     // MARK: - Observation infrastructure
 
     // Helper to build query parameters - always fetches fresh from DB (live results)
@@ -163,10 +333,21 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
 
     public var endIndex: Int {
-        if let bounds = boundsConstraint {
-            return Int(_lattice.backend.countWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: whereStatement?.predicate))
+        // Epoch-cached count (item A §5: idle render tick issues ZERO
+        // collection queries). Batch-pinned epoch resolution keeps one
+        // render batch on one epoch (§1.3); the count statement itself runs
+        // with no locks held and publishes under epoch re-validation (§2.3).
+        let (coordinator, shape, descriptor) = _liveContext()
+        let (epoch, floor) = coordinator.resolve(table: Element.entityName)
+        if let cached = shape.count(epoch: epoch, floor: floor) {
+            _noteServed(epoch)
+            return cached
         }
-        return Int(_lattice.backend.count(table: Element.entityName, where: whereStatement?.predicate, groupBy: groupByColumn, distinctBy: distinctByColumn))
+        let counted = _liveCount(descriptor)
+        shape.publishCount(counted, epoch: epoch, floor: floor,
+                           currentFloor: coordinator.currentFloor(table: Element.entityName))
+        _noteServed(epoch)
+        return counted
     }
 
     public func index(after i: Int) -> Int {

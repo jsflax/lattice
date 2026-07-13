@@ -370,6 +370,15 @@ extension Model {
         _fireObservers(propertyName: propertyName)
         guard let primaryKey else { return }
         guard let dbPath = ModelInstanceRegistry.shared.databasePath(for: self) else { return }
+        // Item A §1.3 Layer 1 (Commit 1): a managed-property setter is a
+        // settled autocommit write (or part of an explicit transaction that
+        // bumps again at commit) — bump the generation epoch synchronously
+        // so same-handle predicate/sort-membership changes are
+        // read-your-writes exact, not one scheduler hop late. O(1) counter
+        // update under a leaf lock; a no-op when the store has no live
+        // results. (The synchronous CORE hook that also covers non-Swift
+        // writers lands in Commit 3, §2.3.)
+        GenerationCoordinatorRegistry.noteWrite(path: dbPath, tables: [Self.entityName])
         ModelInstanceRegistry.shared.notifyChange(
             databasePath: dbPath,
             tableName: Self.entityName,

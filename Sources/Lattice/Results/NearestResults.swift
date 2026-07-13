@@ -321,6 +321,12 @@ public struct TableNearestResults<T: Model>: NearestResults {
         self.distinctByColumn = distinctByColumn
     }
 
+    /// Tolerant-ladder rung (d) witness (item A §1.2): a zero-distance match
+    /// over an unmanaged, default-valued instance.
+    public func _ladderPlaceholder() -> Element? {
+        _NearestMatch(object: T.defaultValue, distance: 0)
+    }
+
     // MARK: - Chainable Methods
 
     /// Filter results by properties on the object or by distance.
@@ -680,7 +686,17 @@ package struct _VirtualNearestResults<each M: Model, T>: NearestResults {
         for t in repeat (each M).self {
             return t
         }
-        fatalError()
+        // Structurally unreachable: virtual nearest results are only built
+        // from a non-empty conforming-type list.
+        preconditionFailure("virtual nearest results with an empty model-type pack")
+    }
+
+    /// Tolerant-ladder rung (d) witness (item A §1.2): a zero-distance match
+    /// over an unmanaged, default-valued instance of the first conforming
+    /// concrete type.
+    public func _ladderPlaceholder() -> Element? {
+        guard let object = firstType.init(isolation: nil) as? T else { return nil }
+        return _NearestMatch(object: object, distance: 0)
     }
 
     // MARK: - Chainable Methods

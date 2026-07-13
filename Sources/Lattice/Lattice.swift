@@ -601,6 +601,11 @@ public struct Lattice {
         /// nil = all core defaults.
         public var syncTuning: SyncTuning?
 
+        /// Live-results tuning knobs (item A §1.7): shape/page cache bounds
+        /// active from Commit 1; belt/TTL/keeper knobs consumed by later
+        /// commits (see `ResultsTuning`).
+        public var resultsTuning: ResultsTuning = .init()
+
         // MARK: Equatable / Hashable (migration excluded — closures aren't comparable)
         public static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.storage == rhs.storage &&
@@ -611,7 +616,8 @@ public struct Lattice {
             lhs.syncFilter == rhs.syncFilter &&
             lhs.ipcTargets == rhs.ipcTargets &&
             lhs.busyTimeoutMs == rhs.busyTimeoutMs &&
-            lhs.syncTuning == rhs.syncTuning
+            lhs.syncTuning == rhs.syncTuning &&
+            lhs.resultsTuning == rhs.resultsTuning
         }
 
         public func hash(into hasher: inout Hasher) {
@@ -624,6 +630,7 @@ public struct Lattice {
             hasher.combine(ipcTargets)
             hasher.combine(busyTimeoutMs)
             hasher.combine(syncTuning)
+            hasher.combine(resultsTuning)
         }
 
         /// Directory for the default (unnamed) database file: the user
@@ -1093,6 +1100,9 @@ public struct Lattice {
         // "vnode unlinked while in use" because the connection still has the
         // file mmap'd.
         let filePath = fileURL.path
+        // Item A §4.6: generations/coordinators ride the same close — tear
+        // down every same-path coordinator before the backends close.
+        GenerationCoordinatorRegistry.evictAll(path: filePath)
         cacheLock.withLockUnchecked {
             for (key, entry) in cache where entry.configuration.fileURL.path == filePath {
                 entry.backend?.close()
@@ -1164,6 +1174,20 @@ public struct Lattice {
     }
     
     // MARK: Add
+
+    /// Item A §1.3 Layer 1 (Commit 1): every Swift write path bumps the
+    /// generation coordinator's epoch directly, synchronously, AFTER the
+    /// backend write returns — same-handle read-your-writes with zero core
+    /// dependency. The bump fans out to every same-path coordinator in this
+    /// process (the Swift-side stand-in for the Commit-3 core hook's
+    /// per-path fan-out). Cross-handle writers that never pass through these
+    /// Swift paths (sync-applied chunks, other processes) ride the interim
+    /// scheduler-dispatched observer signal until the synchronous core
+    /// invalidation hook lands (Commits 3–5; see GenerationCoordinator).
+    private func _noteWrite(tables: [String]?) {
+        GenerationCoordinatorRegistry.noteWrite(path: backend.path, tables: tables)
+    }
+
     /// Inserts an unmanaged object.
     /// - Throws: `LatticeError.alreadyManaged` if the object is already
     ///   managed by a Lattice; `LatticeError.addFailed` if the backend
@@ -1173,6 +1197,7 @@ public struct Lattice {
             throw LatticeError.alreadyManaged
         }
         try backend.add(object._dynamicObject._ref)
+        _noteWrite(tables: [T.entityName])
         // Register for cross-instance observation now that the object has a primaryKey
         object._registerIfNeeded()
     }
@@ -1186,6 +1211,7 @@ public struct Lattice {
             throw LatticeError.alreadyManaged
         }
         try backend.addPreservingGlobalId(object._dynamicObject._ref, globalId: globalId)
+        _noteWrite(tables: [T.entityName])
         object._registerIfNeeded()
     }
 
@@ -1202,6 +1228,7 @@ public struct Lattice {
             return element._dynamicObject._ref
         }
         try backend.addBulk(refs)
+        _noteWrite(tables: [S.Element.entityName])
     }
 
     // MARK: Add/Delete for VirtualModel (existential)
@@ -1216,6 +1243,7 @@ public struct Lattice {
         }
         guard !model.isManaged else { throw LatticeError.alreadyManaged }
         try backend.add(model._dynamicObject._ref)
+        _noteWrite(tables: [type(of: model).entityName])
         model._registerIfNeeded()
     }
 
@@ -1223,7 +1251,9 @@ public struct Lattice {
         guard let model = object as? any Model else {
             fatalError("VirtualModel type must also conform to Model")
         }
-        return backend.remove(model._dynamicObject._ref)
+        let removed = backend.remove(model._dynamicObject._ref)
+        if removed { _noteWrite(tables: [type(of: model).entityName]) }
+        return removed
     }
 
     func beginObserving<T: Model>(_ object: T) {
@@ -1248,14 +1278,17 @@ public struct Lattice {
     @discardableResult public func delete<T: Model>(_ object: consuming T) -> Bool {
 //        defer { object._dynamicObject = T.defaultCxxLatticeObject }
 //        var dynamicObject = consume object._dynamicObject
-        return backend.remove(object._dynamicObject._ref)
-        
+        let removed = backend.remove(object._dynamicObject._ref)
+        if removed { _noteWrite(tables: [T.entityName]) }
+        return removed
     }
-    
+
     @discardableResult public func delete<T: Model>(_ modelType: T.Type = T.self,
                                                     where: ((Query<T>) -> Query<Bool>)? = nil) -> Bool {
         let whereClause: String? = `where`.map { $0(Query<T>()).predicate }
-        return backend.deleteWhere(table: T.entityName, where: whereClause)
+        let deleted = backend.deleteWhere(table: T.entityName, where: whereClause)
+        if deleted { _noteWrite(tables: [T.entityName]) }
+        return deleted
     }
     
     public func deleteHistory() {
@@ -1329,6 +1362,10 @@ public struct Lattice {
     /// Explicitly close all database connections and tear down the synchronizer.
     /// If a sibling instance exists for the same database, it will inherit sync responsibility.
     public func close() {
+        // Item A §4.6: tear down this identity's generation coordinator
+        // (interim observers, shape caches) before the backend closes; a
+        // reopened database mints a new identityHash and a fresh coordinator.
+        GenerationCoordinatorRegistry.evict(identityHash: backend.identityHash)
         backend.close()
     }
 
@@ -1787,6 +1824,10 @@ public struct Lattice {
     
     public func commitTransaction(isolation: isolated (any Actor)? = #isolation) {
         backend.commit()
+        // §1.3 Layer 1: an explicit transaction can touch any table (managed
+        // property setters included) — the touched set is unknown here, so
+        // the settled commit invalidates every shape (tables: nil).
+        _noteWrite(tables: nil)
     }
     
     public func rollbackTransaction(isolation: isolated (any Actor)? = #isolation) {
@@ -1814,6 +1855,14 @@ public struct Lattice {
     
     public mutating func attach(lattice: Lattice) throws {
         try backend.attach(lattice.backend)
+        // Item A: attaching changes what this handle's tables mean (union
+        // views over both stores) — every cached shape is stale. Also link
+        // the two paths so writes on either store invalidate this handle's
+        // shapes while attached (Commit-1 Swift-side stand-in; §4.2 gives
+        // attached shapes hook-driven invalidation in later commits).
+        GenerationCoordinatorRegistry.linkAttachedPaths(parent: backend.path,
+                                                        attached: lattice.backend.path)
+        _noteWrite(tables: nil)
         let key = lattice.configuration.canonicalPath
         // Idempotent at the Swift layer too: the C++ side no-ops a repeat
         // attach of the same path — do not double-book its schema (a stale
@@ -1832,6 +1881,9 @@ public struct Lattice {
     /// that isn't attached is a no-op and leaves the schema untouched.
     public mutating func detach(lattice: Lattice) throws {
         try backend.detach(lattice.backend)
+        GenerationCoordinatorRegistry.unlinkAttachedPaths(parent: backend.path,
+                                                          attached: lattice.backend.path)
+        _noteWrite(tables: nil)
         let key = lattice.configuration.canonicalPath
         guard let idx = attachedSchemas.firstIndex(where: { $0.0 == key }) else { return }
         attachedSchemas.remove(at: idx)
@@ -1869,6 +1921,10 @@ public struct Lattice {
                                  modelTypes: modelTypes,
                                  schema: schema,
                                  isolation: isolation)
+        // Item A: the clone unions rows from the attached store — writes on
+        // either store must invalidate its shapes (see attach(lattice:)).
+        GenerationCoordinatorRegistry.linkAttachedPaths(parent: newLattice.backend.path,
+                                                        attached: lattice.backend.path)
         // Record the attachment on the clone so detach(lattice:) works on it
         // and a repeat attach can't double-book (same bookkeeping as attach).
         newLattice.baseSchema = schema

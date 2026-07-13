@@ -76,7 +76,15 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
         for t in repeat (each M).self {
             return t
         }
-        fatalError()
+        // Structurally unreachable: `_buildVirtualResults` always seeds the
+        // pack with at least one conforming type.
+        preconditionFailure("virtual results with an empty model-type pack")
+    }
+
+    /// Tolerant-ladder rung (d) witness (item A §1.2): an unmanaged,
+    /// default-valued instance of the first conforming concrete type.
+    public func _ladderPlaceholder() -> Element? {
+        firstType.init(isolation: nil) as? Element
     }
 
     private var tableNames: [String] {
@@ -140,7 +148,8 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
                         groupByColumn: groupByColumn,
                         distinctByColumn: distinctByColumn)
         }
-        fatalError()
+        // Structurally unreachable: the pack is never empty (see firstType).
+        preconditionFailure("virtual results with an empty model-type pack")
     }
 
     @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)

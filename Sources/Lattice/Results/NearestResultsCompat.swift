@@ -47,6 +47,14 @@ package struct _VirtualNearestResultsCompat<T>: NearestResults {
         return t
     }
 
+    /// Tolerant-ladder rung (d) witness (item A §1.2): a zero-distance match
+    /// over an unmanaged, default-valued instance of the first conforming
+    /// concrete type. Nil-safe on an empty type list (no trap).
+    public func _ladderPlaceholder() -> Element? {
+        guard let object = modelTypes.first?.init(isolation: nil) as? T else { return nil }
+        return _NearestMatch(object: object, distance: 0)
+    }
+
     // MARK: - Chainable Methods
 
     public func `where`(_ predicate: (Query<Element>) -> Query<Bool>) -> Self {
