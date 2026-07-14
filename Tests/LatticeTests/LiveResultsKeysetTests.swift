@@ -289,13 +289,17 @@ class LiveResultsKeysetTests: BaseTest {
     /// b-tree skip, not in statement count or per-frame work).
     ///
     /// `threadSQLStatementCount` counts EVERY statement on the thread, and a
-    /// fill also pays a fixed non-collection overhead on the Commit-2 live
-    /// staging: hydrating each Model issues per-row registration statements
-    /// (measured empirically below — probed at 2/row), and the end-of-page
-    /// anchor extraction refreshes ONE row snapshot (1 statement). The test
-    /// calibrates that overhead on rows the fills never touch, then asserts
-    /// EXACT totals: any regression to per-row OFFSET reads, per-page extra
-    /// statements, or O(depth) statement growth breaks the equality.
+    /// fill also pays a fixed non-collection overhead — since Commit 7 the
+    /// per-row fill mechanic is prime-then-hydrate: enable the fetched
+    /// handle's row cache (ONE full-row re-fetch statement), key + registry
+    /// reuse-lookup off the primed pk (free), hydrate with the pk reads
+    /// served from the snapshot (free — probed at 1/row total, down from
+    /// 2/row pre-Commit-7), restore live reads. The end-of-page anchor
+    /// extraction re-enables the last element's WARM snapshot — zero
+    /// statements. The test calibrates that overhead by replaying the same
+    /// mechanic on rows the fills never touch, then asserts EXACT totals:
+    /// any regression to per-row OFFSET reads, per-page extra statements, or
+    /// O(depth) statement growth breaks the equality.
     @Test func deepScroll_jumpPaysOneOffsetStatement_thenKeyset() throws {
         let lattice = try testLattice(KeysetItem.self)
         try lattice.transaction {
@@ -312,7 +316,10 @@ class LiveResultsKeysetTests: BaseTest {
 
         // Calibrate the fixed per-fill hydration overhead on page-0 rows
         // (the scroll below only touches pages 25-27): 1 raw collection
-        // statement, then a per-row hydration cost.
+        // statement, then the Commit-7 primed per-row mechanic — row-cache
+        // prime, pk key, hydrate, restore live reads (§1.6 reuse misses
+        // hydrate exactly like this; hits skip the hydration, which issues
+        // no statements either way).
         var before = Lattice.threadSQLStatementCount
         let rawRows = lattice.backend.objects(table: KeysetItem.entityName, where: nil,
                                               orderBy: "id ASC", limit: 100, offset: nil,
@@ -320,11 +327,19 @@ class LiveResultsKeysetTests: BaseTest {
         #expect(Lattice.threadSQLStatementCount - before == 1,
                 "a raw 100-row page query must be exactly ONE statement")
         before = Lattice.threadSQLStatementCount
-        _ = rawRows.map { KeysetItem(dynamicObject: $0) }
+        _ = rawRows.map { row -> KeysetItem in
+            row.enableRowCache()
+            _ = row.getInt(named: "id")
+            let element = KeysetItem(dynamicObject: row)
+            row.disableRowCache()
+            return element
+        }
         let hydrationStatements = Lattice.threadSQLStatementCount - before
-        // One full-page fill = 1 collection statement + hydration + 1
-        // anchor-snapshot refresh.
-        let fillBudget: UInt64 = 1 + hydrationStatements + 1
+        // One full-page fill = 1 collection statement + primed hydration.
+        // The end-of-page anchor extraction costs ZERO further statements:
+        // the last element's handle retains the priming snapshot after
+        // `disableRowCache`, so `extractAnchor`'s re-enable is a warm no-op.
+        let fillBudget: UInt64 = 1 + hydrationStatements
 
         // Cold random jump deep into the collection: exactly ONE collection
         // statement (the session's only OFFSET statement) + fixed overhead.

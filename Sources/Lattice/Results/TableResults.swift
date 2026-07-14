@@ -133,6 +133,80 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
     private var _tuning: ResultsTuning { _lattice.configuration.resultsTuning }
 
+    // MARK: Instance reuse (item A §1.6, Commit 7)
+
+    /// Registry key component for instance reuse: the same normalized path
+    /// string `ModelInstanceRegistry` keys on (both originate from the
+    /// core's `path()`). Memoized — the C++ string conversion should be
+    /// per-facade, not per-row.
+    private let _dbPathMemo = UnfairLock<String?>(initialState: nil)
+    private var _dbPath: String {
+        if let cached = _dbPathMemo.withLockUnchecked({ $0 }) { return cached }
+        let path = _lattice.backend.path
+        return _dbPathMemo.withLockUnchecked { memo in
+            if let existing = memo { return existing }
+            memo = path
+            return path
+        }
+    }
+
+    /// §1.6 obligation 2 (Commit 7): page refills and iterator batches
+    /// REUSE the live registered instance per (path, table, primaryKey)
+    /// when one exists — a re-hydrated row is the SAME object identity as
+    /// the instance a view already holds, so SwiftUI's `ForEach` diff stays
+    /// stable at the instance level across epoch bumps, and
+    /// observer-registration churn is bounded (A1 risk 3: a duplicate
+    /// hydration would `add_object_observer` + register, then tear both
+    /// down when the page rotates). Best-effort by contract: a dead weak
+    /// ref hydrates fresh exactly as before. Reuse is scoped to instances
+    /// hydrated from THIS facade's core handle (`identityHash`): an
+    /// instance's writes route through its own handle's connection, so
+    /// adopting another handle's instance would interleave our writes with
+    /// that handle's transactions (see `ModelInstanceRegistry.lookup`).
+    /// Row VALUES are unaffected either way — property reads are live
+    /// through the object path
+    /// (§1.3); membership, not values, is what the fill decided.
+    /// `snapshot()` deliberately does NOT reuse: it is the explicit
+    /// point-in-time copy, and `materializedSnapshot()` flips its elements
+    /// into row-cache reads — reuse there would mutate the read semantics
+    /// of instances the app already holds.
+    private func _reuseOrHydrate(_ row: any ObjectBackend) -> Element {
+        let primaryKey = _primedPrimaryKey(of: row)
+        if primaryKey > 0,
+           let reused = ModelInstanceRegistry.shared.lookup(databasePath: _dbPath,
+                                                            tableName: Element.entityName,
+                                                            primaryKey: primaryKey,
+                                                            backendIdentity: _lattice.backend.identityHash) as? Element {
+            return reused   // the fetched handle is discarded
+        }
+        // Hydrate with the row cache still ON: the primary-key reads inside
+        // `Model.init(dynamicObject:)` + registration serve from the primed
+        // handle (statement-free), halving the pre-Commit-7 per-row
+        // hydration cost (2 pk SELECTs → the one priming re-fetch above).
+        let element = Element(dynamicObject: row)
+        // Restore live-read semantics (§1.3 object path): the element wraps
+        // this very handle, and only `materialize()` may opt into snapshot
+        // reads.
+        row.disableRowCache()
+        return element
+    }
+
+    /// Primary-key read of a freshly fetched row via row-cache priming: a
+    /// bare `getInt(named: "id")` on a live handle is a per-row SELECT
+    /// (§5's fill budget would grow by pageSize). Enabling the row cache
+    /// re-fetches the FULL row in ONE statement (the fetched handle carries
+    /// no hydrated values), after which `id` serves from the managed
+    /// handle's own `id_` member — so the pk read itself is free, and so is
+    /// every subsequent pk read while the handle stays primed. Idempotent:
+    /// an already-primed handle pays nothing. The handle is exclusively
+    /// ours at this point (pre-publication).
+    private func _primedPrimaryKey(of row: any ObjectBackend) -> Int64 {
+        if !row.isRowCacheEnabled {
+            row.enableRowCache()
+        }
+        return row.getInt(named: "id")
+    }
+
     private func _liveContext() -> (coordinator: GenerationCoordinator, shape: QueryShapeState, descriptor: ShapeDescriptor) {
         let descriptor = _descriptor
         let coordinator = GenerationCoordinatorRegistry.coordinator(for: _lattice.backend, tuning: _tuning)
@@ -271,7 +345,12 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             var byID: [Int64: Element] = [:]
             byID.reserveCapacity(fetched.count)
             for row in fetched {
-                byID[row.getInt(named: "id")] = Element(dynamicObject: row)
+                // §1.6 (Commit 7): reuse the live registered instance when
+                // one exists — only rows the fetch actually returned are
+                // candidates (a captured id whose row died stays on the
+                // placeholder path below). The priming read is idempotent,
+                // so keying and reuse share one re-fetch.
+                byID[_primedPrimaryKey(of: row)] = _reuseOrHydrate(row)
             }
             var rows: [Element] = []
             rows.reserveCapacity(ids.count)
@@ -352,7 +431,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                     generation: generation,
                                     limit: Int64(pageSize),
                                     offset: gapOffset == 0 ? nil : Int64(gapOffset),
-                                    groupBy: nil, distinctBy: nil) else {
+                                    groupBy: nil, distinctBy: nil,
+                                    reuseInstances: true) else {
             return nil
         }
         shape.noteFill(usedOffset: gapOffset != 0, usedKeyset: resume != nil || pageIndex == 0)
@@ -391,10 +471,13 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// Row query routed through a held generation's keeper connection when
     /// `generation != 0` (one MVCC snapshot — §1.1); live read otherwise.
     /// nil = stale sentinel from the generation-scoped read.
+    /// `reuseInstances` (§1.6, Commit 7): page fills and iterator batches
+    /// reuse live registered instances; `snapshot()` hydrates fresh copies.
     private func _queryRows(where whereClause: String?, orderBy: String?,
                             generation: UInt64,
                             limit: Int64?, offset: Int64?,
-                            groupBy: String?, distinctBy: String?) -> [Element]? {
+                            groupBy: String?, distinctBy: String?,
+                            reuseInstances: Bool = false) -> [Element]? {
         if generation != 0 {
             let rows = _lattice.backend.objectsAt(generation: generation,
                                                   table: Element.entityName,
@@ -402,14 +485,18 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                                   limit: limit, offset: offset,
                                                   groupBy: groupBy, distinctBy: distinctBy)
             if _lattice.backend.lastGenerationReadStale() { return nil }
-            return rows.map { Element(dynamicObject: $0) }
+            return reuseInstances
+                ? rows.map { _reuseOrHydrate($0) }
+                : rows.map { Element(dynamicObject: $0) }
         }
         return _gatedLiveRead {
-            _lattice.backend.objects(table: Element.entityName,
-                                     where: whereClause, orderBy: orderBy,
-                                     limit: limit, offset: offset,
-                                     groupBy: groupBy, distinctBy: distinctBy)
-                .map { Element(dynamicObject: $0) }
+            let rows = _lattice.backend.objects(table: Element.entityName,
+                                                where: whereClause, orderBy: orderBy,
+                                                limit: limit, offset: offset,
+                                                groupBy: groupBy, distinctBy: distinctBy)
+            return reuseInstances
+                ? rows.map { _reuseOrHydrate($0) }
+                : rows.map { Element(dynamicObject: $0) }
         }
     }
 
@@ -429,16 +516,17 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                     where: descriptor.whereSQL, orderBy: descriptor.orderBySQL,
                     limit: Int64(limit), offset: Int64(offset), groupBy: groupByColumn)
                 if _lattice.backend.lastGenerationReadStale() { return nil }
-                return rows.map { Element(dynamicObject: $0) }
+                return rows.map { _reuseOrHydrate($0) }
             }
             return _gatedLiveRead {
-                _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: descriptor.whereSQL, orderBy: descriptor.orderBySQL, limit: Int64(limit), offset: Int64(offset), groupBy: groupByColumn).map { Element(dynamicObject: $0) }
+                _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: descriptor.whereSQL, orderBy: descriptor.orderBySQL, limit: Int64(limit), offset: Int64(offset), groupBy: groupByColumn).map { _reuseOrHydrate($0) }
             }
         }
         return _queryRows(where: descriptor.whereSQL, orderBy: descriptor.orderBySQL,
                           generation: generation,
                           limit: Int64(limit), offset: Int64(offset),
-                          groupBy: groupByColumn, distinctBy: distinctByColumn)
+                          groupBy: groupByColumn, distinctBy: distinctByColumn,
+                          reuseInstances: true)
     }
 
     /// Non-trapping indexed access (§1.7): tolerant-ladder rungs (a) — the
@@ -687,7 +775,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             var fetched = self._queryRows(where: whereSQL, orderBy: descriptor.orderBySQL,
                                           generation: hold.id,
                                           limit: Int64(batchSize), offset: nil,
-                                          groupBy: nil, distinctBy: nil)
+                                          groupBy: nil, distinctBy: nil,
+                                          reuseInstances: true)
             if fetched == nil {
                 // Generation force-retired mid-walk (TTL, threshold
                 // eviction, lifecycle — §3): transparently re-pin at the
@@ -698,11 +787,13 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                 fetched = self._queryRows(where: whereSQL, orderBy: descriptor.orderBySQL,
                                           generation: hold.id,
                                           limit: Int64(batchSize), offset: nil,
-                                          groupBy: nil, distinctBy: nil)
+                                          groupBy: nil, distinctBy: nil,
+                                          reuseInstances: true)
                     ?? self._queryRows(where: whereSQL, orderBy: descriptor.orderBySQL,
                                        generation: 0,
                                        limit: Int64(batchSize), offset: nil,
-                                       groupBy: nil, distinctBy: nil)
+                                       groupBy: nil, distinctBy: nil,
+                                       reuseInstances: true)
             }
             var rows = fetched ?? []
             if rows.count < batchSize {

@@ -195,6 +195,56 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         return registeredKeys[objectId]?.databasePath
     }
 
+    /// Item A §1.6 (Commit 7): the live registered instance for a row, if
+    /// any weak ref is still alive. Page refills consult this so a
+    /// re-hydrated row is the SAME object identity as the instance a view
+    /// already holds — identity stability becomes instance-level, not just
+    /// id-level, and observer-registration churn is bounded (A1 risk 3).
+    /// Best-effort by contract: nil (no live ref) hydrates fresh as today.
+    ///
+    /// `backendIdentity` scopes reuse to instances hydrated from the SAME
+    /// core handle (`LatticeBackend.identityHash` — the underlying
+    /// swift_lattice impl pointer). The registry key is (path, table, pk),
+    /// so it also matches instances belonging to OTHER Lattice handles on
+    /// the same file — but a managed instance's property writes route
+    /// through ITS OWN handle's connection: handing handle B's instance to
+    /// a facade on handle A would send A's writes through B's connection,
+    /// interleaving with B's transactions (an overlapping BEGIN throws —
+    /// pinned by `test_WriteWhileIterating`). Same-handle instances are the
+    /// ones whose write routing is already ours.
+    ///
+    /// The weak refs are resolved OUTSIDE the lock: reading a weak var
+    /// creates a temporary strong ref whose release can trigger
+    /// Model.deinit → deregister → deadlock on this non-recursive lock
+    /// (same discipline as `deregister`).
+    func lookup(databasePath: String, tableName: String, primaryKey: Int64,
+                backendIdentity: Int64) -> (any Model)? {
+        let key = InstanceKey(databasePath: databasePath, tableName: tableName, primaryKey: primaryKey)
+        lock.lock()
+        let refs = instances[key] ?? []
+        lock.unlock()
+        for ref in refs where ref.latticeBackend?.identityHash == backendIdentity {
+            if let model = ref.instance { return model }
+        }
+        return nil
+    }
+
+    /// Diagnostics (tests): number of LIVE registered instances for one row
+    /// key. The Commit-7 churn pin: with page-refill reuse, a row held by a
+    /// view and cached in a page is ONE instance, not an accumulating pile
+    /// of duplicates. Weak refs resolved outside the lock (see `lookup`).
+    func _liveInstanceCount(databasePath: String, tableName: String, primaryKey: Int64) -> Int {
+        let key = InstanceKey(databasePath: databasePath, tableName: tableName, primaryKey: primaryKey)
+        lock.lock()
+        let refs = instances[key] ?? []
+        lock.unlock()
+        var alive = 0
+        for ref in refs where ref.instance != nil {
+            alive += 1
+        }
+        return alive
+    }
+
     /// Notify all instances of a row change, except the one that initiated it (if provided)
     func notifyChange(databasePath: String, tableName: String, primaryKey: Int64, propertyName: String, excludingInstanceId: ObjectIdentifier? = nil) {
         let key = InstanceKey(databasePath: databasePath, tableName: tableName, primaryKey: primaryKey)
