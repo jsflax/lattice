@@ -32,6 +32,12 @@ struct QueryShapeKey: Hashable {
 /// pattern).
 final class QueryShapeState: @unchecked Sendable {
     let table: String
+    /// Item A Commit 8 (§2.3 v1.1): the columns this shape's membership and
+    /// order depend on (predicate ∪ sort ∪ group/distinct ∪ implicit id),
+    /// extracted conservatively at registration — never in the hook frame.
+    /// Immutable, so the invalidation hook may read it under the
+    /// COORDINATOR's leaf lock without touching this shape's own lock.
+    let columnDependency: ShapeColumnDependency
 
     private struct State {
         /// Epoch at which `count`/`pages` were last known valid. 0 = never.
@@ -78,8 +84,9 @@ final class QueryShapeState: @unchecked Sendable {
 
     private let lock: UnfairLock<State>
 
-    init(table: String) {
+    init(table: String, columnDependency: ShapeColumnDependency = .mustInvalidate) {
         self.table = table
+        self.columnDependency = columnDependency
         self.lock = UnfairLock(initialState: State())
     }
 

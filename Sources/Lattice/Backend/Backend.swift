@@ -57,6 +57,27 @@ public enum InvalidationReason: Int32, Sendable, Equatable {
     case advance = 2
 }
 
+/// One table's slice of a synchronous-invalidation payload, in the detailed
+/// (Commit 4 / v1.1) form (item A §2.3). Mirrors the bridge's
+/// `invalidation_table_change`.
+public struct InvalidationTableChange: Sendable, Equatable {
+    public var table: String
+    /// Comma-joined, deduped union of plain field names (e.g. "age,name").
+    /// NON-EMPTY only when every event for `table` in the batch was an
+    /// UPDATE with a known changed-field list — the only case where the
+    /// Commit-8 disjointness skip may fire. EMPTY means the consumer MUST
+    /// invalidate: INSERT/DELETE present (pre-change membership is
+    /// unknowable post-hoc), fields unknown (local setter writes carry no
+    /// changedFieldsNames in the core payload), or a rollback/advance
+    /// signal.
+    public var changedFields: String
+
+    public init(table: String, changedFields: String) {
+        self.table = table
+        self.changedFields = changedFields
+    }
+}
+
 /// One sync-filter rule: a table plus an optional WHERE-fragment limiting which
 /// rows upload. Replaces lattice.sync_filter_entry on the neutral surface.
 public struct SyncFilterParam: Sendable, Equatable {
@@ -426,6 +447,13 @@ public protocol LatticeBackend: AnyObject, Sendable {
     /// can throw, no lock any thread ever holds across a SQL statement.
     func addInvalidationHook(
         _ callback: @escaping @Sendable (_ changedTables: [String], _ reason: InvalidationReason) -> Void
+    ) -> UInt64
+    /// Detailed variant (item A Commit 8, §2.3 v1.1): identical contract to
+    /// `addInvalidationHook`, but the payload additionally carries each
+    /// table's `changedFields` union (see `InvalidationTableChange` — empty
+    /// string = must invalidate). Same callback restrictions verbatim.
+    func addInvalidationHookWithFields(
+        _ callback: @escaping @Sendable (_ changes: [InvalidationTableChange], _ reason: InvalidationReason) -> Void
     ) -> UInt64
     func removeInvalidationHook(token: UInt64)
 

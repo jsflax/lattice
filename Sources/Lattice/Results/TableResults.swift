@@ -309,7 +309,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         if _lattice.backend.lastGenerationReadStale() { return nil }
         let ids = ContiguousArray(captured)
         shape.publishIDs(ids, epoch: ctx.epoch, floor: ctx.floor,
-                         currentFloor: coordinator.currentFloor(table: Element.entityName))
+                         currentFloor: coordinator.currentFloor(table: Element.entityName,
+                                                                shapeKey: descriptor.key))
         return ids
     }
 
@@ -457,7 +458,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         }
         if ctx.generationID != 0 {
             ctx = coordinator.resolveAfterStaleRead(failedGeneration: ctx.generationID,
-                                                    table: Element.entityName)
+                                                    table: Element.entityName,
+                                                    shapeKey: descriptor.key)
             if let fill = _fillPage(descriptor, shape: shape, coordinator: coordinator, ctx: ctx,
                                     pageIndex: pageIndex, pageSize: pageSize) {
                 return fill
@@ -537,7 +539,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     public func element(at index: Int) -> Element? {
         guard index >= 0 else { return nil }
         let (coordinator, shape, descriptor) = _liveContext()
-        var ctx = coordinator.resolve(table: Element.entityName)
+        var ctx = coordinator.resolve(table: Element.entityName, shapeKey: descriptor.key)
         let pageSize = Swift.max(1, _tuning.pageSize)
         let pageIndex = index / pageSize
         let slot = index % pageSize
@@ -560,7 +562,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                           ctx: &ctx, pageIndex: pageIndex, pageSize: pageSize)
             shape.publishPage(pageIndex, rows: fill.rows, endAnchor: fill.endAnchor,
                               epoch: ctx.epoch, floor: ctx.floor,
-                              currentFloor: coordinator.currentFloor(table: Element.entityName),
+                              currentFloor: coordinator.currentFloor(table: Element.entityName,
+                                                                     shapeKey: descriptor.key),
                               maxCachedPages: _tuning.maxCachedPages)
             _noteServed(ctx.epoch)
             if slot < fill.rows.count {
@@ -728,7 +731,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         let batchSize = Swift.max(1, _tuning.pageSize)
 
         if _usesMaterializedIDs(coordinator, descriptor) {
-            let ctx = coordinator.resolve(table: table)
+            let ctx = coordinator.resolve(table: table, shapeKey: descriptor.key)
             if let ids = _materializedIDs(shape: shape, coordinator: coordinator,
                                           descriptor: descriptor, ctx: ctx) {
                 var cursor = 0
@@ -755,7 +758,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         // Capture the current generation with a logical hold (§1.4): the
         // walk survives coordinator supersession; only a force-retire (§3)
         // can invalidate it, and then the walk re-pins + resumes by anchor.
-        let initial = coordinator.resolve(table: table)
+        let initial = coordinator.resolve(table: table, shapeKey: descriptor.key)
         let hold = _IteratorGenerationHold(backend: backend)
         hold.retain(initial.generationID)
 
@@ -781,7 +784,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                 // Generation force-retired mid-walk (TTL, threshold
                 // eviction, lifecycle — §3): transparently re-pin at the
                 // current head and resume by anchor (§1.4).
-                let fresh = coordinator.resolveAfterStaleRead(failedGeneration: hold.id, table: table)
+                let fresh = coordinator.resolveAfterStaleRead(failedGeneration: hold.id, table: table,
+                                                              shapeKey: descriptor.key)
                 hold.retain(fresh.generationID)
                 alignedWithPages = false   // ranks may have shifted at the hop
                 fetched = self._queryRows(where: whereSQL, orderBy: descriptor.orderBySQL,
@@ -956,7 +960,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         // memory family (§4.1) — and publishes under epoch re-validation
         // (§2.3).
         let (coordinator, shape, descriptor) = _liveContext()
-        var ctx = coordinator.resolve(table: Element.entityName)
+        var ctx = coordinator.resolve(table: Element.entityName, shapeKey: descriptor.key)
         if let cached = shape.count(epoch: ctx.epoch, floor: ctx.floor) {
             _noteServed(ctx.epoch)
             return cached
@@ -985,7 +989,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             counted = _generationCount(descriptor, generation: ctx.generationID)
             if counted == nil {
                 ctx = coordinator.resolveAfterStaleRead(failedGeneration: ctx.generationID,
-                                                        table: Element.entityName)
+                                                        table: Element.entityName,
+                                                        shapeKey: descriptor.key)
                 if ctx.generationID != 0 {
                     counted = _generationCount(descriptor, generation: ctx.generationID)
                 }
@@ -993,7 +998,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         }
         let result = counted ?? _liveCount(descriptor)
         shape.publishCount(result, epoch: ctx.epoch, floor: ctx.floor,
-                           currentFloor: coordinator.currentFloor(table: Element.entityName))
+                           currentFloor: coordinator.currentFloor(table: Element.entityName,
+                                                                  shapeKey: descriptor.key))
         _noteServed(ctx.epoch)
         return result
     }

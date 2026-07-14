@@ -101,15 +101,39 @@ final class CxxObjectBackend: ObjectBackend, @unchecked Sendable {
     @inlinable var hasLattice: Bool { ref.is_managed() }
 
     @inlinable func hasValue(named name: String) -> Bool { ref.hasValue(named: std.string(name)) }
-    @inlinable func setNull(named name: String) { ref.setNil(named: std.string(name)) }
+    func setNull(named name: String) {
+        _annotatedSingleColumnWrite(column: name) { ref.setNil(named: std.string(name)) }
+    }
+
+    /// Item A Commit 8 (§2.3 v1.1): a managed single-column primitive write
+    /// is, by construction, an UPDATE of exactly `column` on this object's
+    /// table — but the core populates no `changedFieldsNames` for local
+    /// writes, so the synchronous invalidation hook (which fires INLINE on
+    /// this thread, inside the C++ set call, for an autocommit write) would
+    /// otherwise classify the commit as "fields unknown ⇒ must invalidate".
+    /// Bracketing the call with a thread-local annotation lets the
+    /// coordinator's hook callback supply the missing field list precisely.
+    /// Deterministically scoped: set before the write, cleared when it
+    /// returns — a leaked annotation could misclassify a later INSERT as
+    /// UPDATE-only (a missed invalidation), so the bracket is the whole
+    /// contract. Unmanaged sets skip the bracket (no commit can fire);
+    /// writes inside an explicit transaction settle later, outside the
+    /// bracket, and stay conservatively classified. Multi-statement writes
+    /// (`setObject`, link lists) are deliberately NOT annotated.
+    private func _annotatedSingleColumnWrite(column: String, _ body: () -> Void) {
+        guard ref.is_managed() else { return body() }
+        LocalWriteFieldAnnotation.with(table: String(ref.getTableName()), column: column, body)
+    }
 
     // Materialized reads — forwarded to the dynamic_object row cache.
     @inlinable func enableRowCache() { ref.enableRowCache() }
     @inlinable func disableRowCache() { ref.disableRowCache() }
     @inlinable func refreshRowCache() { ref.refreshRowCache() }
     @inlinable var isRowCacheEnabled: Bool { ref.isRowCacheEnabled() }
-    @inlinable func incrementInt(named name: String, by delta: Int64) {
-        ref.incrementIntField(named: std.string(name), by: delta)
+    func incrementInt(named name: String, by delta: Int64) {
+        _annotatedSingleColumnWrite(column: name) {
+            ref.incrementIntField(named: std.string(name), by: delta)
+        }
     }
 
     @inlinable func getInt(named name: String) -> Int64 { Int64(ref.getInt(named: std.string(name))) }
@@ -130,13 +154,25 @@ final class CxxObjectBackend: ObjectBackend, @unchecked Sendable {
         return out
     }
 
-    @inlinable func setInt(named name: String, _ value: Int64) { ref.setInt(named: std.string(name), value) }
-    @inlinable func setDouble(named name: String, _ value: Double) { ref.setDouble(named: std.string(name), value) }
-    @inlinable func setFloat(named name: String, _ value: Float) { ref.setFloat(named: std.string(name), value) }
-    @inlinable func setBool(named name: String, _ value: Bool) { ref.setBool(named: std.string(name), value) }
-    @inlinable func setString(named name: String, _ value: String) { ref.setString(named: std.string(name), std.string(value)) }
+    func setInt(named name: String, _ value: Int64) {
+        _annotatedSingleColumnWrite(column: name) { ref.setInt(named: std.string(name), value) }
+    }
+    func setDouble(named name: String, _ value: Double) {
+        _annotatedSingleColumnWrite(column: name) { ref.setDouble(named: std.string(name), value) }
+    }
+    func setFloat(named name: String, _ value: Float) {
+        _annotatedSingleColumnWrite(column: name) { ref.setFloat(named: std.string(name), value) }
+    }
+    func setBool(named name: String, _ value: Bool) {
+        _annotatedSingleColumnWrite(column: name) { ref.setBool(named: std.string(name), value) }
+    }
+    func setString(named name: String, _ value: String) {
+        _annotatedSingleColumnWrite(column: name) { ref.setString(named: std.string(name), std.string(value)) }
+    }
     func setData(named name: String, _ value: Data) {
-        ref.setData(named: std.string(name), value.reduce(into: CxxByteVector()) { $0.push_back($1) })
+        _annotatedSingleColumnWrite(column: name) {
+            ref.setData(named: std.string(name), value.reduce(into: CxxByteVector()) { $0.push_back($1) })
+        }
     }
 
     func getObject(named name: String) -> any ObjectBackend {
@@ -441,6 +477,52 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
             { ctx in
                 guard let ctx else { return }
                 Unmanaged<_CxxClosureBox<@Sendable ([String], InvalidationReason) -> Void>>
+                    .fromOpaque(ctx).release()
+            }
+        )
+    }
+
+    /// Detailed variant (item A Commit 8, §2.3 v1.1) over
+    /// `swift_lattice_ref.add_invalidation_hook_with_fields`. Same inline
+    /// hook-frame contract as `addInvalidationHook`; the thunk additionally
+    /// copies the parallel `changed_fields` C-string array (valid only for
+    /// the duration of the callback) — per table, the comma-joined deduped
+    /// union of plain field names when (and only when) every event for that
+    /// table in the batch was an UPDATE with a known field list; empty
+    /// otherwise (= must invalidate).
+    func addInvalidationHookWithFields(
+        _ callback: @escaping @Sendable (_ changes: [InvalidationTableChange], _ reason: InvalidationReason) -> Void
+    ) -> UInt64 {
+        let box = _CxxClosureBox(callback)
+        let ptr = Unmanaged.passRetained(box).toOpaque()
+        return ref.add_invalidation_hook_with_fields(
+            ptr,
+            { ctx, tables, fields, count, reason in
+                guard let ctx else { return }
+                let box = Unmanaged<_CxxClosureBox<@Sendable ([InvalidationTableChange], InvalidationReason) -> Void>>
+                    .fromOpaque(ctx).takeUnretainedValue()
+                var changes: [InvalidationTableChange] = []
+                if count > 0, let tables {
+                    changes.reserveCapacity(count)
+                    for i in 0..<count {
+                        guard let t = tables[i] else { continue }
+                        // `fields` is parallel to `tables` (bridge contract);
+                        // a missing entry decodes as "must invalidate".
+                        let f: String
+                        if let fields, let fp = fields[i] {
+                            f = String(cString: fp)
+                        } else {
+                            f = ""
+                        }
+                        changes.append(InvalidationTableChange(table: String(cString: t),
+                                                               changedFields: f))
+                    }
+                }
+                box.fn(changes, InvalidationReason(rawValue: Int32(reason)) ?? .commit)
+            },
+            { ctx in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable ([InvalidationTableChange], InvalidationReason) -> Void>>
                     .fromOpaque(ctx).release()
             }
         )

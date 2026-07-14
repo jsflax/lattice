@@ -38,6 +38,16 @@ public struct ResultsTuning: Sendable, Equatable, Hashable {
     /// so the log can rewind/truncate (§3.4). The hard WAL bound. Forwarded
     /// to the core WAL-hook threshold at open.
     public var walKeeperEvictionThresholdBytes: Int = 16 << 20   // 16 MB
+    /// Item A Commit 8 (§2.3 v1.1): the changedFields skip. When an
+    /// UPDATE-only batch's changed fields are provably disjoint from a
+    /// shape's (predicate ∪ sort ∪ implicit id) columns, that shape keeps
+    /// its caches — the EPOCH STILL BUMPS (read-your-writes and MVCC
+    /// generations are epoch-level; only the shape-cache rebuild is
+    /// skipped), and the row still repaints through the object path.
+    /// INSERT/DELETE/unknown-field batches, rollbacks and advances stay on
+    /// the v1 whole-table rule. Default ON; disabling restores v1 behavior
+    /// exactly.
+    public var fieldAwareInvalidation: Bool = true
 
     public init() {}
 }
@@ -61,6 +71,55 @@ struct GenerationContext {
     let epoch: UInt64
     let floor: UInt64
     let generationID: UInt64
+}
+
+/// One table's slice of a settled write, as the invalidation surface
+/// classifies it (item A Commit 8, §2.3 v1.1). `changedFields` non-nil ⇔
+/// every event for `table` in the batch was an UPDATE with a known field
+/// list (lowercased); nil = fields unknown / membership may have changed —
+/// must invalidate.
+struct WriteBatchTableChange {
+    let table: String
+    let changedFields: Set<String>?
+}
+
+/// Thread-local classification of an in-flight local single-column write
+/// (item A Commit 8, §2.3 v1.1). The core delivers NO `changedFieldsNames`
+/// for local writes, so the synchronous invalidation hook — which fires
+/// INLINE on the writer's thread, inside the backend set call — cannot
+/// classify a local setter's autocommit UPDATE by payload alone. The
+/// primitive object-backend setters (the only single-statement,
+/// single-column write surface) bracket their C++ call with this
+/// annotation; the hook callback, running strictly inside that bracket on
+/// the same thread, reads it to supply the missing field. Deterministically
+/// scoped set/clear — a leaked annotation could misclassify a later commit
+/// (a missed invalidation). Thread-dictionary state only: hook-frame legal
+/// (no locks, no SQL, nothing that can throw — §2.3).
+enum LocalWriteFieldAnnotation {
+    private static let key = "Lattice.Results.localWriteFieldAnnotation"
+
+    /// Bracket one single-column write on `table`.
+    static func with<T>(table: String, column: String, _ body: () -> T) -> T {
+        let dictionary = Thread.current.threadDictionary
+        let previous = dictionary[key]
+        dictionary[key] = [table, column]
+        defer {
+            if let previous {
+                dictionary[key] = previous
+            } else {
+                dictionary.removeObject(forKey: key)
+            }
+        }
+        return body()
+    }
+
+    /// The annotation covering the write currently settling on this thread,
+    /// if any. Read by the coordinator's hook callback.
+    static func current() -> (table: String, column: String)? {
+        guard let value = Thread.current.threadDictionary[key] as? [String],
+              value.count == 2 else { return nil }
+        return (value[0], value[1])
+    }
 }
 
 // MARK: - GenerationCoordinator (item A §2.1/§2.2, Commit-5 slice)
@@ -160,6 +219,22 @@ final class GenerationCoordinator: @unchecked Sendable {
         /// `tuning.maxCachedShapes`.
         var shapes: [QueryShapeKey: QueryShapeState] = [:]
         var shapeLRU: [QueryShapeKey] = []
+        // MARK: changedFields skip (§2.3 v1.1, Commit 8)
+        /// Per-shape relevant-write epochs: an entry means the shape's
+        /// effective floor LAGS `tableWriteEpochs[shape.table]` because
+        /// every write to its table since the entry's epoch was an
+        /// UPDATE-only batch whose changed fields were disjoint from the
+        /// shape's referenced columns. Absent entry = the shape follows the
+        /// table floor. Maintained ATOMICALLY with the epoch bump (same
+        /// critical section — a lag recorded after the bump could be
+        /// retagged over by a racing reader and go stale forever). Entries
+        /// are removed the moment any non-skippable write lands (the shape
+        /// catches back up to the table floor), on shape LRU eviction, and
+        /// on teardown.
+        var shapeRelevantWriteEpochs: [QueryShapeKey: UInt64] = [:]
+        /// Diagnostics (tests): (shape, write) pairs whose invalidation the
+        /// changedFields skip suppressed.
+        var fieldSkipCount: UInt64 = 0
         // MARK: data_version belt (§1.3 cross-process, Commit 6)
         /// Monotonic uptime (ns) of the last belt probe; 0 = never probed.
         var beltLastProbeUptimeNanos: UInt64 = 0
@@ -218,11 +293,16 @@ final class GenerationCoordinator: @unchecked Sendable {
         guard needsRegistration, let backend else { return }
         // The callback body runs INLINE in the writer's hook frame — for
         // file DBs inside SQLite's post-commit C frame (§2.3). It is
-        // restricted to leaf-lock state stores: `noteWrite` is an O(1)
-        // counter/flag update under the coordinator leaf lock — no SQL, no
-        // keeper release (that is deferred via `pendingRetire`), nothing
-        // that can throw.
-        let token = backend.addInvalidationHook { [weak self] tables, reason in
+        // restricted to leaf-lock state stores: `noteWrite` is an O(live
+        // shapes) counter/flag update under the coordinator leaf lock — no
+        // SQL, no keeper release (that is deferred via `pendingRetire`),
+        // nothing that can throw. Commit 8: the with-fields variant — the
+        // payload's per-table changed-field unions (plus, for local setter
+        // writes whose core payload carries no fields, the thread-local
+        // single-column annotation set by the bracket this callback fires
+        // inside) drive the §2.3 v1.1 disjointness skip.
+        let fieldAware = tuning.fieldAwareInvalidation
+        let token = backend.addInvalidationHookWithFields { [weak self] changes, reason in
             guard let self else { return }
             switch reason {
             case .commit:
@@ -230,7 +310,32 @@ final class GenerationCoordinator: @unchecked Sendable {
                 // keeper retirement depends on it); the changed-table payload
                 // only refines which shapes drop caches. An EMPTY payload is
                 // a bookkeeping-only commit: bump, keep every cache.
-                self.noteWrite(tables: tables)
+                guard fieldAware else {
+                    self.noteWrite(tables: changes.map(\.table))
+                    return
+                }
+                let annotation = LocalWriteFieldAnnotation.current()
+                self.noteWrite(changes: changes.map { change in
+                    if !change.changedFields.isEmpty {
+                        // Core-classified UPDATE-only batch (sync-applied
+                        // chunks, upserts resolved to UPDATE): the payload
+                        // is the deduped comma-joined field union.
+                        return WriteBatchTableChange(
+                            table: change.table,
+                            changedFields: Self.parseFieldList(change.changedFields))
+                    }
+                    if let annotation, annotation.table == change.table {
+                        // Local single-column setter write: the payload
+                        // carries no changedFieldsNames, but this callback
+                        // fires inside the setter's annotation bracket on
+                        // the writer's thread — the one write that can
+                        // settle here is that single-column UPDATE.
+                        return WriteBatchTableChange(
+                            table: change.table,
+                            changedFields: [annotation.column.lowercased()])
+                    }
+                    return WriteBatchTableChange(table: change.table, changedFields: nil)
+                })
             case .rollback:
                 // No change batch is delivered for a rollback by design —
                 // any capture that raced the transaction may be poisoned
@@ -260,7 +365,12 @@ final class GenerationCoordinator: @unchecked Sendable {
     /// under epoch re-validation. A write landing during acquisition retries
     /// the mint (bounded) so a writer's own next access never serves a
     /// snapshot that predates its commit (read-your-writes, §1.3).
-    func resolve(table: String) -> GenerationContext {
+    ///
+    /// `shapeKey` (Commit 8): when the access serves a registered shape, the
+    /// returned floor is shape-aware — field-skippable writes leave it
+    /// lagging the table floor, so the shape's caches survive (§2.3 v1.1).
+    /// Accesses without a shape stay on the (conservative) table floor.
+    func resolve(table: String, shapeKey: QueryShapeKey? = nil) -> GenerationContext {
         // Cross-process freshness belt (§1.3, Commit 6): runs FIRST so a
         // detected foreign commit bumps the epoch before this access pins.
         beltCheckIfDue()
@@ -278,14 +388,14 @@ final class GenerationCoordinator: @unchecked Sendable {
             let step: Step = lock.withLockUnchecked { state in
                 if Thread.isMainThread, let pinned = state.mainPin {
                     return .serve(GenerationContext(epoch: pinned.epoch,
-                                                    floor: Self.floorFor(state, table: table, epoch: pinned.epoch),
+                                                    floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: pinned.epoch),
                                                     generationID: pinned.id))
                 }
                 let epoch = state.epoch
                 if let current = state.current, current.epoch == epoch {
                     Self.pinIfMainThread(&state, current, installObserver: &installObserver)
                     return .serve(GenerationContext(epoch: epoch,
-                                                    floor: Self.floorFor(state, table: table, epoch: epoch),
+                                                    floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: epoch),
                                                     generationID: current.id))
                 }
                 if isMemoryFamily || state.keepersSuppressed {
@@ -299,7 +409,7 @@ final class GenerationCoordinator: @unchecked Sendable {
                     Self.supersede(&state, with: fresh)
                     Self.pinIfMainThread(&state, fresh, installObserver: &installObserver)
                     return .serve(GenerationContext(epoch: epoch,
-                                                    floor: Self.floorFor(state, table: table, epoch: epoch),
+                                                    floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: epoch),
                                                     generationID: 0))
                 }
                 return .mint(epoch: epoch)
@@ -318,7 +428,7 @@ final class GenerationCoordinator: @unchecked Sendable {
                         redundant = acquired
                         Self.pinIfMainThread(&state, current, installObserver: &installObserver)
                         return GenerationContext(epoch: current.epoch,
-                                                 floor: Self.floorFor(state, table: table, epoch: current.epoch),
+                                                 floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: current.epoch),
                                                  generationID: current.id)
                     }
                     guard state.epoch == epochAtStart else {
@@ -331,7 +441,7 @@ final class GenerationCoordinator: @unchecked Sendable {
                     Self.supersede(&state, with: fresh)
                     Self.pinIfMainThread(&state, fresh, installObserver: &installObserver)
                     return GenerationContext(epoch: epochAtStart,
-                                             floor: Self.floorFor(state, table: table, epoch: epochAtStart),
+                                             floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: epochAtStart),
                                              generationID: acquired)
                 }
                 if redundant != 0 {
@@ -346,7 +456,7 @@ final class GenerationCoordinator: @unchecked Sendable {
                     // once (live-read fallback); the next batch re-pins.
                     return lock.withLockUnchecked { state in
                         GenerationContext(epoch: state.epoch,
-                                          floor: Self.floorFor(state, table: table, epoch: state.epoch),
+                                          floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: state.epoch),
                                           generationID: 0)
                     }
                 }
@@ -357,8 +467,9 @@ final class GenerationCoordinator: @unchecked Sendable {
     /// A generation-scoped read at `failedGeneration` came back stale
     /// (force-retired keeper, thrown core read — §3.4 protocol). Drop the
     /// dead generation (and any pin on it) and re-resolve, minting fresh.
-    func resolveAfterStaleRead(failedGeneration: UInt64, table: String) -> GenerationContext {
-        guard failedGeneration != 0 else { return resolve(table: table) }
+    func resolveAfterStaleRead(failedGeneration: UInt64, table: String,
+                               shapeKey: QueryShapeKey? = nil) -> GenerationContext {
+        guard failedGeneration != 0 else { return resolve(table: table, shapeKey: shapeKey) }
         lock.withLockUnchecked { state in
             if state.current?.id == failedGeneration {
                 state.current = nil
@@ -370,7 +481,7 @@ final class GenerationCoordinator: @unchecked Sendable {
                 state.pendingRetire.append(failedGeneration)
             }
         }
-        return resolve(table: table)
+        return resolve(table: table, shapeKey: shapeKey)
     }
 
     // MARK: data_version belt (§1.3 cross-process, Commit 6)
@@ -441,15 +552,33 @@ final class GenerationCoordinator: @unchecked Sendable {
     }
 
     /// Current effective floor for `table` against the *live* epoch — used to
-    /// re-validate before publishing a fill (§2.3 two-phase pattern).
-    func currentFloor(table: String) -> UInt64 {
+    /// re-validate before publishing a fill (§2.3 two-phase pattern). With a
+    /// `shapeKey`, the floor is shape-aware (Commit 8): a fill that raced
+    /// only field-skippable writes may still be published.
+    func currentFloor(table: String, shapeKey: QueryShapeKey? = nil) -> UInt64 {
         lock.withLockUnchecked { state in
-            max(state.tableWriteEpochs[table] ?? 0, state.allTablesWriteEpoch)
+            max(Self.relevantWriteEpoch(state, table: table, shapeKey: shapeKey),
+                state.allTablesWriteEpoch)
         }
     }
 
-    private static func floorFor(_ state: State, table: String, epoch: UInt64) -> UInt64 {
-        min(max(state.tableWriteEpochs[table] ?? 0, state.allTablesWriteEpoch), epoch)
+    /// The last epoch a write could have affected the shape (Commit 8): a
+    /// lagging per-shape entry — recorded while every write to the table was
+    /// field-disjoint — else the table floor. The lag never exceeds the
+    /// table floor by construction; the min() is a belt.
+    private static func relevantWriteEpoch(_ state: State, table: String,
+                                           shapeKey: QueryShapeKey?) -> UInt64 {
+        let tableFloor = state.tableWriteEpochs[table] ?? 0
+        if let shapeKey, let lagging = state.shapeRelevantWriteEpochs[shapeKey] {
+            return min(lagging, tableFloor)
+        }
+        return tableFloor
+    }
+
+    private static func floorFor(_ state: State, table: String,
+                                 shapeKey: QueryShapeKey? = nil, epoch: UInt64) -> UInt64 {
+        min(max(relevantWriteEpoch(state, table: table, shapeKey: shapeKey),
+                state.allTablesWriteEpoch), epoch)
     }
 
     private static func pinIfMainThread(_ state: inout State, _ generation: GenerationRef,
@@ -547,16 +676,74 @@ final class GenerationCoordinator: @unchecked Sendable {
     /// `pendingRetire`), nothing that can throw — so it is safe from every
     /// write path INCLUDING the synchronous core invalidation hook frame
     /// (for file DBs, SQLite's post-commit C frame on the writer's thread).
-    func noteWrite(tables: [String]?) {
+    func noteWrite(tables: [String]?, updatedColumns: [String]? = nil) {
+        // `updatedColumns` (Commit 8, §1.3 Layer 1): non-nil ⇔ the write was
+        // an UPDATE touching exactly these columns on every listed table
+        // (the managed-property setter path — one table, one column).
+        let fields: Set<String>? = {
+            guard tuning.fieldAwareInvalidation, let updatedColumns,
+                  !updatedColumns.isEmpty else { return nil }
+            return Set(updatedColumns.map { $0.lowercased() })
+        }()
+        noteWrite(changes: tables.map { list in
+            list.map { WriteBatchTableChange(table: $0, changedFields: fields) }
+        })
+    }
+
+    /// The classified form (Commit 8). `changes == nil` invalidates every
+    /// shape (unknown table set); a change with `changedFields == nil`
+    /// invalidates every shape over its table (v1 whole-table rule); a
+    /// change with a non-empty field set additionally applies the §2.3 v1.1
+    /// disjointness skip — shapes over the table whose referenced columns
+    /// are disjoint keep lagging behind the table floor (their caches
+    /// survive), everything else catches up. All of it in ONE critical
+    /// section with the epoch bump: a lag entry recorded after the bump
+    /// could be retagged over by a racing reader and go stale forever.
+    func noteWrite(changes: [WriteBatchTableChange]?) {
         lock.withLockUnchecked { state in
             state.epoch &+= 1
             let epoch = state.epoch
-            if let tables {
-                for table in tables {
+            if let changes {
+                for change in changes {
+                    let table = change.table
+                    let previousTableFloor = state.tableWriteEpochs[table] ?? 0
                     state.tableWriteEpochs[table] = epoch
+                    if tuning.fieldAwareInvalidation,
+                       let fields = change.changedFields, !fields.isEmpty {
+                        // UPDATE-only with known fields: per-shape triage.
+                        // O(live shapes ≤ maxCachedShapes) set-disjointness
+                        // checks against precomputed dependencies —
+                        // hook-frame legal (§2.3 "per-shape dirty-flag
+                        // stores"); dependency extraction happened at shape
+                        // registration, never here.
+                        for (key, shape) in state.shapes where key.table == table {
+                            if case .columns(let referenced) = shape.columnDependency,
+                               referenced.isDisjoint(with: fields) {
+                                // Skip: preserve the shape's lag. A missing
+                                // entry means it tracked the table floor
+                                // until now — freeze it at the pre-write
+                                // floor.
+                                if state.shapeRelevantWriteEpochs[key] == nil {
+                                    state.shapeRelevantWriteEpochs[key] = previousTableFloor
+                                }
+                                state.fieldSkipCount &+= 1
+                            } else {
+                                state.shapeRelevantWriteEpochs.removeValue(forKey: key)
+                            }
+                        }
+                    } else if !state.shapeRelevantWriteEpochs.isEmpty {
+                        // INSERT/DELETE/unknown fields: every lagging shape
+                        // over this table catches up to the table floor.
+                        for key in Array(state.shapeRelevantWriteEpochs.keys) where key.table == table {
+                            state.shapeRelevantWriteEpochs.removeValue(forKey: key)
+                        }
+                    }
                 }
             } else {
                 state.allTablesWriteEpoch = epoch
+                // Dominated by the max() in floorFor anyway; drop the
+                // entries to keep the map tight.
+                state.shapeRelevantWriteEpochs.removeAll(keepingCapacity: true)
             }
             // Belt bookkeeping (Commit 6): this locally-observed write will
             // move `data_version` on `xproc_read_db_` too — the next probe
@@ -569,6 +756,19 @@ final class GenerationCoordinator: @unchecked Sendable {
             // hook frame. The next resolve mints fresh and supersedes it
             // (§2.2: release scheduled off-frame).
         }
+    }
+
+    /// Parse the bridge's comma-joined deduped field union ("age,name") into
+    /// the lowercased set the disjointness check uses. Model columns are
+    /// Swift identifiers — no commas, no quoting.
+    static func parseFieldList(_ joined: String) -> Set<String> {
+        Set(joined.split(separator: ",").map { $0.lowercased() })
+    }
+
+    /// Diagnostics (tests): number of (shape, write) invalidations the
+    /// changedFields skip suppressed (§2.3 v1.1).
+    var fieldSkipCounter: UInt64 {
+        lock.withLockUnchecked { $0.fieldSkipCount }
     }
 
     /// `Results.refresh()` (§1.7): force the next access to advance the
@@ -698,24 +898,45 @@ final class GenerationCoordinator: @unchecked Sendable {
     /// never held across SQL; the caller runs its query lock-free and
     /// re-validates before publishing into the returned state.
     func shape(for key: QueryShapeKey) -> QueryShapeState {
-        lock.withLockUnchecked { state in
+        if let existing = lock.withLockUnchecked({ state -> QueryShapeState? in
+            guard let existing = state.shapes[key] else { return nil }
+            // LRU touch.
+            if let idx = state.shapeLRU.firstIndex(of: key) {
+                state.shapeLRU.remove(at: idx)
+            }
+            state.shapeLRU.append(key)
+            return existing
+        }) {
+            return existing
+        }
+        // Miss: extract the shape's referenced columns (Commit 8, §2.3
+        // v1.1) OUTSIDE the leaf lock — pure string parsing, but writers'
+        // hook frames contend on this lock, and it runs once per shape, not
+        // per access. Two-phase create: a racing registrant computes the
+        // same value; first insert wins.
+        let dependency: ShapeColumnDependency = tuning.fieldAwareInvalidation
+            ? ShapeColumnExtractor.dependency(of: key)
+            : .mustInvalidate
+        let created = QueryShapeState(table: key.table, columnDependency: dependency)
+        return lock.withLockUnchecked { state in
             if let existing = state.shapes[key] {
-                // LRU touch.
                 if let idx = state.shapeLRU.firstIndex(of: key) {
                     state.shapeLRU.remove(at: idx)
                 }
                 state.shapeLRU.append(key)
                 return existing
             }
-            let created = QueryShapeState(table: key.table)
             state.shapes[key] = created
             state.shapeLRU.append(key)
             // Registry LRU bound (§2.2): evict least-recently-used shapes
             // beyond `maxCachedShapes`. Facades re-register (cold) on their
-            // next access.
+            // next access. Evicted shapes drop their skip-lag entries too —
+            // a recreated shape starts cold and rebuilds at the current
+            // epoch regardless.
             while state.shapeLRU.count > max(1, tuning.maxCachedShapes) {
                 let evicted = state.shapeLRU.removeFirst()
                 state.shapes.removeValue(forKey: evicted)
+                state.shapeRelevantWriteEpochs.removeValue(forKey: evicted)
             }
             return created
         }
@@ -749,6 +970,7 @@ final class GenerationCoordinator: @unchecked Sendable {
             state.mainPin = nil
             state.shapes = [:]
             state.shapeLRU = []
+            state.shapeRelevantWriteEpochs = [:]
             return (token, generations)
         }
         if let backend {
@@ -897,7 +1119,12 @@ enum GenerationCoordinatorRegistry {
     /// across core instances — this Swift fan-out additionally walks attach
     /// links). Near-zero cost when no coordinator exists (no live-Results
     /// usage on the store).
-    static func noteWrite(path: String, tables: [String]?) {
+    /// `updatedColumns` (Commit 8): non-nil ⇔ the write was an UPDATE
+    /// touching exactly these columns on the listed tables (the
+    /// managed-property setter path) — lets the coordinators apply the
+    /// §2.3 v1.1 disjointness skip to the Layer-1 bump too, so it does not
+    /// clobber the lag the (earlier, inline) hook classification preserved.
+    static func noteWrite(path: String, tables: [String]?, updatedColumns: [String]? = nil) {
         let coordinators: [GenerationCoordinator] = lock.withLockUnchecked { state in
             // The written store plus (transitively) every store whose handles
             // union it via attach — a union view over an attached store goes
@@ -922,7 +1149,7 @@ enum GenerationCoordinatorRegistry {
             return found
         }
         for coordinator in coordinators {
-            coordinator.noteWrite(tables: tables)
+            coordinator.noteWrite(tables: tables, updatedColumns: updatedColumns)
         }
     }
 

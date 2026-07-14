@@ -394,7 +394,7 @@ class PropertyMacro: AccessorMacro, MemberMacro {
                 } else {
                     \(raw: property.type).setField(on: &_dynamicObject, named: "\(raw: property.mappedName ?? property.name)", newValue)
                 }
-                _notifyOtherInstances(propertyName: "\(raw: property.name)")
+                _notifyOtherInstances(propertyName: "\(raw: property.name)", changedColumn: "\(raw: property.mappedName ?? property.name)")
             }
             """
         ]

@@ -416,7 +416,13 @@ extension Model {
     /// Called after a property mutation to notify other instances representing the same row.
     /// Uses the registry's cached database path to avoid accessing the C++ lattice ref,
     /// which may be a dangling raw pointer during teardown.
-    public func _notifyOtherInstances(propertyName: String) {
+    ///
+    /// `changedColumn` (item A Commit 8, §2.3 v1.1): the mapped SQL column a
+    /// plain-property setter just updated — nil for mutations without a
+    /// provable single-column UPDATE shape (virtual links, external
+    /// callers), which keeps the Layer-1 bump on the conservative
+    /// whole-table rule.
+    public func _notifyOtherInstances(propertyName: String, changedColumn: String? = nil) {
         _fireObservers(propertyName: propertyName)
         guard let primaryKey else { return }
         guard let dbPath = ModelInstanceRegistry.shared.databasePath(for: self) else { return }
@@ -427,8 +433,12 @@ extension Model {
         // read-your-writes exact, not one scheduler hop late. O(1) counter
         // update under a leaf lock; a no-op when the store has no live
         // results. (The synchronous CORE hook that also covers non-Swift
-        // writers lands in Commit 3, §2.3.)
-        GenerationCoordinatorRegistry.noteWrite(path: dbPath, tables: [Self.entityName])
+        // writers lands in Commit 3, §2.3.) Commit 8: the setter's column
+        // rides along so the Layer-1 double bump classifies identically to
+        // the hook's annotated classification — a nil-fields bump here
+        // would clobber the skip the hook just preserved.
+        GenerationCoordinatorRegistry.noteWrite(path: dbPath, tables: [Self.entityName],
+                                                updatedColumns: changedColumn.map { [$0] })
         ModelInstanceRegistry.shared.notifyChange(
             databasePath: dbPath,
             tableName: Self.entityName,
