@@ -133,6 +133,8 @@ class LiveResultsGenerationReadTests: BaseTest {
 
     // MARK: T2b — cross-thread write lands at the NEXT batch boundary
 
+    // Darwin-only: asserts render-batch PIN semantics (see T3/T8 note above).
+    #if canImport(Darwin)
     @Test @MainActor func t2b_crossThreadWrite_visibleAtNextBatchBoundary() throws {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "t2b_thread_\(String.random(length: 12)).sqlite")
@@ -163,6 +165,7 @@ class LiveResultsGenerationReadTests: BaseTest {
         #expect(all.count == 1)
         #expect(all[0].name == "background")
     }
+    #endif  // canImport(Darwin)
 
     // MARK: T3 — within-generation MVCC exactness (§1.2 rung 1)
 
@@ -336,6 +339,8 @@ class LiveResultsGenerationReadTests: BaseTest {
 
     // MARK: snapshot() at the current generation (§7 Commit 5)
 
+    // Darwin-only: asserts render-batch PIN semantics (see T3/T8 note above).
+    #if canImport(Darwin)
     @Test @MainActor func snapshot_onLiveFacade_executesAtPinnedGeneration() throws {
         let lattice = try testLattice(Gen5Item.self)
         try seed(lattice, count: 120)
@@ -361,6 +366,7 @@ class LiveResultsGenerationReadTests: BaseTest {
         endRenderBatch()
         #expect(results.snapshot().count == 20)
     }
+    #endif  // canImport(Darwin)
 
     // MARK: Close / delete while generations live (§4.6)
 
