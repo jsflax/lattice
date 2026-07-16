@@ -24,7 +24,7 @@ let package = Package(
         // (or drag the local LatticeCore package into the Xcode workspace).
         // 0.10.4 floor is required: materialized reads consume the row-cache
         // bridge APIs introduced there.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "0.10.10"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "0.10.11"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
