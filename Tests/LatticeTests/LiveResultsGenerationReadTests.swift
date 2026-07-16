@@ -166,6 +166,14 @@ class LiveResultsGenerationReadTests: BaseTest {
 
     // MARK: T3 — within-generation MVCC exactness (§1.2 rung 1)
 
+    // Darwin-only: T3/T8 pin RENDER-BATCH semantics — one main-thread batch =
+    // one pinned generation — which rides CFRunLoopObserver (spec §1.3).
+    // Non-Darwin has per-access batches by design (Commit-1 staging note;
+    // no render frames exist on Linux daemons), so the "same batch still
+    // serves generation N" premise structurally doesn't apply there. The
+    // platform-independent properties (trap-freedom, RYW, MVCC within one
+    // held generation) are pinned by T1/T2/keeper tests, which run everywhere.
+    #if canImport(Darwin)
     @Test @MainActor func t3_withinGenerationMVCCExactness() throws {
         let lattice = try testLattice(Gen5Item.self)
         try seed(lattice, count: 250)
@@ -248,6 +256,8 @@ class LiveResultsGenerationReadTests: BaseTest {
         #expect(results.count == 301)
         #expect(results.element(at: 0)?.rank == -1)
     }
+
+    #endif  // canImport(Darwin)
 
     // MARK: Memory family — materialized-id generations (§4.1)
 
