@@ -218,7 +218,14 @@ final class GenerationCoordinator: @unchecked Sendable {
         /// The `.beforeWaiting` observer has fired at least once — proof the
         /// main runloop actually spins, so pins are cleared at real batch
         /// boundaries and never need the staleness escape.
-        var mainLoopObserverHasFired = false
+        /// Uptime (ns) of the observer's most recent `.beforeWaiting` fire.
+        /// 0 = never. The staleness escape keys on RECENCY (no fire since
+        /// the current pin installed), not "ever fired": a test harness or
+        /// tool can spin the runloop between operations yet hold it
+        /// non-spinning through a long await — an ever-fired latch would
+        /// permanently disable the escape and freeze main-thread reads
+        /// (observed: CI belt test, pin held across a 10s poll).
+        var lastMainLoopFireUptimeNanos: UInt64 = 0
         /// Non-spinning main runloop detected (a Darwin process that blocks
         /// its main thread in `dispatchMain()` — daemons, CLI/agent tools):
         /// the observer is installed on a runloop that never runs, so
@@ -459,14 +466,22 @@ final class GenerationCoordinator: @unchecked Sendable {
                     // fall through to a per-access batch. UI apps are
                     // unaffected (their observer fires at the first tick's
                     // end; a fired observer disables the escape for good).
-                    let neverEndingTick = !state.mainLoopObserverHasFired
+                    let pinExpired = state.lastMainLoopFireUptimeNanos < state.mainPinInstalledUptimeNanos
                         && now &- state.mainPinInstalledUptimeNanos > Self.mainPinNonSpinningGraceNanos
-                    if !neverEndingTick {
+                    if !pinExpired {
                         return .serve(GenerationContext(epoch: pinned.epoch,
                                                         floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: pinned.epoch),
                                                         generationID: pinned.id))
                     }
-                    state.mainPinningDisabled = true
+                    // No `.beforeWaiting` since this pin installed and the
+                    // grace elapsed: the runloop is not spinning right now.
+                    // Drop the pin and serve per-access batches. Only a
+                    // NEVER-fired runloop (true daemon) disables pinning
+                    // permanently; an idle-but-alive runloop resumes pinning
+                    // at its next spin.
+                    if state.lastMainLoopFireUptimeNanos == 0 {
+                        state.mainPinningDisabled = true
+                    }
                     Self.clearPinLocked(&state)
                 }
                 let epoch = state.epoch
@@ -623,8 +638,16 @@ final class GenerationCoordinator: @unchecked Sendable {
         let now = DispatchTime.now().uptimeNanoseconds
         let shouldProbe: Bool = lock.withLockUnchecked { state in
             // Mid-batch on the main thread: the frame is pinned — the belt
-            // re-checks at the next batch boundary.
-            if Thread.isMainThread, state.mainPin != nil { return false }
+            // re-checks at the next batch boundary. But honor the same
+            // staleness escape as resolve(): a pin with no runloop fire
+            // since install, past grace, is expired — probing then is safe
+            // (the next resolve drops it too) and required (an eternally
+            // held pin must not silence cross-process freshness).
+            if Thread.isMainThread, state.mainPin != nil {
+                let pinExpired = state.lastMainLoopFireUptimeNanos < state.mainPinInstalledUptimeNanos
+                    && now &- state.mainPinInstalledUptimeNanos > Self.mainPinNonSpinningGraceNanos
+                if !pinExpired { return false }
+            }
             guard now &- state.beltLastProbeUptimeNanos >= intervalNanos
                     || state.beltLastProbeUptimeNanos == 0 else { return false }
             // Claim the probe slot under the lock (≤ 1 PRAGMA per interval
@@ -777,7 +800,7 @@ final class GenerationCoordinator: @unchecked Sendable {
     /// (e.g. accesses before `UIApplicationMain` started the loop).
     private func mainRunLoopTickEnded() {
         let hasPending: Bool = lock.withLockUnchecked { state in
-            state.mainLoopObserverHasFired = true
+            state.lastMainLoopFireUptimeNanos = DispatchTime.now().uptimeNanoseconds
             state.mainPinningDisabled = false
             Self.clearPinLocked(&state)
             return !state.pendingRetire.isEmpty
