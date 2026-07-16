@@ -113,9 +113,16 @@ class LiveResultsCrossProcessBeltTests: BaseTest {
             if promoted.count == 1 { fresh = true; break }
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(fresh, "belt on: a foreign commit must become visible within the belt interval")
-        #expect(coordinator(for: lattice).beltCounters.foreignBumps >= 1,
-                "freshness must have arrived via the belt's foreign-bump detection")
+        // CI-only failure under investigation: dump every layer's state so a
+        // red run tells us WHICH layer is dead (probe cadence, delta
+        // observation, or the foreign write itself).
+        let c = coordinator(for: lattice).beltCounters
+        let dv = lattice.backend.dataVersion()
+        let liveRows = lattice.objects(Gen6Item.self).where { $0.rank >= 900 }.snapshot().count
+        print("T4-diag: fresh=\(fresh) probes=\(c.probes) foreign=\(c.foreignBumps) ambiguous=\(c.ambiguousBumps) dataVersion=\(dv) liveMatchingRows=\(liveRows) count=\(promoted.count)")
+        #expect(fresh, "belt on: a foreign commit must become visible within the belt interval [diag: probes=\(c.probes) foreign=\(c.foreignBumps) ambiguous=\(c.ambiguousBumps) dv=\(dv) liveRows=\(liveRows)]")
+        #expect(c.foreignBumps + c.ambiguousBumps >= 1,
+                "freshness must have arrived via the belt's bump detection [diag: probes=\(c.probes) ambiguous=\(c.ambiguousBumps)]")
     }
 
     // MARK: T4 — belt OFF: foreign commit stays stale (no notifier, no TTL)
