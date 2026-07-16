@@ -103,7 +103,10 @@ class LiveResultsLifecycleSoakTests: BaseTest {
         // pages — every epoch bump re-pins a fresh keeper (the §3.1
         // reader-at-every-instant regime that starves log rewind without
         // §3.4's threshold eviction).
-        Thread.detachNewThread { [weak self] in
+        // No self capture: Linux swiftc rejects non-Sendable self in the
+        // @Sendable detached-thread closure (macOS only warns); everything
+        // the reader needs rides Sendable boxes.
+        Thread.detachNewThread {
             let results = box.value.objects(Soak5Item.self)
             var i = 0
             while !(stop.withLockUnchecked { $0 }) {
@@ -113,7 +116,6 @@ class LiveResultsLifecycleSoakTests: BaseTest {
                     _ = results.element(at: (count - 1 + i) % count)
                 }
                 i += 1
-                _ = self
             }
             readerDone.signal()
         }
