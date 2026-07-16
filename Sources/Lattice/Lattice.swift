@@ -1400,9 +1400,33 @@ public struct Lattice {
         // Never MINT a coordinator here (retiring must not pin): drop the
         // coordinator's holds when one exists, then force-retire everything
         // this instance still holds core-side.
+        //
+        // Item A §3.6: retiring LATCHES keeper suppression — retire-all is
+        // not a one-shot pass. Any access that races the retire (a stale
+        // fill re-resolving) or lands after it (URLSession callbacks,
+        // BGTask wrap-up while the app finishes background execution) would
+        // otherwise re-pin a fresh keeper that nothing retires again, and
+        // the process would suspend holding WAL read-marks — the exact
+        // 0xdead10cc state §3.6 forbids. While latched, accesses serve
+        // unpinned tolerant (live) reads. The latch clears automatically on
+        // `didBecomeActive`/`protectedDataDidBecomeAvailable` where UIKit
+        // is available; manual-contract hosts (extensions, non-UIKit
+        // daemons) call `resumeGenerations()` after resuming.
         GenerationCoordinatorRegistry.existingCoordinator(identityHash: backend.identityHash)?
             .retireAllGenerations()
         backend.retireAllReadGenerations()
+    }
+
+    /// Clear the keeper-suppression latch installed by
+    /// `retireAllGenerations()` (item A §3.6). Re-pin stays lazy: the next
+    /// live-Results access mints a fresh generation; nothing is pinned here.
+    /// Called automatically on `UIApplication.didBecomeActiveNotification` /
+    /// `protectedDataDidBecomeAvailableNotification` where UIKit is
+    /// available; REQUIRED manually (paired with `retireAllGenerations()`)
+    /// from app extensions and non-UIKit hosts.
+    public func resumeGenerations() {
+        GenerationCoordinatorRegistry.existingCoordinator(identityHash: backend.identityHash)?
+            .resumeGenerations()
     }
 
     // MARK: Sync Progress
@@ -1853,35 +1877,83 @@ public struct Lattice {
         }
     }
 
-    // MARK: Thread-local explicit-transaction depth (item A §4.1)
+    // MARK: Explicit-transaction ownership (item A §4.1)
     //
-    // Memory-family hydration batches take the per-store write gate by
-    // riding the lattice-level transaction entry (TableResults._hydrate).
-    // When the CURRENT THREAD already holds an explicit transaction, a
-    // nested same-connection BEGIN would wait on itself (the core retry
-    // loop waits out "transaction within a transaction") — and the
-    // enclosing transaction already owns the gate — so hydration must skip
-    // its own BEGIN. Thread-local by design: transactions are synchronous
-    // and thread-confined; a DIFFERENT thread's hydration waiting out this
-    // thread's transaction is exactly the §4.1 capture-vs-writer exclusion.
-    private static let _explicitTxnDepthKey = "Lattice._explicitTransactionDepth"
-    internal static var _threadHoldsExplicitTransaction: Bool {
-        ((Thread.current.threadDictionary[_explicitTxnDepthKey] as? Int) ?? 0) > 0
+    // Memory-family live reads take the per-store write gate by riding the
+    // lattice-level transaction entry (TableResults._gatedLiveRead /
+    // materialized-id captures). When the CURRENT THREAD already holds an
+    // explicit transaction ON THIS BACKEND, a nested same-connection BEGIN
+    // would wait on itself (the core retry loop waits out "transaction
+    // within a transaction" for its full 30 s deadline) — and the enclosing
+    // transaction already owns the gate — so the read must skip its own
+    // BEGIN and serve through the writer connection (which trivially
+    // satisfies read-your-writes inside one's own transaction).
+    //
+    // Ownership is recorded PER BACKEND IDENTITY in a process-global map,
+    // not as a bare thread-local depth, because:
+    //  (a) the skip must be scoped to the backend whose gate the
+    //      transaction owns — an open transaction on lattice A must not
+    //      disable the §4.1 read gate for an unrelated lattice B on the
+    //      same thread (cross-lattice contamination would reintroduce the
+    //      capture-vs-writer interleaving the gate exists to prevent); and
+    //  (b) begin/commit are public and may legally land on different
+    //      threads (an `await` between them migrates cooperative-pool
+    //      threads) — a process-global record keyed by identity is cleared
+    //      by the commit wherever it runs, where a thread-dictionary depth
+    //      was stranded at >0 on the begin thread forever, permanently
+    //      disabling the gate for every future task scheduled onto it.
+    //
+    // A DIFFERENT thread's gated read waiting out this thread's transaction
+    // is exactly the §4.1 capture-vs-writer exclusion — only the owning
+    // thread skips.
+    private static let _explicitTxnOwners =
+        UnfairLock<[Int64: (owner: ObjectIdentifier, depth: Int)]>(initialState: [:])
+
+    /// True iff the CURRENT THREAD holds an open explicit transaction on the
+    /// backend identified by `identityHash`.
+    internal static func _threadHoldsExplicitTransaction(identityHash: Int64) -> Bool {
+        let current = ObjectIdentifier(Thread.current)
+        return _explicitTxnOwners.withLockUnchecked { owners in
+            guard let entry = owners[identityHash] else { return false }
+            return entry.depth > 0 && entry.owner == current
+        }
     }
-    private static func _adjustThreadTxnDepth(by delta: Int) {
-        let current = (Thread.current.threadDictionary[_explicitTxnDepthKey] as? Int) ?? 0
-        Thread.current.threadDictionary[_explicitTxnDepthKey] = max(0, current + delta)
+
+    private static func _recordExplicitTxnBegin(identityHash: Int64) {
+        let current = ObjectIdentifier(Thread.current)
+        _explicitTxnOwners.withLockUnchecked { owners in
+            if let entry = owners[identityHash], entry.owner == current {
+                owners[identityHash] = (current, entry.depth + 1)
+            } else {
+                // The core serializes explicit transactions per store, so a
+                // successful begin from another thread means the previous
+                // owner's transaction ended — adopt ownership.
+                owners[identityHash] = (current, 1)
+            }
+        }
+    }
+
+    private static func _recordExplicitTxnEnd(identityHash: Int64) {
+        _explicitTxnOwners.withLockUnchecked { owners in
+            guard let entry = owners[identityHash] else { return }
+            if entry.depth <= 1 {
+                owners.removeValue(forKey: identityHash)
+            } else {
+                owners[identityHash] = (entry.owner, entry.depth - 1)
+            }
+        }
     }
 
     public func beginTransaction(isolation: isolated (any Actor)? = #isolation) {
-        // Start the transaction.
+        // Start the transaction; record ownership only once it is really
+        // open (the backend call may block behind another writer).
         backend.beginTransaction()
-        Self._adjustThreadTxnDepth(by: 1)
+        Self._recordExplicitTxnBegin(identityHash: backend.identityHash)
     }
 
     public func commitTransaction(isolation: isolated (any Actor)? = #isolation) {
         backend.commit()
-        Self._adjustThreadTxnDepth(by: -1)
+        Self._recordExplicitTxnEnd(identityHash: backend.identityHash)
         // §1.3 Layer 1: an explicit transaction can touch any table (managed
         // property setters included) — the touched set is unknown here, so
         // the settled commit invalidates every shape (tables: nil). (The
@@ -1892,7 +1964,7 @@ public struct Lattice {
 
     public func rollbackTransaction(isolation: isolated (any Actor)? = #isolation) {
         backend.rollback()
-        Self._adjustThreadTxnDepth(by: -1)
+        Self._recordExplicitTxnEnd(identityHash: backend.identityHash)
     }
 
     /// Runs `block` inside an explicit transaction. On throw the transaction
@@ -1916,11 +1988,20 @@ public struct Lattice {
     
     public mutating func attach(lattice: Lattice) throws {
         try backend.attach(lattice.backend)
-        // Item A: attaching changes what this handle's tables mean (union
-        // views over both stores) — every cached shape is stale. Also link
+        // Item A §4.2: attaching changes what this handle's tables mean
+        // (union views over both stores) — every cached shape is stale. Link
         // the two paths so writes on either store invalidate this handle's
-        // shapes while attached (Commit-1 Swift-side stand-in; §4.2 gives
-        // attached shapes hook-driven invalidation in later commits).
+        // shapes while attached, and MINT the attached store's coordinator
+        // now: its synchronous core hook (§2.3) is what relays writes that
+        // never pass through the attached lattice's Swift write APIs
+        // (sync-applied chunks on the synchronizer's own instance, second
+        // core handles) to this parent's union shapes via the attach links.
+        // Without an active hook on the attached path, those writes would
+        // bump only attached-path coordinators that happen to exist — i.e.
+        // possibly none — and the parent's cached union counts/pages would
+        // be stale indefinitely.
+        _ = GenerationCoordinatorRegistry.coordinator(for: lattice.backend,
+                                                      tuning: lattice.configuration.resultsTuning)
         GenerationCoordinatorRegistry.linkAttachedPaths(parent: backend.path,
                                                         attached: lattice.backend.path)
         _noteWrite(tables: nil)
@@ -1982,8 +2063,12 @@ public struct Lattice {
                                  modelTypes: modelTypes,
                                  schema: schema,
                                  isolation: isolation)
-        // Item A: the clone unions rows from the attached store — writes on
-        // either store must invalidate its shapes (see attach(lattice:)).
+        // Item A §4.2: the clone unions rows from the attached store — writes
+        // on either store must invalidate its shapes (see attach(lattice:)).
+        // Mint the attached store's coordinator so its core hook relays
+        // cross-handle/sync-applied writes through the attach link.
+        _ = GenerationCoordinatorRegistry.coordinator(for: lattice.backend,
+                                                      tuning: lattice.configuration.resultsTuning)
         GenerationCoordinatorRegistry.linkAttachedPaths(parent: newLattice.backend.path,
                                                         attached: lattice.backend.path)
         // Record the attachment on the clone so detach(lattice:) works on it

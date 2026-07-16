@@ -396,3 +396,61 @@ class LiveResultsGenerationReadTests: BaseTest {
         _ = results[3]   // never a trap
     }
 }
+
+// Fix-wave regression pins (adversarial verification findings).
+extension LiveResultsGenerationReadTests {
+    /// CRITICAL (live-reproduced pre-fix): reading a live memory-family
+    /// Results inside an explicit transaction on the same thread must NOT
+    /// self-deadlock on the write-gated id capture — it completes in
+    /// milliseconds and satisfies read-your-writes via the live in-txn path.
+    @Test(.timeLimit(.minutes(1))) func memoryResults_readInsideOwnTransaction_noDeadlock() throws {
+        let lattice = try Lattice(Gen5Item.self, configuration: .init(storage: .memory()))
+        try lattice.add({ let it = Gen5Item(); it.name = "pre"; return it }())
+
+        let start = Date()
+        try lattice.transaction {
+            try lattice.add({ let it = Gen5Item(); it.name = "in-txn"; return it }())
+            let results = lattice.objects(Gen5Item.self)
+            #expect(results.count == 2, "read-your-writes inside own txn")
+            #expect(results.map { $0.name }.contains("in-txn"))
+        }
+        #expect(Date().timeIntervalSince(start) < 5,
+                "in-txn read must not block on the 30s busy timeout")
+        #expect(lattice.objects(Gen5Item.self).count == 2)
+    }
+
+    /// The §3.6 latch: after retireAllGenerations(), accesses must not
+    /// re-pin keepers until resumeGenerations().
+    @Test func retireAll_isALatch_untilResume() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "latch_\(String.random(length: 12)).sqlite")
+        defer { try? Lattice.delete(for: .init(fileURL: path)) }
+        let lattice = try Lattice(Gen5Item.self, configuration: .init(fileURL: path))
+        try lattice.add({ let it = Gen5Item(); it.name = "a"; return it }())
+        _ = lattice.objects(Gen5Item.self).count  // pins
+
+        lattice.retireAllGenerations()
+        #expect(lattice.backend.localReadGenerationsOutstanding() == 0)
+        _ = lattice.objects(Gen5Item.self).count  // latched: unpinned tolerant read
+        #expect(lattice.backend.localReadGenerationsOutstanding() == 0,
+                "access under the latch must not re-pin")
+
+        lattice.resumeGenerations()
+        // A cached count won't mint (correct); force a fresh resolve with a
+        // write (epoch bump) before asserting re-pin works again.
+        let b = Gen5Item(); b.name = "b"; try lattice.add(b)
+        _ = lattice.objects(Gen5Item.self).count
+        #expect(lattice.backend.localReadGenerationsOutstanding() > 0,
+                "resume restores lazy re-pinning")
+    }
+
+    /// Plan item A3: @LatticeQuery's fetchLimit caps the visible count.
+    @Test func fetchLimit_capsFacadeCount() throws {
+        let lattice = try Lattice(Gen5Item.self, configuration: .init(storage: .memory()))
+        for i in 0..<10 { try lattice.add({ let it = Gen5Item(); it.name = "r\(i)"; return it }()) }
+        var results = lattice.objects(Gen5Item.self)
+        #expect(results.count == 10)
+        results._fetchLimit = 3
+        #expect(results.count == 3, "fetchLimit caps endIndex")
+        #expect(results.element(at: 2) != nil)
+    }
+}

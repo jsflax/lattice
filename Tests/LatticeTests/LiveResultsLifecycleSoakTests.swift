@@ -254,9 +254,18 @@ class LiveResultsLifecycleSoakTests: BaseTest {
         #expect(walSize(url) == 0,
                 "-wal is \(walSize(url)) bytes — retired generations must not pin the log")
 
-        // "Resume": the next access re-pins lazily and reflects the writes
-        // (the cross-instance hook already bumped the epoch — §2.3).
+        // "Resume": retireAllGenerations() now LATCHES (§3.6 fix-wave) —
+        // accesses stay unpinned until the foreground/resume signal, exactly
+        // so a racing background access can't re-pin while suspended.
+        #expect(results.count == 150, "latched reads still serve correct data")
+        #expect(a.backend.localReadGenerationsOutstanding() == 0,
+                "no re-pin while latched")
+        a.resumeGenerations()
         #expect(results.count == 150)
+        // A cached count doesn't mint (correct); a fresh resolve after an
+        // epoch bump proves re-pinning is restored.
+        let extra = Soak5Item(); try a.add(extra)
+        #expect(results.count == 151)
         #expect(a.backend.localReadGenerationsOutstanding() >= 1)
         #expect(results.element(at: 149) != nil)
     }

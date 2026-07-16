@@ -120,6 +120,21 @@ enum LocalWriteFieldAnnotation {
               value.count == 2 else { return nil }
         return (value[0], value[1])
     }
+
+    /// Read AND CLEAR the annotation if it covers `table`. The hook callback
+    /// CONSUMES the annotation on first application: the core's flush is a
+    /// bounded drain-until-empty, so change batches delivered by LATER drain
+    /// iterations still execute inside the outer setter's bracket (an inline
+    /// observer's write on a nonisolated lattice, a cross-thread autocommit
+    /// buffered mid-flush) — those are NOT the bracketed single-column
+    /// UPDATE and must fall back to the conservative fields-unknown rule.
+    /// The bracketed write itself settles in the FIRST drained batch (it is
+    /// the write that triggered the flush), so consuming there is exact.
+    static func consume(matchingTable table: String) -> (table: String, column: String)? {
+        guard let value = current(), value.table == table else { return nil }
+        Thread.current.threadDictionary.removeObject(forKey: key)
+        return value
+    }
 }
 
 // MARK: - GenerationCoordinator (item A §2.1/§2.2, Commit-5 slice)
@@ -197,6 +212,24 @@ final class GenerationCoordinator: @unchecked Sendable {
         /// keeper id is never released.
         var mainPin: GenerationRef?
         var mainPinObserverInstalled = false
+        /// Uptime (ns) when the current `mainPin` was installed — the
+        /// non-spinning-runloop escape (below) measures pin age against it.
+        var mainPinInstalledUptimeNanos: UInt64 = 0
+        /// The `.beforeWaiting` observer has fired at least once — proof the
+        /// main runloop actually spins, so pins are cleared at real batch
+        /// boundaries and never need the staleness escape.
+        var mainLoopObserverHasFired = false
+        /// Non-spinning main runloop detected (a Darwin process that blocks
+        /// its main thread in `dispatchMain()` — daemons, CLI/agent tools):
+        /// the observer is installed on a runloop that never runs, so
+        /// `.beforeWaiting` never fires and an installed pin would freeze
+        /// main-thread reads at the first access's epoch FOREVER (and
+        /// suppress the data_version belt). When a pin outlives
+        /// `mainPinNonSpinningGraceNanos` without the observer ever having
+        /// fired, pinning is disabled — every main-thread access becomes its
+        /// own batch (the same per-access-batch fallback as non-CFRunLoop
+        /// platforms, §1.3) — until the observer proves the runloop alive.
+        var mainPinningDisabled = false
         /// Keeper ids whose coordinator hold should be released — superseded
         /// generations, cleared pins, stale-read casualties. Drained OFF the
         /// hook frame (§2.2: the keeper COMMIT is SQL) by resolve /
@@ -208,6 +241,23 @@ final class GenerationCoordinator: @unchecked Sendable {
         /// Maintenance timer (§3.2) armed flag — armed only while
         /// generations are outstanding or work is pending.
         var maintenanceArmed = false
+        /// Monotone count of keeper generations PUBLISHED by resolve —
+        /// bumped in the same critical section that publishes. The
+        /// maintenance tick's disarm decision samples the backend's
+        /// outstanding count OUTSIDE the coordinator lock (leaf-lock rule:
+        /// the call takes a core pool mutex); this sequence closes the
+        /// sample-to-disarm TOCTOU — a mint that lands after the sample
+        /// bumps it, and the tick re-arms instead of disarming on stale
+        /// evidence (which would orphan a live keeper with no §3 actor).
+        var maintenanceMintSeq: UInt64 = 0
+        /// §3.6 lifecycle latch: set by `retireAllGenerations()` (the
+        /// backgrounding path and the manual contract), cleared by
+        /// `resumeGenerations()` / foregrounding. While set, resolve
+        /// publishes keeperless generations (unpinned tolerant live reads)
+        /// and a racing mint's publish releases its keeper — an access in
+        /// the resign-to-suspend window can never re-pin, so the suspended
+        /// process holds ZERO read transactions and WAL read-marks.
+        var retireLatched = false
         /// §4.2/§2.5: attach exposes union tables as per-connection TEMP
         /// views on `db_`/`read_db_` ONLY — pool (keeper) connections do not
         /// carry them, so a keeper-routed read on an attach-parent handle
@@ -245,13 +295,20 @@ final class GenerationCoordinator: @unchecked Sendable {
         /// A same-process write was observed (write-path bump or hook
         /// delivery) since the last probe. `data_version` changes when ANY
         /// other connection commits — including this process's own write
-        /// connection as seen from `xproc_read_db_` — so a delta explained
-        /// by a local write re-baselines instead of double-invalidating
-        /// (the hook already bumped precisely, per table).
+        /// connection as seen from `xproc_read_db_` — so a delta seen with
+        /// this flag set is AMBIGUOUS (local, foreign, or both; the PRAGMA
+        /// carries no arithmetic that could attribute it). The flag only
+        /// CLASSIFIES the delta for diagnostics — it never suppresses the
+        /// epoch bump: a foreign commit sharing its probe window with a
+        /// local write would otherwise be folded into the re-baseline and
+        /// dropped forever (unbounded staleness under steady local writes —
+        /// §1.3's belt contract is "new value ⇒ bump epoch").
         var beltLocalWriteSinceProbe: Bool = false
-        /// Diagnostics (tests): PRAGMA probes issued / foreign bumps seen.
+        /// Diagnostics (tests): PRAGMA probes issued / unambiguous foreign
+        /// bumps / ambiguous (local-write-shared-window) bumps.
         var beltProbeCount: UInt64 = 0
         var beltForeignBumpCount: UInt64 = 0
+        var beltAmbiguousBumpCount: UInt64 = 0
     }
 
     private let lock: UnfairLock<State>
@@ -314,7 +371,6 @@ final class GenerationCoordinator: @unchecked Sendable {
                     self.noteWrite(tables: changes.map(\.table))
                     return
                 }
-                let annotation = LocalWriteFieldAnnotation.current()
                 self.noteWrite(changes: changes.map { change in
                     if !change.changedFields.isEmpty {
                         // Core-classified UPDATE-only batch (sync-applied
@@ -324,12 +380,16 @@ final class GenerationCoordinator: @unchecked Sendable {
                             table: change.table,
                             changedFields: Self.parseFieldList(change.changedFields))
                     }
-                    if let annotation, annotation.table == change.table {
+                    if let annotation = LocalWriteFieldAnnotation.consume(matchingTable: change.table) {
                         // Local single-column setter write: the payload
                         // carries no changedFieldsNames, but this callback
                         // fires inside the setter's annotation bracket on
-                        // the writer's thread — the one write that can
-                        // settle here is that single-column UPDATE.
+                        // the writer's thread. CONSUMED on application: the
+                        // flush drain can deliver FURTHER same-table batches
+                        // inside the same bracket (an inline observer's
+                        // write, a cross-thread commit buffered mid-flush)
+                        // — those are not the bracketed UPDATE and take the
+                        // conservative fields-unknown rule below.
                         return WriteBatchTableChange(
                             table: change.table,
                             changedFields: [annotation.column.lowercased()])
@@ -385,29 +445,49 @@ final class GenerationCoordinator: @unchecked Sendable {
                 case serve(GenerationContext)
                 case mint(epoch: UInt64)
             }
+            let now = DispatchTime.now().uptimeNanoseconds
             let step: Step = lock.withLockUnchecked { state in
                 if Thread.isMainThread, let pinned = state.mainPin {
-                    return .serve(GenerationContext(epoch: pinned.epoch,
-                                                    floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: pinned.epoch),
-                                                    generationID: pinned.id))
+                    // Staleness escape (§1.3): the pin's clearing actor is
+                    // the `.beforeWaiting` runloop observer. In a Darwin
+                    // process whose main runloop never spins (dispatchMain
+                    // daemons, CLI/agent tools) that observer never fires
+                    // and the pin would freeze main-thread reads at this
+                    // epoch forever. If the observer has NEVER fired and the
+                    // pin has outlived the grace cap, conclude the runloop
+                    // is not spinning: drop the pin, disable pinning, and
+                    // fall through to a per-access batch. UI apps are
+                    // unaffected (their observer fires at the first tick's
+                    // end; a fired observer disables the escape for good).
+                    let neverEndingTick = !state.mainLoopObserverHasFired
+                        && now &- state.mainPinInstalledUptimeNanos > Self.mainPinNonSpinningGraceNanos
+                    if !neverEndingTick {
+                        return .serve(GenerationContext(epoch: pinned.epoch,
+                                                        floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: pinned.epoch),
+                                                        generationID: pinned.id))
+                    }
+                    state.mainPinningDisabled = true
+                    Self.clearPinLocked(&state)
                 }
                 let epoch = state.epoch
                 if let current = state.current, current.epoch == epoch {
-                    Self.pinIfMainThread(&state, current, installObserver: &installObserver)
+                    Self.pinIfMainThread(&state, current, now: now, installObserver: &installObserver)
                     return .serve(GenerationContext(epoch: epoch,
                                                     floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: epoch),
                                                     generationID: current.id))
                 }
-                if isMemoryFamily || state.keepersSuppressed {
+                if isMemoryFamily || state.keepersSuppressed || state.retireLatched {
                     // §4.1: no keepers on the memory family — the generation
                     // is the per-shape materialized-id vector (captured by
                     // the facade). §4.2: no keepers while this path is an
                     // attach parent (TEMP views live on `db_`/`read_db_`
-                    // only). Publish a keeperless current so the batch pin
-                    // has a stable ref.
+                    // only). §3.6: no keepers while the retire latch is set
+                    // (backgrounded — an access here must not re-pin into a
+                    // suspending process). Publish a keeperless current so
+                    // the batch pin has a stable ref.
                     let fresh = GenerationRef(epoch: epoch, id: 0)
                     Self.supersede(&state, with: fresh)
-                    Self.pinIfMainThread(&state, fresh, installObserver: &installObserver)
+                    Self.pinIfMainThread(&state, fresh, now: now, installObserver: &installObserver)
                     return .serve(GenerationContext(epoch: epoch,
                                                     floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: epoch),
                                                     generationID: 0))
@@ -423,10 +503,23 @@ final class GenerationCoordinator: @unchecked Sendable {
                 let acquired = backend?.acquireReadGeneration() ?? 0
                 var redundant: UInt64 = 0
                 let published: GenerationContext? = lock.withLockUnchecked { state in
+                    if state.retireLatched {
+                        // §3.6: the retire latch landed while we were
+                        // pinning — the acquired keeper post-dates the
+                        // retire-all pass and nothing would ever retire it
+                        // again. Release it and serve keeperless.
+                        redundant = acquired
+                        let fresh = GenerationRef(epoch: state.epoch, id: 0)
+                        Self.supersede(&state, with: fresh)
+                        Self.pinIfMainThread(&state, fresh, now: now, installObserver: &installObserver)
+                        return GenerationContext(epoch: fresh.epoch,
+                                                 floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: fresh.epoch),
+                                                 generationID: 0)
+                    }
                     if let current = state.current, current.epoch == state.epoch {
                         // Another thread minted for this epoch — serve theirs.
                         redundant = acquired
-                        Self.pinIfMainThread(&state, current, installObserver: &installObserver)
+                        Self.pinIfMainThread(&state, current, now: now, installObserver: &installObserver)
                         return GenerationContext(epoch: current.epoch,
                                                  floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: current.epoch),
                                                  generationID: current.id)
@@ -439,7 +532,13 @@ final class GenerationCoordinator: @unchecked Sendable {
                     }
                     let fresh = GenerationRef(epoch: epochAtStart, id: acquired)
                     Self.supersede(&state, with: fresh)
-                    Self.pinIfMainThread(&state, fresh, installObserver: &installObserver)
+                    Self.pinIfMainThread(&state, fresh, now: now, installObserver: &installObserver)
+                    if acquired != 0 {
+                        // Publish + sequence bump in ONE critical section —
+                        // the maintenance tick's disarm re-check keys off it
+                        // (see `maintenanceMintSeq`).
+                        state.maintenanceMintSeq &+= 1
+                    }
                     return GenerationContext(epoch: epochAtStart,
                                              floor: Self.floorFor(state, table: table, shapeKey: shapeKey, epoch: epochAtStart),
                                              generationID: acquired)
@@ -494,11 +593,22 @@ final class GenerationCoordinator: @unchecked Sendable {
     // the dedicated NON-TRANSACTION cross-process read connection
     // (`xproc_read_db_` — inside a keeper's held read txn the value is
     // frozen at the snapshot, so the belt must never run on a keeper). The
-    // value changes exactly when another connection committed; a change not
-    // explained by a locally-observed write is a FOREIGN commit with an
-    // unknown table set — bump the epoch and re-capture every shape
-    // (`noteWrite(tables: nil)`, the same advance path the hook's
-    // unknown-table reasons take).
+    // value changes exactly when another connection committed — a possible
+    // FOREIGN commit with an unknown table set — so EVERY observed delta
+    // bumps the epoch and re-captures every shape (`noteWrite(tables:
+    // nil)`, the same advance path the hook's unknown-table reasons take).
+    //
+    // A locally-observed write since the last probe makes the delta
+    // AMBIGUOUS (our own write connection moves `xproc_read_db_`'s
+    // data_version too, and the PRAGMA has no per-commit arithmetic that
+    // could attribute it) — but ambiguity must never SWALLOW the delta:
+    // re-baselining it away would fold a foreign commit that shared the
+    // probe window into the baseline permanently, and under steady local
+    // writes (every window contains one) cross-process staleness would be
+    // unbounded — violating §1.3's "new value ⇒ bump epoch". The cost of
+    // the conservative bump is one COUNT/page refill per still-accessed
+    // shape per interval in the worst regime; a swallowed foreign commit
+    // is stale-forever. The flag now only classifies diagnostics.
     //
     // Batch alignment: `resolve` calls this before pin/serve decisions, so
     // on the main thread the belt runs only at a render-batch START (a held
@@ -527,28 +637,36 @@ final class GenerationCoordinator: @unchecked Sendable {
         // SQL — NO locks held (leaf-lock rule).
         let version = backend.dataVersion()
         guard version >= 0 else { return }   // -1 = probe failed: no information
-        let foreignBump: Bool = lock.withLockUnchecked { state in
+        // ONE critical section decides the delta, classifies it, clears the
+        // local-write flag, and re-baselines — the belt's own bump below is
+        // `beltOriginated`, so it never re-sets the flag (no disjoint
+        // second critical section for a concurrent local write's flag-set
+        // to be clobbered by).
+        let bump: Bool = lock.withLockUnchecked { state in
             defer { state.beltLastSeenDataVersion = version }
             let localWrite = state.beltLocalWriteSinceProbe
             state.beltLocalWriteSinceProbe = false
             guard let lastSeen = state.beltLastSeenDataVersion else { return false }  // baseline
             guard version != lastSeen else { return false }
-            if localWrite { return false }   // delta explained by a local write (already bumped, per table)
-            state.beltForeignBumpCount &+= 1
+            if localWrite {
+                state.beltAmbiguousBumpCount &+= 1   // local, foreign, or both
+            } else {
+                state.beltForeignBumpCount &+= 1     // unambiguously foreign
+            }
             return true
         }
-        if foreignBump {
-            // Foreign commit, table set unknown — every shape re-captures.
-            noteWrite(tables: nil)
-            // The bump above was the belt's own: it must not mask the NEXT
-            // foreign delta as a local write.
-            lock.withLockUnchecked { $0.beltLocalWriteSinceProbe = false }
+        if bump {
+            // Another connection committed — possibly foreign, table set
+            // unknown: every shape re-captures. Never swallowed, even when a
+            // local write shares the window (see the header rationale).
+            noteWrite(changes: nil, markBeltLocalWrite: false)
         }
     }
 
-    /// Diagnostics (tests): (PRAGMA probes issued, foreign bumps detected).
-    var beltCounters: (probes: UInt64, foreignBumps: UInt64) {
-        lock.withLockUnchecked { ($0.beltProbeCount, $0.beltForeignBumpCount) }
+    /// Diagnostics (tests): (PRAGMA probes issued, unambiguous foreign bumps
+    /// detected, ambiguous local-write-shared-window bumps).
+    var beltCounters: (probes: UInt64, foreignBumps: UInt64, ambiguousBumps: UInt64) {
+        lock.withLockUnchecked { ($0.beltProbeCount, $0.beltForeignBumpCount, $0.beltAmbiguousBumpCount) }
     }
 
     /// Current effective floor for `table` against the *live* epoch — used to
@@ -581,10 +699,28 @@ final class GenerationCoordinator: @unchecked Sendable {
                 state.allTablesWriteEpoch), epoch)
     }
 
+    /// How long a main-thread pin may live with the batch-boundary observer
+    /// NEVER having fired before the runloop is declared non-spinning and
+    /// pinning is disabled (§1.3 escape). Generous: a UI app's first tick
+    /// finishes far inside it, and even a pathological multi-second first
+    /// frame merely trades the pin for per-access batches. Internal so the
+    /// escape is testable via `_backdateMainPinForTesting`.
+    static let mainPinNonSpinningGraceNanos: UInt64 = 5_000_000_000
+
+    /// Test hook: age the current main pin (and the batch it anchors) so the
+    /// non-spinning-runloop escape can be exercised without a real 5 s wait.
+    func _backdateMainPinForTesting(byNanos nanos: UInt64) {
+        lock.withLockUnchecked { state in
+            let installed = state.mainPinInstalledUptimeNanos
+            state.mainPinInstalledUptimeNanos = installed >= nanos ? installed - nanos : 0
+        }
+    }
+
     private static func pinIfMainThread(_ state: inout State, _ generation: GenerationRef,
-                                        installObserver: inout Bool) {
-        guard Thread.isMainThread else { return }
+                                        now: UInt64, installObserver: inout Bool) {
+        guard Thread.isMainThread, !state.mainPinningDisabled else { return }
         state.mainPin = generation
+        state.mainPinInstalledUptimeNanos = now
         if !state.mainPinObserverInstalled {
             state.mainPinObserverInstalled = true
             installObserver = true
@@ -619,7 +755,7 @@ final class GenerationCoordinator: @unchecked Sendable {
             true, // repeats
             0
         ) { [weak self] _, _ in
-            self?.clearMainPin()
+            self?.mainRunLoopTickEnded()
         }
         if let observer {
             CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
@@ -633,6 +769,24 @@ final class GenerationCoordinator: @unchecked Sendable {
         clearMainPin()
         lock.withLockUnchecked { $0.mainPinObserverInstalled = false }
         #endif
+    }
+
+    /// The `.beforeWaiting` observer fired: the batch is over AND the main
+    /// runloop is provably spinning — record that (it retires the
+    /// non-spinning escape) and re-enable pinning if the escape had tripped
+    /// (e.g. accesses before `UIApplicationMain` started the loop).
+    private func mainRunLoopTickEnded() {
+        let hasPending: Bool = lock.withLockUnchecked { state in
+            state.mainLoopObserverHasFired = true
+            state.mainPinningDisabled = false
+            Self.clearPinLocked(&state)
+            return !state.pendingRetire.isEmpty
+        }
+        if hasPending {
+            Self.maintenanceQueue.async { [weak self] in
+                self?.drainPendingRetires()
+            }
+        }
     }
 
     private func clearMainPin() {
@@ -676,7 +830,9 @@ final class GenerationCoordinator: @unchecked Sendable {
     /// `pendingRetire`), nothing that can throw — so it is safe from every
     /// write path INCLUDING the synchronous core invalidation hook frame
     /// (for file DBs, SQLite's post-commit C frame on the writer's thread).
-    func noteWrite(tables: [String]?, updatedColumns: [String]? = nil) {
+    func noteWrite(tables: [String]?, updatedColumns: [String]? = nil,
+                   markBeltLocalWrite: Bool = true,
+                   fanOutToAttachParents: Bool = true) {
         // `updatedColumns` (Commit 8, §1.3 Layer 1): non-nil ⇔ the write was
         // an UPDATE touching exactly these columns on every listed table
         // (the managed-property setter path — one table, one column).
@@ -687,7 +843,8 @@ final class GenerationCoordinator: @unchecked Sendable {
         }()
         noteWrite(changes: tables.map { list in
             list.map { WriteBatchTableChange(table: $0, changedFields: fields) }
-        })
+        }, markBeltLocalWrite: markBeltLocalWrite,
+           fanOutToAttachParents: fanOutToAttachParents)
     }
 
     /// The classified form (Commit 8). `changes == nil` invalidates every
@@ -699,7 +856,26 @@ final class GenerationCoordinator: @unchecked Sendable {
     /// survive), everything else catches up. All of it in ONE critical
     /// section with the epoch bump: a lag entry recorded after the bump
     /// could be retagged over by a racing reader and go stale forever.
-    func noteWrite(changes: [WriteBatchTableChange]?) {
+    ///
+    /// `markBeltLocalWrite`: false for bumps that did NOT move this store's
+    /// `data_version` as seen from `xproc_read_db_` — the belt's own bump
+    /// (which would otherwise clobber/self-mask the flag across critical
+    /// sections) and attach-parent relays (the write landed in the attached
+    /// store's file, not this one's).
+    ///
+    /// `fanOutToAttachParents` (§4.2): by default every bump relays to the
+    /// coordinators of stores whose handles union this path via attach — so
+    /// HOOK-delivered writes (sync-applied chunks on the synchronizer's own
+    /// instance, second core handles) and belt-detected foreign commits on
+    /// an attached store invalidate the parents' union shapes, not just the
+    /// Swift Layer-1 write path (which walks the links in the registry and
+    /// passes false here to avoid double fan-out). The relay runs AFTER
+    /// this coordinator's own critical section — registry + parent locks
+    /// are leaf locks with state stores only, so the whole chain stays
+    /// hook-frame legal (§2.3).
+    func noteWrite(changes: [WriteBatchTableChange]?,
+                   markBeltLocalWrite: Bool = true,
+                   fanOutToAttachParents: Bool = true) {
         lock.withLockUnchecked { state in
             state.epoch &+= 1
             let epoch = state.epoch
@@ -887,8 +1063,21 @@ final class GenerationCoordinator: @unchecked Sendable {
             state.current = nil
             state.mainPin = nil
             state.pendingRetire = []
+            // §3.6 latch (verify finding: one-shot retire is not enough —
+            // any racing/subsequent access would re-pin while backgrounded).
+            // Accesses under the latch use unpinned tolerant reads until
+            // resumeGenerations() clears it.
+            state.retireLatched = true
         }
         backend?.retireAllReadGenerations()
+    }
+
+    /// Clear the §3.6 suppression latch. Re-pin stays lazy: the next
+    /// live-Results access mints a fresh generation.
+    func resumeGenerations() {
+        lock.withLockUnchecked { state in
+            state.retireLatched = false
+        }
     }
 
     // MARK: Shape registry (two-phase, §2.3)

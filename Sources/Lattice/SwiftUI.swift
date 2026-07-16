@@ -49,6 +49,12 @@ private let latticeQueryLog = OSLog(subsystem: "io.engram.app", category: "Frame
             if let sortBy {
                 wrappedValue = wrappedValue._sorted(by: sortBy)
             }
+            // Plan item A3: fetchLimit must be honored (it was a dead
+            // parameter for the property wrapper's entire life).
+            if let fetchLimit, var table = wrappedValue as? TableResults<T> {
+                table._fetchLimit = fetchLimit
+                wrappedValue = table
+            }
             DispatchQueue.main.async {
                 self.objectWillChange.send()
             }

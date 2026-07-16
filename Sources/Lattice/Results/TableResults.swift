@@ -235,6 +235,10 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     }
 
     /// §4.1 memory-family storage check (no keepers; gated reads).
+    /// @LatticeQuery's fetchLimit (plan item A3): caps the visible element
+    /// count at the facade level; pages fill normally beneath it.
+    internal var _fetchLimit: Int?
+
     private var _isMemoryStore: Bool {
         if case .memory = _lattice.configuration.storage { return true }
         return false
@@ -250,7 +254,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// owns the gate; a nested same-connection BEGIN would wait on itself).
     /// File stores: passthrough — reads are keeper-routed or WAL-safe.
     private func _gatedLiveRead<T>(_ body: () -> T) -> T {
-        guard _isMemoryStore, !Lattice._threadHoldsExplicitTransaction else {
+        guard _isMemoryStore,
+              !Lattice._threadHoldsExplicitTransaction(identityHash: _lattice.backend.identityHash) else {
             return body()
         }
         let backend = _lattice.backend
@@ -303,6 +308,14 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                   descriptor: ShapeDescriptor,
                                   ctx: GenerationContext) -> ContiguousArray<Int64>? {
         if let ids = shape.ids(epoch: ctx.epoch, floor: ctx.floor) { return ids }
+        // CRITICAL guard (verify finding, live-reproduced): the id capture is
+        // a write-gated transaction in the core — issuing it while THIS
+        // thread holds an explicit transaction on the same store self-blocks
+        // for the full busy timeout. Fall to the live in-txn read path
+        // (reading through the writer connection trivially satisfies RYW).
+        if Lattice._threadHoldsExplicitTransaction(identityHash: _lattice.backend.identityHash) {
+            return nil
+        }
         let captured = _lattice.backend.queryIDs(table: Element.entityName,
                                                  where: descriptor.whereSQL,
                                                  orderBy: descriptor.orderBySQL)
@@ -941,6 +954,11 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     public var startIndex: Int { 0 }
     public var count: Int { endIndex }
 
+    @inline(__always) private func _capped(_ n: Int) -> Int {
+        guard let cap = _fetchLimit else { return n }
+        return Swift.min(n, cap)
+    }
+
     #if canImport(Combine)
     public var objectWillChange: ResultsChangePublisher {
         ResultsChangePublisher { [weak self] callback in
@@ -963,7 +981,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         var ctx = coordinator.resolve(table: Element.entityName, shapeKey: descriptor.key)
         if let cached = shape.count(epoch: ctx.epoch, floor: ctx.floor) {
             _noteServed(ctx.epoch)
-            return cached
+            return _capped(cached)
         }
         // Memory family (§4.1): count == ids.count from one captured vector
         // (structural consistency with subscript membership — rung 1).
@@ -971,13 +989,13 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             if let ids = _materializedIDs(shape: shape, coordinator: coordinator,
                                           descriptor: descriptor, ctx: ctx) {
                 _noteServed(ctx.epoch)
-                return ids.count
+                return _capped(ids.count)
             }
             // Capture exhausted its LOCKED-retry budget (§4.1 mechanism 3):
             // serve the last-known count, else fall through to a live count.
             if let lastKnown = shape.lastKnownCountValue() {
                 _noteServed(ctx.epoch)
-                return lastKnown
+                return _capped(lastKnown)
             }
         }
         // File-DB keeper path: COUNT(*) at the generation's snapshot; a
@@ -1001,7 +1019,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                            currentFloor: coordinator.currentFloor(table: Element.entityName,
                                                                   shapeKey: descriptor.key))
         _noteServed(ctx.epoch)
-        return result
+        return _capped(result)
     }
 
     public func index(after i: Int) -> Int {
