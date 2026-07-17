@@ -116,7 +116,7 @@ public actor LatticeDataProvider {
                     throw ToolError(code: "unknown_property", message: "Unknown sort field '\(field)' on '\(model)'")
                 }
                 let asc = (s["order"] as? String).map { $0.lowercased() != "desc" } ?? true
-                results = results.sorted(by: field, ascending: asc)
+                results = results.sortedBy(field, ascending: asc)
             }
         }
 

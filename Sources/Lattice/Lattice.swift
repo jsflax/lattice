@@ -1448,37 +1448,11 @@ public struct Lattice {
         }
     }
 
-    /// Register a callback for sync progress updates.
-    /// The callback fires on the synchronizer's background thread — callers must
-    /// dispatch to the appropriate actor/queue.
-    ///
-    /// Transparently works cross-process: if this process holds the WSS sync lock
-    /// (is_sync_agent), the callback is registered on the in-process synchronizer.
-    /// Otherwise, it observes AuditLog changes via Darwin notifications and derives
-    /// progress from the count of unsynchronized entries.
     /// Entries in the sync set not yet synchronized across every registered
-    /// sync channel — the same number the passive sync-progress observer
-    /// reports as pending. 0 means fully relayed/acknowledged.
+    /// sync channel — the same number `syncProgressStream` reports as
+    /// pending. 0 means fully relayed/acknowledged.
     public var pendingSyncEntryCount: Int {
         Int(backend.pendingSyncEntryCount())
-    }
-
-    public func onSyncProgress(_ handler: @escaping @Sendable (SyncProgress) -> Void) {
-        if backend.isSyncAgent() {
-            // In-process path: register callback on synchronizer atomics
-            backend.setOnSyncProgress { pending, total, acked, received in
-                handler(SyncProgress(
-                    pendingUpload: Int(pending),
-                    totalUpload: Int(total),
-                    acked: Int(acked),
-                    received: Int(received)
-                ))
-            }
-        } else {
-            // Cross-process path: observe AuditLog changes and derive progress
-            // from the count of unsynchronized entries.
-            _startPassiveSyncProgressObserver(handler)
-        }
     }
 
     /// Register a callback for sync errors (connection failures, protocol errors, etc.).
@@ -1491,19 +1465,27 @@ public struct Lattice {
         backend.setOnSyncStateChange(handler)
     }
 
-    /// AsyncStream of sync progress updates. Yields on every progress change
-    /// from the synchronizer's background thread.
-    /// Termination: when the consumer cancels iteration, the callback is replaced
-    /// with nil (clearing the C++ handler and releasing the context).
+    /// The canonical sync-progress API (1.0): an AsyncStream of progress
+    /// updates, yielded from the synchronizer's background thread.
+    /// Termination: when the consumer cancels iteration, the underlying
+    /// handler is cleared (releasing the C++ handler context). Single-slot
+    /// underneath (both branches): a second concurrent stream on the same
+    /// lattice replaces the first's handler; the replaced stream's later
+    /// termination does NOT clear the newer stream's registration (token
+    /// guard — a late teardown must not nuke the live subscriber).
     ///
-    /// Transparently works cross-process via AuditLog observation when
-    /// this process is not the sync agent.
+    /// Transparently works cross-process: if this process holds the WSS sync
+    /// lock (is_sync_agent), progress comes from the in-process synchronizer;
+    /// otherwise it rides the dedicated xproc idle hint (fires on the xproc
+    /// background thread) and derives progress from the count of
+    /// unsynchronized entries — no query-Lattice open, no AuditLog table
+    /// observer (avoids scheduler dispatch to MainActor and the thread
+    /// pile-ups that caused).
     public var syncProgressStream: AsyncStream<SyncProgress> {
         let backend = self.backend
         let isSyncAgent = backend.isSyncAgent()
-        let modelTypes = self.modelTypes
-        let configuration = self.configuration
         return AsyncStream { continuation in
+            let token = _SyncProgressSlot.register(backend)
             if isSyncAgent {
                 // In-process path
                 backend.setOnSyncProgress { pending, total, acked, received in
@@ -1516,31 +1498,18 @@ public struct Lattice {
                 }
 
                 continuation.onTermination = { _ in
-                    backend.setOnSyncProgress(nil)
+                    if _SyncProgressSlot.clearIfCurrent(backend, token: token) {
+                        backend.setOnSyncProgress(nil)
+                    }
                 }
             } else {
-                // Cross-process path: observe AuditLog changes via Darwin notifications.
-                // queryLattice is only touched from the serial observer callback;
-                // wrap it for capture by the @Sendable observer closure.
-                // Opening the query Lattice is IO — a failure here (deleted
-                // file, exhausted descriptors) degrades to an empty stream
-                // instead of crashing the host process from a background path.
-                let queryLattice: UncheckedSendable<Lattice>
-                do {
-                    queryLattice = UncheckedSendable(try Lattice(for: modelTypes, configuration: configuration))
-                } catch {
-                    Logger.sync.error("syncProgressStream: failed to open query Lattice (\(String(describing: error))) — finishing stream")
-                    continuation.finish()
-                    return
-                }
-                // nonisolated(unsafe): mutated only from the serial AuditLog
-                // observer callback (no concurrent access), captured by the
-                // @Sendable observer closure.
+                // Cross-process path. nonisolated(unsafe): mutated only from
+                // the serial xproc callback (no concurrent access), captured
+                // by the @Sendable callback closure.
                 nonisolated(unsafe) var previousPending = 0
 
-                let observerId = backend.addTableObserver(table: AuditLog.entityName) { _ in
-                    // Batch contents are irrelevant — re-read pending count.
-                    let pending = queryLattice.value.count(AuditLog.self, where: { $0.isSynchronized == false })
+                backend.setOnXprocIdle {
+                    let pending = Int(backend.pendingSyncEntryCount())
                     let diff = previousPending - pending
                     let acked = max(0, diff)
                     previousPending = pending
@@ -1553,20 +1522,57 @@ public struct Lattice {
                 }
 
                 continuation.onTermination = { _ in
-                    backend.removeTableObserver(table: AuditLog.entityName, observerId: observerId)
+                    if _SyncProgressSlot.clearIfCurrent(backend, token: token) {
+                        backend.setOnXprocIdle(nil)
+                    }
                 }
             }
         }
     }
 
-    #if canImport(Combine)
-    /// Combine publisher for sync progress updates.
-    public var syncProgressPublisher: AnyPublisher<SyncProgress, Never> {
-        let subject = PassthroughSubject<SyncProgress, Never>()
-        onSyncProgress { progress in
-            subject.send(progress)
+    /// Guards the single-slot progress registration: a stream's termination
+    /// clears the backend handler only if that stream is still the CURRENT
+    /// registrant. Without this, a replaced/finished stream's late
+    /// onTermination nils the slot out from under the live subscriber
+    /// (observed as fire_progress handler=NULL wedging awaiting consumers).
+    private enum _SyncProgressSlot {
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var current: [ObjectIdentifier: UInt64] = [:]
+        nonisolated(unsafe) private static var nextToken: UInt64 = 0
+
+        static func register(_ backend: any LatticeBackend) -> UInt64 {
+            lock.lock(); defer { lock.unlock() }
+            nextToken += 1
+            current[ObjectIdentifier(backend)] = nextToken
+            return nextToken
         }
-        return subject.eraseToAnyPublisher()
+
+        static func clearIfCurrent(_ backend: any LatticeBackend, token: UInt64) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            let id = ObjectIdentifier(backend)
+            guard current[id] == token else { return false }
+            current[id] = nil
+            return true
+        }
+    }
+
+    #if canImport(Combine)
+    /// Combine adapter over `syncProgressStream` (the canonical progress
+    /// API). Cancelling the subscription tears the stream down (clearing the
+    /// underlying handler — the old `onSyncProgress`-backed publisher leaked
+    /// its callback for the backend's lifetime).
+    public var syncProgressPublisher: AnyPublisher<SyncProgress, Never> {
+        let stream = syncProgressStream
+        let subject = PassthroughSubject<SyncProgress, Never>()
+        let pump = Task {
+            for await progress in stream {
+                subject.send(progress)
+            }
+            subject.send(completion: .finished)
+        }
+        return subject
+            .handleEvents(receiveCancel: { pump.cancel() })
+            .eraseToAnyPublisher()
     }
     #endif
 
@@ -1617,33 +1623,6 @@ public struct Lattice {
     // the observer/sync-callback registration now happens inside CxxBackend
     // (the `_CxxClosureBox` + @convention(c) thunks), so every call site passes
     // a plain Swift closure through the neutral backend surface instead.
-
-    /// Start a passive sync progress observer for cross-process use.
-    /// Called when this process is NOT the sync agent. Uses the dedicated
-    /// xproc idle hint callback (fires on the xproc background thread)
-    /// instead of an AuditLog table observer, avoiding scheduler dispatch
-    /// to MainActor and the thread pile-ups that caused.
-    private func _startPassiveSyncProgressObserver(_ handler: @escaping @Sendable (SyncProgress) -> Void) {
-        // nonisolated(unsafe) because the callback fires on the xproc background
-        // thread, not on this actor. The closure only captures value types after
-        // the first call (previousPending is mutated but only from the serial
-        // xproc callback — no concurrent access).
-        nonisolated(unsafe) var previousPending = 0
-        let backend = self.backend
-
-        backend.setOnXprocIdle {
-            let pending = Int(backend.pendingSyncEntryCount())
-            let diff = previousPending - pending
-            let acked = max(0, diff)
-            previousPending = pending
-            handler(SyncProgress(
-                pendingUpload: pending,
-                totalUpload: pending + acked,
-                acked: acked,
-                received: 0
-            ))
-        }
-    }
 
     /// Delivery-ordering contract (1.0): payload-bearing change streams — this
     /// AuditLog observer and the table/collection observers — guarantee that

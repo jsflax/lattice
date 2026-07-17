@@ -30,8 +30,9 @@ public final class DynamicResults: @unchecked Sendable {
                               whereClause: combined, orderByClause: orderByClause)
     }
 
-    /// Append an ORDER BY term.
-    public func sorted(by column: String, ascending: Bool = true) -> DynamicResults {
+    /// Append an ORDER BY term. Named `sortedBy` to match the typed results
+    /// surface (`Results.sortedBy(_:order:)`) — one sort spelling API-wide.
+    public func sortedBy(_ column: String, ascending: Bool = true) -> DynamicResults {
         let term = "\(column) \(ascending ? "ASC" : "DESC")"
         let combined = orderByClause.map { "\($0), \(term)" } ?? term
         return DynamicResults(backend: backend, tableName: tableName,

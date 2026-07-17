@@ -456,10 +456,11 @@ struct CrossProcessTests {
         }
     }
 
-    /// Tests that the passive sync progress observer fires when a cross-process
-    /// write UPDATEs existing AuditLog rows (e.g., marking isSynchronized = 1)
-    /// without creating new rows. This is the exact production path: the daemon
-    /// ACKs synced entries, and the Visualizer's onSyncProgress should update.
+    /// Tests that the passive (non-sync-agent) sync progress path fires when a
+    /// cross-process write UPDATEs existing AuditLog rows (e.g., marking
+    /// isSynchronized = 1) without creating new rows. This is the exact
+    /// production path: the daemon ACKs synced entries, and the Visualizer's
+    /// syncProgressStream should update.
     @Test(.timeLimit(.minutes(5)))
     func crossProcessAuditLogUpdateFiresObserver() async throws {
         // ── Child path ──────────────────────────────────────────────
@@ -499,21 +500,21 @@ struct CrossProcessTests {
             return
         }
 
-        // Use onSyncProgress (the production API) via AsyncStream.
-        // `for await` is cancellation-safe — .timeLimit can kill it if the
-        // observer never fires, instead of hanging forever.
-        let progress = AsyncStream<Void> { stream in
-            lattice.onSyncProgress { _ in
-                stream.yield()
-                stream.finish()
-            }
-            spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "update_audit")
-        }
+        // Use syncProgressStream (the production API). Stream creation
+        // registers the xproc handler synchronously, so the child spawns
+        // strictly after registration. `for await` is cancellation-safe —
+        // .timeLimit can kill it if the handler never fires, instead of
+        // hanging forever.
+        let progress = lattice.syncProgressStream
+        spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "update_audit")
 
         var fired = false
-        for await _ in progress { fired = true }
+        for await _ in progress {
+            fired = true
+            break
+        }
 
-        #expect(fired, "onSyncProgress did not fire for cross-process AuditLog UPDATE")
+        #expect(fired, "syncProgressStream did not fire for cross-process AuditLog UPDATE")
     }
 
     /// Tests that a cross-process List<T> append (link table INSERT) triggers

@@ -67,25 +67,24 @@ actor SyncProgressTests {
     @Test(.disabled(if: isMacOSCI, "Darwin CI hang class — await never resumes and .timeLimit cannot interrupt on macOS; runs locally and on Linux CI. Owner: 1.0 item D1b/D2"), .timeLimit(.minutes(5)))
     func test_SyncProgress_UploadTracking() async throws {
         let lattice = localLattice1!
-        let config = localLattice1Configuration
 
-        // Start listening for progress where totalUpload > 0.
-        // Synchronize: ensure the stream handler is registered BEFORE
-        // adding objects, otherwise fire_progress() can fire before the
-        // handler exists and the event is lost.
-        var progressTask: Task<Lattice.SyncProgress, any Error>?
-        await withCheckedContinuation { continuation in
-            progressTask = Task.detached {
-                let l = try Lattice(SimpleSyncObject.self, configuration: config)
-                let stream = l.syncProgressStream
-                continuation.resume()
-                for await progress in stream {
-                    if progress.totalUpload > 0 {
-                        return progress
-                    }
+        // Listen for progress with totalUpload > 0. The stream MUST be
+        // created on the suite's own handle — the actual sync agent. A fresh
+        // Lattice open inside a detached task is NOT a ref-cache hit (the
+        // cache key includes the isolation context), so it lands on a second,
+        // non-sync-agent instance whose xproc branch never fires for
+        // same-process writes — the await wedges forever. Stream creation
+        // registers the handler synchronously, so creating it before add()
+        // means the event can't be lost; the Sendable stream then crosses
+        // into the detached iterator.
+        let stream = lattice.syncProgressStream
+        let progressTask = Task.detached {
+            for await progress in stream {
+                if progress.totalUpload > 0 {
+                    return progress
                 }
-                return Lattice.SyncProgress(pendingUpload: 0, totalUpload: 0, acked: 0, received: 0)
             }
+            return Lattice.SyncProgress(pendingUpload: 0, totalUpload: 0, acked: 0, received: 0)
         }
 
         // Add objects to trigger upload
@@ -93,7 +92,7 @@ actor SyncProgressTests {
             try lattice.add(SimpleSyncObject(value: i, floatValue: Float(i)))
         }
 
-        let progress = try await progressTask!.value
+        let progress = await progressTask.value
         #expect(progress.totalUpload > 0)
     }
 
@@ -101,19 +100,24 @@ actor SyncProgressTests {
     func test_SyncProgress_AckTracking() async throws {
         let lattice = localLattice1!
 
-        // Use the sync progress callback to detect ACK directly,
-        // avoiding the race between WAL hook and acked counter.
-        let acked: Lattice.SyncProgress = await withCheckedContinuation { continuation in
-            let once = AtomicOnce()
-            lattice.onSyncProgress { progress in
+        // Use syncProgressStream (the canonical progress API) to detect ACK
+        // directly, avoiding the race between WAL hook and acked counter.
+        // Stream on the suite's own sync-agent handle (see UploadTracking for
+        // why a fresh detached-task open wedges), created BEFORE the add so
+        // the event can't be lost.
+        let stream = lattice.syncProgressStream
+        let ackedTask = Task.detached {
+            for await progress in stream {
                 if progress.acked > 0 {
-                    guard once.tryFire() else { return }
-                    continuation.resume(returning: progress)
+                    return progress
                 }
             }
-            try! lattice.add(SimpleSyncObject(value: 99, floatValue: 99.0))
+            return Lattice.SyncProgress(pendingUpload: 0, totalUpload: 0, acked: 0, received: 0)
         }
 
+        try lattice.add(SimpleSyncObject(value: 99, floatValue: 99.0))
+
+        let acked = await ackedTask.value
         #expect(acked.acked > 0)
     }
 
@@ -130,25 +134,26 @@ actor SyncProgressTests {
         print("[DownloadTracking] START lattice1=\(lattice1URL.lastPathComponent) lattice2=\(lattice2URL.lastPathComponent) sockets=\(server.sockets.count)")
 
         // Wait for lattice2's own sync progress to show received increased.
-        // Register the callback BEFORE triggering the sync so we don't miss
-        // the event, and avoid creating a temporary Lattice on the same config
-        // which can steal lattice2's sync connection.
-        let received: Lattice.SyncProgress = await withCheckedContinuation { continuation in
-            let once = AtomicOnce()
-            lattice2.onSyncProgress { progress in
-                print("[DownloadTracking] onSyncProgress fired: received=\(progress.received)")
+        // Stream on lattice2's OWN handle (its process-side sync agent for its
+        // file; a fresh detached-task open is a cache MISS across isolation
+        // contexts and wedges — see UploadTracking), created BEFORE the
+        // triggering add so the event can't be lost.
+        let stream = lattice2.syncProgressStream
+        let receivedTask = Task.detached {
+            for await progress in stream {
+                print("[DownloadTracking] syncProgressStream fired: received=\(progress.received)")
                 if progress.received > 0 {
-                    guard once.tryFire() else { return }
-                    print("[DownloadTracking] RESUMING continuation")
-                    continuation.resume(returning: progress)
+                    return progress
                 }
             }
-            print("[DownloadTracking] Handler registered, adding value 77 to lattice1")
-            // Callback registered; trigger the sync.
-            try! lattice.add(SimpleSyncObject(value: 77, floatValue: 77.0))
-            print("[DownloadTracking] Value 77 added to lattice1")
+            return Lattice.SyncProgress(pendingUpload: 0, totalUpload: 0, acked: 0, received: 0)
         }
 
+        print("[DownloadTracking] Stream registered, adding value 77 to lattice1")
+        try lattice.add(SimpleSyncObject(value: 77, floatValue: 77.0))
+        print("[DownloadTracking] Value 77 added to lattice1")
+
+        let received = await receivedTask.value
         #expect(received.received > 0)
         #expect(lattice2.objects(SimpleSyncObject.self).contains(where: { $0.value == 77 }))
     }
@@ -156,64 +161,25 @@ actor SyncProgressTests {
     @Test(.timeLimit(.minutes(5)))
     func test_SyncProgress_Callback() async throws {
         let lattice = localLattice1!
-        let config = localLattice1Configuration
 
-        // Use syncProgressStream (backed by onSyncProgress callback)
-        // and wait for totalUpload > 0.
-        // Must synchronize: ensure the stream handler is registered BEFORE
-        // adding objects, otherwise fire_progress() can fire before the
-        // handler exists and the event is lost.
-        var callbackFired: Task<Lattice.SyncProgress, any Error>?
-        await withCheckedContinuation { continuation in
-            callbackFired = Task.detached {
-                let l = try Lattice(SimpleSyncObject.self, configuration: config)
-                let stream = l.syncProgressStream
-                continuation.resume()
-                for await progress in stream {
-                    if progress.totalUpload > 0 {
-                        return progress
-                    }
+        // Use syncProgressStream (the canonical progress API) and wait for
+        // totalUpload > 0. Stream on the suite's own sync-agent handle,
+        // created BEFORE the adds (see UploadTracking for both constraints).
+        let stream = lattice.syncProgressStream
+        let callbackFired = Task.detached {
+            for await progress in stream {
+                if progress.totalUpload > 0 {
+                    return progress
                 }
-                return Lattice.SyncProgress(pendingUpload: 0, totalUpload: 0, acked: 0, received: 0)
             }
+            return Lattice.SyncProgress(pendingUpload: 0, totalUpload: 0, acked: 0, received: 0)
         }
 
         try lattice.add(SimpleSyncObject(value: 1, floatValue: 1.0))
         try lattice.add(SimpleSyncObject(value: 2, floatValue: 2.0))
 
-        let progress = try await callbackFired!.value
+        let progress = await callbackFired.value
         #expect(progress.totalUpload > 0)
-    }
-
-    @Test(.timeLimit(.minutes(5)))
-    func test_SyncProgress_OwnedDB_BackgroundThread() async throws {
-        let lattice = localLattice1!
-        let config = localLattice1Configuration
-
-        // The progress callback fires on the synchronizer's std_thread_scheduler
-        // thread, which must NOT be the main thread.
-        // Use a two-stage continuation: signal when l's callback is registered,
-        // then wait for the callback to actually fire.
-        var isBackgroundTask: Task<Bool, any Error>?
-        await withCheckedContinuation { (readyContinuation: CheckedContinuation<Void, Never>) in
-            isBackgroundTask = Task.detached {
-                let l = try Lattice(SimpleSyncObject.self, configuration: config)
-                return await withCheckedContinuation { resultContinuation in
-                    let once = AtomicOnce()
-                    l.onSyncProgress { _ in
-                        guard once.tryFire() else { return }
-                        resultContinuation.resume(returning: !Thread.isMainThread)
-                    }
-                    // l is created and callback is registered — safe to trigger sync
-                    readyContinuation.resume()
-                }
-            }
-        }
-
-        try lattice.add(SimpleSyncObject(value: 42, floatValue: 42.0))
-
-        let result = try await isBackgroundTask!.value
-        #expect(result == true, "Progress callback should fire on a background thread")
     }
 
     @Test(.timeLimit(.minutes(5)))
