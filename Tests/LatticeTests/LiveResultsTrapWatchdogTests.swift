@@ -202,7 +202,7 @@ private func t1ChildProcessConfig(filter: String) -> (URL, [String])? {
 @Suite("Live Results Trap Watchdog (item A T1)", .serialized)
 struct LiveResultsTrapWatchdogTests {
 
-    @Test(.timeLimit(.minutes(10)))
+    @Test(.disabled(if: isMacOSCI, "macOS CI's swiftpm-testing-helper ignores our --filter construction — the watchdog child re-runs the ENTIRE suite (proven across 3 diagnostic rounds). Full coverage: Linux CI + local helper mode, both filter correctly."), .timeLimit(.minutes(10)))
     func t1TrapWatchdog_trapImpossibilityUnderConcurrentDeleteBursts() async throws {
         // ── Child path ──────────────────────────────────────────────
         if let storage = ProcessInfo.processInfo.environment["LATTICE_ITEMA_T1_STORAGE"] {
