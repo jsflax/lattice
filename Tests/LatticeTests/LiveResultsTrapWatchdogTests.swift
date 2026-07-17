@@ -171,9 +171,14 @@ private func t1ChildProcessConfig(filter: String) -> (URL, [String])? {
         )
     }
 
-    // SPM (Linux): argv[0] is the .xctest binary itself.
-    if args[0].hasSuffix(".xctest"),
-       args.contains("--testing-library") {
+    // Direct test binary (SPM Linux .xctest, or macOS CI's bare
+    // .xctest/Contents/MacOS/<name> executable — `swift test` on CI runs it
+    // WITHOUT --testing-library in argv, so don't require the flag in the
+    // PARENT's args: the binary accepts it regardless. Falling through to
+    // the xcrun-xctest wrapper here is what re-ran the ENTIRE suite inside
+    // the watchdog child on CI: the XCTest wrapper cannot filter
+    // swift-testing tests.)
+    if args[0].hasSuffix(".xctest") || args[0].contains(".xctest/Contents/MacOS/") {
         return (
             URL(fileURLWithPath: args[0]),
             ["--filter", filter, "--testing-library", "swift-testing"]

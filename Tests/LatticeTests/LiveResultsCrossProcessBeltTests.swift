@@ -29,6 +29,11 @@ import SQLite3
 }
 
 #if canImport(SQLite3)
+private final class SendBox6<T>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
+}
+
 private struct ForeignWriteError: Error, CustomStringConvertible {
     let message: String
     var description: String { "foreign write failed: \(message)" }
@@ -107,12 +112,19 @@ class LiveResultsCrossProcessBeltTests: BaseTest {
         // the belt re-checks as soon as the interval elapses. The deadline
         // is a CI ceiling, not the freshness bound; typical detection is
         // one interval (25 ms).
-        var fresh = false
-        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
-        while ContinuousClock.now < deadline {
-            if promoted.count == 1 { fresh = true; break }
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        // Poll OFF the main thread: CI schedules this test on main, where the
+        // render-batch pin (correctly, per §1.3) freezes the frame for the
+        // whole synchronous poll — probes=1 forever, and the belt is
+        // unobservable. T4 pins belt freshness for unpinned readers.
+        let promotedBox = SendBox6(promoted)
+        let fresh = await Task.detached { () -> Bool in
+            let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+            while ContinuousClock.now < deadline {
+                if promotedBox.value.count == 1 { return true }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            return false
+        }.value
         // CI-only failure under investigation: dump every layer's state so a
         // red run tells us WHICH layer is dead (probe cadence, delta
         // observation, or the foreign write itself).
