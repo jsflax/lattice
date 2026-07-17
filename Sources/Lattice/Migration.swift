@@ -261,5 +261,3 @@ extension Migration {
 /// A block that handles schema migration.
 public typealias MigrationBlock = @Sendable (/* old, managed value */ DynamicObject,
                                              /* new, unmanaged value */ any Model) -> Void
-
-public enum Deprecated {}

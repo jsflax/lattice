@@ -8,3 +8,7 @@ DerivedData/
 .netrc
 # Generated example projects (regenerable from project.yml via xcodegen)
 Examples/**/*.xcodeproj/
+# Coverage/profiling strays and local scratch build dirs
+*.profraw
+/.build-linux/
+/.swiftpm/

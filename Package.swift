@@ -31,9 +31,6 @@ let package = Package(
           .upToNextMinor(from: "1.1.0") // or `.upToNextMajor
         ),
         .package(url: "https://github.com/vapor/vapor.git", from: "4.76.0"),
-        .package(url: "https://github.com/vapor/fluent.git", from: "4.0.0"),
-        .package(url: "https://github.com/vapor/fluent-sqlite-driver.git", from: "4.8.0"),
-//        .package(url: "https://github.com/vapor/jwt.git",    from: "5.0.0"),
         .package(url: "https://github.com/vapor/websocket-kit.git", from: "2.15.0"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.0"),
     ],
@@ -76,16 +73,6 @@ let package = Package(
                 .product(name: "Vapor", package: "vapor"),
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]),
-//        .executableTarget(
-//            name: "LatticeExampleServer",
-//            dependencies: [
-//                "LatticeServerKit",
-//                .product(name: "Vapor", package: "vapor"),
-//                .product(name: "Fluent", package: "fluent"),
-//                .product(name: "FluentSQLiteDriver", package: "fluent-sqlite-driver"),
-////                .product(name: "JWT", package: "jwt"),
-//            ],
-//            swiftSettings: [.interoperabilityMode(.Cxx)]),
         .executableTarget(name: "LatticeMain",
                           dependencies: ["Lattice"],
                           swiftSettings: [.interoperabilityMode(.Cxx)]),

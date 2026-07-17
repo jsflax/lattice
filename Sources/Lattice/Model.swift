@@ -280,7 +280,6 @@ public enum _ModelStorage {
 }
 
 public typealias CxxLatticeObject = lattice.swift_dynamic_object
-public typealias CxxManagedLatticeObject = lattice.ManagedModel
 public typealias CxxManagedModel = lattice.ManagedModel
 public typealias CxxManagedLink = lattice.ManagedLink
 public typealias CxxManagedInt = lattice.ManagedInt
@@ -683,11 +682,11 @@ extension Model {
         fatalError()
     }
 
-    public static func getManaged(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedModel {
+    public static func getManaged(from object: CxxManagedModel, name: std.string) -> CxxManagedModel {
         fatalError()
     }
 
-    public static func getManagedOptional(from object: CxxManagedLatticeObject, name: std.string) -> CxxManagedModel.OptionalType {
+    public static func getManagedOptional(from object: CxxManagedModel, name: std.string) -> CxxManagedModel.OptionalType {
         object.get_managed_field(name)
     }
 
