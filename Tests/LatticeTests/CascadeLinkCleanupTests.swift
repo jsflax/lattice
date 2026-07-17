@@ -160,11 +160,11 @@ class CascadeLinkCleanupTests: BaseTest {
         post.author = user
 
         let latticeRef = lattice.sendableReference
-        let observation: Task<[YieldBatch], Never> = Task.detached {
+        let observation: Task<[YieldBatch], any Error> = Task.detached {
             guard let l = latticeRef.resolve() else { return [] }
             var batches: [YieldBatch] = []
             var idx = 0
-            for await refs in l.changeStream {
+            for try await refs in l.changeStream {
                 let resolved = refs.compactMap { $0.resolve(isolation: nil, on: l) }
                 let deletes = resolved
                     .filter { $0.operation == .delete }
@@ -185,7 +185,7 @@ class CascadeLinkCleanupTests: BaseTest {
 
         lattice.delete(user)
 
-        let batches = await observation.value
+        let batches = try await observation.value
 
         for batch in batches {
             let summary = batch.deletes.map { $0.table }.joined(separator: ",")

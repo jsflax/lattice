@@ -26,7 +26,7 @@ extension SyncTests {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 var insertCount = 0
-                for await changes in changeStream {
+                for try await changes in changeStream {
                     let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     insertCount += changes.count(where: { $0.operation == .insert })
                     // 3 model inserts: 1 person + 1 dog + 1 cat
@@ -40,7 +40,7 @@ extension SyncTests {
                 let lattice1 = try await Lattice(TestDog.self, TestCat.self, TestPersonWithPets.self, configuration: self.localLattice1Configuration)
                 let changeStream = lattice1.changeStream
                 continuation.resume()
-                for await changes in changeStream {
+                for try await changes in changeStream {
                     let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice1) })
                     if changes.allSatisfy({ $0.isSynchronized }) {
                         break
@@ -118,7 +118,7 @@ extension SyncTests {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 var insertCount = 0
-                for await changes in changeStream {
+                for try await changes in changeStream {
                     let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     insertCount += changes.count(where: { $0.operation == .insert })
                     // 2 model inserts: 1 person + 1 cat
@@ -132,7 +132,7 @@ extension SyncTests {
                 let lattice1 = try await Lattice(TestDog.self, TestCat.self, TestPersonWithPet.self, configuration: self.localLattice1Configuration)
                 let changeStream = lattice1.changeStream
                 continuation.resume()
-                for await changes in changeStream {
+                for try await changes in changeStream {
                     let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice1) })
                     if changes.allSatisfy({ $0.isSynchronized }) {
                         break
@@ -206,7 +206,7 @@ extension SyncTests {
                 let changeStream = lattice2.changeStream
                 continuation.resume()
                 var insertCount = 0
-                for await changes in changeStream {
+                for try await changes in changeStream {
                     let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     insertCount += changes.count(where: { $0.operation == .insert })
                     if insertCount >= 3 { break }
@@ -219,7 +219,7 @@ extension SyncTests {
                 let lattice1 = try await Lattice(TestDog.self, TestCat.self, TestPersonWithPets.self, configuration: self.localLattice1Configuration)
                 let changeStream = lattice1.changeStream
                 continuation.resume()
-                for await changes in changeStream {
+                for try await changes in changeStream {
                     let changes = changes.compactMap({ $0.resolve(isolation: nil, on: lattice1) })
                     if changes.allSatisfy({ $0.isSynchronized }) {
                         break
@@ -278,7 +278,7 @@ extension SyncTests {
                 let lattice2 = try Lattice(TestDog.self, TestCat.self, TestPersonWithPets.self, configuration: localLattice2Configuration)
                 let changeStream = lattice2.changeStream
                 continuation.resume()
-                for await changes in changeStream {
+                for try await changes in changeStream {
                     let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: lattice2) })
                     if resolved.contains(where: { $0.operation == .delete && $0.tableName == "TestDog" }) {
                         break
@@ -347,7 +347,7 @@ actor IPCVirtualCascadeDeleteTests {
                 let stream = db.changeStream
                 continuation.resume()
                 var insertCount = 0
-                for await changes in stream {
+                for try await changes in stream {
                     let resolved = changes.compactMap { $0.resolve(isolation: nil, on: db) }
                     insertCount += resolved.count(where: { $0.operation == .insert })
                     if insertCount >= 3 { break }
@@ -403,7 +403,7 @@ actor IPCVirtualCascadeDeleteTests {
                 let db = try Lattice(TestDog.self, TestCat.self, TestPersonWithPets.self, configuration: readConfig)
                 let stream = db.changeStream
                 continuation.resume()
-                for await changes in stream {
+                for try await changes in stream {
                     let resolved = changes.compactMap { $0.resolve(isolation: nil, on: db) }
                     if resolved.contains(where: { $0.operation == .delete && $0.tableName == "TestDog" }) {
                         break

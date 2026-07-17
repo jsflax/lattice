@@ -1690,37 +1690,67 @@ public struct Lattice {
         }
     }
 
-    public var changeStream: AsyncStream<[AnySendableReference<AuditLog>]> {
-        AsyncStream<[AnySendableReference<AuditLog>]> { [backend, modelTypes, configuration] stream in
+    /// `changeStream` delivery state. The table observer registers
+    /// synchronously at stream creation (a leaf-lock map insert — no SQL) so
+    /// no commit between "stream created" and "query handle ready" can be
+    /// lost; raw batches buffer here until the blocking query-Lattice open
+    /// completes off-task, then flush in arrival order. The lock serializes
+    /// the buffered flush against live callback delivery, preserving order.
+    private final class ChangeStreamState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var buffered: [[TableChangeEvent]] = []
+        private var queryLattice: UncheckedSendable<Lattice>?
+        private var terminated = false
+
+        /// Observer-callback path: buffer while the open is in flight,
+        /// resolve + emit inline once ready.
+        func deliver(_ batch: [TableChangeEvent], _ emit: (Lattice, [TableChangeEvent]) -> Void) {
+            lock.lock(); defer { lock.unlock() }
+            guard !terminated else { return }
+            if let queryLattice {
+                emit(queryLattice.value, batch)
+            } else {
+                buffered.append(batch)
+            }
+        }
+
+        /// Open-complete path: flush the buffer in order, then deliver inline.
+        func ready(_ lattice: UncheckedSendable<Lattice>, _ emit: (Lattice, [TableChangeEvent]) -> Void) {
+            lock.lock(); defer { lock.unlock() }
+            guard !terminated else { return }
+            queryLattice = lattice
+            for batch in buffered {
+                emit(lattice.value, batch)
+            }
+            buffered.removeAll()
+        }
+
+        func terminate() {
+            lock.lock(); defer { lock.unlock() }
+            terminated = true
+            buffered.removeAll()
+            queryLattice = nil
+        }
+    }
+
+    public var changeStream: AsyncThrowingStream<[AnySendableReference<AuditLog>], any Swift.Error> {
+        AsyncThrowingStream { [backend, modelTypes, configuration] stream in
             let log = Logger.sync
+            let state = ChangeStreamState()
+            // `[any Model.Type]` isn't structurally Sendable (existential
+            // metatype element); the immutable array is safe to send.
+            let types = UncheckedSendable(modelTypes)
 
-            // Create a single Lattice for all queries instead of one per notification.
-            // Creating a Lattice runs ensure_tables() which acquires the WAL write lock
-            // (via INSERT OR IGNORE). Doing this on every notification blocks the
-            // synchronizer's scheduler thread and risks SQLITE_BUSY under load.
-            // Strip sync config — queryLattice only reads AuditLog entries by PK.
-            // Keeping ipcTargets/wssEndpoint would join sync channels, receive a
-            // catchup of existing data, and generate spurious AuditLog entries that
-            // fire observers before the real change arrives.
-            var queryConfig = configuration
-            queryConfig.ipcTargets = nil
-            queryConfig.wssEndpoint = nil
-            queryConfig.authorizationToken = nil
-            // Only touched from the serial observer callback below; wrap for the
-            // @Sendable observer closure.
-            let queryLattice = UncheckedSendable(try! Lattice(for: modelTypes, configuration: queryConfig))
-
-            let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
-                // One yield per WAL flush, with all refs from this
-                // batch. Wire-relay consumers (e.g. ClaudeCodeIRC's
-                // RoomSyncServer.broadcastEntries) ship one frame per
-                // yield — so a cascade delete (parent + N link-table
-                // DELETEs from one transaction) reaches the peer as
-                // one frame and applies atomically. See the
-                // notify_changes_batched comment in LatticeCore for
-                // the full rationale.
+            // Resolve a raw change batch against the ready query Lattice and
+            // yield one frame per WAL flush. Wire-relay consumers (e.g.
+            // ClaudeCodeIRC's RoomSyncServer.broadcastEntries) ship one frame
+            // per yield — so a cascade delete (parent + N link-table DELETEs
+            // from one transaction) reaches the peer as one frame and applies
+            // atomically. See the notify_changes_batched comment in
+            // LatticeCore for the full rationale.
+            let emit: @Sendable (Lattice, [TableChangeEvent]) -> Void = { queryLattice, changes in
                 let refs: [AnySendableReference<AuditLog>] = changes.compactMap { c in
-                    guard let auditLog = queryLattice.value.object(AuditLog.self, primaryKey: c.rowId) else {
+                    guard let auditLog = queryLattice.object(AuditLog.self, primaryKey: c.rowId) else {
                         log.warning("changeStream: no AuditLog for pk=\(c.rowId)")
                         return nil
                     }
@@ -1733,8 +1763,46 @@ public struct Lattice {
                 }
             }
 
+            // Register synchronously: add_table_observer is a leaf-lock map
+            // insert (no SQL, no WAL), and consumers rely on "stream created ⇒
+            // subsequent commits are captured" — an async registration would
+            // lose any commit that lands during the open below.
+            let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
+                state.deliver(changes, emit)
+            }
+
+            // The BLOCKING core work hops OFF the caller's task: opening the
+            // query Lattice runs ensure_tables() (WAL write lock via INSERT OR
+            // IGNORE) and can park on the 30s busy timeout — non-suspending
+            // work that would otherwise wedge the caller's context, starving
+            // cooperative cancellation (`.timeLimit` traits could never fire).
+            Task.detached {
+                // One Lattice for all queries instead of one per notification:
+                // a per-notification open blocks the synchronizer's scheduler
+                // thread and risks SQLITE_BUSY under load.
+                // Strip sync config — queryLattice only reads AuditLog entries by PK.
+                // Keeping ipcTargets/wssEndpoint would join sync channels, receive a
+                // catchup of existing data, and generate spurious AuditLog entries that
+                // fire observers before the real change arrives.
+                var queryConfig = configuration
+                queryConfig.ipcTargets = nil
+                queryConfig.wssEndpoint = nil
+                queryConfig.authorizationToken = nil
+                do {
+                    let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
+                    state.ready(queryLattice, emit)
+                } catch {
+                    // A failed open (deleted file, exhausted descriptors)
+                    // surfaces at the consumer's first `try await` instead of
+                    // trapping the host process (was `try!`). finish fires
+                    // onTermination, which removes the observer.
+                    stream.finish(throwing: error)
+                }
+            }
+
             stream.onTermination = { _ in
                 backend.removeTableObserver(table: AuditLog.entityName, observerId: observerId)
+                state.terminate()
             }
         }
     }

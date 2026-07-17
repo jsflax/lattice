@@ -280,7 +280,7 @@ actor NIORelaySyncTests {
                 let lattice2 = try Lattice(SimpleSyncObject.self, configuration: c2Copy)
                 let stream = lattice2.changeStream
                 continuation.resume()
-                for await changes in stream {
+                for try await changes in stream {
                     let resolved = changes.compactMap { $0.resolve(isolation: nil, on: lattice2) }
                     if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
                         break
@@ -303,7 +303,7 @@ actor NIORelaySyncTests {
                 let lattice1 = try Lattice(SimpleSyncObject.self, configuration: c1Copy)
                 let stream = lattice1.changeStream
                 continuation.resume()
-                for await changes in stream {
+                for try await changes in stream {
                     let resolved = changes.compactMap { $0.resolve(isolation: nil, on: lattice1) }
                     if resolved.contains(where: { $0.isSynchronized && $0.tableName == "SimpleSyncObject" }) {
                         break
@@ -382,7 +382,7 @@ actor NIORelaySyncTests {
                 let client = try Lattice(SimpleSyncObject.self, configuration: clientConfig)
                 let stream = client.changeStream
                 continuation.resume()
-                for await changes in stream {
+                for try await changes in stream {
                     let resolved = changes.compactMap { $0.resolve(isolation: nil, on: client) }
                     if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
                         return true

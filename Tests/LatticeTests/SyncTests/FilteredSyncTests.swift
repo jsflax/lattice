@@ -146,7 +146,7 @@ actor FilteredSyncTests {
                 let r = try await Lattice(FilteredNote.self, FilteredTag.self, configuration: self.receiverConfig)
                 let changeStream = r.changeStream
                 continuation.resume()
-                for await changes in changeStream {
+                for try await changes in changeStream {
                     let resolved = changes.compactMap { $0.resolve(isolation: nil, on: r) }
                     if resolved.contains(where: { $0.tableName == table && $0.operation == operation }) {
                         return
@@ -166,7 +166,7 @@ actor FilteredSyncTests {
                 let r = try await Lattice(FilteredNote.self, FilteredTag.self, configuration: self.receiverConfig)
                 let changeStream = r.changeStream
                 let innerTask = Task {
-                    for await changes in changeStream {
+                    for try await changes in changeStream {
                         let resolved = changes.compactMap { $0.resolve(isolation: nil, on: r) }
                         if resolved.contains(where: { $0.tableName == table }) {
                             return true

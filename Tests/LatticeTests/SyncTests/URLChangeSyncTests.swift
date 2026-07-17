@@ -104,7 +104,7 @@ actor URLChangeSyncTests {
         let preKickArrived: Task<Void, any Error> = Task.detached {
             let serverLattice = try Lattice(for: [SimpleSyncObject.self],
                                             configuration: self.serverConfigA)
-            for await changes in serverLattice.changeStream {
+            for try await changes in serverLattice.changeStream {
                 let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
                 let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
                 if touched, serverLattice.objects(SimpleSyncObject.self)
@@ -132,7 +132,7 @@ actor URLChangeSyncTests {
         let postKickArrived: Task<Void, any Error> = Task.detached {
             let serverLattice = try Lattice(for: [SimpleSyncObject.self],
                                             configuration: self.serverConfigB)
-            for await changes in serverLattice.changeStream {
+            for try await changes in serverLattice.changeStream {
                 let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
                 let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
                 if touched, serverLattice.objects(SimpleSyncObject.self)
@@ -175,7 +175,7 @@ actor URLChangeSyncTests {
         let writeArrived: Task<Void, any Error> = Task.detached {
             let serverLattice = try Lattice(for: [SimpleSyncObject.self],
                                             configuration: self.serverConfigA)
-            for await changes in serverLattice.changeStream {
+            for try await changes in serverLattice.changeStream {
                 let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
                 let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
                 if touched, serverLattice.objects(SimpleSyncObject.self)

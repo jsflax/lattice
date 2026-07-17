@@ -113,7 +113,7 @@ actor IPCSyncTests {
                 let db = try Lattice(IPCNote.self, configuration: readConfig)
                 let stream = db.changeStream
                 continuation.resume()
-                for await changes in stream {
+                for try await changes in stream {
                     let resolved = changes.compactMap { $0.resolve(isolation: nil, on: db) }
                     if resolved.contains(where: { $0.tableName == table && $0.operation == operation }) {
                         return

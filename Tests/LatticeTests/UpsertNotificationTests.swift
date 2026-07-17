@@ -28,9 +28,9 @@ final class UpsertNotificationTests: BaseTest {
         // Wire a changeStream observer that returns as soon as it sees an
         // UPDATE audit entry for our table.
         let latticeRef = lattice.sendableReference
-        let observation: Task<String?, Never> = Task.detached {
+        let observation: Task<String?, any Error> = Task.detached {
             guard let l = latticeRef.resolve() else { return nil }
-            for await refs in l.changeStream {
+            for try await refs in l.changeStream {
                 let resolved = refs.compactMap { $0.resolve(on: l) }
                 if let hit = resolved.first(where: {
                     $0.tableName == "UpsertNotify" && $0.operation == .update
@@ -49,7 +49,7 @@ final class UpsertNotificationTests: BaseTest {
         second.value = 2
         try lattice.add(second)
 
-        let op = await observation.value
+        let op = try await observation.value
 
         // Data reflects the upsert...
         #expect(lattice.objects(UpsertNotify.self).count == 1)

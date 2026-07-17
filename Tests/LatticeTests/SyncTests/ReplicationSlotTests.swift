@@ -53,7 +53,7 @@ actor ReplicationSlotTests {
                 let stream = db.changeStream
                 continuation.resume()
                 var seen = 0
-                for await changes in stream {
+                for try await changes in stream {
                     let resolved = changes.compactMap { $0.resolve(isolation: nil, on: db) }
                     seen += resolved.filter { $0.tableName == table && $0.operation == operation }.count
                     if seen >= count { return }
