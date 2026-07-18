@@ -18,6 +18,25 @@ import LatticeSwiftCppBridge
 // update the snapshot, so read-your-writes holds. The snapshot does NOT see
 // concurrent writers until `refreshMaterialized()` — that staleness is the
 // point: a consistent row image for formatting/serialization.
+//
+// ROW-CACHE v1 CONTRACT — links / lists / unions FALL THROUGH (pinned by
+// RowCacheContractTests; deliberate v1 scope, NOT a bug):
+// - SCALARS (Int/Double/Bool/String/Data/Date/UUID/enum raw values) are the
+//   snapshot: stale under a concurrent writer until `refreshMaterialized()`.
+// - LINKS are fully live: traversal never consults the snapshot (the bridge's
+//   `get_object` re-resolves the link column by parent id and hydrates the
+//   target through the live path), so BOTH a concurrent relink of the parent's
+//   link column AND writes to the target's fields are visible through a
+//   materialized parent — and traversal issues SQL.
+// - LISTS (`List`/`VirtualList`) read through their link-list backend on
+//   every access: membership, order, and element fields are always live.
+// - UNIONS marshal through the C++ union_value handle per read: case and
+//   payload are always live (payload links hydrate live, as above).
+// v1 materializes exactly ONE row image; it does not pin a graph. Code that
+// needs a coherent snapshot of a graph should use `detached()` (depth-aware)
+// instead. A future version may extend materialization across links — that
+// would be a behavior CHANGE for the traversal cases above, gated by the
+// contract tests.
 
 public extension Model {
     /// Serve this object's property reads from its hydrated row snapshot.
