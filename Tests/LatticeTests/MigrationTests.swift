@@ -1469,56 +1469,56 @@ class MigrationTests: BaseTest {
         }
     }
 
-    // TODO: Re-enable once C++ exceptions bridge to Swift errors.
-    // The C++ schema version guard throws std::runtime_error which causes SIGTRAP
-    // instead of being caught as a Swift error.
-//    /// Opening a migrated DB with a LOWER target version should throw.
-//    @Test
-//    func test_SchemaVersionGuard_OlderBinary_Throws() throws {
-//        typealias M1Person = MigrationV1.Person
-//        typealias M2Person = MigrationV2.Person
-//        typealias M1Dog = MigrationV1.Dog
-//        typealias M2Dog = MigrationV2.Dog
-//
-//        let dbPath = "schema_guard_older_\(String.random(length: 16)).sqlite"
-//        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
-//        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
-//        try? Lattice.delete(for: .init(fileURL: dbURL))
-//
-//        // Phase 1: Create and migrate to v2
-//        try autoreleasepool {
-//            let lattice = try testLattice(path: dbPath, M1Person.self, M1Dog.self)
-//            let person = M1Person()
-//            person.name = "Bob"
-//            person.age = "30"
-//            try lattice.add(person)
-//        }
-//        try autoreleasepool {
-//            let _ = try testLattice(path: dbPath, M2Person.self, M2Dog.self, migration: [
-//                2: Migration((from: M1Person.self, to: M2Person.self),
-//                             (from: M1Dog.self, to: M2Dog.self),
-//                             blocks: { old, new in new.age = Int(old.age) ?? 0 },
-//                                    { _, _ in })
-//            ])
-//        }
-//
-//        // Phase 2: Manually bump schema version to 3 (simulates a future migration)
-//        try executeRawSQL(dbURL, [
-//            "UPDATE _lattice_meta SET value = '3' WHERE key = 'schema_version'"
-//        ])
-//
-//        // Phase 3: Reopen with v2 migration — should throw (current=3 > target=2)
-//        #expect(throws: (any Error).self) {
-//            try autoreleasepool {
-//                let _ = try testLattice(path: dbPath, M2Person.self, M2Dog.self, migration: [
-//                    2: Migration((from: M1Person.self, to: M2Person.self),
-//                                 (from: M1Dog.self, to: M2Dog.self),
-//                                 blocks: { old, new in new.age = Int(old.age) ?? 0 },
-//                                        { _, _ in })
-//                ])
-//            }
-//        }
-//    }
+    /// Opening a migrated DB with a LOWER target version should throw.
+    /// (G4: restored — item B's throwing open bridges the core guard's
+    /// std::runtime_error through cxx_error into a Swift throw; the guard is
+    /// data/schema-dependent, so per the item-B policy it throws, no trap.)
+    @Test
+    func test_SchemaVersionGuard_OlderBinary_Throws() throws {
+        typealias M1Person = MigrationV1.Person
+        typealias M2Person = MigrationV2.Person
+        typealias M1Dog = MigrationV1.Dog
+        typealias M2Dog = MigrationV2.Dog
+
+        let dbPath = "schema_guard_older_\(String.random(length: 16)).sqlite"
+        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
+        try? Lattice.delete(for: .init(fileURL: dbURL))
+
+        // Phase 1: Create and migrate to v2
+        try autoreleasepool {
+            let lattice = try testLattice(path: dbPath, M1Person.self, M1Dog.self)
+            let person = M1Person()
+            person.name = "Bob"
+            person.age = "30"
+            try lattice.add(person)
+        }
+        try autoreleasepool {
+            let _ = try testLattice(path: dbPath, M2Person.self, M2Dog.self, migration: [
+                2: Migration((from: M1Person.self, to: M2Person.self),
+                             (from: M1Dog.self, to: M2Dog.self),
+                             blocks: { old, new in new.age = Int(old.age) ?? 0 },
+                                    { _, _ in })
+            ])
+        }
+
+        // Phase 2: Manually bump schema version to 3 (simulates a future migration)
+        try executeRawSQL(dbURL, [
+            "UPDATE _lattice_meta SET value = '3' WHERE key = 'schema_version'"
+        ])
+
+        // Phase 3: Reopen with v2 migration — should throw (current=3 > target=2)
+        #expect(throws: (any Error).self) {
+            try autoreleasepool {
+                let _ = try testLattice(path: dbPath, M2Person.self, M2Dog.self, migration: [
+                    2: Migration((from: M1Person.self, to: M2Person.self),
+                                 (from: M1Dog.self, to: M2Dog.self),
+                                 blocks: { old, new in new.age = Int(old.age) ?? 0 },
+                                        { _, _ in })
+                ])
+            }
+        }
+    }
 
     // MARK: - Cache Eviction Regression Test
 
