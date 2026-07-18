@@ -274,7 +274,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     }
 }
 
-public enum _ModelStorage {
+enum _ModelStorage {
     case unmanaged(lattice.swift_dynamic_object)
     case managed(lattice.ManagedModel)
 }
@@ -447,7 +447,7 @@ extension Model {
 
     /// Register this model if it has a primaryKey and isn't already registered.
     /// Called after `lattice.add()` so that manually-created models get registered.
-    public func _registerIfNeeded() {
+    func _registerIfNeeded() {
         guard primaryKey != nil else { return }
         if ModelInstanceRegistry.shared.databasePath(for: self) == nil {
             ModelInstanceRegistry.shared.register(self, tableName: Self.entityName)
@@ -693,7 +693,7 @@ extension Model {
     }
 }
 
-public func _defaultCxxLatticeObject<M>(_ model: M.Type) -> CxxDynamicObject where M: Model {
+func _defaultCxxLatticeObject<M>(_ model: M.Type) -> CxxDynamicObject where M: Model {
     CxxDynamicObject(CxxLatticeObject(std.string(M.entityName), M.cxxPropertyDescriptor()))
 }
 

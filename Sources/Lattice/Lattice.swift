@@ -29,7 +29,7 @@ extension Actor {
 @preconcurrency import Combine
 #endif
 
-public struct _UncheckedSendable<T>: @unchecked Sendable {
+@_spi(LatticeInternals) public struct _UncheckedSendable<T>: @unchecked Sendable {
     public let value: T
     
     public init(_ value: T) {
@@ -761,7 +761,7 @@ public struct Lattice {
         backend.asCxxLatticeRef!
     }
     internal var isolation: (any Actor)?
-    public var _isolation: (any Actor)? { isolation }
+    var _isolation: (any Actor)? { isolation }
     
     /// Resolve the Lattice wrapper for a C++ ref arriving through a trampoline
     /// (observer/sync callbacks, `Model.lattice`). Returns nil when the

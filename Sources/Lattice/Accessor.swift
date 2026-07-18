@@ -691,7 +691,7 @@ extension Dictionary: CxxManaged where Key: RawRepresentable, Value: Codable, Ke
 }
 
 /// Push the default value into unmanaged storage
-public func _pushDefaultToStorage<Value: CxxManaged>(_ storage: inout ModelStorage,
+func _pushDefaultToStorage<Value: CxxManaged>(_ storage: inout ModelStorage,
                                                      name: String,
                                                      value: Value) {
     Value.setField(on: &storage, named: name, value)

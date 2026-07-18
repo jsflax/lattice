@@ -103,11 +103,11 @@ public struct Query<T>: Sendable {
     private var rootEntityName: String?
 
     // Union query support: tracks which union fields were accessed during tracing
-    public class _UnionAccessTracker: @unchecked Sendable {
-        public var fields: [(name: String, type: any LatticeUnion.Type)] = []
+    class _UnionAccessTracker: @unchecked Sendable {
+        var fields: [(name: String, type: any LatticeUnion.Type)] = []
     }
-    public var _unionAccessTracker = _UnionAccessTracker()
-    public nonisolated(unsafe) var _unionOverrides: [String: Any] = [:]
+    var _unionAccessTracker = _UnionAccessTracker()
+    nonisolated(unsafe) var _unionOverrides: [String: Any] = [:]
 
     /**
      The `Query` struct works by compounding `QueryNode`s together in a tree structure.
@@ -393,14 +393,14 @@ public struct Query<T>: Sendable {
     // MARK: Query Construction
 
     /// For testing purposes only. Do not use directly.
-    public static func _constructForTesting() -> Query<T> {
+    static func _constructForTesting() -> Query<T> {
         return Query<T>()
     }
 
     internal var isAuditing: Bool
     /// Constructs an NSPredicate compatible string with its accompanying arguments.
     /// - Note: This is for internal use only and is exposed for testing purposes.
-    public func _constructPredicate() -> (String, [Any]) {
+    func _constructPredicate() -> (String, [Any]) {
         return buildPredicate(node, auditPredicate: isAuditing)
     }
 
@@ -472,7 +472,7 @@ extension Query {
 
 extension Query where T == Bool {
     /// Union subquery: parentCol IN (SELECT globalId FROM unionTable WHERE clause).
-    public static func _unionSubquery(parentKeyPath: [String], unionTable: String, whereClause: String) -> Query<Bool> {
+    static func _unionSubquery(parentKeyPath: [String], unionTable: String, whereClause: String) -> Query<Bool> {
         .init(.comparison(operator: .in,
             .keyPath(parentKeyPath, options: []),
             .select("globalId", from: unionTable, where: whereClause),
@@ -480,7 +480,7 @@ extension Query where T == Bool {
     }
 
     /// SQL CASE WHEN for union switch queries.
-    public static func _caseWhen(whens: [(condition: Query<Bool>, result: Query<Bool>)], elseResult: Query<Bool>) -> Query<Bool> {
+    static func _caseWhen(whens: [(condition: Query<Bool>, result: Query<Bool>)], elseResult: Query<Bool>) -> Query<Bool> {
         .init(.caseWhen(
             whens: whens.map { ($0.condition.node, $0.result.node) },
             elseResult: elseResult.node))

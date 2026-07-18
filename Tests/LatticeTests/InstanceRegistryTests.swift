@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import Lattice
+@_spi(LatticeInternals) import Lattice
 
 @Model final class Widget {
     var value: Int
