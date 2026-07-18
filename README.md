@@ -98,7 +98,7 @@ let results = lattice.objects(Person.self).where {
 
 // Sort results
 let sorted = lattice.objects(Person.self)
-    .sortedBy(.init(\.age, order: .forward))
+    .sortedBy(\.age, order: .forward)
 ```
 
 ### 5. Observe Changes
@@ -255,6 +255,16 @@ let config = Lattice.Configuration(
     ]
 )
 let lattice = try Lattice(V2Person.self, configuration: config)
+```
+
+The variadic `Migration((from:to:), blocks:)` initializer uses parameter packs
+(iOS 17+). On iOS 15/16 use the equivalent pack-free builder, available
+everywhere:
+
+```swift
+let migration = Migration().add(from: V1Person.self, to: V2Person.self) { old, new in
+    new.fullName = "\(old.firstName) \(old.lastName)"
+}
 ```
 
 ### SwiftUI Integration
@@ -579,9 +589,22 @@ let config = Lattice.Configuration(
 
 ## Requirements
 
-- Swift 6.2+
-- iOS 17.0+ / macOS 14.0+ / Linux (Ubuntu 24.04+)
-- Xcode 16.0+ (Apple platforms)
+- Swift 6.3+ toolchain (`swift-tools-version: 6.3`)
+- iOS 15.0+ / macOS 14.0+ / Linux (Ubuntu 24.04+)
+- Xcode with a Swift 6.3 toolchain (Apple platforms)
+
+### iOS 15/16 notes
+
+The deployment floor is iOS 15. The full API surface is available on every
+supported platform; three *convenience spellings* use variadic generics or
+`SortDescriptor.keyPath` and therefore require iOS 17+, each with a portable
+equivalent that works from iOS 15:
+
+| iOS 17+ convenience | iOS 15+ portable equivalent |
+|---|---|
+| `Lattice(A.self, B.self, …)` beyond 6 model types (parameter packs) | Fixed-arity overloads up to 6 types, or `Lattice(for: [A.self, B.self, …])` |
+| `Migration((from: V1.self, to: V2.self), blocks: …)` (parameter packs) | `Migration().add(from: V1.self, to: V2.self) { old, new in … }` |
+| `sortedBy(SortDescriptor(\.age, order: .forward))` | `sortedBy(\.age, order: .forward)` |
 
 ## License
 
