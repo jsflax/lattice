@@ -92,7 +92,8 @@ extension ColumnValue {
         switch cxx.index() {
         case 1:
             let v = lattice.column_value_as_int(cxx)
-            self = v.__convertToBool() ? .int64(v.pointee) : .null
+            // numericCast: C++ int64_t imports as Int on Linux, Int64 on Darwin.
+            self = v.__convertToBool() ? .int64(numericCast(v.pointee)) : .null
         case 2:
             let v = lattice.column_value_as_double(cxx)
             self = v.__convertToBool() ? .real(v.pointee) : .null
@@ -120,7 +121,8 @@ extension ColumnValue {
             // nullptr (the variant's first alternative, i.e. SQL NULL).
             return lattice.union_value().field_as_column_value(std.string(""))
         case .int64(let v):
-            return lattice.column_value_from_int(v)
+            // numericCast: see init(_:) — int64_t width differs per platform.
+            return lattice.column_value_from_int(numericCast(v))
         case .real(let v):
             return lattice.column_value_from_double(v)
         case .text(let v):
@@ -213,7 +215,7 @@ public final class MigrationContext: @unchecked Sendable {
             for pair in oldRow {
                 swiftRow[String(pair.first)] = ColumnValue(pair.second)
             }
-            callback(rowId, swiftRow)
+            callback(numericCast(rowId), swiftRow)
         }
     }
 
@@ -222,7 +224,7 @@ public final class MigrationContext: @unchecked Sendable {
     public func setValue(table tableName: String, rowId: Int64,
                          column: String, value: ColumnValue) {
         cxxContext.setRowValue(table: std.string(tableName),
-                               rowId: rowId,
+                               rowId: numericCast(rowId),
                                column: std.string(column),
                                value: value.cxxValue)
     }
