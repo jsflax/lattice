@@ -102,10 +102,23 @@ extension ColumnValue {
             self = v.__convertToBool() ? .text(String(v.pointee)) : .null
         case 4:
             let v = lattice.column_value_as_blob(cxx)
-            // .map first: Data.init over the imported std::vector's Collection
-            // conformance dispatches through a NULL protocol witness on Linux
-            // (SIGSEGV) — the repo-wide safe idiom is Data(vec.map { $0 }).
-            self = v.__convertToBool() ? .blob(Data(v.pointee.map { $0 })) : .null
+            guard v.__convertToBool() else {
+                self = .null
+                return
+            }
+            // Direct C++ member calls ONLY (size()/operator[]): on Linux this
+            // vector specialization's Collection conformance dispatches count
+            // through a NULL protocol witness (SIGSEGV) — Data.init(_:) AND
+            // Collection.map both crash. Do not "simplify" this loop.
+            let vec = v.pointee
+            let count: Int = numericCast(vec.size())
+            var data = Data(capacity: count)
+            var i = 0
+            while i < count {
+                data.append(vec[numericCast(i)])
+                i += 1
+            }
+            self = .blob(data)
         default:
             // 0 = std::nullptr_t (SQL NULL); anything else is unreachable
             // today — degrade to NULL rather than trap if the core grows an
