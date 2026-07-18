@@ -1451,7 +1451,7 @@ class VirtualModelMacro: ExtensionMacro {
 
 @main
 struct LatticeMacrosPlugin: CompilerPlugin {
-    let providingMacros: [Macro.Type] = [
+    let providingMacros: [any Macro.Type] = [
         ModelMacro.self, TransientMacro.self, PropertyMacro.self,
 //        LatticeMemberMacro.self,
         UniqueMacro.self, CodableMacro.self, EnumMacro.self, UnionMacro.self, EmbeddedModelMacro.self,

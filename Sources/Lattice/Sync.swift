@@ -121,7 +121,7 @@ public enum ServerSentEvent: Codable {
         case kind, auditLog, ack
     }
 
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let kind = try container.decode(String.self, forKey: .kind)
 
@@ -137,7 +137,7 @@ public enum ServerSentEvent: Codable {
         }
     }
 
-    public func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
 
         switch self {

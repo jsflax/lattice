@@ -7,6 +7,18 @@ import Foundation
 // yields type-erased `DynamicObject`s. The where/orderBy SQL fragments are
 // supplied by the caller (the MCP builds + validates them against the schema
 // before calling — see Phase 3).
+//
+// 1.0 SEMANTICS NOTE — generation-model exemption (item A ledger, G9):
+// `DynamicResults` deliberately keeps LIVE `count` + LIMIT/OFFSET `snapshot`
+// semantics; it does NOT adopt the typed `Results` family's generation-pinned
+// (A2-lite) read model. It is trap-free under concurrent shrink by
+// construction: there is no positional `subscript`/`element(at:)` to guard —
+// `snapshot(limit:offset:)` is a single SQL query returning whatever matches
+// at execution time, `count` is a live COUNT(*), and `first` is
+// `snapshot(limit: 1)`. The corollary: a `count` and a subsequent `snapshot`
+// are NOT mutually consistent under a concurrent writer — callers needing a
+// coherent page (the MCP serializer does) must take ONE `snapshot()` and
+// derive counts/slices from the returned array.
 public final class DynamicResults: @unchecked Sendable {
     private let backend: any LatticeBackend
     public let tableName: String

@@ -75,4 +75,21 @@ final class LatticeMCPProviderTests {
         #expect(e3.isError)
         #expect(e3.json.contains("unknown_tool"))
     }
+
+    // `toolNames` is the embedder's registration list (1.0 public surface):
+    // every advertised name must be answered by `handle` (anything else comes
+    // back `unknown_tool`), so the constant cannot drift from the dispatch
+    // switch. Empty-args calls may fail validation (`invalid_predicate` etc.)
+    // but must never be *unrouted*.
+    @Test func testToolNamesMatchesDispatch() async throws {
+        let url = try fixture()
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        let provider = try await LatticeDataProvider(fileURL: url)
+
+        for name in LatticeDataProvider.toolNames {
+            let r = await provider.handle(tool: name, argumentsJSON: "{}")
+            #expect(!r.json.contains("unknown_tool"),
+                    "'\(name)' is in toolNames but not routed by handle(tool:)")
+        }
+    }
 }

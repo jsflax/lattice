@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import Lattice
+import LatticeMCP
 
 /// Thread-safe accumulator for the subprocess's stdout (written from a
 /// FileHandle readability handler on a background queue).
@@ -83,6 +84,14 @@ final class LatticeMCPStdioTests {
         #expect(gotList)                       // tools/list responded
         #expect(out.contains("lattice_query")) // advertised our tools
         #expect(out.contains("lattice_schema"))
+        // Pin the public constant to the executable's advertised tool list:
+        // `LatticeDataProvider.toolNames` is the embedder's registration list
+        // (1.0 public surface), and the provider's `handle` switch + main.swift's
+        // `toolDefinitions()` must not drift from it.
+        for name in LatticeDataProvider.toolNames {
+            #expect(out.contains("\"\(name)\""),
+                    "tools/list did not advertise '\(name)' from LatticeDataProvider.toolNames")
+        }
         #expect(gotCall)                       // tools/call responded
         #expect(out.contains("Alice"))         // query result row
         #expect(out.contains("Rex"))           // resolved dog link (depth 1)
