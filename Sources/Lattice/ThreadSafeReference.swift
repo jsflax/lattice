@@ -180,10 +180,10 @@ extension _VirtualNearestResultsCompat {
 }
 
 public struct LatticeThreadSafeReference: Sendable {
-    private let modelTypes: [Model.Type]
+    private let modelTypes: [any Model.Type]
     private let configuration: Lattice.Configuration
-    
-    init(modelTypes: [Model.Type], configuration: Lattice.Configuration) {
+
+    init(modelTypes: [any Model.Type], configuration: Lattice.Configuration) {
         self.modelTypes = modelTypes
         self.configuration = configuration
     }

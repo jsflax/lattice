@@ -1025,7 +1025,7 @@ public struct Lattice {
     ///   - configuration: Database configuration (including any migrations)
     // Variadic (parameter-pack) convenience init — iOS 17+ (variadic generics).
     // For unbounded arity on iOS 17+. iOS 15 uses the fixed-arity overloads below
-    // or `init(for: [Model.Type])`.
+    // or `init(for: [any Model.Type])`.
     @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     public init<each M: Model>(isolation: isolated (any Actor)? = #isolation,
                                _ modelTypes: repeat (each M).Type,
@@ -1040,7 +1040,7 @@ public struct Lattice {
 
     // Fixed-arity convenience inits (no parameter packs) — available on all
     // deployment targets. They forward to `init(for:)`; for more types than
-    // these cover, use `init(for: [Model.Type])`.
+    // these cover, use `init(for: [any Model.Type])`.
     public init<A: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, configuration: Configuration = defaultConfiguration) throws {
         try self.init(for: [a], configuration: configuration)
     }
@@ -2121,7 +2121,7 @@ typealias LatticeCxx = lattice
 protocol _Schema {
     var modelTypeList: [any Model.Type] { get }
     func merge(typeErased: _Schema) -> _Schema
-    func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> VirtualResults<T>
+    func _generateVirtualResults<T>(_ type: T.Type, on lattice: Lattice) -> any VirtualResults<T>
 }
 
 extension _Schema {
