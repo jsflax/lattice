@@ -102,7 +102,10 @@ extension ColumnValue {
             self = v.__convertToBool() ? .text(String(v.pointee)) : .null
         case 4:
             let v = lattice.column_value_as_blob(cxx)
-            self = v.__convertToBool() ? .blob(Data(v.pointee)) : .null
+            // .map first: Data.init over the imported std::vector's Collection
+            // conformance dispatches through a NULL protocol witness on Linux
+            // (SIGSEGV) — the repo-wide safe idiom is Data(vec.map { $0 }).
+            self = v.__convertToBool() ? .blob(Data(v.pointee.map { $0 })) : .null
         default:
             // 0 = std::nullptr_t (SQL NULL); anything else is unreachable
             // today — degrade to NULL rather than trap if the core grows an
@@ -128,7 +131,12 @@ extension ColumnValue {
         case .text(let v):
             return lattice.column_value_from_string(std.string(v))
         case .blob(let v):
-            return lattice.column_value_from_blob(lattice.ByteVector(v))
+            // Element-wise push_back, matching the repo idiom (see
+            // Data.setUnmanaged) — the sequence-taking ByteVector initializer
+            // rides the same interop surface as the Linux NULL-witness crash.
+            var vec = lattice.ByteVector()
+            for byte in v { vec.push_back(byte) }
+            return lattice.column_value_from_blob(vec)
         }
     }
 }
