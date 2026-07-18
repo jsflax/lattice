@@ -404,30 +404,14 @@ extension List {
     }
 }
 
-// MARK: Codable Support
-extension List: Codable where Element: Codable {
-    public init(from decoder: any Decoder) throws {
-        var container = try decoder.unkeyedContainer()
-        guard let count = container.count else {
-//            self.linkList = LinkList()
-            fatalError()
-            return
-        }
-        
-//        self.linkList = .init()
-        try (0..<(container.count ?? 0)).forEach { _ in
-//            var o = try container.decode(Element.self)._dynamicObject
-//            self.linkList.push_back(&o)
-        }
-        fatalError()
-    }
-    
-    public func encode(to encoder: any Encoder) throws {
-        var container = encoder.unkeyedContainer()
-        try container.encode(contentsOf: self.map(\.self))
-    }
-}
-
+// NOTE: `List` is deliberately NOT Codable (G2). The old conditional
+// conformance was a trap: `init(from:)` was an unconditional `fatalError()`
+// stub, so any decode of a model graph containing a `List` terminated the
+// process at runtime. Serialization of managed graphs goes through
+// `@Detached`, which mirrors lists as plain `[Detached]` arrays with their
+// own synthesized Codable. Dropping the conformance turns the runtime trap
+// into a compile-time error for any future `@Codable` model with a `List`
+// property (mark such properties `@CodableIgnored` or detach first).
 
 public typealias LatticeList = List
 
