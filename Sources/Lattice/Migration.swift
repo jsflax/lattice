@@ -27,6 +27,110 @@ public struct TableChanges: Sendable {
     }
 }
 
+// MARK: - ColumnValue
+
+/// `std::unordered_map<std::string, column_value_t>` (the core's
+/// `migration_row`) imports without collection conformances; declaring
+/// `CxxSequence` here derives iteration from the imported begin()/end(),
+/// letting `enumerateObjects` walk rows without copying through C++.
+extension lattice.migration_row: CxxSequence {}
+
+/// A single SQL value crossing the migration boundary — the Swift face of the
+/// core's `column_value_t` variant (NULL / INTEGER / REAL / TEXT / BLOB).
+///
+/// This shape is the alignment target for the 1.1 unified-open C ABI's
+/// `lattice_column_value_t` (latticecore docs/design-unified-open.md §3):
+/// one case per SQLite storage class, BLOB-capable by construction.
+public enum ColumnValue: Equatable, Sendable {
+    case null
+    case int64(Int64)
+    case real(Double)
+    case text(String)
+    case blob(Data)
+
+    /// The integer payload, or nil for any other kind.
+    public var int64Value: Int64? {
+        if case .int64(let v) = self { return v }
+        return nil
+    }
+
+    /// The floating-point payload. Follows SQLite numeric affinity: an
+    /// INTEGER-stored value in a REAL-declared column surfaces as `.int64`,
+    /// so this accessor also widens `.int64` to `Double`.
+    public var doubleValue: Double? {
+        switch self {
+        case .real(let v): return v
+        case .int64(let v): return Double(v)
+        default: return nil
+        }
+    }
+
+    /// The text payload, or nil for any other kind.
+    public var stringValue: String? {
+        if case .text(let v) = self { return v }
+        return nil
+    }
+
+    /// The blob payload, or nil for any other kind.
+    public var dataValue: Data? {
+        if case .blob(let v) = self { return v }
+        return nil
+    }
+
+    public var isNull: Bool { self == .null }
+}
+
+extension ColumnValue {
+    /// Marshal from the C++ `column_value_t` variant. Discrimination goes
+    /// through `std::variant::index()` — the bridge's `column_value_as_int` /
+    /// `column_value_as_double` helpers COERCE across the numeric kinds
+    /// (truncating doubles, widening ints), so probe order alone would
+    /// misclassify one of them. Alternative order is pinned by the core's
+    /// `column_value_t` declaration (types.hpp): nullptr, int64, double,
+    /// string, blob.
+    init(_ cxx: lattice.column_value_t) {
+        switch cxx.index() {
+        case 1:
+            let v = lattice.column_value_as_int(cxx)
+            self = v.__convertToBool() ? .int64(v.pointee) : .null
+        case 2:
+            let v = lattice.column_value_as_double(cxx)
+            self = v.__convertToBool() ? .real(v.pointee) : .null
+        case 3:
+            let v = lattice.column_value_as_string(cxx)
+            self = v.__convertToBool() ? .text(String(v.pointee)) : .null
+        case 4:
+            let v = lattice.column_value_as_blob(cxx)
+            self = v.__convertToBool() ? .blob(Data(v.pointee)) : .null
+        default:
+            // 0 = std::nullptr_t (SQL NULL); anything else is unreachable
+            // today — degrade to NULL rather than trap if the core grows an
+            // alternative.
+            self = .null
+        }
+    }
+
+    /// Marshal to the C++ `column_value_t` variant.
+    var cxxValue: lattice.column_value_t {
+        switch self {
+        case .null:
+            // std::variant imports into Swift with no initializers and the
+            // bridge exposes no explicit null constructor — obtain SQL NULL by
+            // asking an empty union_value for a missing field, which returns
+            // nullptr (the variant's first alternative, i.e. SQL NULL).
+            return lattice.union_value().field_as_column_value(std.string(""))
+        case .int64(let v):
+            return lattice.column_value_from_int(v)
+        case .real(let v):
+            return lattice.column_value_from_double(v)
+        case .text(let v):
+            return lattice.column_value_from_string(std.string(v))
+        case .blob(let v):
+            return lattice.column_value_from_blob(lattice.ByteVector(v))
+        }
+    }
+}
+
 /// Context for performing data migrations when schema changes.
 ///
 /// Use this to transform data during schema migrations, such as:
@@ -36,24 +140,29 @@ public struct TableChanges: Sendable {
 ///
 /// Example:
 /// ```swift
-/// let lattice = try Lattice(Place.self) { migration in
-///     if migration.hasChanges(for: "Place") {
-///         migration.enumerateObjects(table: "Place") { rowId, oldRow in
-///             if let lat = oldRow["latitude"]?.doubleValue,
-///                let lon = oldRow["longitude"]?.doubleValue {
-///                 migration.setValue(table: "Place", rowId: rowId,
-///                                   column: "location_minLat", value: lat)
-///                 migration.setValue(table: "Place", rowId: rowId,
-///                                   column: "location_maxLat", value: lat)
-///                 migration.setValue(table: "Place", rowId: rowId,
-///                                   column: "location_minLon", value: lon)
-///                 migration.setValue(table: "Place", rowId: rowId,
-///                                   column: "location_maxLon", value: lon)
-///             }
+/// if migration.hasChanges(for: "Place") {
+///     migration.enumerateObjects(table: "Place") { rowId, oldRow in
+///         if let lat = oldRow["latitude"]?.doubleValue,
+///            let lon = oldRow["longitude"]?.doubleValue {
+///             migration.setValue(table: "Place", rowId: rowId,
+///                                column: "location_minLat", value: .real(lat))
+///             migration.setValue(table: "Place", rowId: rowId,
+///                                column: "location_maxLat", value: .real(lat))
+///             migration.setValue(table: "Place", rowId: rowId,
+///                                column: "location_minLon", value: .real(lon))
+///             migration.setValue(table: "Place", rowId: rowId,
+///                                column: "location_maxLon", value: .real(lon))
 ///         }
 ///     }
 /// }
 /// ```
+///
+/// NOTE (1.0): `MigrationContext` is not yet reachable from a public `Lattice`
+/// open — the block-based open rides the 1.1 unified-open ABI work
+/// (latticecore docs/design-unified-open.md). The versioned `[Int: Migration]`
+/// dictionary on `Configuration` is the wired 1.0 migration path. This type's
+/// `(rowId, [String: ColumnValue])` shape is frozen now because the 1.1 C ABI
+/// migration array is specified against it.
 // MigrationContext wraps the C++ `swift_migration_context_ref`, which — like
 // the rest of the *_ref handle family — is a foreign reference on iOS 16.4+
 // and a copyable value type below the floor. Its mutable state (the wrapped
@@ -89,20 +198,33 @@ public final class MigrationContext: @unchecked Sendable {
     /// Enumerate all existing rows in a table for data transformation.
     ///
     /// Call this to iterate over existing data and transform it as needed.
-    /// Use `setValue` within the callback to set new column values.
+    /// Use `setValue` within the callback to stage new column values; staged
+    /// values are applied after auto-migration adds/removes columns.
     ///
     /// - Parameters:
     ///   - tableName: The table to enumerate
-    ///   - callback: Called for each row with (rowId, oldRowData)
+    ///   - callback: Called once per row with the row's `id` and the full old
+    ///     row as column-name → ``ColumnValue`` (includes columns being
+    ///     removed; BLOB columns surface as `.blob`).
     public func enumerateObjects(table tableName: String,
-                                 callback: @escaping (any Model, any Model) -> Void) {
+                                 callback: @escaping (Int64, [String: ColumnValue]) -> Void) {
         cxxContext.enumerateObjects(table: std.string(tableName)) { rowId, oldRow in
-//            var swiftRow: [String: ColumnValue] = [:]
-//            for (key, value) in oldRow {
-//                swiftRow[String(key)] = ColumnValue(value)
-//            }
-//            callback(rowId, swiftRow)
+            var swiftRow: [String: ColumnValue] = [:]
+            for pair in oldRow {
+                swiftRow[String(pair.first)] = ColumnValue(pair.second)
+            }
+            callback(rowId, swiftRow)
         }
+    }
+
+    /// Stage a value for one row/column, applied after auto-migration.
+    /// Call from within an `enumerateObjects` callback.
+    public func setValue(table tableName: String, rowId: Int64,
+                         column: String, value: ColumnValue) {
+        cxxContext.setRowValue(table: std.string(tableName),
+                               rowId: rowId,
+                               column: std.string(column),
+                               value: value.cxxValue)
     }
 
     // MARK: - Helper Operations

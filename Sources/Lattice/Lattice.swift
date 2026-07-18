@@ -1012,37 +1012,17 @@ public struct Lattice {
 //        try self.init(for: types, configuration: configuration, migration: migration)
 //    }
 
-    /// Initialize Lattice with model types and a migration block.
+    /// Initialize Lattice with model types.
     ///
-    /// The migration block is called when schema changes are detected, allowing you
-    /// to transform data during migration.
-    ///
-    /// Example:
-    /// ```swift
-    /// // Migrate separate lat/lon fields to CLLocationCoordinate2D
-    /// let lattice = try Lattice(Place.self, configuration: config) { migration in
-    ///     if migration.hasChanges(for: "Place") {
-    ///         migration.enumerateObjects(table: "Place") { rowId, oldRow in
-    ///             if let lat = oldRow["latitude"]?.doubleValue,
-    ///                let lon = oldRow["longitude"]?.doubleValue {
-    ///                 migration.setValue(table: "Place", rowId: rowId,
-    ///                                   column: "location_minLat", value: lat)
-    ///                 migration.setValue(table: "Place", rowId: rowId,
-    ///                                   column: "location_maxLat", value: lat)
-    ///                 migration.setValue(table: "Place", rowId: rowId,
-    ///                                   column: "location_minLon", value: lon)
-    ///                 migration.setValue(table: "Place", rowId: rowId,
-    ///                                   column: "location_maxLon", value: lon)
-    ///             }
-    ///         }
-    ///     }
-    /// }
-    /// ```
+    /// To transform data across schema versions, pass a versioned
+    /// `[Int: Migration]` dictionary via `Configuration.migration` — the wired
+    /// 1.0 migration path. (A block-based open receiving a `MigrationContext`
+    /// — `enumerateObjects`/`setValue` over `(rowId, [String: ColumnValue])`
+    /// rows — rides the 1.1 unified-open work; see that type's docs.)
     ///
     /// - Parameters:
     ///   - modelTypes: The model types to register
-    ///   - configuration: Database configuration
-    ///   - migration: Block called when schema changes are detected
+    ///   - configuration: Database configuration (including any migrations)
     // Variadic (parameter-pack) convenience init — iOS 17+ (variadic generics).
     // For unbounded arity on iOS 17+. iOS 15 uses the fixed-arity overloads below
     // or `init(for: [Model.Type])`.
