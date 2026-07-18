@@ -311,8 +311,6 @@ public protocol Model: AnyObject, ObservableObject, Hashable, Identifiable, Sche
     static var properties: [(String, any SchemaProperty.Type)] { get }
     var primaryKey: Int64? { get set }
     var globalId: UUID? { get }
-    @available(*, deprecated, renamed: "globalId")
-    var __globalId: UUID? { get }
 
     @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
     var _$observationRegistrar: Observation.ObservationRegistrar { get }

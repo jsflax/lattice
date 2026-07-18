@@ -65,7 +65,7 @@ extension AuditLog {
 
         auditLog.isFromRemote = json.isFromRemote
         auditLog.isSynchronized = json.isSynchronized
-        auditLog.__globalId = UUID(uuidString: json.globalId)  // setter: __globalId is the stored property
+        auditLog.globalId = UUID(uuidString: json.globalId)  // internal(set): stored @Property
 
         return auditLog
     }
@@ -87,7 +87,7 @@ extension AuditLog {
             self.timestamp = parsed.timestamp
             self.isFromRemote = parsed.isFromRemote
             self.isSynchronized = parsed.isSynchronized
-            self.__globalId = parsed.globalId  // setter: __globalId is the stored property
+            self.globalId = parsed.globalId  // internal(set): stored @Property
         } catch {
             // Fallback to empty audit log on parse failure
             self.init()

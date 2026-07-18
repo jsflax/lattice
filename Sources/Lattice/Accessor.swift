@@ -3,14 +3,6 @@ import LatticeSwiftCppBridge
 import LatticeSwiftModule
 import CxxStdlib
 
-public protocol StaticString {
-    static var string: String { get }
-}
-
-public protocol StaticInt32 {
-    static var int32: Int32 { get }
-}
-
 // MARK: - ModelStorage (hides CxxDynamicObjectRef from macro-generated code)
 
 public struct ModelStorage: @unchecked Sendable {

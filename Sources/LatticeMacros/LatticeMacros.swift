@@ -461,7 +461,7 @@ class CodableMacro: ExtensionMacro, MemberMacro {
                     case \(member.name) = "\(member.codingKey ?? member.mappedName ?? member.name)"
                     """
                 }.joined(separator: "\n\t\t"))
-                case __globalId = "globalId"
+                case globalId
             }
 
             public required init(from decoder: Decoder) throws {
@@ -469,7 +469,7 @@ class CodableMacro: ExtensionMacro, MemberMacro {
                     _$observationRegistrarBox = Observation.ObservationRegistrar()
                 }
                 let container = try decoder.container(keyedBy: CodingKeys.self)
-                self.__globalId = try container.decodeIfPresent(UUID.self, forKey: .__globalId)
+                self.globalId = try container.decodeIfPresent(UUID.self, forKey: .globalId)
                 \(raw: members.map { member in
                     if member.isOptional {
                         return "self.\(member.name) = try container.decodeIfPresent(\(member.unwrappedType).self, forKey: .\(member.name))"
@@ -481,7 +481,7 @@ class CodableMacro: ExtensionMacro, MemberMacro {
 
             public func encode(to encoder: any Encoder) throws {
                 var container = encoder.container(keyedBy: CodingKeys.self)
-                try container.encode(__globalId, forKey: .__globalId)
+                try container.encode(globalId, forKey: .globalId)
                 \(raw: members.map { member in
                     """
                     try container.encode(\(member.name), forKey: .\(member.name))
@@ -890,14 +890,9 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                     _$observationRegistrarBox = Observation.ObservationRegistrar()
                 }
             }
-            private struct __GlobalIdName: StaticString { static var string: String { "globalId" } }
-            private struct __GlobalIdKey: StaticInt32 { static var int32: Int32 { 1 } }
-            
             @Property(name: "globalId")
-            public var __globalId: UUID?
+            public internal(set) var globalId: UUID?
 
-            public var globalId: UUID? { __globalId }
-            
             public var _instanceObservers: [_ModelObserver] = []
             // Untyped box for the iOS-17 ObservationRegistrar (a stored property
             // of a 17-only type can't exist at the iOS-15 floor). Eagerly filled

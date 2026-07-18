@@ -62,8 +62,8 @@ public class AuditLog: CustomStringConvertible {
     /// `encode(to:)` in the extension below.
     public required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        if let gidStr = try container.decodeIfPresent(String.self, forKey: .__globalId) {
-            self.__globalId = UUID(uuidString: gidStr)
+        if let gidStr = try container.decodeIfPresent(String.self, forKey: .globalId) {
+            self.globalId = UUID(uuidString: gidStr)
         }
         self.tableName = try container.decode(String.self, forKey: .tableName)
         self.operation = try container.decode(Operation.self, forKey: .operation)
@@ -90,7 +90,7 @@ extension AuditLog: Codable {
         case timestamp
         case isFromRemote
         case isSynchronized
-        case __globalId = "globalId"
+        case globalId
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -101,7 +101,7 @@ extension AuditLog: Codable {
         // re-encode for C++ apply). Foundation's default UUID
         // Codable would emit UPPERCASE — see the comment on the type
         // above for why that breaks `@Relation` link-table joins.
-        try container.encodeIfPresent(__globalId?.uuidString.lowercased(), forKey: .__globalId)
+        try container.encodeIfPresent(globalId?.uuidString.lowercased(), forKey: .globalId)
         try container.encode(tableName, forKey: .tableName)
         try container.encode(operation, forKey: .operation)
         try container.encode(rowId, forKey: .rowId)
