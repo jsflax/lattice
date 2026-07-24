@@ -108,6 +108,14 @@ public extension TableResults {
 }
 
 #if canImport(LatticeSwiftCppBridge)
+// Availability guard is REQUIRED, not decorative: `lattice.swift_lattice`
+// crosses C++ interop whose foreign-reference-type runtime floor is
+// iOS 16.4 / macOS 13.3 / tvOS 16.4 / watchOS 9.4 (see LATTICE_HAS_FRT in
+// LatticeCore's bridging.hpp). SPM compiles this module at the package's
+// own iOS 15 floor regardless of the consuming app's deployment target, so
+// without the guard the WHOLE module fails to compile for iOS:
+//   error: 'swift_lattice' is only available in iOS 16.4.0 or newer
+@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 public extension Lattice {
     /// Process-global count of SQL statements issued through the database
     /// layer, across ALL connections and lattices. A test/benchmark
