@@ -8,13 +8,29 @@ permissions:
   contents: write
 
 jobs:
+  # Releasability gate: clean tag-at-origin/main, latticecore pin sanity
+  # (edit-mode detector), changelog section, semver-monotonic tag, CI green
+  # for the exact commit. See Scripts/release-preflight.sh.
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history + all tags: the monotonicity check walks every tag.
+          fetch-depth: 0
+      - name: Release preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./Scripts/release-preflight.sh "${GITHUB_REF_NAME}"
+
   # The release test gates ARE the CI gates — called, not copy-pasted, so
   # they cannot drift (a 6.2-container bug once lived in two files).
   tests:
     uses: ./.github/workflows/ci.yml
 
   release:
-    needs: [tests]
+    needs: [tests, preflight]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
