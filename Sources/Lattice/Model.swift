@@ -42,6 +42,13 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         // asCxxLatticeRef (the handle works on every OS — value-converted
         // below the FRT floor).
         var latticeBackend: (any LatticeBackend)?
+        // Captured at registration: notifyChange can fire from inside the C++
+        // commit hook while the triggering setter's exclusive access to the
+        // model's storage is still live — reading `model.lattice` there (it
+        // goes through _dynamicObject) is a Swift exclusivity violation. The
+        // owning handle's isolation never changes, so the register-time
+        // capture is equivalent and touches no model storage.
+        weak var isolation: (any Actor)?
         init(_ model: any Model) {
             self.instance = model
             self.objectIdentifier = ObjectIdentifier(model)
@@ -66,6 +73,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         let dbPath = String(latticeRef.path())
         let key = InstanceKey(databasePath: dbPath, tableName: tableName, primaryKey: primaryKey)
         var ref = WeakModelRef(model)
+        ref.isolation = model.lattice?.isolation
         let objectId = ObjectIdentifier(model)
 
         // Register C++ object observer for cross-process changes.
@@ -245,6 +253,37 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         return alive
     }
 
+    // MARK: - Change notification (coalesced)
+    //
+    // One unstructured Task per (property-change × live observer) melts down
+    // under bulk writes: a single transaction touching thousands of rows
+    // spawns tens of thousands of Tasks, all hopping isolation and contending
+    // on SwiftUI's global Observation graph lock — observed as multi-minute
+    // UI hangs with every cooperative thread parked on that mutex (issue #4).
+    // Deliveries are instead enqueued into one pending buffer, deduplicated
+    // per (instance, property) within a burst — the callback carries only the
+    // property name and observers read current state, so a merged delivery is
+    // lossless — and drained by a SINGLE task that walks the buffer in
+    // enqueue (commit) order, hopping isolation once per consecutive
+    // same-isolation run instead of once per notification. Delivery is
+    // ALWAYS asynchronous — notifyChange can be reached from inside the
+    // C++ commit hook (flush_changes → for_each_alive → observer callback),
+    // where the triggering property setter's exclusive-access scope is still
+    // live on the stack; a synchronous send there is a Swift exclusivity
+    // violation ("Fatal access conflict"). Non-isolated targets simply
+    // deliver on the drain task itself, without a hop.
+
+    private struct _PendingNotification: @unchecked Sendable {
+        let ref: WeakModelRef
+        let propertyName: String
+        let isolation: (any Actor)?
+    }
+
+    private struct _PendingKey: Hashable {
+        let id: ObjectIdentifier
+        let propertyName: String
+    }
+
     /// Notify all instances of a row change, except the one that initiated it (if provided)
     func notifyChange(databasePath: String, tableName: String, primaryKey: Int64, propertyName: String, excludingInstanceId: ObjectIdentifier? = nil) {
         let key = InstanceKey(databasePath: databasePath, tableName: tableName, primaryKey: primaryKey)
@@ -254,21 +293,97 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         lock.unlock()
 
         for ref in refs {
-            guard let model = ref.instance else { continue }
+            guard ref.instance != nil else { continue }
             if let excludeId = excludingInstanceId, ref.objectIdentifier == excludeId {
                 continue
             }
-            Task {
-                // Trigger both Combine (ObservableObject) and Observation (@Observable) systems
-                if let isolation = model.lattice?.isolation {
+            // ref.isolation, NOT model.lattice?.isolation: this path can run
+            // inside the C++ commit hook with the writer's exclusive access
+            // still open — model storage must not be touched here.
+            _enqueueNotification(_PendingNotification(ref: ref, propertyName: propertyName, isolation: ref.isolation))
+        }
+    }
+
+    private let notifyLock = NSLock()
+    private var pendingNotifications: [_PendingNotification] = []
+    private var pendingSeen: Set<_PendingKey> = []
+    private var drainScheduled = false
+    private var drainTasksScheduled = 0
+
+    /// Test hook: how many drain tasks have ever been scheduled. The
+    /// bulk-write pin asserts this stays orders of magnitude below the
+    /// notification count.
+    var _drainTasksScheduledForTesting: Int {
+        notifyLock.lock()
+        defer { notifyLock.unlock() }
+        return drainTasksScheduled
+    }
+
+    private func _enqueueNotification(_ pending: _PendingNotification) {
+        var schedule = false
+        notifyLock.lock()
+        if pendingSeen.insert(_PendingKey(id: pending.ref.objectIdentifier, propertyName: pending.propertyName)).inserted {
+            pendingNotifications.append(pending)
+        }
+        if !drainScheduled {
+            drainScheduled = true
+            drainTasksScheduled += 1
+            schedule = true
+        }
+        notifyLock.unlock()
+        if schedule {
+            Task { await self._drainPendingNotifications() }
+        }
+    }
+
+    /// Synchronous helper: snapshot-and-clear the pending buffer, or mark the
+    /// drain finished and return nil when it's empty. (NSLock is unavailable
+    /// from async contexts; the drain loop calls this instead.)
+    private func _takePendingBatch() -> [_PendingNotification]? {
+        notifyLock.lock()
+        defer { notifyLock.unlock() }
+        if pendingNotifications.isEmpty {
+            drainScheduled = false
+            pendingSeen.removeAll(keepingCapacity: true)
+            return nil
+        }
+        let batch = pendingNotifications
+        pendingNotifications.removeAll(keepingCapacity: true)
+        // Fresh dedup window per batch: a property that changes again after
+        // its batch was snapshot must deliver again.
+        pendingSeen.removeAll(keepingCapacity: true)
+        return batch
+    }
+
+    private func _drainPendingNotifications() async {
+        while true {
+            guard let batch = _takePendingBatch() else { return }
+
+            var index = 0
+            while index < batch.count {
+                let isolation = batch[index].isolation
+                var end = index
+                while end < batch.count,
+                      batch[end].isolation.map(ObjectIdentifier.init) == isolation.map(ObjectIdentifier.init) {
+                    end += 1
+                }
+                let run = Array(batch[index..<end])
+                if let isolation {
                     await isolation.invoke { _ in
-                        ref.instance?._objectWillChange_send()
-                        ref.instance?._triggerObservers_send(keyPath: propertyName)
+                        for pending in run {
+                            pending.ref.instance?._objectWillChange_send()
+                            pending.ref.instance?._triggerObservers_send(keyPath: pending.propertyName)
+                        }
                     }
                 } else {
-                    ref.instance?._objectWillChange_send()
-                    ref.instance?._triggerObservers_send(keyPath: propertyName)
+                    // No hop target: deliver on the drain task. Both
+                    // notification systems are thread-safe entry points.
+                    for pending in run {
+                        pending.ref.instance?._objectWillChange_send()
+                        pending.ref.instance?._triggerObservers_send(keyPath: pending.propertyName)
+                    }
                 }
+                index = end
             }
         }
     }
