@@ -4,7 +4,11 @@
 
 The 1.0 release. Every breaking change below is also ledgered, one line per
 change, in `MIGRATION-1.0.md` — read that alongside this section when
-upgrading from 0.10.x.
+upgrading from 0.10.x. Binary consumers: an xcframework built against 0.10.x
+fails at link against 1.0 (symbols changed for the throwing `add` family, the
+`changeStream` getter's new return type, and the removed
+`init(isStoredInMemoryOnly:)`) — vendored binaries must be rebuilt from
+migrated sources.
 
 ### Added
 - `Lattice.detach(lattice:)` — drops a previously attached database's views,
@@ -101,11 +105,17 @@ Throwing APIs (wrap call sites in `try`):
   and the `VirtualModel` overload silently swallowed them. Re-adding an
   already-managed object throws `LatticeError.alreadyManaged` instead of an
   unconditional message-less `fatalError()`, and `add(contentsOf:)` now
-  pre-checks every element and throws before anything is inserted.
+  pre-checks every element and throws before anything is inserted. The
+  `throws` cascades through wrappers: helpers that wrap `add` must become
+  `throws` themselves, and detached work that adds becomes
+  `try await Task.detached { … }.value` so the failure reaches the caller.
 - **`Lattice.attach(lattice:)` and `attaching(lattice:)` now throw**
   `LatticeError.attachFailed` on schema mismatch or alias collision instead
   of terminating the process; the new `detach(lattice:)` throws
-  `LatticeError.detachFailed`.
+  `LatticeError.detachFailed`. `attach` and `detach` are `mutating`
+  (`Lattice` is a struct) — a handle that attaches must be bound `var`, not
+  `let`; recommended teardown is `defer { try? handle.detach(lattice:) }`,
+  and the non-mutating `attaching(lattice:)` returns a new merged handle.
 - **`Lattice.transaction { }` now rolls back on a thrown error and rethrows
   it.** Previously a throw left the write transaction open, wedging the
   connection until the busy timeout killed the process.
@@ -124,7 +134,12 @@ Storage and memory:
   other's writes. Migrate `.init(isStoredInMemoryOnly: true)` to
   `.init(storage: .memory())`; `.init(fileURL:)` spellings keep working, and
   `configuration.fileURL` remains as a computed accessor whose setter
-  switches storage to `.file`.
+  switches storage to `.file`. Boolean read sites migrate too:
+  `if configuration.isStoredInMemoryOnly` becomes
+  `if case .memory = configuration.storage` (file branch:
+  `if case .file(let url) = configuration.storage`). Do not test the storage
+  kind via `fileURL` — for memory stores it returns the legacy `:memory:`
+  placeholder URL, not a real path.
 - `.memory(named:)` names are percent-encoded into the backing SQLite URI:
   names no longer need to be URI-safe, and two names that differ only by
   URI-hostile characters (`?`, `#`, `%`, space) are distinct databases.
@@ -143,7 +158,11 @@ Sync progress and change stream:
   stream exists are always captured (early batches buffer and flush in
   order). A failed background open surfaces as a thrown error at first
   iteration instead of crashing the process, and cancellation promptly ends
-  iteration and removes the observer.
+  iteration and removes the observer. In non-throwing observer contexts
+  (view models, `.task` modifiers) the recommended policy is
+  catch-and-end-observation — strictly gentler than the 0.10 trap:
+  `do { for try await batch in lattice.changeStream { … } } catch { … }`,
+  logging the error and re-creating the stream to resume.
 
 Migrations:
 - **`MigrationContext.enumerateObjects(table:callback:)` is
@@ -165,7 +184,12 @@ Migrations:
   `syncProgressPublisher` as the Combine adapter. The publisher is now
   stream-backed, and cancelling its subscription clears the underlying
   handler, where the old callback leaked for the backend's lifetime.
-  Migration is a mechanical callback → `for await` conversion.
+  Migration is a mechanical callback → `for await` conversion. If the loop
+  lives in a `Task { … }` closure, capturing the `Lattice` struct trips
+  Swift 6 region isolation ("sending … risks causing data races") — hoist
+  the stream out first: `let stream = lattice.syncProgressStream;
+  Task { for await progress in stream { … } }` (`AsyncStream` is `Sendable`;
+  `Lattice` is not).
 - **`Model.__globalId`** — the deprecated requirement is gone and the
   `@Model` macro no longer emits it; `globalId` is now the stored property
   itself (public get, setter internal to the model's module). Migration is a
