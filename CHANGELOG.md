@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.12]
+
+### Fixed
+- **Bulk row updates no longer hang the UI** (issue #4): cross-instance
+  change notifications were dispatched as one unstructured `Task` per
+  (property-change × live observer), so a routine bulk refresh piled tens of
+  thousands of Tasks onto SwiftUI's process-global Observation lock —
+  observed as a multi-minute freeze. Notifications are now coalesced per
+  (instance, property) within a burst and delivered by a single drain task
+  in commit order, hopping isolation once per run. A bulk write costs one
+  drain task regardless of size. Also hardens the notify path against two
+  Swift exclusivity violations the old dispatch masked (delivery from
+  inside the commit hook; reading model storage on the notify path).
+  Reported by Diana Perez Afanador.
+
 ## [0.10.9] - 2026-07-12
 
 ### Fixed
