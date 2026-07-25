@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.10] - 2026-07-25
+
+### Fixed
+- **iOS availability on the statement counters**: the `public extension
+  Lattice` carrying `totalSQLStatementCount` / `threadSQLStatementCount`
+  (added in the 0.10.4 row-cache work) reaches through to `swift_lattice`,
+  which is `@available(iOS 16.4, macOS 13.3, …)`, but carried no
+  availability annotation of its own. Against this line's declared iOS 15
+  floor that is a hard compile error for *every* iOS consumer —
+  `'swift_lattice' is only available in iOS 16.4.0 or newer` — even though
+  the counters are a test/benchmark primitive the consumer never touches.
+  The extension is now annotated to match the symbols it uses; the iOS 15
+  floor stands for everything else. No API or behavior change on macOS.
+
+  Undetected until now because every consumer of this line has been
+  macOS-only: a green macOS build says nothing about iOS availability
+  gating. (Thanks @dianaperezafanador, #3.)
+
 ## [0.10.9] - 2026-07-12
 
 ### Fixed
