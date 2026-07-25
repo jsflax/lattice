@@ -116,6 +116,10 @@ public extension Lattice {
     /// read/write/xproc connections over multiple lattice instances, so
     /// per-connection counters undercount. Serialize tests that assert on
     /// deltas.
+    /// - Note: iOS 16.4+ — the `swift_lattice` C++ interop module carries a
+    ///   16.4 floor (the foreign-reference-type boundary), so this accessor
+    ///   inherits it. macOS/Linux (where the tests run) are unaffected.
+    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
     static var totalSQLStatementCount: UInt64 {
         lattice.swift_lattice.totalSQLStatementCount()
     }
@@ -123,6 +127,8 @@ public extension Lattice {
     /// Thread-local twin of `totalSQLStatementCount`: counts only statements
     /// issued from the calling thread. Use for EXACT budgets on synchronous
     /// read paths — immune to parallel test suites in the same process.
+    /// - Note: iOS 16.4+ — see `totalSQLStatementCount`.
+    @available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
     static var threadSQLStatementCount: UInt64 {
         lattice.swift_lattice.threadSQLStatementCount()
     }
