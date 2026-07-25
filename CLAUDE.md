@@ -2,7 +2,7 @@
 
 Swift ORM built on SQLite with a C++ backend (LatticeCore). Uses Swift macros for compile-time code generation.
 
-Swift 6.2+ / macOS 14+ / iOS 17+. C++ interop enabled on all targets.
+Swift 6.3+ toolchain / macOS 14+ / iOS 15+ / Linux (Ubuntu 24.04+). C++ interop enabled on all targets.
 
 ## Architecture
 
@@ -55,14 +55,20 @@ Lattice init — variadic parameter pack for model types:
 let lattice = try Lattice(Person.self, Dog.self, configuration: .init(fileURL: url))
 ```
 
-Migration lives inside `Configuration`:
+Migration lives inside `Configuration`. A table is identified by its model
+type's *name*, so schema versions are same-named models in version namespaces
+(NOT differently-named types like `V1Person`/`V2Person` — those would be
+different tables):
 ```swift
+enum SchemaV1 { @Model class Person { var firstName: String; var lastName: String } }
+enum SchemaV2 { @Model class Person { var fullName: String } }
+
 let config = Lattice.Configuration(fileURL: url, migration: [
-    2: Migration((from: V1Person.self, to: V2Person.self), blocks: { old, new in
+    2: Migration((from: SchemaV1.Person.self, to: SchemaV2.Person.self), blocks: { old, new in
         new.fullName = "\(old.firstName) \(old.lastName)"
     })
 ])
-let lattice = try Lattice(V2Person.self, configuration: config)
+let lattice = try Lattice(SchemaV2.Person.self, configuration: config)
 ```
 
 ### Testing
@@ -80,8 +86,10 @@ class MyTests: BaseTest {
 
 In-memory alternative (no BaseTest needed):
 ```swift
-let lattice = try Lattice(MyModel.self, configuration: .init(isStoredInMemoryOnly: true))
+let lattice = try Lattice(MyModel.self, configuration: .init(storage: .memory()))
 ```
+`.memory()` is a fresh private database; `.memory(named:)` shares one
+same-process database across handles opened with the same name.
 
 Run tests: `swift test` or `swift test --filter testName`
 
@@ -95,22 +103,23 @@ let config = Lattice.Configuration(
     wssEndpoint: URL(string: "wss://server/sync"))
 ```
 
-IPC sync connects databases across processes via Unix domain sockets:
+IPC sync connects databases across processes via Unix domain sockets. Roles
+are negotiated at runtime (first process to open a channel serves; later ones
+connect). `ipcTargets` is a mutable property, not an initializer parameter:
 ```swift
-// Source process (hub — binds and listens)
+// Hub process (serves filtered data)
 var filter = Lattice.SyncFilter()
 filter.include(Memory.self, where: { $0.isPrivate == false })
 
-let sourceConfig = Lattice.Configuration(
-    fileURL: memoryURL,
-    ipcTargets: [.init(channel: "synced", syncFilter: filter)])
+var sourceConfig = Lattice.Configuration(fileURL: memoryURL)
+sourceConfig.ipcTargets = [.init(channel: "synced", syncFilter: filter)]
 
-// Target process (spoke — connects to hub, plus WSS to cloud)
-let targetConfig = Lattice.Configuration(
+// Spoke process (same channel name, plus WSS to cloud)
+var targetConfig = Lattice.Configuration(
     fileURL: syncedURL,
     authorizationToken: token,
-    wssEndpoint: wssURL,
-    ipcTargets: [.init(channel: "synced")])
+    wssEndpoint: wssURL)
+targetConfig.ipcTargets = [.init(channel: "synced")]
 ```
 
 IPC + WSS compose for cloud relay: `source →IPC→ target →WSS→ server`. Per-synchronizer state (`_lattice_sync_state` table) tracks sync status independently per transport, enabling automatic relay without loop prevention logic.
