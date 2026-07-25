@@ -1,5 +1,12 @@
 # Lattice
 
+<!--
+  Every Swift snippet in this file is compile-checked (and, where cheap, run)
+  by Tests/LatticeTests/READMESnippetTests.swift — one test per section,
+  named after the section heading. If you edit a snippet here, update the
+  matching test (and vice versa). `swift test --filter READMESnippetTests`.
+-->
+
 A modern, type-safe Swift ORM framework built on SQLite with real-time synchronization and SwiftUI integration.
 
 ## Features
@@ -59,15 +66,24 @@ import Lattice
 ### 2. Initialize Lattice
 
 ```swift
-// Initialize with default configuration (in-memory or default file)
+// Default configuration: a database file in the documents directory
 let lattice = try Lattice(Person.self, Pet.self)
 
-// Or with custom configuration
+// Custom file location
 let config = Lattice.Configuration(
     fileURL: URL(fileURLWithPath: "/path/to/database.sqlite")
 )
 let lattice = try Lattice(Person.self, Pet.self, configuration: config)
+
+// Fresh private in-memory database (tests, previews)
+let scratch = try Lattice(Person.self, Pet.self,
+                          configuration: .init(storage: .memory()))
 ```
+
+Storage is controlled by `Configuration.storage`: `.file(URL)` for an on-disk
+database, `.memory()` for a fresh private in-memory database, and
+`.memory(named:)` for a shared in-memory database — handles opened with the
+same name in one process share the database and observe each other's writes.
 
 ### 3. Create and Save Objects
 
@@ -77,8 +93,12 @@ person.name = "Alice"
 person.age = 30
 person.email = "alice@example.com"
 
-lattice.add(person)
+try lattice.add(person)
 ```
+
+`add` throws: a failed insert (constraint violation, closed handle, I/O error)
+surfaces as `LatticeError.addFailed`, and re-adding an already-managed object
+throws `LatticeError.alreadyManaged`.
 
 ### 4. Query Data
 
@@ -108,6 +128,8 @@ let cancellable = lattice.objects(Person.self).observe { change in
     switch change {
     case .insert(let id):
         print("New person added with id: \(id)")
+    case .update(let id):
+        print("Person updated: \(id)")
     case .delete(let id):
         print("Person deleted: \(id)")
     }
@@ -123,7 +145,7 @@ let cancellable = lattice.objects(Person.self).observe { change in
     @Unique()
     var username: String
 
-    @Unique(compoundedWith: \.date, \.email, allowsUpsert: true)
+    @Unique(compoundedWith: \Self.date, \.email, allowsUpsert: true)
     var sessionId: String
 
     var date: Date
@@ -133,11 +155,14 @@ let cancellable = lattice.objects(Person.self).observe { change in
 
 ### Embedded Models
 
+Embedded models are value types stored as JSON inside the owning row. They
+must be default-constructible, so give every property a default value:
+
 ```swift
 struct Address: EmbeddedModel {
-    var street: String
-    var city: String
-    var zipCode: String
+    var street: String = ""
+    var city: String = ""
+    var zipCode: String = ""
 }
 
 @Model class Company {
@@ -165,52 +190,56 @@ struct Address: EmbeddedModel {
 ```swift
 let config = Lattice.Configuration(
     fileURL: URL(fileURLWithPath: "/path/to/db.sqlite"),
-    wssEndpoint: URL(string: "wss://your-server.com/sync"),
-    authorizationToken: "your-auth-token"
+    authorizationToken: "your-auth-token",
+    wssEndpoint: URL(string: "wss://your-server.com/sync")
 )
 
 let lattice = try Lattice(Person.self, configuration: config)
 // Changes are automatically synced via WebSocket
 ```
 
+Track progress with `lattice.syncProgressStream` (an `AsyncStream` of
+`SyncProgress` values — `for await progress in lattice.syncProgressStream`),
+or `lattice.syncProgressPublisher` for Combine.
+
 ### IPC Sync
 
-Synchronize databases across processes via Unix domain sockets. Both sides reference a shared channel name — the socket path is auto-derived per platform.
+Synchronize databases across processes via Unix domain sockets. Both sides
+reference a shared channel name — the socket path is auto-derived per
+platform, and roles are negotiated at runtime: the first process to open a
+channel becomes the server, later ones connect as clients. Set
+`ipcTargets` on the configuration before opening the database:
 
 ```swift
-// Source process (hub): serves sync data with a filter
+// Hub process: opens the channel and serves filtered data
 var filter = Lattice.SyncFilter()
 filter.include(Person.self, where: { $0.age >= 18 })
 
-let sourceConfig = Lattice.Configuration(
-    fileURL: sourceURL,
-    ipcTargets: [
-        .init(channel: "adults", role: .server, syncFilter: filter)
-    ]
-)
+var sourceConfig = Lattice.Configuration(fileURL: sourceURL)
+sourceConfig.ipcTargets = [.init(channel: "adults", syncFilter: filter)]
 let source = try Lattice(Person.self, configuration: sourceConfig)
 
-// Target process (spoke): connects and receives filtered data
-let targetConfig = Lattice.Configuration(
-    fileURL: targetURL,
-    ipcTargets: [
-        .init(channel: "adults", role: .client)
-    ]
-)
+// Spoke process: same channel name — connects and receives the filtered data
+var targetConfig = Lattice.Configuration(fileURL: targetURL)
+targetConfig.ipcTargets = [.init(channel: "adults")]
 let target = try Lattice(Person.self, configuration: targetConfig)
 // Sync is bidirectional — changes flow both ways
 ```
 
-IPC and WSS compose for cloud relay — a target database can receive changes via IPC and automatically forward them to the cloud via WSS:
+When the two processes don't share a HOME directory (e.g. a macOS app talking
+to an iOS simulator), pass an explicit `socketPath:` to `IPCSyncTarget`
+instead of relying on the derived path.
+
+IPC and WSS compose for cloud relay — a database can receive changes via IPC and automatically forward them to the cloud via WSS:
 
 ```swift
-// Target: receives from IPC, relays to cloud
-let relayConfig = Lattice.Configuration(
+// Relay process: receives from IPC, relays to cloud
+var relayConfig = Lattice.Configuration(
     fileURL: relayURL,
-    wssEndpoint: URL(string: "wss://your-server.com/sync"),
     authorizationToken: token,
-    ipcTargets: [.init(channel: "adults", role: .client)]
+    wssEndpoint: URL(string: "wss://your-server.com/sync")
 )
+relayConfig.ipcTargets = [.init(channel: "adults")]
 ```
 
 Per-synchronizer state (`_lattice_sync_state` table) tracks sync status independently per transport, preventing loops and enabling automatic relay.
@@ -226,8 +255,8 @@ filter.include(Pet.self) // all pets
 
 let config = Lattice.Configuration(
     fileURL: url,
-    wssEndpoint: wssURL,
     authorizationToken: token,
+    wssEndpoint: wssURL,
     syncFilter: filter
 )
 ```
@@ -236,25 +265,32 @@ Only matching rows are uploaded. Incoming remote changes are always applied rega
 
 ### Migrations
 
+A table is identified by its model type's *name*, so schema versions are
+declared as same-named models inside version namespaces:
+
 ```swift
-@Model class V1Person {
-    var firstName: String
-    var lastName: String
+enum SchemaV1 {
+    @Model class Person {
+        var firstName: String
+        var lastName: String
+    }
 }
 
-@Model class V2Person {
-    var fullName: String
+enum SchemaV2 {
+    @Model class Person {
+        var fullName: String
+    }
 }
 
 let config = Lattice.Configuration(
     fileURL: url,
     migration: [
-        2: Migration((from: V1Person.self, to: V2Person.self), blocks: { old, new in
+        2: Migration((from: SchemaV1.Person.self, to: SchemaV2.Person.self), blocks: { old, new in
             new.fullName = "\(old.firstName) \(old.lastName)"
         })
     ]
 )
-let lattice = try Lattice(V2Person.self, configuration: config)
+let lattice = try Lattice(SchemaV2.Person.self, configuration: config)
 ```
 
 The variadic `Migration((from:to:), blocks:)` initializer uses parameter packs
@@ -262,7 +298,7 @@ The variadic `Migration((from:to:), blocks:)` initializer uses parameter packs
 everywhere:
 
 ```swift
-let migration = Migration().add(from: V1Person.self, to: V2Person.self) { old, new in
+let migration = Migration().add(from: SchemaV1.Person.self, to: SchemaV2.Person.self) { old, new in
     new.fullName = "\(old.firstName) \(old.lastName)"
 }
 ```
@@ -276,7 +312,7 @@ import Lattice
 struct PersonListView: View {
     @LatticeQuery(
         predicate: { $0.age >= 18 },
-        sort: \.name,
+        sort: \Person.name,
         order: .forward
     ) var adults: TableResults<Person>
 
@@ -291,29 +327,38 @@ struct PersonListView: View {
 ### Transactions
 
 ```swift
-lattice.transaction {
+try lattice.transaction {
     let person1 = Person()
     person1.name = "Alice"
-    lattice.add(person1)
+    try lattice.add(person1)
 
     let person2 = Person()
     person2.name = "Bob"
-    lattice.add(person2)
+    try lattice.add(person2)
 
     // Both are saved atomically
 }
 ```
 
+If the block throws, the transaction is rolled back and the error is
+rethrown — none of the block's writes are kept.
+
 ### Thread Safety
 
+Managed objects and `Lattice` handles are confined to the context that
+created them. To cross threads, capture `sendableReference`s and resolve them
+on the other side:
+
 ```swift
-// Create a sendable reference
-let reference = person.sendableReference
+// Create sendable references
+let personRef = person.sendableReference
+let latticeRef = lattice.sendableReference
 
 // Pass to another thread/actor
 Task.detached {
-    let resolved = reference.resolve(on: lattice)
-    resolved?.name = "Updated Name"
+    guard let lattice = latticeRef.resolve(),
+          let person = personRef.resolve(on: lattice) else { return }
+    person.name = "Updated Name"
 }
 ```
 
@@ -335,6 +380,12 @@ protocol POI: VirtualModel {
     var country: String
     var embedding: FloatVector
     var cuisineType: String
+
+    init(name: String = "", country: String = "", cuisineType: String = "") {
+        self.name = name
+        self.country = country
+        self.cuisineType = cuisineType
+    }
 }
 
 @Model class Museum: POI {
@@ -342,6 +393,12 @@ protocol POI: VirtualModel {
     var country: String
     var embedding: FloatVector
     var exhibitCount: Int
+
+    init(name: String = "", country: String = "", exhibitCount: Int = 0) {
+        self.name = name
+        self.country = country
+        self.exhibitCount = exhibitCount
+    }
 }
 
 // Query across all POI types
@@ -372,11 +429,11 @@ var mainLattice = try Lattice(Restaurant.self, Person.self)
 let museumsLattice = try Lattice(Museum.self)
 
 // Add data to each
-mainLattice.add(Restaurant(name: "Le Bernardin", country: "United States"))
-museumsLattice.add(Museum(name: "The Louvre", country: "France"))
+try mainLattice.add(Restaurant(name: "Le Bernardin", country: "United States"))
+try museumsLattice.add(Museum(name: "The Louvre", country: "France"))
 
 // Attach the second database to the first
-mainLattice.attach(lattice: museumsLattice)
+try mainLattice.attach(lattice: museumsLattice)
 
 // Now query across both databases
 let allPOIs = mainLattice.objects(POI.self)  // Returns restaurants AND museums
@@ -386,7 +443,13 @@ print(allPOIs.count)  // 2
 let frenchPOIs = mainLattice.objects(POI.self).where {
     $0.country == "France"
 }
+
+// Detach when done — drops the attachment and rebuilds the merged schema
+try mainLattice.detach(lattice: museumsLattice)
 ```
+
+`attach` throws `LatticeError.attachFailed` on schema mismatch or alias
+collision; `detach` throws `LatticeError.detachFailed`.
 
 ### Vector Search
 
@@ -509,10 +572,6 @@ let filtered = lattice.objects(Article.self)
 let hybrid = lattice.objects(Article.self)
     .matching("learning", on: \.content)
     .nearest(to: queryVec, on: \.embedding, limit: 10, distance: .cosine)
-
-// FTS5 across polymorphic types
-let allDocs = lattice.objects(Searchable.self)
-    .matching(.anyOf("swift", "rust"), on: \.content)
 ```
 
 FTS5 rank scores are negative (lower = better match) and accessible via `match.distances["columnName"]`.
@@ -527,7 +586,7 @@ let people = (0..<1000).map { i in
     return person
 }
 
-lattice.add(contentsOf: people)
+try lattice.add(contentsOf: people)
 ```
 
 ## Query DSL
@@ -558,10 +617,9 @@ Lattice supports a rich query syntax:
 .where { $0.name.ends(with: "e") }
 ```
 
-### Collection Operations
+### Range Operations
 ```swift
-.where { $0.tags.contains("swift") }
-.where { $0.age.contains(20...30) }
+.where { $0.age.contains(20...30) }   // BETWEEN 20 AND 30
 ```
 
 ### Embedded Properties
@@ -572,11 +630,18 @@ Lattice supports a rich query syntax:
 ## Configuration Options
 
 ```swift
-let config = Lattice.Configuration(
-    fileURL: URL(fileURLWithPath: "/path/to/db.sqlite"),
+var config = Lattice.Configuration(
+    storage: .file(URL(fileURLWithPath: "/path/to/db.sqlite")),  // or .memory() / .memory(named:)
+    authorizationToken: "token",
     wssEndpoint: URL(string: "wss://sync-server.com"),
-    authorizationToken: "token"
+    isReadOnly: false,          // open with SQLITE_OPEN_READONLY (bundled template databases)
+    migration: nil,             // versioned [Int: Migration] schema migrations
+    syncFilter: nil,            // upload whitelist (see Filtered Sync)
+    busyTimeoutMs: 30_000,      // statement-level SQLite busy timeout
+    syncTuning: nil             // sync transport knobs (chunk size, backoff, …)
 )
+config.ipcTargets = [.init(channel: "my-channel")]  // cross-process sync (see IPC Sync)
+config.resultsTuning = .init()  // live-results cache/read-generation knobs
 ```
 
 ## Performance Tips
