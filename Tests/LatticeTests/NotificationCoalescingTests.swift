@@ -69,8 +69,10 @@ struct NotificationCoalescingTests {
         #expect(fired.count == 200, "every live twin's observer fires (got \(fired.count))")
 
         // The pin: 200 row updates → a handful of drain tasks, not hundreds.
+        // No lower bound: under parallel suites another burst's drainer may
+        // already be live, in which case these entries ride it and ZERO new
+        // tasks are scheduled — that's the design working, not a miss.
         let drains = ModelInstanceRegistry.shared._drainTasksScheduledForTesting - baseline
-        #expect(drains >= 1)
         #expect(drains <= 20, "coalescer scheduled \(drains) drain tasks for 200 notifications")
 
         withExtendedLifetime(observed) {}
