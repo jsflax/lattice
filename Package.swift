@@ -66,6 +66,15 @@ let package = Package(
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
+        // Cross-SDK conformance runner (plan WS-C item C4a): interprets the
+        // declarative corpus in latticecore/conformance/corpus against the
+        // public Lattice API. Skips gracefully when the corpus checkout is
+        // absent (LATTICE_CONFORMANCE_DIR overrides the default sibling path).
+        .testTarget(
+            name: "LatticeConformanceTests",
+            dependencies: ["Lattice"],
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
         .target(
             name: "LatticeServerKit",
             dependencies: [
