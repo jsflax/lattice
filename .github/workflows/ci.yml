@@ -49,6 +49,25 @@ jobs:
       - name: Test
         run: swift test
 
+  # Build-only: proves the library product compiles for iOS (the platform we
+  # declare but never test on — tests need a host app). The `Lattice` scheme
+  # is Xcode's auto-generated package scheme; nothing under .swiftpm/ is
+  # committed. -skipMacroValidation is MANDATORY: Lattice depends on a .macro
+  # target and xcodebuild refuses to run unvalidated macros non-interactively.
+  ios-build:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # ARCHS=arm64: the x86_64 simulator slice trips an upstream LatticeCore
+      # bug (SqliteVec's dependency scan pulls _Builtin_intrinsics.arm.neon,
+      # "requires feature 'neon'", on x86_64). Rosetta-simulator is legacy;
+      # arm64 is the slice that matters. Drop the override when LatticeCore
+      # fixes the include.
+      - name: Build (iOS Simulator)
+        run: xcodebuild -scheme Lattice -destination 'generic/platform=iOS Simulator' build -skipMacroValidation ARCHS=arm64
+
   macos:
     runs-on: macos-26
     # Known intermittent relay-test hang (1.0 item D) — fail fast, re-run.
