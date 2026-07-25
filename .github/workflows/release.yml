@@ -8,47 +8,13 @@ permissions:
   contents: write
 
 jobs:
-  test-macos:
-    runs-on: macos-26
-    # Known intermittent relay-test hang (1.0 item D) — fail fast, re-run.
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build
-        run: swift build
-      # Watchdog: sample the test process at 20min so a hang leaves stacks
-      # in the log (Darwin .timeLimit cannot interrupt the stuck await).
-      - name: Test
-        run: |
-          (
-            sleep 1200
-            PID=$(pgrep -f LatticePackageTests | head -1)
-            if [ -n "$PID" ]; then
-              echo "=== HANG WATCHDOG: sampling $PID at 20min ==="
-              sample "$PID" 5 -file /tmp/hang-sample.txt 2>/dev/null || true
-              cat /tmp/hang-sample.txt || true
-            fi
-          ) &
-          WATCHDOG=$!
-          swift test
-          kill $WATCHDOG 2>/dev/null || true
-
-  test-linux:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    # Must be >= the manifest's swift-tools-version (6.3) — see linux.yml.
-    container: swift:6.3-noble
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install dependencies
-        run: apt-get update && apt-get install -y libsqlite3-dev
-      - name: Build
-        run: swift build
-      - name: Test
-        run: swift test
+  # The release test gates ARE the CI gates — called, not copy-pasted, so
+  # they cannot drift (a 6.2-container bug once lived in two files).
+  tests:
+    uses: ./.github/workflows/ci.yml
 
   release:
-    needs: [test-macos, test-linux]
+    needs: [tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

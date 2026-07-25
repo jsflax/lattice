@@ -1,14 +1,39 @@
-name: macOS
+name: CI
 
+# Single source of truth for the test gates. `release.yml` calls this
+# workflow (workflow_call) instead of copy-pasting the jobs, so the gates
+# cannot drift between the push/PR path and the release path.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_call:
 
 jobs:
-  build-and-test:
+  linux:
+    runs-on: ubuntu-latest
+    # A known intermittent relay-test hang (pre-existing, tracked for 1.0
+    # item D) can wedge a run; fail fast and re-run instead of a 6h zombie.
+    timeout-minutes: 90
+    # Must be >= the manifest's swift-tools-version (6.3): a 6.2 toolchain
+    # refuses the manifest at parse time, before any compile error can surface.
+    container: swift:6.3-noble
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: apt-get update && apt-get install -y libsqlite3-dev
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+  macos:
     runs-on: macos-26
+    # Known intermittent relay-test hang (1.0 item D) — fail fast, re-run.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
