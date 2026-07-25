@@ -158,11 +158,12 @@ struct Adapter<M: ConfModel>: TableAdapter, @unchecked Sendable {
     }
 
     func count(_ lattice: Lattice, whereJV: JV?) throws -> Int {
-        // Maps to the SDK's dedicated count API (`Lattice.count`), not
-        // `objects().count`: the corpus `count` op must observe a
-        // transaction's own uncommitted writes, and the live-results
-        // facade's epoch-cached count serves a pre-transaction snapshot
-        // on file-backed stores (see the conformance report).
+        // Maps to the SDK's dedicated count API (`Lattice.count`) — the
+        // closest semantic match for the corpus `count` op. (Historical
+        // note: this mapping once mattered for transaction scenarios; since
+        // the §4.1 in-txn writer-connection carve-out was extended to file
+        // stores, `objects().count` observes a transaction's own
+        // uncommitted writes too.)
         if let whereJV {
             let built = try buildWhere(whereJV)
             return lattice.count(M.self, where: { _ in built })

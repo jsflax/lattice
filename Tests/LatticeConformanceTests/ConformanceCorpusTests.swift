@@ -31,14 +31,12 @@ struct ConformanceCorpusTests {
         // build_combined_nearest_ctes_.)
         "query-knn/cosine-order":
             "cosine KNN returns correct distances but L2 ordering (bridge CTE drops the re-scored ORDER BY)",
-        // Inside an explicit transaction on a FILE-backed store, queries and
-        // counts (objects().snapshot()/count, Lattice.count, object(primaryKey:))
-        // do not see the transaction's own uncommitted writes — they serve
-        // through read/keeper connections that cannot see the writer's open
-        // transaction. Handle property reads DO see them. The §4.1
-        // writer-connection carve-out covers memory-family stores only.
-        "transactions/own-writes-visible-inside":
-            "file-store queries inside an explicit transaction miss the transaction's own uncommitted writes",
+        // transactions/own-writes-visible-inside was ledgered here until the
+        // §4.1 in-transaction writer-connection carve-out was extended to
+        // file stores (InTransactionReads.swift + the TableResults /
+        // Lattice.count / object(primaryKey:) in-txn routing) — reads inside
+        // an explicit transaction now see the transaction's own uncommitted
+        // writes on every storage family.
     ]
 
     @Test func corpusDiscovery() {

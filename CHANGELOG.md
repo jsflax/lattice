@@ -198,6 +198,18 @@ Migrations:
   `VERSIONING.md`.
 
 ### Fixed
+- **Read-your-writes inside explicit transactions on file stores**: inside
+  `lattice.transaction { … }` on a file-backed store, collection reads
+  (`objects()` snapshots, counts, indexed access and iteration),
+  `Lattice.count`, and `object(primaryKey:)` now see the transaction's own
+  uncommitted writes — previously they served the pre-transaction state
+  because they routed through read/keeper connections that cannot observe
+  the writer connection's open transaction (managed-property reads were
+  always correct). In-transaction reads now execute on the writer
+  connection, never mint read generations, and never publish into the shape
+  caches, so a rollback leaves no trace of the discarded writes. Memory
+  stores already behaved correctly; the cross-SDK conformance scenario
+  `transactions/own-writes-visible-inside` now passes.
 - **Bulk-update notification coalescing**: cross-instance notifications are
   coalesced per (instance, property) and delivered by a single drain task in
   commit order, fixing a multi-minute UI hang under bulk writes (issue #4).

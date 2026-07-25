@@ -1254,6 +1254,17 @@ public struct Lattice {
     
     public func object<T>(isolation: isolated (any Actor)? = #isolation,
                           _ type: T.Type = T.self, primaryKey: Int64) -> T? where T: Model {
+        // §4.1 in-txn carve-out: the live pk read routes through the core's
+        // read connection on file stores, which cannot see this thread's
+        // open transaction — serve through the writer connection instead
+        // (see InTransactionReads.swift).
+        if Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) {
+            return _writerTransactionRows(table: type.entityName,
+                                          where: "id = \(primaryKey)",
+                                          orderBy: nil, limit: 1, offset: nil,
+                                          groupBy: nil, distinctBy: nil)
+                .first.map { T(dynamicObject: $0) }
+        }
         return backend.object(primaryKey: primaryKey, table: type.entityName).map { T(dynamicObject: $0) }
     }
     
@@ -1571,6 +1582,14 @@ public struct Lattice {
 
     public func count<T>(_ modelType: T.Type, where: ((Query<T>) -> Query<Bool>)? = nil) -> Int where T: Model {
         let whereClause: String? = `where`.map { $0(Query<T>()).predicate }
+        // §4.1 in-txn carve-out: the live count routes through the core's
+        // read connection on file stores, which cannot see this thread's
+        // open transaction — count on the writer connection instead
+        // (see InTransactionReads.swift).
+        if Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) {
+            return _writerTransactionCount(table: T.entityName, where: whereClause,
+                                           groupBy: nil, distinctBy: nil)
+        }
         return Int(backend.count(table: T.entityName, where: whereClause))
     }
     

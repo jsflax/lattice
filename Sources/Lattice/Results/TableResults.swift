@@ -264,6 +264,66 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         return body()
     }
 
+    // MARK: Explicit-transaction reads (§4.1 carve-out, file-store extension)
+
+    /// True iff the CURRENT THREAD holds an open explicit transaction on
+    /// this facade's backend — the §4.1 detector. While it holds, every
+    /// read on this facade takes the in-txn route below: generation-routed
+    /// reads execute on pooled READ connections (keepers) that cannot see
+    /// the writer connection's open transaction, and resolving/minting a
+    /// keeper while this thread holds the transaction is the in-txn
+    /// deadlock class — so the in-txn branches run BEFORE any
+    /// `coordinator.resolve` and never read or publish shape caches
+    /// (nothing to poison on rollback; the rollback hook then bumps the
+    /// epoch and every shape re-captures).
+    private var _threadHoldsOwnTransaction: Bool {
+        Lattice._threadHoldsExplicitTransaction(identityHash: _lattice.backend.identityHash)
+    }
+
+    /// In-txn row read: bbox shapes use the existing live spatial read
+    /// (the bridge already routes it through the writer connection); every
+    /// other shape goes through the writer-connection read carve-out
+    /// (`Lattice._writerTransactionRows` — see InTransactionReads.swift).
+    /// Hydrated instances have live property semantics on the writer
+    /// connection, so their reads see the transaction too.
+    private func _inTxnRows(limit: Int64?, offset: Int64?, reuseInstances: Bool) -> [Element] {
+        if let bounds = boundsConstraint {
+            let rows = _lattice.backend.objectsWithinBBox(
+                table: Element.entityName, geoColumn: bounds.propertyName,
+                minLat: bounds.minLat, maxLat: bounds.maxLat,
+                minLon: bounds.minLon, maxLon: bounds.maxLon,
+                where: whereStatement?.predicate,
+                orderBy: _effectiveOrderBySQL(qualifyTiebreaker: true),
+                limit: limit, offset: offset, groupBy: groupByColumn)
+            return reuseInstances ? rows.map { _reuseOrHydrate($0) }
+                                  : rows.map { Element(dynamicObject: $0) }
+        }
+        let rows = _lattice._writerTransactionRows(
+            table: Element.entityName,
+            where: whereStatement?.predicate,
+            orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false),
+            limit: limit, offset: offset,
+            groupBy: groupByColumn, distinctBy: distinctByColumn)
+        return reuseInstances ? rows.map { _reuseOrHydrate($0) }
+                              : rows.map { Element(dynamicObject: $0) }
+    }
+
+    /// In-txn count — writer-connection COUNT (bbox via the existing live
+    /// spatial count, which the bridge already runs on the writer).
+    private func _inTxnCount() -> Int {
+        if let bounds = boundsConstraint {
+            return Int(_lattice.backend.countWithinBBox(
+                table: Element.entityName, geoColumn: bounds.propertyName,
+                minLat: bounds.minLat, maxLat: bounds.maxLat,
+                minLon: bounds.minLon, maxLon: bounds.maxLon,
+                where: whereStatement?.predicate))
+        }
+        return _lattice._writerTransactionCount(table: Element.entityName,
+                                                where: whereStatement?.predicate,
+                                                groupBy: groupByColumn,
+                                                distinctBy: distinctByColumn)
+    }
+
     private func _liveCount(_ descriptor: ShapeDescriptor) -> Int {
         _gatedLiveRead {
             if let bounds = boundsConstraint {
@@ -551,6 +611,12 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// `subscript`; an optional return expresses "no such element" directly).
     public func element(at index: Int) -> Element? {
         guard index >= 0 else { return nil }
+        // §4.1 in-txn carve-out: one writer-connection read at the
+        // effective total order's index — no page-cache read (entries
+        // predate the transaction) and no generation resolution.
+        if _threadHoldsOwnTransaction {
+            return _inTxnRows(limit: 1, offset: Int64(index), reuseInstances: true).first
+        }
         let (coordinator, shape, descriptor) = _liveContext()
         var ctx = coordinator.resolve(table: Element.entityName, shapeKey: descriptor.key)
         let pageSize = Swift.max(1, _tuning.pageSize)
@@ -643,6 +709,13 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
         LatticePerf.bump(.snapshots)
 
+        // §4.1 in-txn carve-out: read-your-writes inside this thread's own
+        // explicit transaction — writer-connection read, no generation
+        // resolution (no keeper minting), no cache traffic.
+        if _threadHoldsOwnTransaction {
+            return _inTxnRows(limit: limit, offset: offset, reuseInstances: false)
+        }
+
         // Coordinator + descriptor WITHOUT registering a query shape: one-shot
         // snapshots (`first`, `rowMatchesNow`) must not churn the registry.
         let descriptor = _descriptor
@@ -734,6 +807,26 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// (§4.1) — the id vector captured at the current epoch — hydrating per
     /// batch; rows deleted after capture are skipped.
     public func makeIterator() -> KeysetCursor<Element> {
+        // §4.1 in-txn carve-out: OFFSET-batched walk on the writer
+        // connection. The keyset walk pins a generation hold (keeper) —
+        // forbidden while this thread's transaction is open — and the
+        // effective total order is deterministic, so OFFSET resume over it
+        // is exact (only this thread can write this store mid-walk).
+        if _threadHoldsOwnTransaction {
+            let batchSize = Int64(Swift.max(1, _tuning.pageSize))
+            var offset: Int64 = 0
+            var finished = false
+            // Captures self STRONGLY — the cursor keeps a temporary facade
+            // alive for the walk, as the live cursors below do.
+            return KeysetCursor(nextBatch: {
+                if finished { return nil }
+                let rows = self._inTxnRows(limit: batchSize, offset: offset,
+                                           reuseInstances: true)
+                offset += Int64(rows.count)
+                if rows.count < Int(batchSize) { finished = true }
+                return rows.isEmpty ? nil : rows
+            })
+        }
         let descriptor = _descriptor
         guard let spec = descriptor.keysetSpec else {
             return KeysetCursor(self)
@@ -970,6 +1063,16 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
 
     public var endIndex: Int {
+        // §4.1 in-txn carve-out: writer-connection count, bypassing both
+        // the epoch-cached count (whose entries predate the transaction's
+        // writes — property-setter writes inside the block do not bump the
+        // epoch until commit) and the generation machinery (keeper reads
+        // cannot see the open transaction; minting is the in-txn deadlock
+        // class). Nothing is published, so a rollback leaves no poisoned
+        // count behind.
+        if _threadHoldsOwnTransaction {
+            return _capped(_inTxnCount())
+        }
         // Epoch-cached count (item A §5: idle render tick issues ZERO
         // collection queries). Batch-pinned generation resolution keeps one
         // render batch on one snapshot (§1.3); the count statement itself
