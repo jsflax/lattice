@@ -23,7 +23,15 @@ enum JV: Hashable, CustomStringConvertible, Sendable {
         case is NSNull:
             self = .null
         case let n as NSNumber:
-            if CFGetTypeID(n) == CFBooleanGetTypeID() {
+            // Bool-vs-number discrimination differs per platform:
+            // CFBoolean type-id on Darwin; corelibs-foundation encodes JSON
+            // booleans as NSNumber with objCType "c" on Linux.
+            #if canImport(Darwin)
+            let isBool = CFGetTypeID(n) == CFBooleanGetTypeID()
+            #else
+            let isBool = String(cString: n.objCType) == "c"
+            #endif
+            if isBool {
                 self = .bool(n.boolValue)
             } else {
                 switch String(cString: n.objCType) {
