@@ -1,5 +1,8 @@
 # Lattice
 
+[![CI](https://github.com/jsflax/lattice/actions/workflows/ci.yml/badge.svg)](https://github.com/jsflax/lattice/actions/workflows/ci.yml)
+[![Docs](https://github.com/jsflax/lattice/actions/workflows/docs.yml/badge.svg)](https://jsflax.github.io/lattice/documentation/lattice/)
+
 <!--
   Every Swift snippet in this file is compile-checked (and, where cheap, run)
   by Tests/LatticeTests/READMESnippetTests.swift — one test per section,

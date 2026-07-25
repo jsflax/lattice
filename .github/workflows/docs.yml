@@ -1,0 +1,75 @@
+name: Docs
+
+# Build the DocC catalog (Sources/Lattice/Lattice.docc) and deploy it to
+# GitHub Pages at https://jsflax.github.io/lattice/documentation/lattice/.
+# Runs on main pushes that can change the rendered docs (the catalog, doc
+# comments in Lattice sources, the manifest) and on demand.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Sources/Lattice/**"
+      - "Package.swift"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One Pages deployment at a time; a newer push supersedes an in-flight one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # macos-26 matches ci.yml: its default toolchain satisfies
+    # swift-tools-version 6.3 with no toolchain-install step.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build DocC archive (static hosting)
+        run: |
+          swift package --allow-writing-to-directory docs-out \
+            generate-documentation --target Lattice \
+            --disable-indexing \
+            --transform-for-static-hosting \
+            --hosting-base-path lattice \
+            --output-path docs-out
+
+      # The archive's pages live under /documentation/lattice/; give the
+      # site root a redirect so the bare Pages URL lands somewhere useful.
+      - name: Add root redirect
+        run: |
+          cat > docs-out/index.html <<'EOF'
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta http-equiv="refresh" content="0; url=documentation/lattice/">
+              <title>Lattice Documentation</title>
+            </head>
+            <body>
+              <a href="documentation/lattice/">Lattice documentation</a>
+            </body>
+          </html>
+          EOF
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
