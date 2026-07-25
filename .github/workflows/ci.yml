@@ -12,13 +12,31 @@ on:
 
 jobs:
   linux:
+    name: linux (${{ matrix.image }})
     runs-on: ubuntu-latest
     # A known intermittent relay-test hang (pre-existing, tracked for 1.0
     # item D) can wedge a run; fail fast and re-run instead of a 6h zombie.
     timeout-minutes: 90
-    # Must be >= the manifest's swift-tools-version (6.3): a 6.2 toolchain
-    # refuses the manifest at parse time, before any compile error can surface.
-    container: swift:6.3-noble
+    strategy:
+      # Never let an informational nightly failure cancel the release-gating
+      # stable leg.
+      fail-fast: false
+      matrix:
+        include:
+          # Must be >= the manifest's swift-tools-version (6.3): a 6.2
+          # toolchain refuses the manifest at parse time, before any compile
+          # error can surface.
+          - image: swift:6.3-noble
+            experimental: false
+          # Early warning against the next toolchain. Informational only
+          # (continue-on-error). Nightly images live under the swiftlang/
+          # Docker org — `swift:nightly-*` does NOT exist.
+          - image: swiftlang/swift:nightly-main-noble
+            experimental: true
+    # Marks the job green even when the nightly leg fails; the stable leg
+    # still gates.
+    continue-on-error: ${{ matrix.experimental }}
+    container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@v4
 
