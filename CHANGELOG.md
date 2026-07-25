@@ -1,6 +1,216 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.0] - Unreleased
+
+The 1.0 release. Every breaking change below is also ledgered, one line per
+change, in `MIGRATION-1.0.md` — read that alongside this section when
+upgrading from 0.10.x.
+
+### Added
+- `Lattice.detach(lattice:)` — drops a previously attached database's views,
+  DETACHes it, and rebuilds the merged schema. Add it to teardown paths that
+  `attach`.
+- `Lattice.rollbackTransaction()` alongside the existing begin/commit pair.
+- `Results.element(at:)` — returns `nil` for a missing index instead of a
+  fabricated element (see the subscript behavior change below).
+- `Configuration.resultsTuning` (`ResultsTuning`) — tuning knobs for the new
+  live-results read model: page size, cached pages and shapes, generation
+  TTL, WAL eviction threshold, cross-process freshness interval.
+- `Lattice.retireAllGenerations()` — releases every pinned read generation;
+  required before suspension in some host configurations (see the
+  backgrounding note under Changed).
+- Public `ColumnValue` (`.null` / `.int64` / `.real` / `.text` /
+  `.blob(Data)`, one case per SQLite storage class, with
+  `int64Value`/`doubleValue`/`stringValue`/`dataValue`/`isNull` accessors)
+  and `MigrationContext.setValue(table:rowId:column:value:)` for staging
+  per-row writes during migration enumeration.
+- New `LatticeError` cases: `addFailed`, `alreadyManaged`, `attachFailed`,
+  `detachFailed`.
+
+### Changed
+
+Live results and observation:
+- **Live `Results` reads are generation-consistent.** On file (WAL)
+  databases, every `count`, page fill, and `snapshot()` within one
+  main-thread render batch executes at a single pinned MVCC snapshot, served
+  by a small pool of read-only connections; on in-memory databases the
+  equivalent is a per-query-shape materialized id vector captured under the
+  store's write gate. Same-handle read-your-writes stays exact — `add`,
+  `delete`, `transaction`, and managed-property setters advance the read
+  epoch synchronously before returning. A commit from another same-process
+  handle (a second `Lattice` instance, a sync-applied chunk) also advances
+  the epoch synchronously on the writer's thread; a commit from another
+  thread becomes visible at the next render-batch boundary, so a single
+  frame always renders one generation. `Results.refresh()` forces an
+  advance.
+- **`count` and `subscript` are generation-cached** — resolved at most once
+  per main-thread runloop tick instead of issuing a fresh statement per
+  read, backed by a bounded per-query-shape page cache (`pageSize` ×
+  `maxCachedPages` hydrated rows per shape, at most `maxCachedShapes` shapes
+  per lattice, LRU-evicted). Baseline memory grows by the size of that
+  cache; tune it via `Configuration.resultsTuning`.
+- **Out-of-bounds and cross-generation subscripts no longer trap.** Instead
+  of `fatalError("Index out of bounds")`, `Results` and `Slice` subscripts
+  serve a tolerant ladder: the current fill, then a retained previous page,
+  then a last-known-good element, and finally an unmanaged default-valued
+  placeholder. Use `element(at:)` when you want `nil` for a missing index.
+  Accessing a `@Relation` on a not-yet-inserted instance returns empty
+  results instead of trapping.
+- **Unsorted live queries are now deterministic**: results with no explicit
+  sort carry an implicit `ORDER BY id ASC` (oldest-first) instead of SQLite
+  scan order.
+- **Iteration is stable under concurrent change.** On file databases,
+  `for x in results` walks a captured generation and, if that generation is
+  retired mid-walk, transparently re-pins and resumes from a keyset anchor —
+  rows are visited at most once, in order. On in-memory databases, a row
+  deleted concurrently with a render can hydrate as an invalidated
+  (default-valued) placeholder for at most one frame; iteration skips such
+  rows.
+- **File databases trade some WAL growth for pinned reads**: the `-wal` file
+  may grow up to `ResultsTuning.walKeeperEvictionThresholdBytes` (default
+  16 MB) before pinned snapshots are evicted, and up to three extra
+  read-only connections are opened per instance. Idle read generations
+  self-retire after `ResultsTuning.generationTTLSeconds` (default 30 s) via
+  a maintenance timer that runs for every configuration, including non-sync
+  lattices.
+- **Backgrounding retires all read generations.** This is automatic where
+  UIKit is available (resign-active / protected-data notifications), and
+  transparent — results re-pin lazily on the next access after
+  foregrounding. App extensions and non-UIKit hosts using a shared app-group
+  container MUST call `Lattice.retireAllGenerations()` before suspension: a
+  suspended process holding WAL read marks in a shared container is killed
+  by the system (`0xdead10cc`). SwiftUI hosts where those notifications do
+  not fire should call it from a `ScenePhase` handler.
+- **Cross-process freshness is a bounded-staleness contract**: another
+  process's commit becomes visible within
+  `ResultsTuning.crossProcessBeltIntervalMs` (default 500 ms) or on any
+  same-process write or notification, whichever comes first — not
+  instantaneously. Same-process writes remain read-your-writes exact.
+- **`DynamicResults` is a documented exemption** from the generation-pinned
+  read model: it keeps live `count` and LIMIT/OFFSET
+  `snapshot(limit:offset:)` semantics, and is trap-free under concurrent
+  shrink by construction. `count` and a subsequent `snapshot` are not
+  mutually consistent under a concurrent writer — take one `snapshot()` and
+  derive counts from it.
+
+Throwing APIs (wrap call sites in `try`):
+- **The `add` family now throws**: `add(_:)`, `add(_:preservingGlobalId:)`,
+  `add(contentsOf:)`, and the `any VirtualModel` overload. Backend insert
+  failures (constraint violation, closed handle, I/O error) surface as
+  `LatticeError.addFailed` where `add(_:)` previously terminated the process
+  and the `VirtualModel` overload silently swallowed them. Re-adding an
+  already-managed object throws `LatticeError.alreadyManaged` instead of an
+  unconditional message-less `fatalError()`, and `add(contentsOf:)` now
+  pre-checks every element and throws before anything is inserted.
+- **`Lattice.attach(lattice:)` and `attaching(lattice:)` now throw**
+  `LatticeError.attachFailed` on schema mismatch or alias collision instead
+  of terminating the process; the new `detach(lattice:)` throws
+  `LatticeError.detachFailed`.
+- **`Lattice.transaction { }` now rolls back on a thrown error and rethrows
+  it.** Previously a throw left the write transaction open, wedging the
+  connection until the busy timeout killed the process.
+- **`LatticeBackend` protocol requirements changed** (custom conformers
+  only; none known outside this repo): `attach` now throws; `detach(_:)`,
+  `rollback()`, and throwing `addPreservingGlobalId`/`addBulk` are new or
+  updated requirements; and the read-generation machinery adds
+  invalidation-hook, generation acquire/retain/release/retire,
+  pool-maintenance, and generation-pinned query entry-point requirements.
+
+Storage and memory:
+- **`Configuration.isStoredInMemoryOnly` is replaced by
+  `Configuration.storage`**: `.file(URL)`, `.memory()` for a fresh private
+  in-memory database, or `.memory(named:)` for a shared one — handles opened
+  with the same name in one process share the database and observe each
+  other's writes. Migrate `.init(isStoredInMemoryOnly: true)` to
+  `.init(storage: .memory())`; `.init(fileURL:)` spellings keep working, and
+  `configuration.fileURL` remains as a computed accessor whose setter
+  switches storage to `.file`.
+- `.memory(named:)` names are percent-encoded into the backing SQLite URI:
+  names no longer need to be URI-safe, and two names that differ only by
+  URI-hostile characters (`?`, `#`, `%`, space) are distinct databases.
+- **`EmbeddedModel` reads are tolerant**: reading a property from empty or
+  undecodable stored JSON returns the type's default value (with an error
+  log) instead of trapping. JSON encode failures on the write path still
+  trap, now with a message naming the type.
+
+Sync progress and change stream:
+- **`Lattice.changeStream` is now
+  `AsyncThrowingStream<[AnySendableReference<AuditLog>], any Error>`** (was
+  `AsyncStream`) — iterate with `for try await`. Creating or iterating the
+  stream no longer blocks the calling task on the background database open,
+  so time limits and cancellation can fire; the AuditLog observer still
+  registers synchronously at stream creation, so commits made after the
+  stream exists are always captured (early batches buffer and flush in
+  order). A failed background open surfaces as a thrown error at first
+  iteration instead of crashing the process, and cancellation promptly ends
+  iteration and removes the observer.
+
+Migrations:
+- **`MigrationContext.enumerateObjects(table:callback:)` is
+  reimplemented.** The old `(any Model, any Model) -> Void` callback was a
+  never-functional stub — it compiled but did nothing. The callback now
+  receives each row's `id` (`Int64`) plus the full old row as
+  `[String: ColumnValue]`, and per-row writes are staged with the new
+  `setValue(table:rowId:column:value:)`. The versioned `[Int: Migration]`
+  dictionary remains the wired migration path in 1.0 — no public open
+  invokes a `MigrationContext` block yet. The versioned row-transform path
+  migrates BLOB-bearing tables byte-for-byte (now test-pinned).
+- **`DynamicResults.sorted(by:ascending:)` is renamed
+  `sortedBy(_:ascending:)`** — one sort spelling across the API surface,
+  matching the typed `Results` family.
+
+### Removed
+- **`Lattice.onSyncProgress(_:)`** — `syncProgressStream` is the canonical
+  progress API (`for await progress in lattice.syncProgressStream`), with
+  `syncProgressPublisher` as the Combine adapter. The publisher is now
+  stream-backed, and cancelling its subscription clears the underlying
+  handler, where the old callback leaked for the backend's lifetime.
+  Migration is a mechanical callback → `for await` conversion.
+- **`Model.__globalId`** — the deprecated requirement is gone and the
+  `@Model` macro no longer emits it; `globalId` is now the stored property
+  itself (public get, setter internal to the model's module). Migration is a
+  mechanical rename `.__globalId` → `.globalId` in reads and query key
+  paths; to seed a specific `globalId` on insert use
+  `add(_:preservingGlobalId:)`. Also removed: the macro-emitted
+  `__GlobalIdName`/`__GlobalIdKey` helper structs and the orphaned public
+  `StaticString`/`StaticInt32` protocols (Lattice's `StaticString` shadowed
+  `Swift.StaticString` in any file importing Lattice).
+- **`List`'s `Codable` conformance** — its `init(from:)` was an
+  unconditional `fatalError()` stub, so decoding any model graph containing
+  a `List` terminated the process, and the working encode half had no
+  callers. Serialize via `@Detached` (lists mirror as plain arrays with
+  their own synthesized `Codable`); a `@Codable` model with a `List`
+  property is now a compile-time error — mark it `@CodableIgnored` or detach
+  first.
+- **Dead symbols**: the public no-op `enum Deprecated`, the duplicate
+  `typealias CxxManagedLatticeObject` (use `CxxManagedModel`), the
+  long-commented-out `LatticeExampleServer` executable target, and the
+  orphaned `fluent`/`fluent-sqlite-driver` package dependencies.
+- **Twelve underscored support symbols are no longer `public`** — they were
+  not referenced by macro expansions and had zero external users
+  (`Query._constructForTesting`/`_constructPredicate`/`_unionSubquery`/
+  `_caseWhen`/`_unionAccessTracker`/`_unionOverrides`, `Lattice._isolation`,
+  `Model._registerIfNeeded`, `_ModelStorage`, `_defaultCxxLatticeObject`,
+  `_pushDefaultToStorage`; `_UncheckedSendable` moves behind
+  `@_spi(LatticeInternals)`). Macro-referenced underscored plumbing stays
+  public and is exempt from semver — consumers must not call it directly.
+  The full audit is in `docs/spi-audit-1.0.md`; the policy is in
+  `VERSIONING.md`.
+
+### Fixed
+- **Bulk-update notification coalescing**: cross-instance notifications are
+  coalesced per (instance, property) and delivered by a single drain task in
+  commit order, fixing a multi-minute UI hang under bulk writes (issue #4).
+  Also released separately as 0.10.12.
+- `syncProgressStream` no longer crashes the process if its background query
+  database fails to open (cross-process path) — it logs and finishes the
+  stream. Its non-sync-agent path now rides the cross-process idle hint
+  instead of opening a second database handle and AuditLog observer — one
+  fewer failure mode, same yields.
+- `Configuration.init` no longer traps when no documents directory exists
+  (headless Linux daemons, some sandboxed utility processes): the default
+  database location falls back to the current working directory with a
+  warning log.
 
 ## [0.10.8] - 2026-07-10
 
