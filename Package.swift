@@ -33,6 +33,10 @@ let package = Package(
         .package(url: "https://github.com/vapor/vapor.git", from: "4.76.0"),
         .package(url: "https://github.com/vapor/websocket-kit.git", from: "2.15.0"),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.0"),
+        // Docs-time only: enables `swift package generate-documentation` over
+        // the catalog at Sources/Lattice/Lattice.docc (and the docs.yml Pages
+        // deploy). No target depends on it; it adds nothing to consumer builds.
+        .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.

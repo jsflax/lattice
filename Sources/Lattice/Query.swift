@@ -606,7 +606,7 @@ extension Query where T: _QueryString {
     /**
      Checks for all elements in this collection that equal the given value.
      `?` and `*` are allowed as wildcard characters, where `?` matches 1 character and `*` matches 0 or more characters.
-     - parameter value: value used.
+     - parameter column: the column whose value is used as the LIKE pattern.
      - parameter caseInsensitive: `true` if it is a case-insensitive search.
      */
     public func like<U>(_ column: Query<U>, caseInsensitive: Bool = false) -> Query<Bool> {

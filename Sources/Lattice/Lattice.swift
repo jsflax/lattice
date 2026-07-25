@@ -1021,6 +1021,8 @@ public struct Lattice {
     /// rows — rides the 1.1 unified-open work; see that type's docs.)
     ///
     /// - Parameters:
+    ///   - isolation: The actor isolation the handle is confined to
+    ///     (defaults to the caller's isolation)
     ///   - modelTypes: The model types to register
     ///   - configuration: Database configuration (including any migrations)
     // Variadic (parameter-pack) convenience init — iOS 17+ (variadic generics).
