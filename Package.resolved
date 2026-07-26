@@ -1,5 +1,5 @@
 {
-  "originHash" : "4703c2b6a0bb805b08afdba311352ef4fc19bc45f8c53bf86cf71f077de2c4c5",
+  "originHash" : "b0909cde479cccabd99162864b190228428ef00515b934e5b2f082137d2cbf37",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jsflax/LatticeCore.git",
       "state" : {
-        "revision" : "bac030957374f7243ca9f5c63eeadd1d8fe48d90",
-        "version" : "0.10.11"
+        "revision" : "16828cbdae9f78d4bd9be4a61287b06438137eb9",
+        "version" : "1.0.1"
       }
     },
     {
@@ -134,6 +134,24 @@
       "state" : {
         "revision" : "dc4030184203ffafbb2ec614352487235d747fe0",
         "version" : "1.4.1"
+      }
+    },
+    {
+      "identity" : "swift-docc-plugin",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-docc-plugin",
+      "state" : {
+        "revision" : "647c708be89f834fa6a6d4945442793a77ddf5b6",
+        "version" : "1.5.0"
+      }
+    },
+    {
+      "identity" : "swift-docc-symbolkit",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-docc-symbolkit",
+      "state" : {
+        "revision" : "b45d1f2ed151d057b54504d653e0da5552844e34",
+        "version" : "1.0.0"
       }
     },
     {

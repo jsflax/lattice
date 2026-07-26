@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-07-25
 
 The 1.0 release. Every breaking change below is also ledgered, one line per
 change, in `MIGRATION-1.0.md` — read that alongside this section when
