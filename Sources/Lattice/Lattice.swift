@@ -465,10 +465,26 @@ public struct Lattice {
         /// have different HOME directories (e.g. macOS app ↔ iOS simulator).
         public var socketPath: String?
 
-        public init(channel: String, syncFilter: SyncFilter? = nil, socketPath: String? = nil) {
+        /// Whether NARROWING this channel's filter emits removal DELETEs to
+        /// the peer (Stage A4). Default true: the peer's mirror is trimmed
+        /// to match the new filter.
+        ///
+        /// Set false when the peer is a shared/multi-writer database whose
+        /// contents are not this side's to trim — narrowing then updates
+        /// only local sync bookkeeping and the peer keeps every row it
+        /// already has. That is the correct semantic for a channel feeding
+        /// a group database: un-sharing a project must stop FUTURE sharing,
+        /// not delete what teammates already received (and it removes the
+        /// divergence class where field-delta updates land on rows the
+        /// mirror-clear deleted).
+        public var narrowingEmitsRemovals: Bool
+
+        public init(channel: String, syncFilter: SyncFilter? = nil, socketPath: String? = nil,
+                    narrowingEmitsRemovals: Bool = true) {
             self.channel = channel
             self.syncFilter = syncFilter
             self.socketPath = socketPath
+            self.narrowingEmitsRemovals = narrowingEmitsRemovals
         }
     }
 
@@ -706,6 +722,7 @@ public struct Lattice {
                     if let filter = target.syncFilter {
                         ipcTarget.sync_filter = lattice.sync_filter_to_optional(_makeCxxSyncFilter(Array(filter.entries)))
                     }
+                    ipcTarget.narrowing_emits_removals = target.narrowingEmitsRemovals
                     targets.push_back(ipcTarget)
                 }
                 config.set_ipc_targets(targets)
