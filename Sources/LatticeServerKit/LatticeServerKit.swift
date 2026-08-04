@@ -34,9 +34,18 @@ public struct SyncChannel: Sendable {
 /// frame is applied or fanned out. Mechanical frame validation, not relay
 /// intelligence: the relay already decodes every frame to apply it.
 ///
-/// Tables absent from `allowedOperations` are unrestricted. A violating
-/// frame is answered with `ServerSentEvent.rejected(reason:)` and dropped
-/// whole — nothing applied, nothing fanned out, entries left unACKed.
+/// A violating frame is answered with `ServerSentEvent.rejected(reason:)`
+/// and dropped whole — nothing applied, nothing fanned out, entries left
+/// unACKed.
+///
+/// **Fails CLOSED.** This inspector reads the frame with a different parser
+/// (Foundation) than the applier (nlohmann in LatticeCore), so anything the
+/// inspector cannot fully understand — an unparsable frame, a non-object
+/// array element, a missing/odd `tableName` or `operation` — is treated as
+/// a violation rather than waved through. An earlier fail-open version was
+/// defeated by prefixing the entry array with a single `0`: the Swift cast
+/// to `[[String: Any]]` yielded nil (no violation) while the C++ parser
+/// skipped the junk element and applied every real DELETE behind it.
 public struct SyncWritePolicy: Sendable {
     public enum Operation: String, Sendable, CaseIterable {
         case insert = "INSERT"
@@ -44,43 +53,98 @@ public struct SyncWritePolicy: Sendable {
         case delete = "DELETE"
     }
 
-    /// tableName → operations allowed on that table.
+    /// How to treat a table with no entry in `allowedOperations`.
+    public enum UnlistedTablePolicy: Sendable {
+        /// Unrestricted (back-compat default for single-tenant mounts).
+        case allow
+        /// Rejected. Correct for shared/multi-tenant channels: the schema
+        /// is fixed and known, so anything else is forged.
+        case deny
+    }
+
+    /// tableName → operations allowed on that table. Matched
+    /// case-insensitively: SQLite identifiers are case-insensitive, so a
+    /// `"memory"` entry reaches the same table as `"Memory"` and must not
+    /// slip past an exact-match lookup.
     public var allowedOperations: [String: Set<Operation>]
     /// Optional cap on DELETE entries per frame across ALL tables — a
     /// mass-deletion brake that still admits legitimate single-row
     /// retractions on tables whose policy allows deletes.
     public var maxDeletesPerFrame: Int?
+    /// Treatment of tables absent from `allowedOperations`.
+    public var unlistedTables: UnlistedTablePolicy
 
-    public init(allowedOperations: [String: Set<Operation>], maxDeletesPerFrame: Int? = nil) {
+    /// Lattice-internal tables a client may never write through the relay,
+    /// whatever the policy says. `AuditLog` is the dangerous one: the relay
+    /// serves it verbatim to catching-up peers (`eventsAfter`), so a forged
+    /// INSERT into it launders arbitrary operations — including ones this
+    /// policy forbids — into every member's next catch-up.
+    static let internalTables: Set<String> = ["auditlog"]
+
+    public init(
+        allowedOperations: [String: Set<Operation>],
+        maxDeletesPerFrame: Int? = nil,
+        unlistedTables: UnlistedTablePolicy = .allow
+    ) {
         self.allowedOperations = allowedOperations
         self.maxDeletesPerFrame = maxDeletesPerFrame
+        self.unlistedTables = unlistedTables
     }
 
-    /// First violation in the frame, or nil when the frame passes. Frames
-    /// that are not audit-log uploads (acks etc.) pass untouched; a frame
-    /// that fails to parse as JSON also passes — `Lattice.receive` is the
-    /// authority on malformed input and will surface its own error.
+    /// Case-insensitive lookup over `allowedOperations`.
+    private func allowed(forTable table: String) -> Set<Operation>? {
+        let key = table.lowercased()
+        if let exact = allowedOperations[table] { return exact }
+        for (name, ops) in allowedOperations where name.lowercased() == key {
+            return ops
+        }
+        return nil
+    }
+
+    /// First violation in the frame, or nil when the frame passes.
     func violation(inFrame data: Data) -> String? {
-        guard
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let entries = root["auditLog"] as? [[String: Any]]
-        else { return nil }
+        guard let parsed = try? JSONSerialization.jsonObject(with: data) else {
+            // The applier's parser is more permissive than Foundation's
+            // (nesting depth, number forms). Anything we cannot read, we
+            // cannot vet — refuse it.
+            return "frame is not readable JSON"
+        }
+        guard let root = parsed as? [String: Any] else {
+            return "frame is not a JSON object"
+        }
+        // Not an upload (ack/replayRequest/etc.): nothing to enforce.
+        guard let rawEntries = root["auditLog"] else { return nil }
+        guard let entries = rawEntries as? [Any] else {
+            return "auditLog is not an array"
+        }
 
         var deleteCount = 0
-        for entry in entries {
-            guard
-                let table = entry["tableName"] as? String,
-                let opRaw = entry["operation"] as? String
-            else { continue }
-            let op = Operation(rawValue: opRaw)
-            if op == .delete { deleteCount += 1 }
-            if let allowed = allowedOperations[table] {
-                guard let op, allowed.contains(op) else {
-                    return "operation \(opRaw) not permitted on \(table) for this channel"
+        for element in entries {
+            guard let entry = element as? [String: Any] else {
+                return "malformed audit entry (not an object)"
+            }
+            guard let table = entry["tableName"] as? String, !table.isEmpty else {
+                return "audit entry is missing a tableName"
+            }
+            guard let opRaw = entry["operation"] as? String,
+                  let op = Operation(rawValue: opRaw.uppercased()) else {
+                return "audit entry has an unrecognized operation"
+            }
+            guard !Self.internalTables.contains(table.lowercased()) else {
+                return "writes to the internal table \(table) are never permitted"
+            }
+            if op == .delete {
+                deleteCount += 1
+                if let cap = maxDeletesPerFrame, deleteCount > cap {
+                    return "frame exceeds the \(cap)-delete limit for this channel"
                 }
             }
-            if let cap = maxDeletesPerFrame, deleteCount > cap {
-                return "frame exceeds the \(cap)-delete limit for this channel"
+            if let allowed = allowed(forTable: table) {
+                guard allowed.contains(op) else {
+                    return "operation \(opRaw) not permitted on \(table) for this channel"
+                }
+            } else if case .deny = unlistedTables {
+                return "table \(table) is not part of this channel's schema"
             }
         }
         return nil
@@ -126,16 +190,34 @@ public struct SyncSchemaHandshake: Sendable {
 
 // MARK: - Socket registry
 
+/// One-way flag a connection consults before doing any work. Revocation
+/// MUST NOT depend on the peer completing the WebSocket close handshake:
+/// `close(code:)` only *sends* a close frame, and a hostile client that
+/// never replies keeps `isClosed == false` (Vapor sets no server-side ping
+/// timeout), so a "kicked" socket would otherwise keep applying frames to
+/// the shared database and fanning them out to the members who remain.
+final class RevocationFlag: @unchecked Sendable {
+    private let lock = NIOLock()
+    private var revoked = false
+    var isRevoked: Bool { lock.withLock { revoked } }
+    func revoke() { lock.withLock { revoked = true } }
+}
+
 actor SocketManager {
     struct Entry {
         let socket: WebSocket
         let userId: UUID
+        let revocation: RevocationFlag
     }
 
     private var channels: [String: [Entry]] = [:]
 
     func sockets(channelId: String) -> [WebSocket] {
-        channels[channelId, default: []].map(\.socket)
+        // Revoked entries are excluded from fan-out immediately, even while
+        // their transport lingers.
+        channels[channelId, default: []]
+            .filter { !$0.revocation.isRevoked }
+            .map(\.socket)
     }
 
     func connectionCount(channelId: String) -> Int {
@@ -143,36 +225,49 @@ actor SocketManager {
         return channels[channelId, default: []].count
     }
 
-    func add(socket: WebSocket, channelId: String, userId: UUID) {
+    func add(socket: WebSocket, channelId: String, userId: UUID, revocation: RevocationFlag) {
         reap(channelId: channelId)
-        channels[channelId, default: []].append(Entry(socket: socket, userId: userId))
+        channels[channelId, default: []].append(
+            Entry(socket: socket, userId: userId, revocation: revocation))
     }
 
     func remove(socket: WebSocket, channelId: String) {
         channels[channelId]?.removeAll { $0.socket === socket }
+        if channels[channelId]?.isEmpty == true { channels[channelId] = nil }
     }
 
     private func reap(channelId: String) {
         channels[channelId]?.removeAll { $0.socket.isClosed }
+        if channels[channelId]?.isEmpty == true { channels[channelId] = nil }
     }
 
-    /// Close + deregister one user's live sockets on a channel (membership
-    /// revocation). Sockets registered pre-open are included — closing them
-    /// makes the relay's post-open `isClosed` check abandon the connection.
+    /// Revoke + close one user's connections on a channel (membership
+    /// removal). The revocation flag is the authoritative part — the close
+    /// frame and the ping-timeout are best-effort transport cleanup. Entries
+    /// stay registered until their `onClose` fires so a lingering hostile
+    /// socket remains visible to `connectionCount` and to later kicks.
     func disconnect(channelId: String, userId: UUID) {
         for entry in channels[channelId, default: []] where entry.userId == userId {
-            _ = entry.socket.close(code: .goingAway)
+            entry.revocation.revoke()
+            forceClose(entry.socket)
         }
-        channels[channelId]?.removeAll { $0.userId == userId }
     }
 
-    /// Close + deregister every socket on a channel (group deletion; also
+    /// Revoke + close every connection on a channel (channel deletion; also
     /// the post-purge nudge that forces reconnect-and-catch-up).
     func disconnectAll(channelId: String) {
         for entry in channels[channelId, default: []] {
-            _ = entry.socket.close(code: .goingAway)
+            entry.revocation.revoke()
+            forceClose(entry.socket)
         }
-        channels[channelId] = nil
+    }
+
+    /// Politely close, then drop the transport if the peer never answers:
+    /// `pingInterval` starts server-side pings whose unanswered-pong path
+    /// closes the channel outright.
+    private func forceClose(_ socket: WebSocket) {
+        socket.pingInterval = .seconds(5)
+        _ = socket.close(code: .goingAway)
     }
 }
 
@@ -256,10 +351,21 @@ extension Lattice {
                     print("🧦", "Received String Event", str)
                 }
                 ws.onBinary { ws, bb in
+                    // Revoked or refused: consume and discard. Never apply,
+                    // never ack, never fan out, never buffer.
+                    guard !state.revocation.isRevoked, !state.isRefused else { return }
                     if let lattice = state.lattice, let process = state.process {
                         process(ws, bb, lattice)
-                    } else {
+                    } else if state.bufferedBytes + bb.readableBytes <= maxBufferedFrameBytes {
+                        state.bufferedBytes += bb.readableBytes
                         state.buffered.append(bb)
+                    } else {
+                        print(">>> Pre-open buffer cap exceeded; closing connection")
+                        state.isRefused = true
+                        state.buffered.removeAll()
+                        state.bufferedBytes = 0
+                        ws.pingInterval = .seconds(5)
+                        _ = ws.close(code: .policyViolation)
                     }
                 }
                 ws.onClose.whenComplete { _ in
@@ -278,6 +384,7 @@ extension Lattice {
                             state.lattice = nil
                             state.process = nil
                             state.buffered.removeAll()
+                            state.bufferedBytes = 0
                             if let box {
                                 Task.detached { box.clear() }
                             }
@@ -290,7 +397,9 @@ extension Lattice {
             // attributable reason instead of the silent apply-wedge class.
             if let refusal = handshake?.refusal(for: req) {
                 print(">>> Sync handshake refused: \(refusal)")
+                state.isRefused = true
                 try? await ws.send("schema-handshake: \(refusal)")
+                ws.pingInterval = .seconds(5)   // drop a peer that ignores the close
                 try? await ws.close(code: .policyViolation)
                 return
             }
@@ -300,6 +409,8 @@ extension Lattice {
                 channel = try await channelExtractor(req)
             } catch {
                 print(">>> Could not authorize sync connection: \(error)")
+                state.isRefused = true
+                ws.pingInterval = .seconds(5)
                 try? await ws.close()
                 return
             }
@@ -314,6 +425,8 @@ extension Lattice {
                   !channel.databaseFileName.contains("\\"),
                   !channel.databaseFileName.hasPrefix(".") else {
                 print(">>> Refusing unsafe database filename for channel \(channel.id)")
+                state.isRefused = true
+                ws.pingInterval = .seconds(5)
                 try? await ws.close(code: .policyViolation)
                 return
             }
@@ -324,6 +437,10 @@ extension Lattice {
                 .appending(path: channel.databaseFileName)
 
             @Sendable func processFrame(_ ws: WebSocket, _ bb: ByteBuffer, _ lattice: Lattice) {
+                // Authoritative revocation: a kicked connection stops
+                // affecting the channel immediately, even if its transport
+                // lingers because the peer never answered the close frame.
+                guard !state.revocation.isRevoked else { return }
                 let data = Data(buffer: bb)
                 // Write-policy gate: a violating frame is refused whole —
                 // not applied, not fanned out, its entries left unACKed.
@@ -353,8 +470,17 @@ extension Lattice {
             // (the client applies them independently of our open state).
             // channelId publishes to the loop first so a kick-triggered
             // onClose can always deregister.
-            ws.eventLoop.execute { state.channelId = channel.id }
-            await sockets.add(socket: ws, channelId: channel.id, userId: channel.userId)
+            state.channelId = channel.id
+            await sockets.add(socket: ws, channelId: channel.id,
+                              userId: channel.userId, revocation: state.revocation)
+            // A socket that closed while the extractor was awaiting ran its
+            // onClose with channelId still nil and deregistered nothing —
+            // without this it would sit in the registry for the process
+            // lifetime, retaining a dead socket and slowing every fan-out.
+            if ws.isClosed {
+                await sockets.remove(socket: ws, channelId: channel.id)
+                return
+            }
 
             guard let connectionLattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
                 print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
@@ -370,14 +496,19 @@ extension Lattice {
             // abandon: never install the lattice on a dead connection
             // (onClose has already run its cleanup, which found nil).
             ws.eventLoop.execute {
-                guard !ws.isClosed else {
+                guard !ws.isClosed, !state.revocation.isRevoked else {
                     state.buffered.removeAll()
-                    Task.detached { held.clear() }
+                    state.bufferedBytes = 0
+                    // The catch-up task below force-unwraps `held.value`;
+                    // clearing here would trap it. Mark abandoned instead
+                    // and let the catch-up guard release it.
+                    state.abandoned = true
                     return
                 }
                 state.process = processFrame
                 for bb in state.buffered { processFrame(ws, bb, held.value) }
                 state.buffered.removeAll()
+                state.bufferedBytes = 0
                 state.lattice = held.value
             }
 
@@ -385,7 +516,14 @@ extension Lattice {
             // catch-up serialize through the same per-channel lattice.
             do {
                 try await Task {
-                    guard !ws.isClosed else { return }
+                    // The go-live hop hands ownership here when it abandons:
+                    // release the opened lattice off-loop and do not touch
+                    // `held.value` again.
+                    if state.abandoned {
+                        Task.detached { held.clear() }
+                        return
+                    }
+                    guard !ws.isClosed, !state.revocation.isRevoked else { return }
                     let lattice = held.value
 
                     let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
@@ -393,6 +531,7 @@ extension Lattice {
                     if count > 0 {
                         print(">>> Bringing channel \(channel.id) connection up to date with \(count) events")
                         for i in stride(from: 0, to: count, by: 1000) {
+                            guard !state.revocation.isRevoked else { break }
                             let page = events[i..<min(count, i + 1000)]
                             let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
                             await ws.send(ByteBuffer(data: encoded))
@@ -450,7 +589,43 @@ final class ConnectionRelayState: @unchecked Sendable {
     /// Installed at go-live: the frame processor bound to this connection's
     /// channel (handlers register before the channel is known).
     var process: ((WebSocket, ByteBuffer, Lattice) -> Void)?
-    /// Late-bound channel id; nil = never registered with the SocketManager.
-    var channelId: String?
     var buffered: [ByteBuffer] = []
+    var bufferedBytes: Int = 0
+
+    /// Late-bound channel id. Written on the event loop, READ from the
+    /// detached onClose task — so it lives in a lock, not in loop
+    /// confinement. nil = never registered with the SocketManager.
+    private let channelIdBox = NIOLockedValueBox<String?>(nil)
+    var channelId: String? {
+        get { channelIdBox.withLockedValue { $0 } }
+        set { channelIdBox.withLockedValue { $0 = newValue } }
+    }
+
+    /// Set by the SocketManager on revocation; consulted before any apply,
+    /// ack, or fan-out (the close frame alone is not authoritative).
+    let revocation = RevocationFlag()
+
+    /// Set when the connection is refused (handshake/authorization/unsafe
+    /// name): the binary handler then discards instead of buffering, so a
+    /// peer that ignores the close frame cannot pin memory.
+    private let refusedBox = NIOLockedValueBox<Bool>(false)
+    var isRefused: Bool {
+        get { refusedBox.withLockedValue { $0 } }
+        set { refusedBox.withLockedValue { $0 = newValue } }
+    }
+
+    /// Set on the go-live hop when the connection died (or was revoked)
+    /// during the lattice open. The catch-up task, which force-unwraps the
+    /// opened lattice's box, checks this and releases instead — clearing
+    /// the box from the go-live hop itself would trap that unwrap.
+    private let abandonedBox = NIOLockedValueBox<Bool>(false)
+    var abandoned: Bool {
+        get { abandonedBox.withLockedValue { $0 } }
+        set { abandonedBox.withLockedValue { $0 = newValue } }
+    }
 }
+
+/// Cap on frames held during the pre-go-live window. Generous for a real
+/// client's opening burst, bounded against a peer that streams into a
+/// connection that will never go live.
+private let maxBufferedFrameBytes = 64 * 1024 * 1024

@@ -161,6 +161,19 @@ private final class RelayHarness: @unchecked Sendable {
         return collector
     }
 
+    /// Server-side registration completes AFTER the client's upgrade
+    /// resolves (the extractor awaits in between), so connection counts are
+    /// eventually-consistent from the client's point of view — poll.
+    func awaitConnectionCount(_ target: Int, channelId: String, timeout: TimeInterval = 5) async -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+        var seen = await handle.connectionCount(channelId: channelId)
+        while seen != target && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            seen = await handle.connectionCount(channelId: channelId)
+        }
+        return seen
+    }
+
     func shutdown() async {
         try? await app.asyncShutdown()
         try? FileManager.default.removeItem(at: storageURL)
@@ -203,8 +216,8 @@ final class ServerRelayTests: BaseTest {
         let a = try await harness.connect(pathSuffix: "sync/group/g1", user: userA)
         let b = try await harness.connect(pathSuffix: "sync/group/g1", user: userB)
         let c = try await harness.connect(pathSuffix: "sync/group/g2", user: userC)
-        #expect(await harness.handle.connectionCount(channelId: "group-g1") == 2)
-        #expect(await harness.handle.connectionCount(channelId: "group-g2") == 1)
+        #expect(await harness.awaitConnectionCount(2, channelId: "group-g1") == 2)
+        #expect(await harness.awaitConnectionCount(1, channelId: "group-g2") == 1)
 
         let entries = try donorEntries { donor in
             try donor.add(SimpleSyncObject(value: 41, floatValue: 1))
@@ -240,12 +253,12 @@ final class ServerRelayTests: BaseTest {
         let kicked = UUID(), survivor = UUID()
         let a = try await harness.connect(pathSuffix: "sync/group/g1", user: kicked)
         let b = try await harness.connect(pathSuffix: "sync/group/g1", user: survivor)
-        #expect(await harness.handle.connectionCount(channelId: "group-g1") == 2)
+        #expect(await harness.awaitConnectionCount(2, channelId: "group-g1") == 2)
 
         await harness.handle.disconnect(channelId: "group-g1", userId: kicked)
         #expect(await a.wait { $0.isClosed })
         #expect(!b.isClosed)
-        #expect(await harness.handle.connectionCount(channelId: "group-g1") == 1)
+        #expect(await harness.awaitConnectionCount(1, channelId: "group-g1") == 1)
 
         // Survivor still relays: an upload is acked post-kick.
         let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 7, floatValue: 1)) }
@@ -254,7 +267,7 @@ final class ServerRelayTests: BaseTest {
 
         await harness.handle.disconnectAll(channelId: "group-g1")
         #expect(await b.wait { $0.isClosed })
-        #expect(await harness.handle.connectionCount(channelId: "group-g1") == 0)
+        #expect(await harness.awaitConnectionCount(0, channelId: "group-g1") == 0)
     }
 
     // MARK: Write policy
@@ -372,6 +385,167 @@ final class ServerRelayTests: BaseTest {
         let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 5, floatValue: 1)) }
         try await ok.socket!.send(try makeFrame(entries: entries))
         #expect(await ok.wait { !$0.acks.isEmpty })
+    }
+
+    // MARK: Policy fail-closed (adversarial review)
+
+    /// The inspector (Foundation) and the applier (nlohmann) are different
+    /// parsers. Anything the inspector cannot fully vet must be REFUSED, not
+    /// waved through: the original fail-open version was defeated by
+    /// prefixing the entry array with a single `0`.
+    @Test func policyFailsClosedOnParserDifferentials() async throws {
+        let policy = SyncWritePolicy(
+            allowedOperations: ["SimpleSyncObject": [.insert, .update]],
+            unlistedTables: .deny)
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            writePolicy: policy,
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        let a = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+        let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+
+        // Build a REAL delete entry, then smuggle it behind junk.
+        let donor = try testLattice(SimpleSyncObject.self)
+        let obj = SimpleSyncObject(value: 55, floatValue: 1)
+        try donor.add(obj)
+        let inserts = Array(donor.eventsAfter(globalId: nil))
+        donor.delete(obj)
+        let insertedIds = Set(inserts.compactMap(\.globalId))
+        let deleteEntry = Array(donor.eventsAfter(globalId: nil))
+            .first { entry in
+                entry.operation == .delete
+                    && !(entry.globalId.map { insertedIds.contains($0) } ?? false)
+            }
+        #expect(deleteEntry != nil)
+
+        // Seed the channel with the row through the legitimate path.
+        try await a.socket!.send(try makeFrame(entries: inserts))
+        #expect(await a.wait { !$0.acks.isEmpty })
+        let ackCountAfterInsert = a.acks.count
+        let peerFramesAfterInsert = peer.count(of: "auditLog")
+
+        func rawFrame(_ object: [String: Any]) throws -> [UInt8] {
+            Array(try JSONSerialization.data(withJSONObject: object))
+        }
+        let deleteJSON = try JSONSerialization.jsonObject(
+            with: try JSONEncoder().encode(deleteEntry!)) as! [String: Any]
+
+        // (1) Junk-prefixed array — the exact bypass.
+        var rejects = 0
+        try await a.socket!.send(try rawFrame(["kind": "auditLog", "auditLog": [0, deleteJSON]]))
+        let afterJunk = rejects
+        #expect(await a.wait { $0.count(of: "rejected") > afterJunk })
+        rejects = a.count(of: "rejected")
+
+        // (2) Case-flipped table name — SQLite identifiers are
+        // case-insensitive, so an exact-match allowlist would miss it.
+        var lowered = deleteJSON
+        lowered["tableName"] = "simplesyncobject"
+        try await a.socket!.send(try rawFrame(["kind": "auditLog", "auditLog": [lowered]]))
+        let afterCase = rejects
+        #expect(await a.wait { $0.count(of: "rejected") > afterCase })
+        rejects = a.count(of: "rejected")
+
+        // (3) Forged AuditLog write — the relay serves that table verbatim
+        // to catching-up peers, so it launders forbidden ops.
+        var forgedAudit = deleteJSON
+        forgedAudit["tableName"] = "AuditLog"
+        forgedAudit["operation"] = "INSERT"
+        try await a.socket!.send(try rawFrame(["kind": "auditLog", "auditLog": [forgedAudit]]))
+        let afterForged = rejects
+        #expect(await a.wait { $0.count(of: "rejected") > afterForged })
+        rejects = a.count(of: "rejected")
+
+        // (4) Unknown table under .deny.
+        var unknown = deleteJSON
+        unknown["tableName"] = "SomeOtherTable"
+        unknown["operation"] = "INSERT"
+        try await a.socket!.send(try rawFrame(["kind": "auditLog", "auditLog": [unknown]]))
+        let afterUnknown = rejects
+        #expect(await a.wait { $0.count(of: "rejected") > afterUnknown })
+
+        // Nothing was applied, nothing acked, nothing fanned out.
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        #expect(a.acks.count == ackCountAfterInsert)
+        #expect(peer.count(of: "auditLog") == peerFramesAfterInsert)
+        let channelDB = try Lattice(SimpleSyncObject.self, configuration: .init(
+            fileURL: harness.storageURL.appending(path: "group-g1.sqlite")))
+        #expect(channelDB.objects(SimpleSyncObject.self).contains { $0.value == 55 })
+    }
+
+    // MARK: Authoritative revocation
+
+    /// `close(code:)` only SENDS a close frame; a peer that never answers
+    /// keeps `isClosed == false`. Revocation must therefore be enforced
+    /// server-side, not by transport cooperation.
+    @Test func revokedConnectionCannotWriteEvenIfItIgnoresTheClose() async throws {
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        let kicked = UUID()
+        let a = try await harness.connect(pathSuffix: "sync/group/g1", user: kicked)
+        let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+
+        // Establish the connection works pre-kick.
+        let warmup = try donorEntries { try $0.add(SimpleSyncObject(value: 11, floatValue: 1)) }
+        try await a.socket!.send(try makeFrame(entries: warmup))
+        #expect(await a.wait { !$0.acks.isEmpty })
+        let acksBeforeKick = a.acks.count
+        let peerFramesBeforeKick = peer.count(of: "auditLog")
+
+        await harness.handle.disconnect(channelId: "group-g1", userId: kicked)
+
+        // Simulate a hostile client: keep writing on the same socket
+        // regardless of the close frame. Sends may fail once the transport
+        // actually dies — that's fine, the assertion is about EFFECT.
+        let postKick = try donorEntries { try $0.add(SimpleSyncObject(value: 99, floatValue: 1)) }
+        for _ in 0..<3 {
+            try? await a.socket?.send(try makeFrame(entries: postKick))
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 500_000_000)
+
+        // No ack, no fan-out, and — decisively — nothing in the channel DB.
+        #expect(a.acks.count == acksBeforeKick)
+        #expect(peer.count(of: "auditLog") == peerFramesBeforeKick)
+        let channelDB = try Lattice(SimpleSyncObject.self, configuration: .init(
+            fileURL: harness.storageURL.appending(path: "group-g1.sqlite")))
+        #expect(!channelDB.objects(SimpleSyncObject.self).contains { $0.value == 99 })
+        // The surviving member is unaffected.
+        let survivorEntries = try donorEntries { try $0.add(SimpleSyncObject(value: 12, floatValue: 1)) }
+        try await peer.socket!.send(try makeFrame(entries: survivorEntries))
+        #expect(await peer.wait { !$0.acks.isEmpty })
+    }
+
+    /// A refused connection must not buffer frames: handlers now register
+    /// before authorization, so an unauthorized peer that ignores the close
+    /// could otherwise pin memory until OOM.
+    @Test func refusedConnectionDiscardsFramesInsteadOfBuffering() async throws {
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            channelExtractor: { _ in throw Abort(.forbidden) })
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        let refused = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 8, floatValue: 1)) }
+        for _ in 0..<5 {
+            try? await refused.socket?.send(try makeFrame(entries: entries))
+        }
+        try? await Task.sleep(nanoseconds: 400_000_000)
+
+        // Never acked, never registered, no database created for a channel
+        // that was never authorized.
+        #expect(refused.acks.isEmpty)
+        #expect(await harness.awaitConnectionCount(0, channelId: "group-g1") == 0)
+        #expect(!FileManager.default.fileExists(
+            atPath: harness.storageURL.appending(path: "group-g1.sqlite").path))
     }
 
     // MARK: Traversal guard
