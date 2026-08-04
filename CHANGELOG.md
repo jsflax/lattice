@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.0] - 2026-08-04
+
+### Added
+- `IPCSyncTarget.narrowingEmitsRemovals` — Swift surface for the Stage A4
+  core flag. Default `true` (narrowing trims the peer's mirror, unchanged);
+  `false` makes narrowing bookkeeping-only, which is required when the peer
+  is a shared multi-writer database (a group spoke): un-sharing must stop
+  future sharing without deleting rows other members already have.
+
 ## [1.0.0] - 2026-07-25
 
 The 1.0 release. Every breaking change below is also ledgered, one line per
