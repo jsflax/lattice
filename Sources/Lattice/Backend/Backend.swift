@@ -427,6 +427,13 @@ public protocol LatticeBackend: AnyObject, Sendable {
     // Sync filter
     func updateSyncFilter(_ filter: [SyncFilterParam])
     func clearSyncFilter()
+    // Per-channel variants (Stage A2/A6): scope a filter update to ONE
+    // synchronizer instead of fanning it to WSS + every IPC target, and
+    // drop a removed channel's sync bookkeeping so its stale state can't
+    // collapse entries the live channels still need.
+    func updateSyncFilter(_ filter: [SyncFilterParam], forChannel channel: String)
+    func clearSyncFilter(forChannel channel: String)
+    func removeSyncChannelState(syncId: String)
 
     // Observation — single @escaping @Sendable closure replaces C fn-ptr+ctx+destroy
     func addTableObserver(

@@ -1582,6 +1582,43 @@ public struct Lattice {
         }
     }
 
+    /// Update ONE synchronizer's filter at runtime (Stage A2), triggering
+    /// reconciliation on that channel only. `channel` is an IPC target's
+    /// channel name; pass `""` for the WSS synchronizer. The no-argument
+    /// `updateSyncFilter(_:)` fans one filter to every synchronizer — with
+    /// multiple differently-filtered IPC targets (one per group), that
+    /// overwrite is a cross-channel leak, so per-channel is the only safe
+    /// update once more than one filtered target exists.
+    public func updateSyncFilter(_ filter: SyncFilter?, forChannel channel: String) {
+        if let filter {
+            let params = filter.entries.map { SyncFilterParam(tableName: $0.key, whereClause: $0.value) }
+            backend.updateSyncFilter(params, forChannel: channel)
+        } else {
+            backend.clearSyncFilter(forChannel: channel)
+        }
+    }
+
+    /// Drop a removed channel's sync bookkeeping (Stage A6):
+    /// `_lattice_sync_state` rows, its `_lattice_sync_set` partition, and
+    /// its replication slot. Call when a sync target is being torn down
+    /// permanently (e.g. a group membership ended) — stale confirmed rows
+    /// from a dead channel otherwise let audit entries collapse before live
+    /// channels have relayed them (silent relay loss), and stale pending
+    /// rows pin entries forever.
+    ///
+    /// `syncId` is the RAW prefixed id the core uses: `"ipc:<channel>"` for
+    /// an IPC target, `"wss:<endpoint>"` for a WSS synchronizer. Prefer
+    /// `removeSyncChannelState(ipcChannel:)` for the common case.
+    public func removeSyncChannelState(syncId: String) {
+        backend.removeSyncChannelState(syncId: syncId)
+    }
+
+    /// Convenience over `removeSyncChannelState(syncId:)` composing the
+    /// core's `"ipc:" + channel` sync-id form.
+    public func removeSyncChannelState(ipcChannel channel: String) {
+        backend.removeSyncChannelState(syncId: "ipc:" + channel)
+    }
+
     public func count<T>(_ modelType: T.Type, where: ((Query<T>) -> Query<Bool>)? = nil) -> Int where T: Model {
         let whereClause: String? = `where`.map { $0(Query<T>()).predicate }
         // §4.1 in-txn carve-out: the live count routes through the core's

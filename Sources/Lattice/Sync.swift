@@ -116,9 +116,13 @@ public enum ServerSentEvent: Codable {
     // sequence (e.g. a Results Slice) wrap it with `Array(...)`.
     case auditLog([AuditLog])
     case ack([UUID])
+    /// Server refused a client frame (relay write-policy). The frame was
+    /// neither applied nor fanned out; its entries stay unACKed client-side.
+    /// Legacy clients ignore the unknown kind (C++ `from_json` → nullopt).
+    case rejected(reason: String)
 
     private enum CodingKeys: String, CodingKey {
-        case kind, auditLog, ack
+        case kind, auditLog, ack, rejected
     }
 
     public init(from decoder: any Decoder) throws {
@@ -132,6 +136,9 @@ public enum ServerSentEvent: Codable {
         case "ack":
             let ids = try container.decode([UUID].self, forKey: .ack)
             self = .ack(ids)
+        case "rejected":
+            let reason = try container.decode(String.self, forKey: .rejected)
+            self = .rejected(reason: reason)
         default:
             throw DecodingError.dataCorruptedError(forKey: .kind, in: container, debugDescription: "Unknown kind: \(kind)")
         }
@@ -147,6 +154,9 @@ public enum ServerSentEvent: Codable {
         case .ack(let ids):
             try container.encode("ack", forKey: .kind)
             try container.encode(ids, forKey: .ack)
+        case .rejected(let reason):
+            try container.encode("rejected", forKey: .kind)
+            try container.encode(reason, forKey: .rejected)
         }
     }
 }
