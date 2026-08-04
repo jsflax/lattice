@@ -435,6 +435,11 @@ public protocol LatticeBackend: AnyObject, Sendable {
     func clearSyncFilter(forChannel channel: String)
     func removeSyncChannelState(syncId: String)
 
+    // No-relay hard delete (admin tombstone purge): rows vanish locally and
+    // the DELETE entries carry the filter-removal marker, so no peer ever
+    // applies them. Returns rows deleted.
+    func deleteRowsNoRelay(table: String, globalRowIds: [String]) -> Int64
+
     // Observation — single @escaping @Sendable closure replaces C fn-ptr+ctx+destroy
     func addTableObserver(
         table: String,

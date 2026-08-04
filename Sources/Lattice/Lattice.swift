@@ -1636,6 +1636,30 @@ public struct Lattice {
         backend.removeSyncChannelState(syncId: "ipc:" + channel)
     }
 
+    /// Hard-delete rows WITHOUT relaying the deletes.
+    ///
+    /// Each row's DELETE audit entry carries the core's filter-removal
+    /// marker: WSS receivers skip-and-ack it (they never apply it) and IPC
+    /// receivers record it fully-synchronized, so the rows vanish from THIS
+    /// database while every peer keeps its own copy untouched.
+    ///
+    /// This exists for exactly one caller: the server-side tombstone purge
+    /// on a shared group database. A normal `delete` there would be
+    /// catastrophic — members' spokes would apply it, and because purged
+    /// rows sit in each member's spoke→hub sync set, the DELETE would
+    /// classify onward into their personal hubs and fan out to every one
+    /// of their devices. Do not reach for this to "clean up" an ordinary
+    /// synced store; divergence is the designed outcome here, not a bug.
+    ///
+    /// - Returns: the number of rows actually deleted.
+    @discardableResult
+    public func deleteNoRelay<T: Model>(_ modelType: T.Type, globalIds: [UUID]) -> Int64 {
+        let deleted = backend.deleteRowsNoRelay(
+            table: T.entityName, globalRowIds: globalIds.map(\.uuidString))
+        if deleted > 0 { _noteWrite(tables: [T.entityName]) }
+        return deleted
+    }
+
     public func count<T>(_ modelType: T.Type, where: ((Query<T>) -> Query<Bool>)? = nil) -> Int where T: Model {
         let whereClause: String? = `where`.map { $0(Query<T>()).predicate }
         // §4.1 in-txn carve-out: the live count routes through the core's

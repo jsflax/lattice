@@ -454,6 +454,12 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         ref.remove_sync_channel_state(std.string(syncId))
     }
 
+    func deleteRowsNoRelay(table: String, globalRowIds: [String]) -> Int64 {
+        var ids = lattice.StringVector()
+        for id in globalRowIds { ids.push_back(std.string(id)) }
+        return ref.delete_rows_no_relay(std.string(table), ids)
+    }
+
     func removeTableObserver(table: String, observerId: UInt64) {
         ref.remove_table_observer(std.string(table), observerId)
     }
