@@ -374,6 +374,42 @@ final class ServerRelayTests: BaseTest {
         #expect(await ok.wait { !$0.acks.isEmpty })
     }
 
+    // MARK: Traversal guard
+
+    @Test func unsafeDatabaseFileNameIsRefused() async throws {
+        // Vapor's router already 404s an encoded-slash path parameter (a
+        // `%2F` traversal never matches the single-segment `:groupID` route
+        // — verified while writing this test), so the relay guard's real
+        // target is extractors that build database names from OTHER request
+        // data. Simulate that buggy-consumer shape: filename from a header.
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            channelExtractor: { req in
+                guard let raw = req.headers.first(name: "X-Test-User"),
+                      let uid = UUID(uuidString: raw) else { throw Abort(.unauthorized) }
+                let gid = req.parameters.get("groupID") ?? "g"
+                let name = req.headers.first(name: "X-Test-DBName")
+                return SyncChannel(id: "group-\(gid)", userId: uid, databaseFileName: name)
+            })
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        let hostile = try await harness.connect(
+            pathSuffix: "sync/group/g1", user: UUID(),
+            headers: ["X-Test-DBName": "../evil.sqlite"])
+        #expect(await hostile.wait { $0.isClosed })
+        // Nothing escaped the storage dir: its parent gained no evil.sqlite.
+        let parent = harness.storageURL.deletingLastPathComponent()
+        let escaped = (try? FileManager.default.contentsOfDirectory(atPath: parent.path))?
+            .contains { $0 == "evil.sqlite" } ?? false
+        #expect(!escaped)
+        // A legitimate connection on the same mount still works.
+        let ok = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 3, floatValue: 1)) }
+        try await ok.socket!.send(try makeFrame(entries: entries))
+        #expect(await ok.wait { !$0.acks.isEmpty })
+    }
+
     // MARK: Personal wrapper parity
 
     @Test func wrapperKeepsPersonalLayoutAndBehavior() async throws {

@@ -228,7 +228,65 @@ extension Lattice {
         let sockets = SocketManager()
         nonisolated(unsafe) let schema = schema
         routes.webSocket(path, maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 300 * 1024 * 1024)) { req, ws in
-            // Schema handshake FIRST: version skew closes with an explicit,
+            // Per-connection state, confined to the socket's event loop.
+            // Frames that arrive before the (slow — schema ensure, epoch
+            // migrations) per-channel lattice open finishes are BUFFERED and
+            // replayed in arrival order the moment it's live. Previously the
+            // open ran before handler registration, and WebSocketKit silently
+            // drops frames with no onBinary registered — a client that
+            // uploaded within the open window lost that frame, its entries
+            // sat unACKed until the resend/reconnect, and the relay tests
+            // that await that first delivery hung (the intermittent CI hang
+            // class). ONE lattice per connection, held for the socket's
+            // lifetime (a fresh Lattice per frame raced the weak instance
+            // cache and segfaulted under real bursts — exit 139).
+            let state = ConnectionRelayState()
+
+            // Handlers go live IMMEDIATELY — synchronously on the socket's
+            // event loop, BEFORE any await (handshake, extractor, open). The
+            // old userIdExtractor was synchronous, so upgrade→registration
+            // had no suspension point; the async channelExtractor would
+            // otherwise reopen the frame-drop window. Until go-live, frames
+            // only buffer. `state.channelId` is late-bound: nil means this
+            // connection never registered with the SocketManager, so onClose
+            // has nothing to deregister; `state.process` is installed at
+            // go-live alongside the lattice.
+            ws.eventLoop.execute {
+                ws.onText { ws, str in
+                    print("🧦", "Received String Event", str)
+                }
+                ws.onBinary { ws, bb in
+                    if let lattice = state.lattice, let process = state.process {
+                        process(ws, bb, lattice)
+                    } else {
+                        state.buffered.append(bb)
+                    }
+                }
+                ws.onClose.whenComplete { _ in
+                    Task {
+                        if let channelId = state.channelId {
+                            await sockets.remove(socket: ws, channelId: channelId)
+                        }
+                        // Detach the per-connection lattice ON the loop (state
+                        // is loop-confined) but RELEASE it OFF the loop:
+                        // ~lattice_db tears down sync threads, and running
+                        // that inline in `execute` stalls the shared event
+                        // loop for every other connection (observed as
+                        // time-limit storms in the in-process relay tests).
+                        ws.eventLoop.execute {
+                            let box = state.lattice.map(UnsafeSendableBox.init)
+                            state.lattice = nil
+                            state.process = nil
+                            state.buffered.removeAll()
+                            if let box {
+                                Task.detached { box.clear() }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Schema handshake: version skew closes with an explicit,
             // attributable reason instead of the silent apply-wedge class.
             if let refusal = handshake?.refusal(for: req) {
                 print(">>> Sync handshake refused: \(refusal)")
@@ -246,24 +304,24 @@ extension Lattice {
                 return
             }
 
+            // Defense in depth against path traversal: channel ids commonly
+            // embed request-controlled path parameters (Vapor percent-decodes
+            // them, so an encoded `../` can reach here past an extractor that
+            // forgot to validate). The database name must be a single path
+            // component inside storageURL.
+            guard !channel.databaseFileName.isEmpty,
+                  !channel.databaseFileName.contains("/"),
+                  !channel.databaseFileName.contains("\\"),
+                  !channel.databaseFileName.hasPrefix(".") else {
+                print(">>> Refusing unsafe database filename for channel \(channel.id)")
+                try? await ws.close(code: .policyViolation)
+                return
+            }
+
             try? FileManager.default.createDirectory(at: storageURL, withIntermediateDirectories: true)
 
             let latticeURL: URL? = storageURL
                 .appending(path: channel.databaseFileName)
-
-            // Per-connection state, confined to the socket's event loop.
-            // Frames that arrive before the (slow — schema ensure, epoch
-            // migrations) per-channel lattice open finishes are BUFFERED and
-            // replayed in arrival order the moment it's live. Previously the
-            // open ran before handler registration, and WebSocketKit silently
-            // drops frames with no onBinary registered — a client that
-            // uploaded within the open window lost that frame, its entries
-            // sat unACKed until the resend/reconnect, and the relay tests
-            // that await that first delivery hung (the intermittent CI hang
-            // class). ONE lattice per connection, held for the socket's
-            // lifetime (a fresh Lattice per frame raced the weak instance
-            // cache and segfaulted under real bursts — exit 139).
-            let state = ConnectionRelayState()
 
             @Sendable func processFrame(_ ws: WebSocket, _ bb: ByteBuffer, _ lattice: Lattice) {
                 let data = Data(buffer: bb)
@@ -289,45 +347,13 @@ extension Lattice {
                 }
             }
 
-            // Handlers go live FIRST — synchronously on the socket's event
-            // loop, before the lattice open. The sync onBinary body keeps
-            // receive() strictly frame-ordered on the loop.
-            ws.eventLoop.execute {
-                ws.onText { ws, str in
-                    print("🧦", "Received String Event", str)
-                }
-                ws.onBinary { ws, bb in
-                    if let lattice = state.lattice {
-                        processFrame(ws, bb, lattice)
-                    } else {
-                        state.buffered.append(bb)
-                    }
-                }
-                ws.onClose.whenComplete { _ in
-                    Task {
-                        await sockets.remove(socket: ws, channelId: channel.id)
-                        // Detach the per-connection lattice ON the loop (state
-                        // is loop-confined) but RELEASE it OFF the loop:
-                        // ~lattice_db tears down sync threads, and running
-                        // that inline in `execute` stalls the shared event
-                        // loop for every other connection (observed as
-                        // time-limit storms in the in-process relay tests).
-                        ws.eventLoop.execute {
-                            let box = state.lattice.map(UnsafeSendableBox.init)
-                            state.lattice = nil
-                            state.buffered.removeAll()
-                            if let box {
-                                Task.detached { box.clear() }
-                            }
-                        }
-                    }
-                }
-            }
-
             // Register BEFORE the slow lattice open (kick-race fix): a
             // revocation during the open window can now see — and close —
             // this socket. Fan-out frames sent to a pre-open socket are fine
             // (the client applies them independently of our open state).
+            // channelId publishes to the loop first so a kick-triggered
+            // onClose can always deregister.
+            ws.eventLoop.execute { state.channelId = channel.id }
             await sockets.add(socket: ws, channelId: channel.id, userId: channel.userId)
 
             guard let connectionLattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
@@ -349,6 +375,7 @@ extension Lattice {
                     Task.detached { held.clear() }
                     return
                 }
+                state.process = processFrame
                 for bb in state.buffered { processFrame(ws, bb, held.value) }
                 state.buffered.removeAll()
                 state.lattice = held.value
@@ -420,5 +447,10 @@ final class UnsafeSendableBox<T>: @unchecked Sendable {
 /// and are replayed the moment the per-channel lattice goes live.
 final class ConnectionRelayState: @unchecked Sendable {
     var lattice: Lattice?
+    /// Installed at go-live: the frame processor bound to this connection's
+    /// channel (handlers register before the channel is known).
+    var process: ((WebSocket, ByteBuffer, Lattice) -> Void)?
+    /// Late-bound channel id; nil = never registered with the SocketManager.
+    var channelId: String?
     var buffered: [ByteBuffer] = []
 }
