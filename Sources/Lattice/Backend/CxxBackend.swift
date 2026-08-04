@@ -440,6 +440,20 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         ref.update_sync_filter(_makeCxxSyncFilter(filter.map { ($0.tableName, $0.whereClause) }))
     }
 
+    func updateSyncFilter(_ filter: [SyncFilterParam], forChannel channel: String) {
+        ref.update_sync_filter_for_channel(
+            std.string(channel),
+            _makeCxxSyncFilter(filter.map { ($0.tableName, $0.whereClause) }))
+    }
+
+    func clearSyncFilter(forChannel channel: String) {
+        ref.clear_sync_filter_for_channel(std.string(channel))
+    }
+
+    func removeSyncChannelState(syncId: String) {
+        ref.remove_sync_channel_state(std.string(syncId))
+    }
+
     func removeTableObserver(table: String, observerId: UInt64) {
         ref.remove_table_observer(std.string(table), observerId)
     }

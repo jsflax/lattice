@@ -66,6 +66,7 @@ let package = Package(
             dependencies: [
                 "Lattice",
                 "LatticeMCP",
+                "LatticeServerKit",
                     .product(name: "Vapor", package: "vapor")
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]
