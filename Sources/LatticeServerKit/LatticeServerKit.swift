@@ -225,6 +225,17 @@ actor SocketManager {
         return channels[channelId, default: []].count
     }
 
+    /// Every live (channelId, userId) pair, for periodic re-authorization
+    /// sweeps. Reaps dead transports first so the sweep never wastes an
+    /// auth check on a socket that already went away.
+    func activeConnections() -> [(channelId: String, userId: UUID)] {
+        for channelId in channels.keys { reap(channelId: channelId) }
+        return channels.flatMap { channelId, entries in
+            entries.filter { !$0.revocation.isRevoked }
+                .map { (channelId: channelId, userId: $0.userId) }
+        }
+    }
+
     func add(socket: WebSocket, channelId: String, userId: UUID, revocation: RevocationFlag) {
         reap(channelId: channelId)
         channels[channelId, default: []].append(
@@ -288,6 +299,15 @@ public struct SyncRelayHandle: Sendable {
 
     public func connectionCount(channelId: String) async -> Int {
         await manager.connectionCount(channelId: channelId)
+    }
+
+    /// Every live (channelId, userId) pair across the relay — the input to
+    /// a periodic re-authorization sweep. Tokens are typically checked only
+    /// at the WebSocket handshake, so without a sweep an admin revoking a
+    /// token (or a membership) leaves the live socket connected until it
+    /// happens to reconnect.
+    public func activeConnections() async -> [(channelId: String, userId: UUID)] {
+        await manager.activeConnections()
     }
 }
 
