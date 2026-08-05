@@ -70,6 +70,22 @@ extension LatticeBackend {
     var asCxxLatticeRef: lattice.swift_lattice_ref? {
         return (self as? CxxBackend)?.ref
     }
+
+    // Sealed-query error surface, protocol-untouched (cast-based, like
+    // asCxxLatticeRef): non-C++ backends report nothing. Concrete
+    // implementations live on CxxBackend and shadow these for direct calls.
+
+    /// The last sealed-query failure on the CURRENT THREAD, or nil if the
+    /// most recent query call succeeded. Check immediately after the call.
+    func lastQueryError() -> String? {
+        (self as? CxxBackend)?.lastQueryError()
+    }
+
+    /// Register a handler for sealed-query failures (nil clears). No-op on
+    /// non-C++ backends.
+    func setOnQueryError(_ handler: (@Sendable (String) -> Void)?) {
+        (self as? CxxBackend)?.setOnQueryError(handler)
+    }
 }
 
 extension ObjectBackend {
@@ -243,7 +259,14 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     // non-mutating on both paths and the handle can be a `let`.
     let ref: lattice.swift_lattice_ref
 
-    @inlinable init(_ ref: lattice.swift_lattice_ref) { self.ref = ref }
+    // Push-style surface for sealed-query failures — the query analog of
+    // setOnSyncError, but Swift-level: the C++ side has no query callback;
+    // this backend checks the thread-local error slot after each query call
+    // and fans out here. Guarded because queries run on many threads.
+    private let onQueryErrorLock = NSLock()
+    private var onQueryErrorHandler: (@Sendable (String) -> Void)?
+
+    init(_ ref: lattice.swift_lattice_ref) { self.ref = ref }
 
     var identityHash: Int64 { Int64(ref.hash_value()) }
     var path: String { String(ref.path()) }
@@ -292,6 +315,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
     func objects(table: String, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?) -> [any ObjectBackend] {
         let res = ref.objects(std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy))
+        reportQueryFailureIfAny()
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
@@ -300,13 +324,16 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func unionObjects(tables: [String], where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?) -> [any ObjectBackend] {
         let tableVec = tables.reduce(into: lattice.StringVector()) { $0.push_back(std.string($1)) }
         let res = ref.union_objects(tableVec, optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset))
+        reportQueryFailureIfAny()
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
         return out
     }
     func count(table: String, where whereClause: String?, groupBy: String?, distinctBy: String?) -> Int64 {
-        Int64(ref.count(std.string(table), optStr(whereClause), optStr(groupBy), optStr(distinctBy)))
+        let n = Int64(ref.count(std.string(table), optStr(whereClause), optStr(groupBy), optStr(distinctBy)))
+        reportQueryFailureIfAny()
+        return n
     }
     func deleteWhere(table: String, where whereClause: String?) -> Bool {
         ref.delete_where(std.string(table), optStr(whereClause))
@@ -335,13 +362,16 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     // Spatial (R*Tree)
     func objectsWithinBBox(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?) -> [any ObjectBackend] {
         let res = ref.objectsWithinBBox(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause), orderBy: optStr(orderBy), limit: optInt(limit), offset: optInt(offset), groupBy: optStr(groupBy))
+        reportQueryFailureIfAny()
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
         return out
     }
     func countWithinBBox(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?) -> Int64 {
-        Int64(ref.countWithinBBox(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause)))
+        let n = Int64(ref.countWithinBBox(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause)))
+        reportQueryFailureIfAny()
+        return n
     }
 
     // Composite proximity — translate the neutral *Param structs to C++ constraint vectors.
@@ -369,6 +399,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func combinedNearestQuery(table: String, bounds: [BoundsConstraintParam], vectors: [VectorConstraintParam], geos: [GeoConstraintParam], texts: [TextConstraintParam], where whereClause: String?, sort: SortDescriptorParam, limit: Int64, groupBy: String?, distinctBy: String?) -> [NearestRow] {
         let (cb, cv, cg, ct, cs) = buildNearestCxx(bounds, vectors, geos, texts, sort)
         let res = ref.combinedNearestQuery(table: std.string(table), bounds: cb, vectors: cv, geos: cg, texts: ct, where: optStr(whereClause), sort: cs, limit: limit, groupBy: optStr(groupBy), distinctBy: optStr(distinctBy))
+        reportQueryFailureIfAny()
         var out: [NearestRow] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() {
@@ -382,7 +413,9 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
     func combinedNearestQueryCount(table: String, bounds: [BoundsConstraintParam], vectors: [VectorConstraintParam], geos: [GeoConstraintParam], texts: [TextConstraintParam], where whereClause: String?, sort: SortDescriptorParam, limit: Int64, groupBy: String?, distinctBy: String?) -> Int64 {
         let (cb, cv, cg, ct, cs) = buildNearestCxx(bounds, vectors, geos, texts, sort)
-        return Int64(ref.combinedNearestQueryCount(table: std.string(table), bounds: cb, vectors: cv, geos: cg, texts: ct, where: optStr(whereClause), sort: cs, limit: limit, groupBy: optStr(groupBy), distinctBy: optStr(distinctBy)))
+        let n = Int64(ref.combinedNearestQueryCount(table: std.string(table), bounds: cb, vectors: cv, geos: cg, texts: ct, where: optStr(whereClause), sort: cs, limit: limit, groupBy: optStr(groupBy), distinctBy: optStr(distinctBy)))
+        reportQueryFailureIfAny()
+        return n
     }
 
     // Attach another lattice's underlying handle (cloud-relay / multi-db).
@@ -433,6 +466,31 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func lastReceiveError() -> String? {
         let e = ref.last_receive_error()
         return e.__convertToBool() ? String(e.pointee) : nil
+    }
+
+    // Sealed query surface (LatticeCore 1.2.4): the C++ side never throws
+    // into Swift — a failed query returns empty/0 and stashes the reason in
+    // a THREAD-LOCAL slot. Same-thread, immediately-after-the-call
+    // semantics, like lastGenerationReadStale().
+    func lastQueryError() -> String? {
+        let e = ref.last_query_error()
+        return e.__convertToBool() ? String(e.pointee) : nil
+    }
+
+    func setOnQueryError(_ handler: (@Sendable (String) -> Void)?) {
+        onQueryErrorLock.lock(); defer { onQueryErrorLock.unlock() }
+        onQueryErrorHandler = handler
+    }
+
+    /// Called by each query method right after its bridge call: fan a
+    /// sealed-query failure out to the registered handler. Cheap on the
+    /// success path (one thread-local read).
+    @inline(__always) private func reportQueryFailureIfAny() {
+        guard let msg = lastQueryError() else { return }
+        onQueryErrorLock.lock()
+        let handler = onQueryErrorHandler
+        onQueryErrorLock.unlock()
+        handler?(msg)
     }
 
     // Sync filter — translate the neutral [SyncFilterParam] to the C++ vector.

@@ -1470,6 +1470,24 @@ public struct Lattice {
         backend.setOnSyncError(handler)
     }
 
+    /// Register a callback for query failures. The C++ query surface is
+    /// sealed — C++ exceptions cannot cross the Swift interop boundary, so a
+    /// failed query (e.g. transient SQLITE_NOMEM under system memory
+    /// pressure) returns EMPTY results instead of throwing, and reports the
+    /// reason here. Fired synchronously on the querying thread, right after
+    /// the failed call.
+    public func onQueryError(_ handler: @escaping @Sendable (String) -> Void) {
+        backend.setOnQueryError(handler)
+    }
+
+    /// The last sealed-query failure on the CURRENT THREAD, or nil if the
+    /// most recent query call succeeded. Pull-style twin of
+    /// ``onQueryError(_:)`` — check immediately after a suspicious empty
+    /// result, on the same thread that ran the query.
+    public func lastQueryError() -> String? {
+        backend.lastQueryError()
+    }
+
     /// Register a callback for sync connection state changes.
     public func onSyncStateChange(_ handler: @escaping @Sendable (Bool) -> Void) {
         backend.setOnSyncStateChange(handler)
