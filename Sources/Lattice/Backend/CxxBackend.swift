@@ -336,7 +336,9 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         return n
     }
     func deleteWhere(table: String, where whereClause: String?) -> Bool {
-        ref.delete_where(std.string(table), optStr(whereClause))
+        let ok = ref.delete_where(std.string(table), optStr(whereClause))
+        reportQueryFailureIfAny()
+        return ok
     }
 
     // Maintenance
@@ -349,9 +351,22 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func backdateReplicationSlots(seconds: Int64) { ref.backdate_replication_slots(seconds) }
     func checkpoint() { ref.checkpoint() }
     func optimize() { ref.optimize() }
-    func beginTransaction() { ref.begin_transaction() }
-    func commit() { ref.commit() }
-    func rollback() { ref.rollback() }
+    // Transactions are sealed C++-side (1.2.5): a failed BEGIN degrades to
+    // autocommit writes instead of trapping at the interop boundary. Fan
+    // the failure out so it is visible (killed the Engram MCP server twice
+    // before sealing).
+    func beginTransaction() {
+        ref.begin_transaction()
+        reportQueryFailureIfAny()
+    }
+    func commit() {
+        ref.commit()
+        reportQueryFailureIfAny()
+    }
+    func rollback() {
+        ref.rollback()
+        reportQueryFailureIfAny()
+    }
     func close() { ref.close() }
 
     // Sync status
