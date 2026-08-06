@@ -530,6 +530,14 @@ extension Lattice {
                 state.buffered.removeAll()
                 state.bufferedBytes = 0
                 state.lattice = held.value
+                // Keepalive on the healthy path (until here pings only ran on
+                // kick/refusal). An idle-but-healthy connection otherwise sends
+                // nothing, and intermediaries cut it: Cloudflare's proxied-WS
+                // idle timeout is ~100s, AWS NLBs 340s. Browsers answer
+                // protocol pings automatically, so this keeps traffic flowing
+                // both ways for every client class — and gives the relay
+                // dead-peer detection it previously got only on kicks.
+                ws.pingInterval = .seconds(30)
             }
 
             // Catch-up AFTER handlers are live. Incoming frames during
