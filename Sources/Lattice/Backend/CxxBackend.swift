@@ -350,6 +350,9 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func forceCompactAuditLog() -> Int64 { Int64(ref.force_compact_audit_log()) }
     func backdateReplicationSlots(seconds: Int64) { ref.backdate_replication_slots(seconds) }
     func checkpoint() { ref.checkpoint() }
+    func checkpointBounded(busyBudgetMs: Int64) -> Int64 {
+        ref.checkpointBounded(busyBudgetMs: busyBudgetMs)
+    }
     func optimize() { ref.optimize() }
     // Transactions are sealed C++-side (1.2.5): a failed BEGIN degrades to
     // autocommit writes instead of trapping at the interop boundary. Fan
@@ -711,20 +714,21 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         )
     }
 
-    func setOnSyncProgress(_ callback: (@Sendable (Int64, Int64, Int64, Int64) -> Void)?) {
+    func setOnSyncProgress(_ callback: (@Sendable (Int64, Int64, Int64, Int64, String) -> Void)?) {
         guard let callback else { ref.set_on_sync_progress(nil, nil, nil); return }
         let box = _CxxClosureBox(callback)
         let ptr = Unmanaged.passRetained(box).toOpaque()
         ref.set_on_sync_progress(
             ptr,
-            { ctx, pending, total, acked, received in
+            { ctx, pending, total, acked, received, syncIdPtr in
                 guard let ctx else { return }
-                Unmanaged<_CxxClosureBox<@Sendable (Int64, Int64, Int64, Int64) -> Void>>.fromOpaque(ctx).takeUnretainedValue()
-                    .fn(Int64(pending), Int64(total), Int64(acked), Int64(received))
+                let syncId = syncIdPtr.map { String(cString: $0) } ?? ""
+                Unmanaged<_CxxClosureBox<@Sendable (Int64, Int64, Int64, Int64, String) -> Void>>.fromOpaque(ctx).takeUnretainedValue()
+                    .fn(Int64(pending), Int64(total), Int64(acked), Int64(received), syncId)
             },
             { ctx in
                 guard let ctx else { return }
-                Unmanaged<_CxxClosureBox<@Sendable (Int64, Int64, Int64, Int64) -> Void>>.fromOpaque(ctx).release()
+                Unmanaged<_CxxClosureBox<@Sendable (Int64, Int64, Int64, Int64, String) -> Void>>.fromOpaque(ctx).release()
             }
         )
     }

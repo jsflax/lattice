@@ -400,6 +400,10 @@ public protocol LatticeBackend: AnyObject, Sendable {
     @discardableResult func forceCompactAuditLog() -> Int64
     func backdateReplicationSlots(seconds: Int64)
     func checkpoint()
+    /// Bounded WAL checkpoint (TRUNCATE with a small busy budget, PASSIVE
+    /// fallback + generation-advance on busy). Safe to call between write
+    /// batches; returns frames checkpointed (-1 when nothing ran).
+    func checkpointBounded(busyBudgetMs: Int64) -> Int64
     /// Incremental query-planner statistics refresh (`PRAGMA optimize`).
     func optimize()
 
@@ -547,7 +551,7 @@ public protocol LatticeBackend: AnyObject, Sendable {
 
     // Sync callbacks — optional closures; nil clears (matches nullptr branch)
     func setOnSyncProgress(
-        _ callback: (@Sendable (_ pendingUpload: Int64, _ totalUpload: Int64, _ acked: Int64, _ received: Int64) -> Void)?
+        _ callback: (@Sendable (_ pendingUpload: Int64, _ totalUpload: Int64, _ acked: Int64, _ received: Int64, _ syncId: String) -> Void)?
     )
     func setOnSyncError(_ callback: (@Sendable (String) -> Void)?)
     func setOnSyncStateChange(_ callback: (@Sendable (Bool) -> Void)?)

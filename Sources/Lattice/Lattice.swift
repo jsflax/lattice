@@ -1343,8 +1343,25 @@ public struct Lattice {
     /// Flushes WAL contents to the main database file and truncates the WAL.
     /// Called automatically on deinitialization but can be invoked explicitly
     /// to ensure durability or reduce WAL file size.
+    ///
+    /// - Warning: TRUNCATE waits out readers up to the connection's FULL busy
+    ///   timeout (30s) while holding the writer gate. Teardown-only; from
+    ///   maintenance paths between write batches use ``checkpointBounded(busyBudgetMs:)``.
     public func checkpoint() {
         backend.checkpoint()
+    }
+
+    /// Bounded WAL checkpoint — safe to call between write batches in
+    /// long-running maintenance (embedding sweeps, repair): TRUNCATE with a
+    /// small busy budget (fails fast instead of stalling every writer when a
+    /// reader holds the WAL), falling back to PASSIVE + a read-generation
+    /// advance request so the NEXT truncate can land behind re-pinned
+    /// readers. Keeps the WAL bounded under sustained writes — the unbounded
+    /// growth path behind the Aug 2026 11GB-WAL incident.
+    /// - Returns: frames checkpointed this call (-1 when nothing could run).
+    @discardableResult
+    public func checkpointBounded(busyBudgetMs: Int64 = 250) -> Int64 {
+        backend.checkpointBounded(busyBudgetMs: busyBudgetMs)
     }
 
     /// Incremental query-planner statistics refresh (`PRAGMA optimize`).
@@ -1447,14 +1464,23 @@ public struct Lattice {
         public let totalUpload: Int
         public let acked: Int
         public let received: Int
+        /// Which sync channel this update belongs to (e.g. "wss:…" or
+        /// "ipc:engram-sync"). Multiple synchronizers on one database
+        /// multiplex through one stream — without the label, interleaved
+        /// counters from different channels are undiagnosable (the Aug 2026
+        /// audit-explosion incident's daemon log was exactly this). Empty on
+        /// the cross-process derived path, which aggregates all channels.
+        public let syncId: String
         public var uploadFraction: Double { totalUpload > 0 ? Double(acked) / Double(totalUpload) : 1.0 }
         public var isUploading: Bool { pendingUpload > 0 }
 
-        package init(pendingUpload: Int, totalUpload: Int, acked: Int, received: Int) {
+        package init(pendingUpload: Int, totalUpload: Int, acked: Int, received: Int,
+                     syncId: String = "") {
             self.pendingUpload = pendingUpload
             self.totalUpload = totalUpload
             self.acked = acked
             self.received = received
+            self.syncId = syncId
         }
     }
 
@@ -1516,12 +1542,13 @@ public struct Lattice {
             let token = _SyncProgressSlot.register(backend)
             if isSyncAgent {
                 // In-process path
-                backend.setOnSyncProgress { pending, total, acked, received in
+                backend.setOnSyncProgress { pending, total, acked, received, syncId in
                     continuation.yield(SyncProgress(
                         pendingUpload: Int(pending),
                         totalUpload: Int(total),
                         acked: Int(acked),
-                        received: Int(received)
+                        received: Int(received),
+                        syncId: syncId
                     ))
                 }
 
