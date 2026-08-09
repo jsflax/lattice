@@ -38,15 +38,6 @@
       }
     },
     {
-      "identity" : "latticecore",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/jsflax/LatticeCore.git",
-      "state" : {
-        "revision" : "fc49ddbf901f298b5803ae7cc8e5512136d7d0d9",
-        "version" : "1.2.5"
-      }
-    },
-    {
       "identity" : "multipart-kit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/vapor/multipart-kit.git",

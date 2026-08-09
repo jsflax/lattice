@@ -348,6 +348,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func vacuum() { ref.vacuum() }
     func safeCompactAuditLog(staleThresholdSeconds: Int64) -> Int64 { Int64(ref.safe_compact_audit_log(staleThresholdSeconds)) }
     func forceCompactAuditLog() -> Int64 { Int64(ref.force_compact_audit_log()) }
+    func normalizeAuditTimestamps() -> Int64 { Int64(ref.normalizeAuditTimestamps()) }
     func backdateReplicationSlots(seconds: Int64) { ref.backdate_replication_slots(seconds) }
     func checkpoint() { ref.checkpoint() }
     func checkpointBounded(busyBudgetMs: Int64) -> Int64 {

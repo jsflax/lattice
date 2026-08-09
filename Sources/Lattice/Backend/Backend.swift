@@ -398,6 +398,9 @@ public protocol LatticeBackend: AnyObject, Sendable {
     func vacuum()
     @discardableResult func safeCompactAuditLog(staleThresholdSeconds: Int64) -> Int64
     @discardableResult func forceCompactAuditLog() -> Int64
+    /// Repair audit rows whose timestamp was stored as TEXT in the REAL
+    /// column (pre-fix remote-apply path). Idempotent; returns rows fixed.
+    @discardableResult func normalizeAuditTimestamps() -> Int64
     func backdateReplicationSlots(seconds: Int64)
     func checkpoint()
     /// Bounded WAL checkpoint (TRUNCATE with a small busy budget, PASSIVE

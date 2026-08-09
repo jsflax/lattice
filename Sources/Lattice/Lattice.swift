@@ -1340,6 +1340,16 @@ public struct Lattice {
         backend.forceCompactAuditLog()
     }
 
+    /// Repair audit rows whose timestamp was written as TEXT into the REAL
+    /// `timestamp` column by a pre-1.3.0 remote-apply path — such rows are
+    /// invisible to every date-based query and to age-based maintenance.
+    /// Idempotent; safe to call at startup.
+    /// - Returns: rows normalized.
+    @discardableResult
+    public func normalizeAuditTimestamps() -> Int64 {
+        backend.normalizeAuditTimestamps()
+    }
+
     /// Flushes WAL contents to the main database file and truncates the WAL.
     /// Called automatically on deinitialization but can be invoked explicitly
     /// to ensure durability or reduce WAL file size.
