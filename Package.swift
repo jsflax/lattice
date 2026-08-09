@@ -24,7 +24,14 @@ let package = Package(
         // (or drag the local LatticeCore package into the Xcode workspace).
         // 0.10.4 floor is required: materialized reads consume the row-cache
         // bridge APIs introduced there.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "1.2.0"),
+        // 1.3.0 floor is REQUIRED, not preferred: the bridge's sync-progress
+        // callback gained a sync_id parameter there, and this wrapper passes
+        // a 6-argument @convention(c) closure. Pairing this wrapper with an
+        // older core fails to compile deep inside a consumer's build with a
+        // closure-arity error that names neither package (it bit
+        // engram-server within minutes of the 1.3.0 tag). The floor makes
+        // SwiftPM refuse the bad pair instead.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "1.3.0"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
