@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Dedicated delivery thread for observer change batches (crash fix C0a,
 /// Aug 2026 SIGBUS incident).
@@ -58,10 +63,18 @@ final class ObserverDeliveryWorker: @unchecked Sendable {
 
     private func startThread() {
         let thread = Thread { [self] in
+            // Stack-size verification is Darwin-only on purpose:
+            // pthread_get_stacksize_np does not exist in Glibc, and Darwin is
+            // where the SIGBUS this thread exists to prevent actually happened
+            // (512KB cooperative-pool stacks + Apple's scanstatus-fattened
+            // prepares). Foundation honors `stackSize` on both platforms; only
+            // the assertion is platform-gated, never the sizing itself.
+            #if canImport(Darwin)
             let actual = pthread_get_stacksize_np(pthread_self())
             precondition(actual >= Self.requiredStackSize,
                          "observer delivery worker got a \(actual)-byte stack — " +
                          "the 512KB default is the SIGBUS class this thread exists to prevent")
+            #endif
             stackVerified.withLocked { $0 = true }
             while true {
                 condition.lock()
@@ -72,7 +85,11 @@ final class ObserverDeliveryWorker: @unchecked Sendable {
             }
         }
         thread.name = "lattice.observer-delivery"
+        // QualityOfService is a Darwin scheduling concept; swift-corelibs-
+        // foundation does not surface it on Thread.
+        #if canImport(Darwin)
         thread.qualityOfService = .utility
+        #endif
         thread.stackSize = Self.requiredStackSize
         thread.start()
     }
