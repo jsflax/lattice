@@ -74,11 +74,24 @@ extension Collection {
     where Element == ModelThreadSafeReference<T> {
         let keys = self.compactMap(\.key)
         guard !keys.isEmpty else { return [] }
-        let optKeys: [Int64?] = keys.map { $0 }
-        let fetched = lattice.objects(T.self).where { $0.primaryKey.in(optKeys) }.snapshot()
-        let byKey: [Int64: T] = Dictionary(uniqueKeysWithValues: fetched.compactMap { obj in
-            obj.primaryKey.map { ($0, obj) }
-        })
+        // Chunked (C2): `.in(collection)` renders every element as a literal
+        // in the SQL text, so an unbounded reference collection produced an
+        // unbounded statement (multi-MB text for tens of thousands of keys —
+        // pure parse cost and memory; SQLite handles flat IN lists
+        // iteratively, so this is a perf bound, not a stack one).
+        let chunkSize = 500
+        var byKey: [Int64: T] = [:]
+        byKey.reserveCapacity(keys.count)
+        var start = keys.startIndex
+        while start < keys.endIndex {
+            let end = keys.index(start, offsetBy: chunkSize, limitedBy: keys.endIndex) ?? keys.endIndex
+            let optKeys: [Int64?] = keys[start..<end].map { $0 }
+            let fetched = lattice.objects(T.self).where { $0.primaryKey.in(optKeys) }.snapshot()
+            for obj in fetched {
+                if let pk = obj.primaryKey { byKey[pk] = obj }
+            }
+            start = end
+        }
         return self.compactMap { $0.key.flatMap { byKey[$0] } }
     }
 }
