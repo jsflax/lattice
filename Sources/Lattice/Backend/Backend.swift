@@ -28,6 +28,25 @@ import Foundation
 /// conformer feeds it straight to find_where. A `String` alias for documentation.
 public typealias SQLPredicate = String
 
+/// One value bound to a `?` placeholder in a parameterized predicate.
+///
+/// The neutral mirror of the core's `column_value_t` variant. Ordered
+/// positionally: `params[i]` binds the i-th `?` in the statement text, which is
+/// why every renderer appends to the SQL string and to the parameter array in
+/// the SAME traversal step (see `Query`'s parameterized channel).
+///
+/// A predicate rendered on the LITERAL channel always carries an EMPTY
+/// parameter array — that channel is byte-identical to the pre-parameter
+/// renderer and is the only form safe to splice into composed SQL text
+/// (sync filters, union CASE-WHEN wrapping, `_unionSubquery`).
+public enum QueryParameter: Sendable, Hashable {
+    case null
+    case integer(Int64)
+    case real(Double)
+    case text(String)
+    case blob(Data)
+}
+
 /// One change event delivered to a table observer. Mirrors the parallel-array
 /// payload the C trampoline decodes today (operation / row_id / global_row_id).
 public struct TableChangeEvent: Sendable, Equatable {
@@ -326,6 +345,12 @@ public protocol LatticeBackend: AnyObject, Sendable {
     func objectByGlobalId(_ globalId: String, table: String) -> (any ObjectBackend)?
 
     // Fetch many
+    //
+    // PARAMETERIZED SURFACE: the trailing `params` binds the `?` placeholders
+    // in `whereClause`, positionally. Callers that render a predicate on the
+    // literal channel (`Query.predicate`) pass `[]` — and the no-`params`
+    // overloads in the extension below do exactly that, so a caller who has no
+    // parameter channel cannot accidentally emit an unbound statement.
     func objects(
         table: String,
         where whereClause: String?,
@@ -333,7 +358,8 @@ public protocol LatticeBackend: AnyObject, Sendable {
         limit: Int64?,
         offset: Int64?,
         groupBy: String?,
-        distinctBy: String?
+        distinctBy: String?,
+        params: [QueryParameter]
     ) -> [any ObjectBackend]
 
     func unionObjects(
@@ -341,12 +367,15 @@ public protocol LatticeBackend: AnyObject, Sendable {
         where whereClause: String?,
         orderBy: String?,
         limit: Int64?,
-        offset: Int64?
+        offset: Int64?,
+        params: [QueryParameter]
     ) -> [any ObjectBackend]
 
     // Counts / deletes (collapsed arity overloads -> one requirement each)
-    func count(table: String, where whereClause: String?, groupBy: String?, distinctBy: String?) -> Int64
-    @discardableResult func deleteWhere(table: String, where whereClause: String?) -> Bool
+    func count(table: String, where whereClause: String?, groupBy: String?, distinctBy: String?,
+               params: [QueryParameter]) -> Int64
+    @discardableResult func deleteWhere(table: String, where whereClause: String?,
+                                        params: [QueryParameter]) -> Bool
 
     // Spatial (R*Tree)
     func objectsWithinBBox(
@@ -519,7 +548,8 @@ public protocol LatticeBackend: AnyObject, Sendable {
         limit: Int64?,
         offset: Int64?,
         groupBy: String?,
-        distinctBy: String?
+        distinctBy: String?,
+        params: [QueryParameter]
     ) -> [any ObjectBackend]
     /// `count` executed at a held read generation. -1 + stale flag on
     /// failure; 0 is a genuine zero.
@@ -528,7 +558,8 @@ public protocol LatticeBackend: AnyObject, Sendable {
         table: String,
         where whereClause: String?,
         groupBy: String?,
-        distinctBy: String?
+        distinctBy: String?,
+        params: [QueryParameter]
     ) -> Int64
     /// `objectsWithinBBox` executed at a held read generation. EMPTY + stale
     /// flag on failure.
@@ -543,7 +574,8 @@ public protocol LatticeBackend: AnyObject, Sendable {
     /// [WHERE …] [ORDER BY …]` inside a capture transaction under the
     /// per-store write gate, with a bounded LOCKED retry. NOT
     /// generation-scoped. EMPTY + stale flag after the retry budget.
-    func queryIDs(table: String, where whereClause: String?, orderBy: String?) -> [Int64]
+    func queryIDs(table: String, where whereClause: String?, orderBy: String?,
+                  params: [QueryParameter]) -> [Int64]
     /// `PRAGMA data_version` on the dedicated non-transaction cross-process
     /// read connection (Commit-6 belt). -1 on failure.
     func dataVersion() -> Int64
@@ -569,14 +601,57 @@ public protocol LatticeBackend: AnyObject, Sendable {
 extension LatticeBackend {
     @inlinable
     public func objects(table: String) -> [any ObjectBackend] {
-        objects(table: table, where: nil, orderBy: nil, limit: nil, offset: nil, groupBy: nil, distinctBy: nil)
+        objects(table: table, where: nil, orderBy: nil, limit: nil, offset: nil, groupBy: nil, distinctBy: nil,
+                params: [])
     }
     @inlinable
     public func count(table: String, where whereClause: String? = nil) -> Int64 {
-        count(table: table, where: whereClause, groupBy: nil, distinctBy: nil)
+        count(table: table, where: whereClause, groupBy: nil, distinctBy: nil, params: [])
     }
     @inlinable
     public func deleteWhere(table: String) -> Bool {
-        deleteWhere(table: table, where: nil)
+        deleteWhere(table: table, where: nil, params: [])
+    }
+
+    // LITERAL-CHANNEL overloads. Dropping `params` means "this predicate has
+    // no placeholders" — the only correct call for a fragment rendered by
+    // `Query.predicate`. Kept so the many literal-channel call sites read
+    // exactly as they did before parameterization.
+    @inlinable
+    public func objects(table: String, where whereClause: String?, orderBy: String?,
+                        limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?) -> [any ObjectBackend] {
+        objects(table: table, where: whereClause, orderBy: orderBy, limit: limit, offset: offset,
+                groupBy: groupBy, distinctBy: distinctBy, params: [])
+    }
+    @inlinable
+    public func unionObjects(tables: [String], where whereClause: String?, orderBy: String?,
+                             limit: Int64?, offset: Int64?) -> [any ObjectBackend] {
+        unionObjects(tables: tables, where: whereClause, orderBy: orderBy, limit: limit, offset: offset,
+                     params: [])
+    }
+    @inlinable
+    public func count(table: String, where whereClause: String?, groupBy: String?, distinctBy: String?) -> Int64 {
+        count(table: table, where: whereClause, groupBy: groupBy, distinctBy: distinctBy, params: [])
+    }
+    @inlinable
+    @discardableResult
+    public func deleteWhere(table: String, where whereClause: String?) -> Bool {
+        deleteWhere(table: table, where: whereClause, params: [])
+    }
+    @inlinable
+    public func objectsAt(generation: UInt64, table: String, where whereClause: String?, orderBy: String?,
+                          limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?) -> [any ObjectBackend] {
+        objectsAt(generation: generation, table: table, where: whereClause, orderBy: orderBy,
+                  limit: limit, offset: offset, groupBy: groupBy, distinctBy: distinctBy, params: [])
+    }
+    @inlinable
+    public func countAt(generation: UInt64, table: String, where whereClause: String?,
+                        groupBy: String?, distinctBy: String?) -> Int64 {
+        countAt(generation: generation, table: table, where: whereClause,
+                groupBy: groupBy, distinctBy: distinctBy, params: [])
+    }
+    @inlinable
+    public func queryIDs(table: String, where whereClause: String?, orderBy: String?) -> [Int64] {
+        queryIDs(table: table, where: whereClause, orderBy: orderBy, params: [])
     }
 }

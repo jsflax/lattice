@@ -68,6 +68,10 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     private struct ShapeDescriptor {
         let key: QueryShapeKey
         let whereSQL: String?
+        /// Values bound to `whereSQL`'s placeholders, positionally. EMPTY when
+        /// the predicate rendered all-literal (which is always the case on the
+        /// bbox path — see `_descriptor`).
+        let params: [QueryParameter]
         let orderBySQL: String?
         let keysetSpec: KeysetSortSpec?
     }
@@ -97,7 +101,17 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         if let memoized = _shapeMemo.withLockUnchecked({ $0 }) { return memoized }
         // Build OUTSIDE the memo lock (leaf-lock rule — predicate
         // construction is pure string building, but keep the lock tiny).
-        let whereSQL = whereStatement?.predicate
+        // Render channel (§ parameterization): the bbox shapes route through
+        // `objectsWithinBBox`/`countWithinBBox`, whose bridge surface carries
+        // no parameter channel — a placeholder there would reach SQLite
+        // unbound (read as NULL) and silently return no rows. Those shapes
+        // therefore keep the literal channel; everything else binds, and every
+        // executable call below is handed `descriptor.params`.
+        let rendered: (sql: String, params: [QueryParameter])? = whereStatement.map {
+            boundsConstraint == nil ? $0._parameterizedPredicate() : ($0.predicate, [])
+        }
+        let whereSQL = rendered?.sql
+        let params = rendered?.params ?? []
         let orderBySQL: String? = _effectiveOrderBySQL(qualifyTiebreaker: boundsConstraint != nil)
         // Keyset paging needs a total order over stored `(col, id)` values:
         // grouped/distinct rows lack stable `(col, id)` identity and bbox
@@ -120,8 +134,13 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                whereSQL: keyWhere,
                                orderBySQL: orderBySQL,
                                groupBy: groupByColumn,
-                               distinctBy: distinctByColumn),
+                               distinctBy: distinctByColumn,
+                               // Two queries whose only difference is their
+                               // bound values render identical SQL. Without
+                               // this they would share one cache entry.
+                               bindDigest: BindDigest(params)),
             whereSQL: whereSQL,
+            params: params,
             orderBySQL: orderBySQL,
             keysetSpec: keysetSpec)
         return _shapeMemo.withLockUnchecked { memo in
@@ -329,7 +348,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             if let bounds = boundsConstraint {
                 return Int(_lattice.backend.countWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: descriptor.whereSQL))
             }
-            return Int(_lattice.backend.count(table: Element.entityName, where: descriptor.whereSQL, groupBy: groupByColumn, distinctBy: distinctByColumn))
+            return Int(_lattice.backend.count(table: Element.entityName, where: descriptor.whereSQL, groupBy: groupByColumn, distinctBy: distinctByColumn, params: descriptor.params))
         }
     }
 
@@ -342,7 +361,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                                table: Element.entityName,
                                                where: descriptor.whereSQL,
                                                groupBy: groupByColumn,
-                                               distinctBy: distinctByColumn)
+                                               distinctBy: distinctByColumn,
+                                               params: descriptor.params)
         if counted < 0 || _lattice.backend.lastGenerationReadStale() { return nil }
         return Int(counted)
     }
@@ -378,7 +398,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         }
         let captured = _lattice.backend.queryIDs(table: Element.entityName,
                                                  where: descriptor.whereSQL,
-                                                 orderBy: descriptor.orderBySQL)
+                                                 orderBy: descriptor.orderBySQL,
+                                                 params: descriptor.params)
         if _lattice.backend.lastGenerationReadStale() { return nil }
         let ids = ContiguousArray(captured)
         shape.publishIDs(ids, epoch: ctx.epoch, floor: ctx.floor,
@@ -501,6 +522,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             }
         }
         guard let rows = _queryRows(where: KeysetSQL.conjoin(where: descriptor.whereSQL, resume: resume),
+                                    params: descriptor.params,
                                     orderBy: descriptor.orderBySQL,
                                     generation: generation,
                                     limit: Int64(pageSize),
@@ -548,7 +570,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// nil = stale sentinel from the generation-scoped read.
     /// `reuseInstances` (§1.6, Commit 7): page fills and iterator batches
     /// reuse live registered instances; `snapshot()` hydrates fresh copies.
-    private func _queryRows(where whereClause: String?, orderBy: String?,
+    private func _queryRows(where whereClause: String?, params: [QueryParameter] = [],
+                            orderBy: String?,
                             generation: UInt64,
                             limit: Int64?, offset: Int64?,
                             groupBy: String?, distinctBy: String?,
@@ -558,7 +581,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                                   table: Element.entityName,
                                                   where: whereClause, orderBy: orderBy,
                                                   limit: limit, offset: offset,
-                                                  groupBy: groupBy, distinctBy: distinctBy)
+                                                  groupBy: groupBy, distinctBy: distinctBy,
+                                                  params: params)
             if _lattice.backend.lastGenerationReadStale() { return nil }
             return reuseInstances
                 ? rows.map { _reuseOrHydrate($0) }
@@ -568,7 +592,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             let rows = _lattice.backend.objects(table: Element.entityName,
                                                 where: whereClause, orderBy: orderBy,
                                                 limit: limit, offset: offset,
-                                                groupBy: groupBy, distinctBy: distinctBy)
+                                                groupBy: groupBy, distinctBy: distinctBy,
+                                                params: params)
             return reuseInstances
                 ? rows.map { _reuseOrHydrate($0) }
                 : rows.map { Element(dynamicObject: $0) }
@@ -597,7 +622,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                 _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: descriptor.whereSQL, orderBy: descriptor.orderBySQL, limit: Int64(limit), offset: Int64(offset), groupBy: groupByColumn).map { _reuseOrHydrate($0) }
             }
         }
-        return _queryRows(where: descriptor.whereSQL, orderBy: descriptor.orderBySQL,
+        return _queryRows(where: descriptor.whereSQL, params: descriptor.params,
+                          orderBy: descriptor.orderBySQL,
                           generation: generation,
                           limit: Int64(limit), offset: Int64(offset),
                           groupBy: groupByColumn, distinctBy: distinctByColumn,
@@ -741,7 +767,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         }
 
         if ctx.generationID != 0 {
-            if let rows = _queryRows(where: descriptor.whereSQL,
+            if let rows = _queryRows(where: descriptor.whereSQL, params: descriptor.params,
                                      orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false),
                                      generation: ctx.generationID,
                                      limit: limit, offset: offset,
@@ -751,7 +777,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             ctx = coordinator.resolveAfterStaleRead(failedGeneration: ctx.generationID,
                                                     table: Element.entityName)
             if ctx.generationID != 0,
-               let rows = _queryRows(where: descriptor.whereSQL,
+               let rows = _queryRows(where: descriptor.whereSQL, params: descriptor.params,
                                      orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false),
                                      generation: ctx.generationID,
                                      limit: limit, offset: offset,
@@ -760,7 +786,9 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             }
         }
         return _gatedLiveRead {
-            _lattice.backend.objects(table: Element.entityName, where: whereStatement?.predicate, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false), limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn).map { Element(dynamicObject: $0) }
+            // Serves the memory family (no keepers ⇒ generationID 0) as well
+            // as the post-stale fallback: same descriptor, same bindings.
+            _lattice.backend.objects(table: Element.entityName, where: descriptor.whereSQL, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false), limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn, params: descriptor.params).map { Element(dynamicObject: $0) }
         }
     }
 
@@ -881,7 +909,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             if finished { return nil }
             let resume = anchor.map { KeysetSQL.resumePredicate(spec: spec, anchor: $0) }
             let whereSQL = KeysetSQL.conjoin(where: descriptor.whereSQL, resume: resume)
-            var fetched = self._queryRows(where: whereSQL, orderBy: descriptor.orderBySQL,
+            var fetched = self._queryRows(where: whereSQL, params: descriptor.params,
+                                          orderBy: descriptor.orderBySQL,
                                           generation: hold.id,
                                           limit: Int64(batchSize), offset: nil,
                                           groupBy: nil, distinctBy: nil,
@@ -894,12 +923,14 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                                               shapeKey: descriptor.key)
                 hold.retain(fresh.generationID)
                 alignedWithPages = false   // ranks may have shifted at the hop
-                fetched = self._queryRows(where: whereSQL, orderBy: descriptor.orderBySQL,
+                fetched = self._queryRows(where: whereSQL, params: descriptor.params,
+                                          orderBy: descriptor.orderBySQL,
                                           generation: hold.id,
                                           limit: Int64(batchSize), offset: nil,
                                           groupBy: nil, distinctBy: nil,
                                           reuseInstances: true)
-                    ?? self._queryRows(where: whereSQL, orderBy: descriptor.orderBySQL,
+                    ?? self._queryRows(where: whereSQL, params: descriptor.params,
+                                       orderBy: descriptor.orderBySQL,
                                        generation: 0,
                                        limit: Int64(batchSize), offset: nil,
                                        groupBy: nil, distinctBy: nil,

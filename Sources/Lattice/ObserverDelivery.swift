@@ -23,6 +23,15 @@ import Foundation
 /// secondary threads default to the same 512KB as the cooperative pool — the
 /// explicit `stackSize` is the load-bearing line, and the run loop asserts it
 /// took effect so a regression turns tests red.
+///
+/// CONTRACT (new, and the one behavioral cost of this change): an observer
+/// block delivered without an `isolation` runs ON this shared worker, and
+/// delivery is serialized across every Lattice in the process. A block that
+/// BLOCKS — waits on a semaphore, joins a thread, or synchronously awaits
+/// work that itself needs observer delivery to progress — now stalls all
+/// observers instead of only its own batch. Observer blocks must return
+/// promptly: do the read, hand the result to a queue/actor, return. Blocks
+/// bound to an isolation are unaffected (they hop to their actor per batch).
 final class ObserverDeliveryWorker: @unchecked Sendable {
     static let shared = ObserverDeliveryWorker()
 

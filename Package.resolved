@@ -1,5 +1,5 @@
 {
-  "originHash" : "614429e993f18a2494712a089b005cc453c7325f1f5ccaf1156f5fac6cea2d1d",
+  "originHash" : "68ed481709ef2857fa10e4a993bdf0c7715b3830814c784478f7754b1da3f1ea",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -34,6 +34,15 @@
       "location" : "https://github.com/mattt/eventsource.git",
       "state" : {
         "revision" : "a3a85a85214caf642abaa96ae664e4c772a59f6e",
+        "version" : "1.4.1"
+      }
+    },
+    {
+      "identity" : "latticecore",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jsflax/LatticeCore.git",
+      "state" : {
+        "revision" : "7f7f601730817267320ffe6f3e9697a5e0db3ff0",
         "version" : "1.4.1"
       }
     },

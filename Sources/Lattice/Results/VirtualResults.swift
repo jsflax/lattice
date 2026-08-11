@@ -100,7 +100,10 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
         var objects: [Element] = []
         
         let orderBy: String? = _sortColumn.map { "\($0.name) \($0.order == .forward ? "ASC" : "DESC")" }
-        let cxxResults = _lattice.backend.unionObjects(tables: self.tableNames, where: whereStatement?.predicate, orderBy: orderBy, limit: limit, offset: offset)
+        // Union queries emit the predicate ONCE PER TABLE; the core replicates
+        // the bindings to match (see query_union_rows).
+        let rendered = whereStatement?._parameterizedPredicate()
+        let cxxResults = _lattice.backend.unionObjects(tables: self.tableNames, where: rendered?.sql, orderBy: orderBy, limit: limit, offset: offset, params: rendered?.params ?? [])
         
         for row in cxxResults {
             for type in repeat (each M).self {
@@ -201,8 +204,11 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
     public var endIndex: Int {
         // Live count from C++
         var count = 0
+        let rendered = whereStatement?._parameterizedPredicate()
         for type in repeat (each M).self {
-            count += Int(_lattice.backend.count(table: type.entityName, where: whereStatement?.predicate))
+            count += Int(_lattice.backend.count(table: type.entityName, where: rendered?.sql,
+                                                groupBy: nil, distinctBy: nil,
+                                                params: rendered?.params ?? []))
         }
         return count
     }

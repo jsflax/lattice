@@ -18,6 +18,75 @@ struct QueryShapeKey: Hashable {
     let orderBySQL: String?
     let groupBy: String?
     let distinctBy: String?
+    /// Digest of the ordered values bound to `whereSQL`'s `?` placeholders,
+    /// or nil for an all-literal predicate.
+    ///
+    /// CORRECTNESS, NOT PERFORMANCE. Before parameterization the rendered SQL
+    /// text WAS the query's full identity, because every constant was baked
+    /// into it. With placeholders it no longer is: `.in(idsA)` and
+    /// `.in(idsB)` render the SAME `id IN (SELECT value FROM json_each(?))`
+    /// text, so without this component the two queries collide onto one
+    /// `QueryShapeState` and the second facade serves the FIRST one's cached
+    /// count, pages and id vector — wrong rows, silently. Pinned by
+    /// `disjointInSets_doNotShareShapeState`.
+    ///
+    /// Threading it through the key also repairs, for free, every other
+    /// consumer that keys on shape identity: the coordinator's shape LRU, the
+    /// `shapeRelevantWriteEpochs` bookkeeping, and `ShapeColumnExtractor`'s
+    /// per-shape dependency.
+    var bindDigest: BindDigest? = nil
+}
+
+/// A 128-bit digest over an ordered parameter list.
+///
+/// Wide on purpose: this value stands in for the bound values inside a cache
+/// key, so a collision is not a slow path — it is two different queries
+/// sharing one cache entry, i.e. wrong rows. 128 bits makes that
+/// unreachable in practice, at a fraction of the memory of retaining the
+/// values themselves (a 28K-element membership query would otherwise pin
+/// ~300 KB per live shape).
+///
+/// Deterministic FNV-1a with two independent parameterizations, so it does not
+/// depend on Swift's per-process `Hasher` seed.
+struct BindDigest: Hashable, Sendable {
+    let lo: UInt64
+    let hi: UInt64
+
+    init?(_ params: [QueryParameter]) {
+        guard !params.isEmpty else { return nil }
+        var a: UInt64 = 0xcbf2_9ce4_8422_2325
+        var b: UInt64 = 0x9e37_79b9_7f4a_7c15
+        func mix(_ byte: UInt8) {
+            a = (a ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+            b = (b ^ UInt64(byte)) &* 0x8864_3f65_e0d1_4d0d
+            b ^= b >> 29
+        }
+        func mix<S: Sequence>(_ bytes: S) where S.Element == UInt8 {
+            for byte in bytes { mix(byte) }
+        }
+        func mix(_ value: UInt64) {
+            withUnsafeBytes(of: value.littleEndian) { mix($0) }
+        }
+        // The per-element TAG is load-bearing: without it the integer 0 and
+        // an empty blob would digest identically. The LENGTH prefix likewise
+        // stops ["ab","c"] from colliding with ["a","bc"].
+        for param in params {
+            switch param {
+            case .null:
+                mix(UInt8(0))
+            case .integer(let i):
+                mix(UInt8(1)); mix(UInt64(bitPattern: i))
+            case .real(let d):
+                mix(UInt8(2)); mix(d.bitPattern)
+            case .text(let s):
+                mix(UInt8(3)); mix(UInt64(s.utf8.count)); mix(s.utf8)
+            case .blob(let data):
+                mix(UInt8(4)); mix(UInt64(data.count)); mix(data)
+            }
+        }
+        self.lo = a
+        self.hi = b
+    }
 }
 
 /// Shared, epoch-keyed cache state for one query shape: cached `count`, an

@@ -278,6 +278,31 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     @inline(__always) private func optInt(_ i: Int64?) -> lattice.OptionalInt64 {
         i.map { lattice.int64_to_optional($0) } ?? .init()
     }
+    /// Ordered bindings → the core's `std::vector<column_value_t>`. Order is
+    /// load-bearing: element i binds the i-th `?` in the statement.
+    @inline(__always) private func columnValues(_ params: [QueryParameter]) -> lattice.ColumnValueVector {
+        var vec = lattice.ColumnValueVector()
+        guard !params.isEmpty else { return vec }
+        vec.reserve(params.count)
+        for param in params {
+            switch param {
+            case .null:
+                lattice.push_column_value(&vec, lattice.column_value_null())
+            case .integer(let i):
+                lattice.push_column_value(&vec, lattice.column_value_from_int(i))
+            case .real(let d):
+                lattice.push_column_value(&vec, lattice.column_value_from_double(d))
+            case .text(let s):
+                lattice.push_column_value(&vec, lattice.column_value_from_string(std.string(s)))
+            case .blob(let data):
+                var bytes = lattice.ByteVector()
+                bytes.reserve(data.count)
+                for byte in data { bytes.push_back(byte) }
+                lattice.push_column_value(&vec, lattice.column_value_from_blob(bytes))
+            }
+        }
+        return vec
+    }
     func add(_ object: any ObjectBackend) throws {
         guard let cxx = object as? CxxObjectBackend else { preconditionFailure("CxxBackend requires CxxObjectBackend") }
         var err = lattice.cxx_error()
@@ -313,30 +338,30 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         guard let o = ref.object_by_global_id(std.string(globalId), std.string(table)).value else { return nil }
         return CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(o.pointee).make_shared()))
     }
-    func objects(table: String, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?) -> [any ObjectBackend] {
-        let res = ref.objects(std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy))
+    func objects(table: String, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?, params: [QueryParameter]) -> [any ObjectBackend] {
+        let res = ref.objects(std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy), columnValues(params))
         reportQueryFailureIfAny()
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
         return out
     }
-    func unionObjects(tables: [String], where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?) -> [any ObjectBackend] {
+    func unionObjects(tables: [String], where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, params: [QueryParameter]) -> [any ObjectBackend] {
         let tableVec = tables.reduce(into: lattice.StringVector()) { $0.push_back(std.string($1)) }
-        let res = ref.union_objects(tableVec, optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset))
+        let res = ref.union_objects(tableVec, optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), columnValues(params))
         reportQueryFailureIfAny()
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
         return out
     }
-    func count(table: String, where whereClause: String?, groupBy: String?, distinctBy: String?) -> Int64 {
-        let n = Int64(ref.count(std.string(table), optStr(whereClause), optStr(groupBy), optStr(distinctBy)))
+    func count(table: String, where whereClause: String?, groupBy: String?, distinctBy: String?, params: [QueryParameter]) -> Int64 {
+        let n = Int64(ref.count(std.string(table), optStr(whereClause), optStr(groupBy), optStr(distinctBy), columnValues(params)))
         reportQueryFailureIfAny()
         return n
     }
-    func deleteWhere(table: String, where whereClause: String?) -> Bool {
-        let ok = ref.delete_where(std.string(table), optStr(whereClause))
+    func deleteWhere(table: String, where whereClause: String?, params: [QueryParameter]) -> Bool {
+        let ok = ref.delete_where(std.string(table), optStr(whereClause), columnValues(params))
         reportQueryFailureIfAny()
         return ok
     }
@@ -648,16 +673,16 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
     func walEvictionPending() -> Bool { ref.wal_eviction_pending() }
 
-    func objectsAt(generation: UInt64, table: String, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?) -> [any ObjectBackend] {
-        let res = ref.objects_at(generation, std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy))
+    func objectsAt(generation: UInt64, table: String, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?, params: [QueryParameter]) -> [any ObjectBackend] {
+        let res = ref.objects_at(generation, std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy), columnValues(params))
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
         return out
     }
 
-    func countAt(generation: UInt64, table: String, where whereClause: String?, groupBy: String?, distinctBy: String?) -> Int64 {
-        ref.count_at(generation, std.string(table), optStr(whereClause), optStr(groupBy), optStr(distinctBy))
+    func countAt(generation: UInt64, table: String, where whereClause: String?, groupBy: String?, distinctBy: String?, params: [QueryParameter]) -> Int64 {
+        ref.count_at(generation, std.string(table), optStr(whereClause), optStr(groupBy), optStr(distinctBy), columnValues(params))
     }
 
     func objectsWithinBBoxAt(generation: UInt64, table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?) -> [any ObjectBackend] {
@@ -668,10 +693,10 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         return out
     }
 
-    func queryIDs(table: String, where whereClause: String?, orderBy: String?) -> [Int64] {
+    func queryIDs(table: String, where whereClause: String?, orderBy: String?, params: [QueryParameter]) -> [Int64] {
         // Index loop, NOT map/Collection conformance — see receiveSyncData
         // (imported-vector Collection witnesses segfault on aarch64 Linux).
-        let vec = ref.query_ids_at(std.string(table), optStr(whereClause), optStr(orderBy))
+        let vec = ref.query_ids_at(std.string(table), optStr(whereClause), optStr(orderBy), columnValues(params))
         var out: [Int64] = []
         out.reserveCapacity(vec.size())
         var i = 0

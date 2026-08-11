@@ -401,16 +401,251 @@ public struct Query<T>: Sendable {
     /// Constructs an NSPredicate compatible string with its accompanying arguments.
     /// - Note: This is for internal use only and is exposed for testing purposes.
     func _constructPredicate() -> (String, [Any]) {
-        return buildPredicate(node, auditPredicate: isAuditing)
+        return (buildPredicate(node, auditPredicate: isAuditing).0, [])
     }
 
     /// Creates an NSPredicate compatible string.
     /// - Returns: A tuple containing the predicate string and an array of arguments.
 
     /// Creates the final SQL WHERE clause from the query expression.
+    ///
+    /// LITERAL CHANNEL. Every constant is interpolated as an escaped SQL
+    /// literal and the result is a self-contained fragment with no `?`
+    /// placeholders — the only form that is safe to splice into composed SQL
+    /// text or hand to a surface with no parameter channel (`SyncFilter`,
+    /// the union CASE-WHEN wrapping, `_unionSubquery`, `List.findWhere`,
+    /// the combined-nearest query). Byte-identical to the pre-parameter
+    /// renderer; do NOT "upgrade" callers of this property to the
+    /// parameterized channel without plumbing parameters end-to-end.
     package var predicate: String {
         _constructPredicate().0
     }
+
+    /// PARAMETERIZED CHANNEL. Renders the same predicate, but the
+    /// pathological literal classes bind instead of interpolating:
+    ///
+    ///   * a collection membership test over more than
+    ///     `QueryParameterization.inlineCollectionThreshold` elements becomes
+    ///     `lhs IN (SELECT value FROM json_each(?))` with the WHOLE collection
+    ///     bound as ONE JSON-array TEXT parameter — so a 28K-id query is a
+    ///     fixed-size statement instead of multi-MB of SQL text, and repeated
+    ///     queries of the same shape hit the statement cache;
+    ///   * blob constants bind as BLOB parameters instead of interpolating
+    ///     (the literal channel has no faithful rendering for `Data` at all).
+    ///
+    /// Everything else renders exactly as the literal channel does: small
+    /// collections keep the inline `IN (a,b,c)` form (better query plans, and
+    /// they were never the problem), scalars stay literal.
+    ///
+    /// ONLY for callers that carry `params` all the way to the statement.
+    /// The returned values are positional: `params[i]` binds the i-th `?`.
+    ///
+    /// - Returns: the SQL fragment and its ordered bound values. An EMPTY
+    ///   parameter array means the fragment came out byte-identical to the
+    ///   literal channel.
+    package func _parameterizedPredicate() -> (sql: String, params: [QueryParameter]) {
+        buildPredicate(node, auditPredicate: isAuditing, parameterized: true)
+    }
+}
+
+// MARK: - Parameterization policy
+
+/// Tunables and shared literals for the parameterized predicate channel.
+/// The SQL text here is shared with `ShapeColumnExtractor` so the renderer and
+/// the column-dependency extractor cannot drift apart (a drift would silently
+/// collapse every `.in()` live query to `mustInvalidate`).
+package enum QueryParameterization {
+    /// Collections of at most this many elements keep the inline
+    /// `IN (a,b,c)` literal list.
+    ///
+    /// Chosen at 64. Below it an inline list is a few hundred bytes, parses in
+    /// microseconds, and gives SQLite the better plan — an `IN` over a short
+    /// value list drives an index seek per element, whereas the `json_each`
+    /// form materializes a subquery first. Above it the literal list is what
+    /// turns into multi-MB statement text. 64 is also far below the 32766
+    /// bind-variable ceiling of the stock wasm/Android amalgamations, which is
+    /// what makes the flat form safe at any size we still allow it: the
+    /// binding form above the threshold spends exactly ONE variable no matter
+    /// how large the collection is.
+    package static let inlineCollectionThreshold = 64
+
+    /// The closed subquery a bound collection renders to. Self-contained: it
+    /// references no column of the enclosing query, which is what lets
+    /// `ShapeColumnExtractor` treat it as opaque rather than bailing.
+    package static let boundCollectionSubquerySQL = "(SELECT value FROM json_each(?))"
+}
+
+/// Converts Swift constants to bound values, mirroring `formatValue`'s
+/// literal conversions BRANCH FOR BRANCH.
+///
+/// This is a correctness surface, not a formatting one: a bound value that
+/// converts differently from the literal one silently changes which rows a
+/// comparison matches. Every branch below has a twin in `formatValue` —
+/// UUID lowercasing, `Date` → epoch seconds, enum `rawValue` unwrap, optional
+/// unwrap, `NSNull` → NULL — and the numeric branches deliberately reuse
+/// `"\(v)"`, the exact text `formatValue` interpolates, rather than
+/// re-formatting through a second path.
+///
+/// Anything without a faithful representation returns `nil`, and the caller
+/// keeps the literal rendering. Failing to the STATUS QUO is always safe;
+/// guessing is not.
+enum SQLBindMarshaling {
+
+    /// The JSON type a marshaled element landed on. Tracked because SQLite's
+    /// `IN (SELECT …)` form applies the SUBQUERY's affinity rather than the
+    /// left operand's, and a TEXT-affinity column compared against a JSON
+    /// NUMBER is the one cell where `IN (SELECT value FROM json_each(?))`
+    /// diverges from `IN (a,b,c)` (verified against SQLite 3.44: `s TEXT`
+    /// holding '5' matches `s IN (5)` but NOT the json_each form).
+    ///
+    /// Lattice's schema mapping makes that cell unreachable — a TEXT column is
+    /// a String/UUID/URL property, and those marshal to JSON strings, while
+    /// numeric properties map to INTEGER/REAL columns — but a MIXED collection
+    /// would reopen it, so mixed string/number collections refuse to bind.
+    enum JSONKind {
+        case string
+        case number
+        case null
+    }
+
+    /// One element's JSON text, or nil when it has no faithful representation
+    /// (blob, nested collection, an unrecognized type, a non-finite double).
+    static func jsonValueText(for value: Any?) -> (text: String, kind: JSONKind)? {
+        guard let value else { return ("null", .null) }
+
+        let mirror = Mirror(reflecting: value)
+        // Optional unwrap — twin of formatValue's `.optional` branch.
+        if mirror.displayStyle == .optional {
+            if let child = mirror.children.first {
+                return jsonValueText(for: child.value)
+            }
+            return ("null", .null)
+        }
+        // A nested collection has no literal twin worth reproducing.
+        if mirror.displayStyle == .collection { return nil }
+
+        if value is NSNull { return ("null", .null) }
+        if let enumValue = value as? any LatticeEnum {
+            return jsonValueText(for: enumValue.rawValue)
+        }
+        if let date = value as? Date {
+            // formatValue: "\(date.timeIntervalSince1970)".
+            return numberText("\(date.timeIntervalSince1970)")
+        }
+        if let string = value as? String {
+            return (jsonStringText(string), .string)
+        }
+        if let uuid = value as? UUID {
+            // formatValue lowercases; a bound value that did not would stop
+            // matching rows written through the lowercasing write path.
+            return (jsonStringText(uuid.uuidString.lowercased()), .string)
+        }
+        if let url = value as? URL {
+            return (jsonStringText(url.absoluteString), .string)
+        }
+        // formatValue renders Bool through its `"\(v)"` fallback as the SQL
+        // keywords true/false; SQLite reads those as 1/0, and json_each
+        // yields integer 1/0 for JSON booleans. Same comparison either way.
+        if let flag = value as? Bool {
+            return (flag ? "true" : "false", .number)
+        }
+        // Integers and floats reuse formatValue's own interpolation, then are
+        // validated against the JSON number grammar — which is what rejects
+        // infinity and NaN (whose "\(v)" text is neither valid JSON nor a
+        // valid SQL literal).
+        if value is any BinaryInteger || value is any BinaryFloatingPoint {
+            return numberText("\(value)")
+        }
+        return nil
+    }
+
+    private static func numberText(_ text: String) -> (String, JSONKind)? {
+        isValidJSONNumber(text) ? (text, .number) : nil
+    }
+
+    /// Strict JSON number grammar: `-? (0|[1-9]\d*) (\.\d+)? ([eE][+-]?\d+)?`,
+    /// relaxed only to accept leading zeros (Swift never emits them, and
+    /// SQLite's parser accepts them).
+    static func isValidJSONNumber(_ text: String) -> Bool {
+        var scalars = Substring(text)[...]
+        func take(while predicate: (Character) -> Bool) -> Int {
+            var taken = 0
+            while let c = scalars.first, predicate(c) {
+                scalars = scalars.dropFirst()
+                taken += 1
+            }
+            return taken
+        }
+        if scalars.first == "-" { scalars = scalars.dropFirst() }
+        guard take(while: \.isASCIIDigit) > 0 else { return false }
+        if scalars.first == "." {
+            scalars = scalars.dropFirst()
+            guard take(while: \.isASCIIDigit) > 0 else { return false }
+        }
+        if let e = scalars.first, e == "e" || e == "E" {
+            scalars = scalars.dropFirst()
+            if let sign = scalars.first, sign == "+" || sign == "-" {
+                scalars = scalars.dropFirst()
+            }
+            guard take(while: \.isASCIIDigit) > 0 else { return false }
+        }
+        return scalars.isEmpty
+    }
+
+    /// JSON string literal, escaped per RFC 8259.
+    static func jsonStringText(_ value: String) -> String {
+        var out = "\""
+        out.reserveCapacity(value.utf8.count + 2)
+        for scalar in value.unicodeScalars {
+            switch scalar {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            case "\u{08}": out += "\\b"
+            case "\u{0C}": out += "\\f"
+            default:
+                if scalar.value < 0x20 {
+                    out += String(format: "\\u%04x", scalar.value)
+                } else {
+                    out.unicodeScalars.append(scalar)
+                }
+            }
+        }
+        return out + "\""
+    }
+
+    /// The whole collection as one JSON array, or nil when ANY element has no
+    /// faithful representation (the caller then keeps the literal list, which
+    /// is exactly today's behavior) or when the collection mixes JSON strings
+    /// with JSON numbers (see `JSONKind`).
+    static func jsonArrayText(forCollection collection: Any) -> String? {
+        let mirror = Mirror(reflecting: collection)
+        guard mirror.displayStyle == .collection else { return nil }
+
+        var out = "["
+        var first = true
+        var sawString = false
+        var sawNumber = false
+        for child in mirror.children {
+            guard let (text, kind) = jsonValueText(for: child.value) else { return nil }
+            switch kind {
+            case .string: sawString = true
+            case .number: sawNumber = true
+            case .null: break
+            }
+            if sawString && sawNumber { return nil }
+            if !first { out += "," }
+            first = false
+            out += text
+        }
+        return out + "]"
+    }
+}
+
+extension Character {
+    fileprivate var isASCIIDigit: Bool { self >= "0" && self <= "9" }
 }
 
 extension Query where T == Bool {
@@ -907,6 +1142,11 @@ private indirect enum QueryNode: @unchecked Sendable {
 
     case not(_ child: QueryNode)
     case constant(_ value: Any?)
+    /// A collection bound as ONE JSON-array TEXT parameter, rendered as the
+    /// closed subquery `(SELECT value FROM json_each(?))`. Produced only on
+    /// the parameterized channel, only above
+    /// `QueryParameterization.inlineCollectionThreshold`.
+    case boundJSONArray(_ json: String)
 
     case keyPath(_ value: [String], options: KeyPathOptions)
     case embeddedKeyPath(_ value: [String], isAnyProperty: Bool, options: KeyPathOptions)
@@ -931,8 +1171,18 @@ private enum CollectionSubscript {
     case all
 }
 
-private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPredicate: Bool = false) -> (String, [Any]) {
+/// Renders a query tree to SQL.
+///
+/// `parameterized` selects the channel: `false` (the default, and what
+/// `Query.predicate` uses) interpolates every constant as a literal and returns
+/// an empty parameter array — byte-identical to the pre-parameter renderer.
+/// `true` binds the pathological classes and returns their values positionally.
+/// The SQL string and the parameter array are appended to in the SAME
+/// traversal, which is what guarantees `params[i]` lines up with the i-th `?`.
+private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPredicate: Bool = false,
+                            parameterized: Bool = false) -> (String, [QueryParameter]) {
     let formatStr = NSMutableString(string: "")
+    var params: [QueryParameter] = []
     var subqueryCounter = subqueryCount
 
     func buildExpression(_ lhs: QueryNode,
@@ -1074,27 +1324,45 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
             str.replacingOccurrences(of: "'", with: "''")
         }
 
-        func formatValue(_ v: Any?) {
+        /// `bindingAllowed` is the BIND-CEILING guard. A flat placeholder list
+        /// costs one SQL variable per element, and the stock wasm/Android
+        /// amalgamations cap out at 32766 — so element-level binding is
+        /// permitted only inside a collection small enough to stay far below
+        /// that. A large collection that could not be bound as a single JSON
+        /// parameter renders fully literal (exactly as it did before
+        /// parameterization) rather than emitting one `?` per element.
+        func formatValue(_ v: Any?, bindingAllowed: Bool = true) {
             guard let v = v else {
                 formatStr.append("NULL")
+                return
+            }
+            // Blob constants: the literal channel has no faithful rendering
+            // (Data falls through to `"\(v)"`, i.e. "12 bytes"), so binding is
+            // the only correct form. Checked before the collection branch so
+            // it cannot be reinterpreted as a byte sequence.
+            if parameterized, bindingAllowed, let data = v as? Data {
+                formatStr.append("?")
+                params.append(.blob(data))
                 return
             }
             let mirror = Mirror(reflecting: v)
             if mirror.displayStyle == .optional {
                 if let child = mirror.children.first {
-                    formatValue(child.value)
+                    formatValue(child.value, bindingAllowed: bindingAllowed)
                 } else {
                     formatStr.append("NULL")
                 }
                 return
             }
             if mirror.displayStyle == .collection {
+                let elementBindingAllowed = bindingAllowed
+                    && mirror.children.count <= QueryParameterization.inlineCollectionThreshold
                 formatStr.append("(")
                 var first = true
                 for child in mirror.children {
                     if !first { formatStr.append(",") }
                     first = false
-                    formatValue(child.value)
+                    formatValue(child.value, bindingAllowed: elementBindingAllowed)
                 }
                 formatStr.append(")")
                 return
@@ -1119,6 +1387,9 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
         switch node {
         case .constant(let value):
             formatValue(value)
+        case .boundJSONArray(let json):
+            formatStr.append(QueryParameterization.boundCollectionSubquerySQL)
+            params.append(.text(json))
         case .select(let keyPath, let tableName, let whereClause):
             if let whereClause {
                 formatStr.append("(SELECT \(keyPath) FROM \(tableName) WHERE \(whereClause))")
@@ -1206,7 +1477,20 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
                             preconditionFailure()
                         }
                         if rhsValue.isEmpty {
+                            // Empty membership stays `IN (NULL)` — never true,
+                            // and never NULL-vs-false ambiguous. Identical on
+                            // both channels.
                             buildExpression(lhs, "\(op.rawValue)\(strOptions(options))", .constant([NSNull()]), prefix: prefix)
+                        } else if parameterized,
+                                  rhsValue.count > QueryParameterization.inlineCollectionThreshold,
+                                  let json = SQLBindMarshaling.jsonArrayText(forCollection: rhsValue) {
+                            // The pathological class: bind the WHOLE collection
+                            // as one JSON-array parameter. `jsonArrayText`
+                            // returning nil (unrepresentable or mixed-kind
+                            // elements) falls through to the literal list —
+                            // slower, but exactly today's behavior.
+                            buildExpression(lhs, "\(op.rawValue)\(strOptions(options))",
+                                            .boundJSONArray(json), prefix: prefix)
                         } else {
                             buildExpression(lhs, "\(op.rawValue)\(strOptions(options))", rhs, prefix: prefix)
                         }
@@ -1256,7 +1540,7 @@ private func buildPredicate(_ root: QueryNode, subqueryCount: Int = 0, auditPred
         }
     }
     build(root, isNewNode: true)
-    return (formatStr as String, [])
+    return (formatStr as String, params)
 }
 
 private struct KeyPathOptions: OptionSet {
@@ -1301,7 +1585,7 @@ private struct SubqueryRewriter {
             return .between(rewrite(lhs), lowerBound: rewrite(lowerBound), upperBound: rewrite(upperBound))
         case .subqueryCount(let inner):
             return .subqueryCount(inner)
-        case .constant:
+        case .constant, .boundJSONArray:
             return node
         case .mapSubscript:
             fatalError("Subqueries do not support map subscripts.")

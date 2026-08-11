@@ -90,7 +90,24 @@ enum ShapeColumnExtractor {
     /// the caller must fall back to must-invalidate.
     static func referencedColumns(in fragment: String) -> Set<String>? {
         var columns: Set<String> = []
-        let scalars = Array(fragment.unicodeScalars)
+        // The ONE recognized subquery form: a bound collection rendered by the
+        // parameterized channel as `col IN (SELECT value FROM json_each(?))`.
+        //
+        // Without this, the general SELECT/FROM bail would collapse EVERY
+        // large-`.in()` live query to `.mustInvalidate` — a caching regression
+        // in precisely the hot path parameterization exists to speed up.
+        //
+        // Erasing the fixed text is safe in the direction that matters. The
+        // fragment is closed and correlation-free: it names no column of the
+        // enclosing table (only `value` and `json_each`, neither of which is
+        // emitted), so no referenced column can be lost by removing it, and
+        // the surrounding `col IN (?)` still yields `col`. A user string
+        // literal that happens to contain the same characters degrades to a
+        // shorter literal — still a literal, still no column dropped. Every
+        // other subquery keeps the conservative bail.
+        let scanned = fragment.replacingOccurrences(
+            of: QueryParameterization.boundCollectionSubquerySQL, with: "(?)")
+        let scalars = Array(scanned.unicodeScalars)
         var i = 0
         let n = scalars.count
 

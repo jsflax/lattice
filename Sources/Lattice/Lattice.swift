@@ -1306,8 +1306,9 @@ public struct Lattice {
 
     @discardableResult public func delete<T: Model>(_ modelType: T.Type = T.self,
                                                     where: ((Query<T>) -> Query<Bool>)? = nil) -> Bool {
-        let whereClause: String? = `where`.map { $0(Query<T>()).predicate }
-        let deleted = backend.deleteWhere(table: T.entityName, where: whereClause)
+        let rendered = `where`.map { $0(Query<T>())._parameterizedPredicate() }
+        let deleted = backend.deleteWhere(table: T.entityName, where: rendered?.sql,
+                                          params: rendered?.params ?? [])
         if deleted { _noteWrite(tables: [T.entityName]) }
         return deleted
     }
@@ -1716,16 +1717,19 @@ public struct Lattice {
     }
 
     public func count<T>(_ modelType: T.Type, where: ((Query<T>) -> Query<Bool>)? = nil) -> Int where T: Model {
-        let whereClause: String? = `where`.map { $0(Query<T>()).predicate }
         // §4.1 in-txn carve-out: the live count routes through the core's
         // read connection on file stores, which cannot see this thread's
         // open transaction — count on the writer connection instead
-        // (see InTransactionReads.swift).
+        // (see InTransactionReads.swift). That writer path is STRING-ONLY, so
+        // it takes the literal channel; the live path binds.
         if Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) {
-            return _writerTransactionCount(table: T.entityName, where: whereClause,
+            return _writerTransactionCount(table: T.entityName,
+                                           where: `where`.map { $0(Query<T>()).predicate },
                                            groupBy: nil, distinctBy: nil)
         }
-        return Int(backend.count(table: T.entityName, where: whereClause))
+        let rendered = `where`.map { $0(Query<T>())._parameterizedPredicate() }
+        return Int(backend.count(table: T.entityName, where: rendered?.sql,
+                                 groupBy: nil, distinctBy: nil, params: rendered?.params ?? []))
     }
     
     /// Holds observation state and cancels on deinit
