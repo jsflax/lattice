@@ -1789,9 +1789,15 @@ public struct Lattice {
         let s = UncheckedSendable(self)
         let blk = UncheckedSendable(block)
         let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
-            for change in changes {
-                if let auditLog = s.value.object(AuditLog.self, primaryKey: change.rowId) {
-                    blk.value([auditLog])
+            // C0a: the per-row hydration used to run directly on the sync
+            // scheduler's thread (a default-stack std::thread — the same
+            // 512KB class as the crashed cooperative pool). Deliver from the
+            // big-stack worker instead.
+            ObserverDeliveryWorker.shared.enqueue {
+                for change in changes {
+                    if let auditLog = s.value.object(AuditLog.self, primaryKey: change.rowId) {
+                        blk.value([auditLog])
+                    }
                 }
             }
         }
@@ -1881,7 +1887,11 @@ public struct Lattice {
             // subsequent commits are captured" — an async registration would
             // lose any commit that lands during the open below.
             let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
-                state.deliver(changes, emit)
+                // C0a: emit resolves the batch with SQL — off the sync
+                // scheduler's default-stack thread, onto the 8MB worker.
+                ObserverDeliveryWorker.shared.enqueue {
+                    state.deliver(changes, emit)
+                }
             }
 
             // The BLOCKING core work hops OFF the caller's task: opening the
@@ -1946,19 +1956,23 @@ public struct Lattice {
             // preserving input commit order. Same per-row semantics as
             // the legacy callback — just delivered in one fire instead
             // of N.
-            Task.detached {
+            //
+            // C0a (Aug 2026 SIGBUS fix): delivery runs on the shared
+            // big-stack worker, NOT `Task.detached`. The detached task ran
+            // membership SQL (and, without an isolation, the user's block —
+            // which routinely runs more SQL) on 512KB cooperative-pool
+            // threads, and a daemon sync burst fanned out thousands of them;
+            // the production crash was a stack-guard SIGBUS in sqlite3's
+            // prepare underneath exactly this closure. On the worker the SQL
+            // gets an 8MB stack and batches apply serially. A block bound to
+            // an isolation still runs on that actor — only the decision SQL
+            // moves.
+            ObserverDeliveryWorker.shared.enqueue {
                 guard let self = ref.resolve() else {
                     return
                 }
 
                 let isolation = self.isolation
-                @Sendable func dispatch(_ change: CollectionChange) async {
-                    if let isolation {
-                        await isolation.invoke { _ in block(change) }
-                    } else {
-                        block(change)
-                    }
-                }
 
                 // Filtered observers fire on RESULT-SET membership, not on
                 // "did the changed fields satisfy the predicate". The old
@@ -1982,13 +1996,16 @@ public struct Lattice {
                         .where({ _ in `where` && Query<Bool>.primaryKeyEquals(rowId) })
                         .first != nil
                 }
+                // Decision SQL runs synchronously here on the worker's 8MB
+                // stack; delivery happens per decision below.
+                var decisions: [CollectionChange] = []
                 for entry in changes {
                     let operation = entry.operation
                     let rowId = entry.rowId
                     switch operation {
                     case "INSERT":
                         if rowMatchesNow(rowId) {
-                            await dispatch(.insert(rowId))
+                            decisions.append(.insert(rowId))
                         }
                     case "DELETE":
                         // Pre-delete membership IS knowable when auditing is
@@ -2004,16 +2021,32 @@ public struct Lattice {
                                 $0.rowId == rowId && $0.operation == .delete
                             }).first != nil
                             if wasMember || !anyAuditForRow {
-                                await dispatch(.delete(rowId))
+                                decisions.append(.delete(rowId))
                             }
                         } else {
-                            await dispatch(.delete(rowId))
+                            decisions.append(.delete(rowId))
                         }
                     case "UPDATE":
-                        await dispatch(.update(rowId))
+                        decisions.append(.update(rowId))
                     default:
                         break
                     }
+                }
+                guard !decisions.isEmpty else { return }
+                if let isolation {
+                    // One hop per batch: the user's block runs on its actor,
+                    // in commit order, exactly as before.
+                    let batch = decisions
+                    Task {
+                        await isolation.invoke { _ in
+                            for change in batch { block(change) }
+                        }
+                    }
+                } else {
+                    // No isolation requested: deliver ON the worker — the
+                    // block's own SQL (per-row hydration in UI observers)
+                    // inherits the deep stack too.
+                    for change in decisions { block(change) }
                 }
             }
         }
