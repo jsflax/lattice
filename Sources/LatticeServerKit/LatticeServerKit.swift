@@ -374,8 +374,21 @@ extension Lattice {
                     // Revoked or refused: consume and discard. Never apply,
                     // never ack, never fan out, never buffer.
                     guard !state.revocation.isRevoked, !state.isRefused else { return }
-                    if let lattice = state.lattice, let process = state.process {
-                        process(ws, bb, lattice)
+                    if state.lattice != nil, let cont = state.applyContinuation {
+                        // Post-go-live: hand the frame to this connection's
+                        // serial applier. The queued-bytes cap bounds server
+                        // memory against a client that outruns apply — same
+                        // policy (and same cap) as the pre-open buffer.
+                        if state.queuedApplyBytes + bb.readableBytes > maxBufferedFrameBytes {
+                            print(">>> Apply queue cap exceeded; closing connection")
+                            state.isRefused = true
+                            cont.finish()
+                            ws.pingInterval = .seconds(5)
+                            _ = ws.close(code: .policyViolation)
+                        } else {
+                            state.queuedApplyBytes += bb.readableBytes
+                            cont.yield(bb)
+                        }
                     } else if state.bufferedBytes + bb.readableBytes <= maxBufferedFrameBytes {
                         state.bufferedBytes += bb.readableBytes
                         state.buffered.append(bb)
@@ -400,6 +413,12 @@ extension Lattice {
                         // loop for every other connection (observed as
                         // time-limit storms in the in-process relay tests).
                         ws.eventLoop.execute {
+                            // Stop the apply pipeline: finish drains the
+                            // stream; the consumer exits after the in-flight
+                            // apply (revocation gates any queued remainder).
+                            state.applyContinuation?.finish()
+                            state.applyContinuation = nil
+                            state.applyConsumer = nil
                             let box = state.lattice.map(UnsafeSendableBox.init)
                             state.lattice = nil
                             state.process = nil
@@ -473,7 +492,13 @@ extension Lattice {
                 }
                 do {
                     let globalIds = try lattice.receive(data)
-                    ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
+                    // B3.8: never ack an empty apply — in particular incoming
+                    // ACK frames used to be re-acked (ack-of-ack ping-pong,
+                    // one empty bookkeeping round trip per client download
+                    // ack, forever).
+                    if !globalIds.isEmpty {
+                        ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
+                    }
                 } catch {
                     print("Error:", error)
                 }
@@ -526,7 +551,27 @@ extension Lattice {
                     return
                 }
                 state.process = processFrame
-                for bb in state.buffered { processFrame(ws, bb, held.value) }
+                // B3.2: applies run on a per-connection serial consumer, OFF
+                // the event loop — one slow apply no longer blocks every
+                // other socket on this loop (the client made the same move in
+                // sync.cpp:1053 long ago). Ordering is preserved: one
+                // consumer, frames yielded in arrival order, ack + fan-out
+                // still happen inside processFrame after the apply commits.
+                let lattice = held.value
+                let (stream, cont) = AsyncStream<ByteBuffer>.makeStream()
+                state.applyContinuation = cont
+                state.applyConsumer = Task.detached {
+                    for await frame in stream {
+                        guard !state.revocation.isRevoked else { continue }
+                        processFrame(ws, frame, lattice)
+                        let n = frame.readableBytes
+                        ws.eventLoop.execute { state.queuedApplyBytes -= n }
+                    }
+                }
+                for bb in state.buffered {
+                    state.queuedApplyBytes += bb.readableBytes
+                    cont.yield(bb)
+                }
                 state.buffered.removeAll()
                 state.bufferedBytes = 0
                 state.lattice = held.value
@@ -619,6 +664,17 @@ final class ConnectionRelayState: @unchecked Sendable {
     var process: ((WebSocket, ByteBuffer, Lattice) -> Void)?
     var buffered: [ByteBuffer] = []
     var bufferedBytes: Int = 0
+
+    /// Post-go-live apply pipeline (B3.2): frames are enqueued from the event
+    /// loop and applied by ONE detached consumer per connection, so a slow
+    /// apply no longer stalls every other socket sharing the loop. The
+    /// continuation and queued-byte counter are loop-confined like the rest
+    /// of the mutable state; the consumer task touches neither — it receives
+    /// everything it needs as captured arguments and re-checks `revocation`
+    /// (lock-backed) at dequeue.
+    var applyContinuation: AsyncStream<ByteBuffer>.Continuation?
+    var applyConsumer: Task<Void, Never>?
+    var queuedApplyBytes: Int = 0
 
     /// Late-bound channel id. Written on the event loop, READ from the
     /// detached onClose task — so it lives in a lock, not in loop
