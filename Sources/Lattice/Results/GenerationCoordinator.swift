@@ -1045,6 +1045,17 @@ final class GenerationCoordinator: @unchecked Sendable {
         }
     }
 
+    /// Test seam (§3.2 TOCTOU): invoked by the maintenance tick between its
+    /// outstanding-count sample and the disarm decision, so a test can land
+    /// a mint inside that window deterministically. Boxed, not `State`: the
+    /// seam runs SQL (a resolve/mint) and must never execute under the state
+    /// lock. Always nil in production.
+    private let maintenanceTickSeamBox = UnfairLock<(@Sendable () -> Void)?>(initialState: nil)
+
+    func _setMaintenanceTickSeamForTesting(_ seam: (@Sendable () -> Void)?) {
+        maintenanceTickSeamBox.withLockUnchecked { $0 = seam }
+    }
+
     private func maintenanceTick() {
         drainPendingRetires()
         guard let backend else {
@@ -1055,9 +1066,23 @@ final class GenerationCoordinator: @unchecked Sendable {
         // Re-arm while there is anything left to police: outstanding keepers
         // (TTL/age caps), queued releases, or an unserviced WAL-threshold
         // eviction. Otherwise disarm; the next mint re-arms.
+        // The sample runs OUTSIDE the state lock (leaf-lock rule: the call
+        // takes a core pool mutex) — capture `maintenanceMintSeq` first so
+        // the disarm decision can detect a mint racing the window.
+        let mintSeqAtSample = lock.withLockUnchecked { $0.maintenanceMintSeq }
         let outstanding = backend.localReadGenerationsOutstanding()
+        maintenanceTickSeamBox.withLockUnchecked { $0 }?()
         let pending: Bool = lock.withLockUnchecked { state in
             if outstanding > 0 || !state.pendingRetire.isEmpty || backend.walEvictionPending() {
+                return true
+            }
+            if state.maintenanceMintSeq != mintSeqAtSample {
+                // A mint published its keeper after the sample (§3.2
+                // sample-to-disarm TOCTOU — see `maintenanceMintSeq`): the
+                // zero above is stale evidence, and its `armMaintenanceTimer`
+                // no-opped against this still-armed tick. Disarming would
+                // orphan the fresh keeper with no §3 actor — re-arm and let
+                // the next tick re-observe.
                 return true
             }
             state.maintenanceArmed = false

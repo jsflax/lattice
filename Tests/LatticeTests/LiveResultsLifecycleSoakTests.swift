@@ -423,4 +423,62 @@ class LiveResultsLifecycleSoakTests: BaseTest {
         #expect(lattice.backend.localReadGenerationsOutstanding() >= 1)
         #expect(poll(deadline: 2.0) { lattice.backend.localReadGenerationsOutstanding() == 0 })
     }
+
+    // MARK: Maintenance timer sample-to-disarm TOCTOU (§3.2, hotfix-0143)
+
+    /// A mint that lands BETWEEN the tick's outstanding-count sample and its
+    /// disarm decision must not be orphaned. The tick samples the backend's
+    /// count outside the state lock (leaf-lock rule); a mint in that window
+    /// publishes its keeper and calls `armMaintenanceTimer()`, which no-ops
+    /// because the tick is still armed. Broken code then disarms on the
+    /// stale zero — no §3 actor ever retires the fresh keeper (the incident
+    /// shape: an idle daemon pinning the WAL read mark for days). Fixed code
+    /// re-checks `maintenanceMintSeq` under the lock and re-arms instead;
+    /// the next sweep TTL-retires the keeper.
+    @Test(.timeLimit(.minutes(5)))
+    func maintenanceTimer_mintInsideDisarmWindow_isNotOrphaned() throws {
+        var config = Lattice.Configuration(
+            fileURL: FileManager.default.temporaryDirectory
+                .appending(path: "toctou_\(String.random(length: 12)).sqlite"))
+        defer { try? Lattice.delete(for: .init(fileURL: config.fileURL)) }
+        config.resultsTuning.generationTTLSeconds = 0.05   // tick ≈ 25 ms
+        let lattice = try Lattice(Soak5Item.self, configuration: config)
+        try seed(lattice, count: 10)
+
+        let coordinator = GenerationCoordinatorRegistry.coordinator(
+            for: lattice.backend, tuning: lattice.configuration.resultsTuning)
+        let minted = UnfairLock<Bool>(initialState: false)
+
+        // Seam: the first tick whose sweep leaves ZERO outstanding keepers
+        // gets a mint landed inside its sample-to-disarm window — the §3.2
+        // TOCTOU interleaving, deterministically (the seam runs inside the
+        // tick, after the sample, before the disarm decision).
+        coordinator._setMaintenanceTickSeamForTesting { [weak coordinator] in
+            guard let coordinator, let backend = coordinator.backend,
+                  backend.localReadGenerationsOutstanding() == 0,
+                  !(minted.withLockUnchecked { $0 }) else { return }
+            minted.withLockUnchecked { $0 = true }
+            coordinator.forceAdvance()   // stale current → resolve must mint
+            _ = coordinator.resolve(table: Soak5Item.entityName)
+        }
+        defer { coordinator._setMaintenanceTickSeamForTesting(nil) }
+
+        // Pin one keeper (arms the timer), then go idle: the TTL sweep
+        // retires it, the tick samples zero, the seam mints in the window.
+        let results = lattice.objects(Soak5Item.self)
+        #expect(results.count == 10)
+        #expect(lattice.backend.localReadGenerationsOutstanding() >= 1)
+        try #require(poll(deadline: 3.0) { minted.withLockUnchecked { $0 } },
+                     "seam never saw a zero-outstanding tick — TTL retire broken")
+
+        // THE pin: the timer must still be the §3 actor for the keeper the
+        // seam minted. With zero further accesses, no writes, no WAL-hook
+        // traffic, and no lifecycle events, ONLY a re-armed maintenance tick
+        // can retire it.
+        let retired = poll(deadline: 3.0) {
+            lattice.backend.localReadGenerationsOutstanding() == 0
+        }
+        #expect(retired,
+                "keeper minted inside the sample-to-disarm window was orphaned (§3.2 TOCTOU: timer disarmed on stale evidence)")
+    }
 }
