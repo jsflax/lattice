@@ -37,7 +37,12 @@ let package = Package(
         // minting audit rows, apply-loop logging that cost 11-20s per frame —
         // lives in the core. A consumer resolving 1.6.x against a 1.3.x core
         // would get a partially-fixed fleet with no error to explain why.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "1.4.1"),
+        // 1.4.2 floor (0.14.3 hotfix): same coherence rule. This wrapper's
+        // keeper-interlock fix pairs with the core's begin_transaction
+        // busy-timeout fix, vec0 reconcile idempotence, and apply-chunk ack
+        // survival — a 1.6.2 wrapper on a 1.4.1 core would still livelock
+        // IPC sync under the vec0 storm it claims to have fixed.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "1.4.2"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
