@@ -499,13 +499,20 @@ extension Lattice {
                     if !globalIds.isEmpty {
                         ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
                     }
-                } catch {
-                    print("Error:", error)
-                }
-                Task {
-                    for socket in await sockets.sockets(channelId: channel.id) where socket !== ws {
-                        socket.send(bb)
+                    // Fan out ONLY what the channel database holds. A frame
+                    // that failed receive() used to fall through to fan-out:
+                    // live peers applied entries the relay store never got,
+                    // so catch-up replay could never deliver them to anyone
+                    // who reconnected or joined later — permanent divergence
+                    // between live observers and the channel of record.
+                    // (Program-plan sync-M7; mirrors the rejection path.)
+                    Task {
+                        for socket in await sockets.sockets(channelId: channel.id) where socket !== ws {
+                            socket.send(bb)
+                        }
                     }
+                } catch {
+                    print(">>> receive failed on \(channel.id) — frame NOT fanned out, entries left unACKed:", error)
                 }
             }
 
