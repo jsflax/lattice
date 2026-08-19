@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.7.0] - Unreleased
+
+LatticeCore dependency floor unchanged (`from: "1.4.2"`); zero core changes.
+
+### Added
+- **Observer push** (`LatticeServerKit`): `configureSyncRelay` gains
+  `observerPush: SyncObserverPush?` (default `nil` — pre-1.7 behavior
+  byte-for-byte). On a push-enabled mount, every commit to a channel's
+  database file — a relay-socket apply on any mount sharing the file, an
+  in-process co-writer such as a projector actor, or (best-effort) another
+  process — is pushed to that mount's sockets as ordinary
+  `ServerSentEvent.auditLog` catch-up frames, exactly-once and
+  commit-ordered per socket ("nudge + pump": a payload-free per-file commit
+  observer nudges per-socket pumps that re-run the catch-up machinery from a
+  monotone AuditLog-pk cursor, with awaited sends for slow-consumer
+  isolation). Clients apply pushed frames with zero changes; app-level
+  redial loops become cheap no-op fallbacks. Push-enabled mounts no longer
+  fan client frames (observer acks) to same-channel peers.
+- `Lattice.observeCommits(_:)` — payload-free AuditLog commit signal (no
+  per-row hydration, no delivery-worker hop; consumers re-query by cursor).
+- `Lattice.eventsAfter(id:)` — `Int64` primary-key-cursor overload beside
+  the existing `eventsAfter(globalId:)`.
+- `SyncSchemaHandshake`: native `?schema=` query-parameter declaration
+  (checked before the header — browser WebSockets cannot set headers) and
+  `Mode.exact(Int)`, which refuses both older ("upgrade required") and
+  newer ("server behind client") clients with distinct legible close
+  reasons. The existing `minimumVersion` init and semantics are preserved;
+  consumers can delete their query-lift middleware and app-level
+  newer-schema checks.
+
 ## [1.2.0] - 2026-08-04
 
 ### Added
