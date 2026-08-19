@@ -329,6 +329,15 @@ extension Lattice {
     ///   - storageURL: Directory for per-channel databases (created if needed)
     ///   - writePolicy: Optional per-table operation allowlist for uploads
     ///   - handshake: Optional declared-schema gate at connect
+    ///   - storeConfiguration: Optional per-mount factory for the
+    ///     `Lattice.Configuration` used to open each channel's database,
+    ///     given that channel's file URL. `nil` (the default) opens with
+    ///     `.init(fileURL:)` — target schema version 1, which is correct
+    ///     for files the relay itself created. A mount whose files are
+    ///     produced/migrated by another opener (e.g. a projector writing at
+    ///     a versioned schema) MUST supply the same `migration:` dictionary
+    ///     here, or the raw open refuses the file's higher `user_version`.
+    ///     The returned configuration must keep `fileURL` at the given URL.
     ///   - channelExtractor: Maps the request to its `SyncChannel`
     @discardableResult
     public static func configureSyncRelay(
@@ -338,6 +347,7 @@ extension Lattice {
         storageURL: URL,
         writePolicy: SyncWritePolicy? = nil,
         handshake: SyncSchemaHandshake? = nil,
+        storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) -> SyncRelayHandle {
         let sockets = SocketManager()
@@ -527,7 +537,14 @@ extension Lattice {
                 return
             }
 
-            guard let connectionLattice = try? Lattice(for: schema, configuration: .init(fileURL: latticeURL)) else {
+            // The ONLY per-connection open. `storeConfiguration` lets the
+            // mount open files another writer created at a higher schema
+            // version; the default raw open targets version 1 and would
+            // refuse them (the "Could not open lattice for url" close-1001
+            // class on projector-owned channel files).
+            let configuration = latticeURL.flatMap { url in storeConfiguration?(url) }
+                ?? .init(fileURL: latticeURL)
+            guard let connectionLattice = try? Lattice(for: schema, configuration: configuration) else {
                 print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
                 await sockets.remove(socket: ws, channelId: channel.id)
                 try? await ws.close()

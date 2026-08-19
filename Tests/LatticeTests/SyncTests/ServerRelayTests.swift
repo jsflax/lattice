@@ -95,6 +95,7 @@ private final class RelayHarness: @unchecked Sendable {
         schema: [any Lattice.Model.Type],
         writePolicy: SyncWritePolicy? = nil,
         handshake: SyncSchemaHandshake? = nil,
+        storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) async throws {
         storageURL = FileManager.default.temporaryDirectory
@@ -106,6 +107,7 @@ private final class RelayHarness: @unchecked Sendable {
         handle = Lattice.configureSyncRelay(
             on: app.routes, path: path, for: schema, storageURL: storageURL,
             writePolicy: writePolicy, handshake: handshake,
+            storeConfiguration: storeConfiguration,
             channelExtractor: channelExtractor)
         try await app.startup()
         guard let assigned = app.http.server.shared.localAddress?.port else {
@@ -601,5 +603,77 @@ final class ServerRelayTests: BaseTest {
         #expect(FileManager.default.fileExists(atPath: dbURL.path))
         let db = try Lattice(SimpleSyncObject.self, configuration: .init(fileURL: dbURL))
         #expect(db.objects(SimpleSyncObject.self).contains { $0.value == 77 })
+    }
+
+    // MARK: Store configuration
+
+    /// A mount can serve channel files it did NOT create: a projector that
+    /// opens with `migration:` leaves the file at `user_version == max key`,
+    /// and the relay's default open (target version 1) refuses it — every
+    /// observer's socket closed at connect, forever. `storeConfiguration`
+    /// hands the mount the projector's own migration dictionary so the open
+    /// succeeds; a mount left at the default keeps today's behavior for its
+    /// own relay-created (version-1) files.
+    @Test func storeConfigurationOpensProjectorMigratedChannelFiles() async throws {
+        let migrations: [Int: Migration] = [2: Migration(), 3: Migration()]
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            storeConfiguration: { url in .init(fileURL: url, migration: migrations) },
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        // Projector-shaped creation: the channel file exists BEFORE any
+        // connection, migrated to user_version 3, with a projected row.
+        try FileManager.default.createDirectory(at: harness.storageURL,
+                                                withIntermediateDirectories: true)
+        let fileURL = harness.storageURL.appending(path: "group-g1.sqlite")
+        do {
+            let projector = try Lattice(SimpleSyncObject.self, configuration: .init(
+                fileURL: fileURL, migration: migrations))
+            try projector.add(SimpleSyncObject(value: 33, floatValue: 1))
+        }
+
+        // The configured mount opens the v3 file: connection survives and
+        // the catch-up delivers the projected row.
+        let observer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+        #expect(await observer.wait { $0.count(of: "auditLog") > 0 })
+        #expect(!observer.isClosed)
+
+        // Uploads still work through the configured open.
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 34, floatValue: 1)) }
+        try await observer.socket!.send(try makeFrame(entries: entries))
+        #expect(await observer.wait { !$0.acks.isEmpty })
+    }
+
+    /// The bug this parameter fixes, pinned as a regression shape: a DEFAULT
+    /// mount pointed at a projector-migrated (v3) file refuses the open and
+    /// closes the socket — while the same default mount on its own fresh
+    /// file keeps working exactly as before.
+    @Test func defaultMountRefusesMigratedFileButStillServesOwnFiles() async throws {
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        try FileManager.default.createDirectory(at: harness.storageURL,
+                                                withIntermediateDirectories: true)
+        do {
+            let projector = try Lattice(SimpleSyncObject.self, configuration: .init(
+                fileURL: harness.storageURL.appending(path: "group-g1.sqlite"),
+                migration: [2: Migration(), 3: Migration()]))
+            try projector.add(SimpleSyncObject(value: 33, floatValue: 1))
+        }
+
+        // Version-skewed file → open fails → connect-then-close.
+        let refused = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+        #expect(await refused.wait { $0.isClosed })
+
+        // Cookie-1 path unchanged: a fresh relay-created channel file works.
+        let ok = try await harness.connect(pathSuffix: "sync/group/g2", user: UUID())
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 21, floatValue: 1)) }
+        try await ok.socket!.send(try makeFrame(entries: entries))
+        #expect(await ok.wait { !$0.acks.isEmpty })
     }
 }
