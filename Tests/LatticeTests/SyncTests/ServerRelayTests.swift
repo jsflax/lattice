@@ -389,6 +389,60 @@ final class ServerRelayTests: BaseTest {
         #expect(await ok.wait { !$0.acks.isEmpty })
     }
 
+    /// `.exact` mode refuses BOTH older and newer clients, with distinct
+    /// legible reasons, via either declaration channel — the `?schema=`
+    /// query parameter (checked first: browser WebSockets cannot set
+    /// headers) or the header. Replaces the consumer-side pre-upgrade
+    /// query-lift middleware + app-level newer-schema check.
+    @Test func exactMatchRefusesAboveAndBelowViaQueryAndHeader() async throws {
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            handshake: SyncSchemaHandshake(exactVersion: 3),
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        // Below, via header → refused: upgrade required.
+        let low = try await harness.connect(
+            pathSuffix: "sync/group/g1", user: UUID(), headers: ["X-Lattice-Schema": "2"])
+        #expect(await low.wait { $0.isClosed })
+        #expect(low.closeCode == nil || low.closeCode == WebSocketErrorCode.policyViolation)
+        if !low.receivedTexts.isEmpty {
+            #expect(low.receivedTexts.contains { $0.contains("upgrade required") })
+        }
+
+        // Above, via query → refused: server behind client (a distinct
+        // reason — this client must NOT be told to upgrade).
+        let high = try await harness.connect(
+            pathSuffix: "sync/group/g1?schema=4", user: UUID())
+        #expect(await high.wait { $0.isClosed })
+        #expect(high.closeCode == nil || high.closeCode == WebSocketErrorCode.policyViolation)
+        if !high.receivedTexts.isEmpty {
+            #expect(high.receivedTexts.contains { $0.contains("server behind client") })
+        }
+
+        // Missing declaration entirely → refused (requireDeclaration).
+        let missing = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+        #expect(await missing.wait { $0.isClosed })
+
+        // Exact via query → admitted and functional; the query is checked
+        // FIRST, so it wins over a (stale) low header.
+        let ok = try await harness.connect(
+            pathSuffix: "sync/group/g1?schema=3", user: UUID(),
+            headers: ["X-Lattice-Schema": "1"])
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 6, floatValue: 1)) }
+        try await ok.socket!.send(try makeFrame(entries: entries))
+        #expect(await ok.wait { !$0.acks.isEmpty })
+        #expect(!ok.isClosed)
+
+        // Exact via header alone → admitted too.
+        let okHeader = try await harness.connect(
+            pathSuffix: "sync/group/g2", user: UUID(), headers: ["X-Lattice-Schema": "3"])
+        let more = try donorEntries { try $0.add(SimpleSyncObject(value: 7, floatValue: 1)) }
+        try await okHeader.socket!.send(try makeFrame(entries: more))
+        #expect(await okHeader.wait { !$0.acks.isEmpty })
+    }
+
     // MARK: Policy fail-closed (adversarial review)
 
     /// The inspector (Foundation) and the applier (nlohmann) are different

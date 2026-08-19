@@ -154,35 +154,114 @@ public struct SyncWritePolicy: Sendable {
 // MARK: - Schema handshake
 
 /// Declared-version gate at connect time. When configured, a client whose
-/// `headerName` header is missing (if required) or below `minimumVersion`
-/// is answered with a human-readable text frame and a policy-violation
-/// close — a visible, attributable error instead of a silent apply-wedge
-/// when wire schemas drift (the W1.0 failure class).
+/// declared schema version is missing (if required), unparsable, or outside
+/// the mount's `mode` is answered with a human-readable text frame and a
+/// policy-violation close — a visible, attributable error instead of a
+/// silent apply-wedge when wire schemas drift (the W1.0 failure class).
+///
+/// The declaration is read from the `queryParameterName` query parameter
+/// FIRST (browser WebSockets cannot set request headers, so `?schema=` is
+/// the only channel a wasm client has — previously every consumer needed a
+/// pre-upgrade middleware to lift it into the header), then from the
+/// `headerName` header.
 public struct SyncSchemaHandshake: Sendable {
-    public var headerName: String
-    public var minimumVersion: Int
-    /// When false, clients that send no header at all are admitted (legacy
-    /// tolerance); a header that is present but unparsable/low still closes.
-    public var requireHeader: Bool
+    /// How the declared version is matched.
+    public enum Mode: Sendable {
+        /// Admit any client at or above the version (the historical
+        /// semantics): old clients are refused, newer ones trusted.
+        case minimum(Int)
+        /// Admit ONLY the exact version: refuses below ("upgrade required")
+        /// AND above ("server behind client") with distinct legible close
+        /// reasons. Correct for wire schemas where the server cannot
+        /// interpret frames minted by a newer client.
+        case exact(Int)
+    }
 
+    public var headerName: String
+    /// Query parameter consulted BEFORE the header (`"schema"` by default);
+    /// nil disables the query channel entirely.
+    public var queryParameterName: String?
+    public var mode: Mode
+    /// When false, clients that send no declaration at all are admitted
+    /// (legacy tolerance); a declaration that is present but unparsable or
+    /// out of range still closes.
+    public var requireDeclaration: Bool
+
+    /// Legacy accessor (pre-1.7 this struct was minimum-only). Reads the
+    /// version out of either mode; setting forces `.minimum`.
+    public var minimumVersion: Int {
+        get {
+            switch mode {
+            case .minimum(let v), .exact(let v): return v
+            }
+        }
+        set { mode = .minimum(newValue) }
+    }
+
+    /// Legacy alias for `requireDeclaration` (pre-1.7 name, when the header
+    /// was the only declaration channel).
+    public var requireHeader: Bool {
+        get { requireDeclaration }
+        set { requireDeclaration = newValue }
+    }
+
+    /// Minimum-version gate (source-compatible with pre-1.7).
     public init(headerName: String = "X-Lattice-Schema", minimumVersion: Int, requireHeader: Bool = true) {
         self.headerName = headerName
-        self.minimumVersion = minimumVersion
-        self.requireHeader = requireHeader
+        self.queryParameterName = "schema"
+        self.mode = .minimum(minimumVersion)
+        self.requireDeclaration = requireHeader
+    }
+
+    /// Exact-version gate: refuses both older and newer clients.
+    public init(exactVersion: Int, queryParameter: String? = "schema",
+                headerName: String = "X-Lattice-Schema",
+                requireDeclaration: Bool = true) {
+        self.headerName = headerName
+        self.queryParameterName = queryParameter
+        self.mode = .exact(exactVersion)
+        self.requireDeclaration = requireDeclaration
     }
 
     /// Reason to refuse this request, or nil to admit.
     func refusal(for req: Request) -> String? {
-        guard let raw = req.headers.first(name: headerName) else {
-            return requireHeader
-                ? "missing \(headerName) header (server requires schema >= \(minimumVersion))"
+        // Query parameter first: it is the only declaration channel a
+        // browser client has, and a client that sends both means the same
+        // value anyway (skew between them is a client bug — the query wins
+        // deterministically rather than silently).
+        let declared: (raw: String, source: String)?
+        if let name = queryParameterName, let value = req.query[String.self, at: name] {
+            declared = (value, "?\(name)")
+        } else if let value = req.headers.first(name: headerName) {
+            declared = (value, "\(headerName) header")
+        } else {
+            declared = nil
+        }
+        let requirement: String
+        switch mode {
+        case .minimum(let v): requirement = ">= \(v)"
+        case .exact(let v): requirement = "== \(v)"
+        }
+        guard let declared else {
+            return requireDeclaration
+                ? "missing schema declaration (server requires schema \(requirement); send ?\(queryParameterName ?? "schema")= or the \(headerName) header)"
                 : nil
         }
-        guard let version = Int(raw) else {
-            return "unparsable \(headerName) header '\(raw)'"
+        guard let version = Int(declared.raw) else {
+            return "unparsable schema declaration in \(declared.source): '\(declared.raw)'"
         }
-        guard version >= minimumVersion else {
-            return "client schema \(version) below server minimum \(minimumVersion) — upgrade required"
+        switch mode {
+        case .minimum(let minimum):
+            guard version >= minimum else {
+                return "client schema \(version) below server minimum \(minimum) — upgrade required"
+            }
+        case .exact(let exact):
+            if version < exact {
+                return "client schema \(version) below server schema \(exact) — upgrade required"
+            }
+            if version > exact {
+                return "client schema \(version) ahead of server schema \(exact) — server behind client, refusing to admit a newer schema"
+            }
         }
         return nil
     }
