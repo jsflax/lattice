@@ -286,6 +286,15 @@ actor SocketManager {
 /// visibility. Returned by `configureSyncRelay`; safe to hold anywhere.
 public struct SyncRelayHandle: Sendable {
     let manager: SocketManager
+    /// Present on observer-push mounts (`observerPush != nil`): the per-mount
+    /// watch-group owner. Internal — exposed for teardown observability in
+    /// tests (`groupCount`), not part of the public surface.
+    let pushManager: FileWatchManager?
+
+    init(manager: SocketManager, pushManager: FileWatchManager? = nil) {
+        self.manager = manager
+        self.pushManager = pushManager
+    }
 
     /// Kick one user's live connections on a channel (membership removal).
     public func disconnect(channelId: String, userId: UUID) async {
@@ -338,6 +347,17 @@ extension Lattice {
     ///     a versioned schema) MUST supply the same `migration:` dictionary
     ///     here, or the raw open refuses the file's higher `user_version`.
     ///     The returned configuration must keep `fileURL` at the given URL.
+    ///   - observerPush: Opt-in live push of committed changes to this
+    ///     mount's sockets (see `SyncObserverPush`). Any commit to a
+    ///     channel's file — a relay apply on any mount sharing the file, an
+    ///     in-process co-writer, or (best-effort) another process — is
+    ///     pushed as ordinary `ServerSentEvent.auditLog` catch-up frames,
+    ///     exactly-once and commit-ordered per socket. Intended for deny-all
+    ///     watch mounts; `nil` (the default) keeps pre-1.7 behavior exactly.
+    ///     Note: a push-enabled mount does NOT fan client frames to
+    ///     same-channel peers (delivery is the pump's job; on a watch mount
+    ///     the only client frames are acks, and echoing every observer's ack
+    ///     to every other observer is N² frames per commit).
     ///   - channelExtractor: Maps the request to its `SyncChannel`
     @discardableResult
     public static func configureSyncRelay(
@@ -348,10 +368,16 @@ extension Lattice {
         writePolicy: SyncWritePolicy? = nil,
         handshake: SyncSchemaHandshake? = nil,
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
+        observerPush: SyncObserverPush? = nil,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) -> SyncRelayHandle {
         let sockets = SocketManager()
         nonisolated(unsafe) let schema = schema
+        // One watch manager per push-enabled mount, captured by the handler
+        // like `sockets` is; `nil` on legacy mounts (zero new work anywhere).
+        let watchManager = observerPush.map {
+            FileWatchManager(schema: schema, storeConfiguration: storeConfiguration, options: $0)
+        }
         routes.webSocket(path, maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 300 * 1024 * 1024)) { req, ws in
             // Per-connection state, confined to the socket's event loop.
             // Frames that arrive before the (slow — schema ensure, epoch
@@ -415,6 +441,14 @@ extension Lattice {
                     Task {
                         if let channelId = state.channelId {
                             await sockets.remove(socket: ws, channelId: channelId)
+                        }
+                        // Observer push: drop this socket's subscription
+                        // (idempotent — the pump's send-failure path may have
+                        // beaten us here). Group teardown when the last
+                        // subscriber leaves happens inside the manager, with
+                        // the watcher released off-loop.
+                        if let sub = state.pushSubscription {
+                            await watchManager?.unsubscribe(sub)
                         }
                         // Detach the per-connection lattice ON the loop (state
                         // is loop-confined) but RELEASE it OFF the loop:
@@ -512,9 +546,18 @@ extension Lattice {
                 } catch {
                     print("Error:", error)
                 }
-                Task {
-                    for socket in await sockets.sockets(channelId: channel.id) where socket !== ws {
-                        socket.send(bb)
+                // Legacy same-channel fan-out — unchanged on mounts without
+                // observer push (writer mounts keep verbatim fan-out
+                // byte-for-byte). On push-enabled mounts it is skipped
+                // entirely: delivery is the pump's job (commit-ordered,
+                // cursor-deduped), uploads are policy-refused anyway, and
+                // fanning every frame would echo each observer's ack to
+                // every other observer — N² frames per commit.
+                if watchManager == nil {
+                    Task {
+                        for socket in await sockets.sockets(channelId: channel.id) where socket !== ws {
+                            socket.send(bb)
+                        }
                     }
                 }
             }
@@ -551,6 +594,19 @@ extension Lattice {
                 return
             }
             let held = UnsafeSendableBox(connectionLattice)
+
+            // Observer push: register a PARKED subscription now — BEFORE the
+            // go-live hop and the catch-up snapshot below. The commit
+            // observer is live from this point, so no commit can fall
+            // between the snapshot and the watch: anything that lands during
+            // catch-up buffers as a `dirty` nudge and activation's first
+            // pump (which reads strictly beyond the catch-up boundary) picks
+            // it up — no gaps, no dupes, in order. A nil subscription
+            // (watcher open failure) leaves this socket catch-up-only.
+            if let watchManager, let latticeURL {
+                state.pushSubscription = await watchManager.subscribe(
+                    fileURL: latticeURL, socket: ws, revocation: state.revocation)
+            }
 
             // Go live: replay anything that arrived during the open, in
             // order, then hand subsequent frames straight to the lattice.
@@ -608,23 +664,57 @@ extension Lattice {
                 try await Task {
                     // The go-live hop hands ownership here when it abandons:
                     // release the opened lattice off-loop and do not touch
-                    // `held.value` again.
+                    // `held.value` again. A parked push subscription is
+                    // dropped too — it would otherwise never activate.
                     if state.abandoned {
                         Task.detached { held.clear() }
+                        if let sub = state.pushSubscription {
+                            await watchManager?.unsubscribe(sub)
+                        }
                         return
                     }
-                    guard !ws.isClosed, !state.revocation.isRevoked else { return }
+                    guard !ws.isClosed, !state.revocation.isRevoked else {
+                        if let sub = state.pushSubscription {
+                            await watchManager?.unsubscribe(sub)
+                        }
+                        return
+                    }
                     let lattice = held.value
 
-                    let events = lattice.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
+                    let lastEventId = try? req.query.get(UUID?.self, at: "last-event-id")
+                    let events = lattice.eventsAfter(globalId: lastEventId)
                     let count = events.count
+                    // Observer-push activation boundary: the pk of the last
+                    // catch-up entry this socket was sent, taken from the
+                    // SAME results object (a separate MAX(id) read could
+                    // skew against concurrent commits — dupe/skip window);
+                    // else the checkpoint entry's pk when the client was
+                    // already up to date; else 0 on an empty log. The first
+                    // pump reads strictly beyond it.
+                    var boundary: Int64 = 0
                     if count > 0 {
                         print(">>> Bringing channel \(channel.id) connection up to date with \(count) events")
                         for i in stride(from: 0, to: count, by: 1000) {
                             guard !state.revocation.isRevoked else { break }
-                            let page = events[i..<min(count, i + 1000)]
-                            let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
+                            let page = Array(events[i..<min(count, i + 1000)])
+                            let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
                             await ws.send(ByteBuffer(data: encoded))
+                            boundary = page.last?.primaryKey ?? boundary
+                        }
+                    } else if let lastEventId {
+                        boundary = lattice.objects(AuditLog.self)
+                            .where { $0.globalId == lastEventId }
+                            .snapshot(limit: 1)
+                            .first?.primaryKey ?? 0
+                    }
+                    // Activate push (cursor = catch-up boundary) — or drop
+                    // the parked subscription if this socket died/was
+                    // revoked during catch-up.
+                    if let sub = state.pushSubscription {
+                        if state.revocation.isRevoked || ws.isClosed {
+                            await watchManager?.unsubscribe(sub)
+                        } else {
+                            await watchManager?.activate(sub, cursor: boundary)
                         }
                     }
                 }.value
@@ -632,7 +722,7 @@ extension Lattice {
                 print("Error bringing channel connection up to date: \(error.localizedDescription)")
             }
         }
-        return SyncRelayHandle(manager: sockets)
+        return SyncRelayHandle(manager: sockets, pushManager: watchManager)
     }
 
     /// Personal-topology wrapper preserving the original API and on-disk
@@ -705,6 +795,16 @@ final class ConnectionRelayState: @unchecked Sendable {
     /// Set by the SocketManager on revocation; consulted before any apply,
     /// ack, or fan-out (the close frame alone is not authoritative).
     let revocation = RevocationFlag()
+
+    /// Observer-push subscription (push-enabled mounts only). Written by the
+    /// handler task after the per-connection open, READ from the detached
+    /// onClose task — lock-backed like `channelId`, not loop-confined.
+    /// nil = never subscribed (legacy mount, or watcher open failure).
+    private let pushSubscriptionBox = NIOLockedValueBox<PushSubscription?>(nil)
+    var pushSubscription: PushSubscription? {
+        get { pushSubscriptionBox.withLockedValue { $0 } }
+        set { pushSubscriptionBox.withLockedValue { $0 = newValue } }
+    }
 
     /// Set when the connection is refused (handshake/authorization/unsafe
     /// name): the binary handler then discards instead of buffering, so a

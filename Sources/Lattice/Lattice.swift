@@ -1813,6 +1813,34 @@ public struct Lattice {
         }
     }
 
+    /// Payload-free commit signal: fires once per committed WAL flush that
+    /// minted AuditLog rows — from THIS instance, from sibling same-process
+    /// instances sharing the file (exactly-once, commit-ordered per the
+    /// delivery contract on `observe(_:)`), and — best-effort — from other
+    /// processes via the cross-process notifier (a race can drop the wakeup;
+    /// the data itself is durable — poll or re-query to recover).
+    ///
+    /// Consumers that need the entries re-query by cursor (e.g.
+    /// `eventsAfter(id:)`); that re-query — not the notification — is the
+    /// correctness mechanism, so this deliberately skips the per-row
+    /// `AuditLog` hydration and the `ObserverDeliveryWorker` hop that
+    /// `observe(_:)` performs. The block runs on the core's notification
+    /// thread: it MUST be cheap (set a flag, spawn a task) and hop off
+    /// immediately — any SQL or encoding in the callback recreates the C0a
+    /// stack/stall class.
+    public func observeCommits(_ block: @escaping @Sendable () -> Void) -> AnyCancellable {
+        let backend = self.backend
+        let observerId = backend.addTableObserver(table: AuditLog.entityName) { _ in
+            block()
+        }
+
+        let token = TableObservationToken(backend: backend, tableName: AuditLog.entityName, observerId: observerId)
+
+        return AnyCancellable {
+            token.cancel()
+        }
+    }
+
     /// `changeStream` delivery state. The table observer registers
     /// synchronously at stream creation (a leaf-lock map insert — no SQL) so
     /// no commit between "stream created" and "query handle ready" can be

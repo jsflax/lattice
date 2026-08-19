@@ -195,6 +195,22 @@ extension Lattice {
         return result
     }
     
+    /// Audit entries strictly after a primary-key cursor, commit-ordered.
+    ///
+    /// The pk-cursor twin of `eventsAfter(globalId:)`: the relay's
+    /// observer-push pump keeps a monotone `Int64` cursor per socket —
+    /// AuditLog ids are commit-ordered by construction (the documented
+    /// total-order key, see the delivery contract on `observe(_:)`) — while
+    /// the globalId overload stays for the client-dial path, which only
+    /// knows its last-event-id UUID.
+    ///
+    /// Lazy like the globalId overload; use `snapshot(limit:)` to page.
+    public func eventsAfter(id: Int64) -> TableResults<AuditLog> {
+        objects(AuditLog.self)
+            .sortedBy(\.primaryKey, order: .forward)
+            .where { $0.primaryKey > id }
+    }
+
     /// Get audit log events after a checkpoint as a lazy query.
     /// Use `snapshot(limit:offset:)` to paginate without loading all entries into memory.
     public func eventsAfter(globalId: UUID?) -> TableResults<AuditLog> {
