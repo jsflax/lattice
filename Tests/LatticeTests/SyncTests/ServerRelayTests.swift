@@ -402,24 +402,35 @@ final class ServerRelayTests: BaseTest {
             channelExtractor: groupExtractor)
         defer { Task { [harness] in await harness.shutdown() } }
 
+        // Both reasons are asserted UNCONDITIONALLY: the refusal text is
+        // sent on the connection BEFORE the close frame, so it is ordered
+        // ahead of the close on the same channel — waiting for the text is
+        // the assertion, and a refusal that closed silently (or with the
+        // wrong reason) fails here instead of being skipped by an
+        // `if !receivedTexts.isEmpty` guard, which is exactly how a
+        // regression in the distinct-reasons behavior would hide.
+
         // Below, via header → refused: upgrade required.
         let low = try await harness.connect(
             pathSuffix: "sync/group/g1", user: UUID(), headers: ["X-Lattice-Schema": "2"])
+        #expect(await low.wait { collector in
+            collector.receivedTexts.contains { $0.contains("upgrade required") }
+        })
         #expect(await low.wait { $0.isClosed })
         #expect(low.closeCode == nil || low.closeCode == WebSocketErrorCode.policyViolation)
-        if !low.receivedTexts.isEmpty {
-            #expect(low.receivedTexts.contains { $0.contains("upgrade required") })
-        }
+        // ...and NOT the newer-client reason.
+        #expect(!low.receivedTexts.contains { $0.contains("server behind client") })
 
         // Above, via query → refused: server behind client (a distinct
         // reason — this client must NOT be told to upgrade).
         let high = try await harness.connect(
             pathSuffix: "sync/group/g1?schema=4", user: UUID())
+        #expect(await high.wait { collector in
+            collector.receivedTexts.contains { $0.contains("server behind client") }
+        })
         #expect(await high.wait { $0.isClosed })
         #expect(high.closeCode == nil || high.closeCode == WebSocketErrorCode.policyViolation)
-        if !high.receivedTexts.isEmpty {
-            #expect(high.receivedTexts.contains { $0.contains("server behind client") })
-        }
+        #expect(!high.receivedTexts.contains { $0.contains("upgrade required") })
 
         // Missing declaration entirely → refused (requireDeclaration).
         let missing = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())

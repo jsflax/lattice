@@ -192,6 +192,18 @@ actor FileWatchManager {
     /// Keyed by canonical channel-file path.
     private var groups: [String: FileWatchGroup] = [:]
 
+    /// In-flight watcher opens, keyed the same way. Every subscriber that
+    /// arrives for a key while its open is running awaits THIS task instead
+    /// of starting a second open (dedupe), and the task itself installs the
+    /// group before it completes — so `groups[key]` is authoritative the
+    /// moment any waiter resumes.
+    private var creating: [String: Task<Bool, Never>] = [:]
+
+    /// Watcher opens STARTED for each live group's key — teardown clears the
+    /// entry with the group, so this is bounded by live groups, never by
+    /// channels ever seen. Dedupe observability (see `watcherOpenCount`).
+    private var opensStarted: [String: Int] = [:]
+
     private let log = Logger(label: "lattice.observer-push")
 
     /// Whether a live watch group exists for the given channel file —
@@ -208,25 +220,37 @@ actor FileWatchManager {
         groups[Self.canonicalKey(for: fileURL)]?.subscribers.count ?? 0
     }
 
+    /// Watcher opens started for this file since its current group began —
+    /// cleared with the group, exactly like `hasGroup`. However many sockets
+    /// race to be the first subscriber, a live group must report 1: the
+    /// per-key in-flight task dedupes them onto ONE open.
+    func watcherOpenCount(forFile fileURL: URL) -> Int {
+        opensStarted[Self.canonicalKey(for: fileURL)] ?? 0
+    }
+
     /// Registers a PARKED subscription (no cursor yet). MUST be called
     /// before the caller takes its catch-up snapshot: the commit observer is
-    /// live from here on, so any commit after the snapshot lands as a
-    /// `dirty` nudge on the parked subscription and activation's first pump
-    /// picks it up — no commit can fall between snapshot and watch.
+    /// live from here on (it is registered before this returns), so any
+    /// commit after the snapshot lands as a `dirty` nudge on the parked
+    /// subscription and activation's first pump picks it up — no commit can
+    /// fall between snapshot and watch.
+    ///
+    /// The first subscriber for a file pays for the watcher open. That open
+    /// runs OFF this actor (see `resolveGroup`): it is a full SQLite open —
+    /// schema ensure, epoch migrations, WAL recovery on a cold file — and
+    /// this actor is PROCESS-WIDE, so running it inline stalled every other
+    /// file's pumps, nudges and teardowns behind one channel's first
+    /// subscriber. Concurrent subscribers for the same file await the SAME
+    /// in-flight open, so a file never gets a second watcher.
     ///
     /// Returns `nil` when the watcher cannot be opened (file deleted, fd
     /// exhaustion): logged once, subscribers stay catch-up-only (the client
     /// redial fallback remains correct), retried on the next subscriber join.
     func subscribe(fileURL: URL, context: MountPushContext,
-                   socket: WebSocket, revocation: RevocationFlag) -> PushSubscription? {
+                   socket: WebSocket, revocation: RevocationFlag) async -> PushSubscription? {
         let key = Self.canonicalKey(for: fileURL)
-        let group: FileWatchGroup
-        if let existing = groups[key] {
-            group = existing
-        } else {
-            guard let created = makeGroup(key: key, fileURL: fileURL, context: context) else { return nil }
-            groups[key] = created
-            group = created
+        guard let group = await resolveGroup(key: key, fileURL: fileURL, context: context) else {
+            return nil
         }
         let sub = PushSubscription(socket: socket, revocation: revocation, key: key,
                                    pageSize: context.options.pageSize)
@@ -264,6 +288,7 @@ actor FileWatchManager {
         group.subscribers.removeAll { $0 === sub }
         if group.subscribers.isEmpty {
             groups[sub.key] = nil
+            opensStarted[sub.key] = nil
             group.token?.cancel()
             group.token = nil
             group.reconcile?.cancel()
@@ -399,28 +424,74 @@ actor FileWatchManager {
 
     // MARK: group construction
 
-    private func makeGroup(key: String, fileURL: URL, context: MountPushContext) -> FileWatchGroup? {
-        // The subscribing mount's own storeConfiguration (the 1.6.3
-        // per-mount factory) — mandatory, or a watcher on a
-        // projector-migrated file would refuse the open exactly like the
-        // pre-1.6.3 relay did — then strip sync config the way
-        // `changeStream`'s query lattice does, so the watcher never joins
-        // sync channels or mints spurious entries. The group is created from
-        // the FIRST subscriber's mount context; later subscribers from other
-        // mounts over the same file share it as-is.
-        var configuration = context.storeConfiguration?(fileURL) ?? .init(fileURL: fileURL)
-        configuration.ipcTargets = nil
-        configuration.wssEndpoint = nil
-        configuration.authorizationToken = nil
-        guard let watcher = try? Lattice(for: context.schema, configuration: configuration) else {
-            log.error("observer-push: could not open watcher for \(key); subscribers stay catch-up-only")
-            return nil
+    /// The live group for `key`, opening the watcher OFF this actor.
+    ///
+    /// The open used to run inline in an actor-isolated `makeGroup`, so one
+    /// slow `Lattice(for:configuration:)` — schema ensure, epoch migration,
+    /// WAL recovery on a cold file — blocked the PROCESS-WIDE manager:
+    /// every other channel's pumps, nudges and teardowns queued behind one
+    /// channel's first subscriber. Now the open runs on a detached task and
+    /// this actor is SUSPENDED (not blocked) while it runs, so the rest of
+    /// the process keeps pumping.
+    ///
+    /// Concurrent subscribers for one key dedupe onto that single in-flight
+    /// task, so "one watcher `Lattice` + one commit observer per file"
+    /// survives the added suspension point: the second subscriber cannot
+    /// observe the empty `groups[key]` window and start a rival open.
+    /// Failure is shared too — every waiter on a failed open returns nil
+    /// rather than retrying in turn (the retry is the NEXT subscriber join).
+    private func resolveGroup(key: String, fileURL: URL,
+                              context: MountPushContext) async -> FileWatchGroup? {
+        if let live = groups[key] { return live }
+        let creation: Task<Bool, Never>
+        if let inFlight = creating[key] {
+            creation = inFlight
+        } else {
+            opensStarted[key, default: 0] += 1
+            creation = Task.detached { [weak self] in
+                let opened = Self.openWatcher(fileURL: fileURL, context: context)
+                guard let self else {
+                    // The manager is a process-wide singleton, so this is
+                    // unreachable in production — but a watcher that has
+                    // nowhere to live is released here rather than leaked,
+                    // and off-actor as ~lattice_db requires.
+                    opened?.clear()
+                    return false
+                }
+                return await self.installGroup(key: key, watcher: opened, context: context)
+            }
+            creating[key] = creation
         }
-        let group = FileWatchGroup(watcher: UnsafeSendableBox(watcher))
+        // Suspends this actor rather than blocking it. The task installs the
+        // group (and clears `creating`) before it completes, so the lookup
+        // below is authoritative for every waiter, whichever order they
+        // resume in.
+        _ = await creation.value
+        return groups[key]
+    }
+
+    /// Hop back onto the actor with the opened watcher: register the
+    /// payload-free commit observer + optional reconcile tick and publish
+    /// the group. Performs NO `await`, so clearing `creating` and installing
+    /// `groups[key]` are atomic against every other subscriber — a waiter
+    /// can never see "no group and no creation in flight" for a key whose
+    /// open succeeded.
+    private func installGroup(key: String, watcher box: UnsafeSendableBox<Lattice>?,
+                              context: MountPushContext) -> Bool {
+        creating[key] = nil
+        guard let box, let watcher = box.valueIfPresent else {
+            opensStarted[key] = nil
+            log.error("observer-push: could not open watcher for \(key); subscribers stay catch-up-only")
+            return false
+        }
+        let group = FileWatchGroup(watcher: box)
         // Payload-free commit signal. The callback runs on the core's
         // notification thread: flag-set + task-spawn ONLY (no SQL, no
         // encoding, no hydration) — the pump re-queries by cursor, which is
-        // the correctness mechanism.
+        // the correctness mechanism. Registration itself is a leaf-lock map
+        // insert, so it stays on the actor: the observer is live before
+        // `subscribe` returns, which is what closes the
+        // snapshot-versus-watch gap.
         if !context.options._suppressCommitObserverForTesting {
             group.token = watcher.observeCommits { [weak self] in
                 guard let self else { return }
@@ -436,7 +507,29 @@ actor FileWatchManager {
                 }
             }
         }
-        return group
+        groups[key] = group
+        return true
+    }
+
+    /// The watcher open itself — ALWAYS called off the actor.
+    ///
+    /// Uses the subscribing mount's own storeConfiguration (the 1.6.3
+    /// per-mount factory) — mandatory, or a watcher on a projector-migrated
+    /// file would refuse the open exactly like the pre-1.6.3 relay did —
+    /// then strips sync config the way `changeStream`'s query lattice does,
+    /// so the watcher never joins sync channels or mints spurious entries.
+    /// The group is created from the FIRST subscriber's mount context; later
+    /// subscribers from other mounts over the same file share it as-is.
+    private static func openWatcher(fileURL: URL,
+                                    context: MountPushContext) -> UnsafeSendableBox<Lattice>? {
+        var configuration = context.storeConfiguration?(fileURL) ?? .init(fileURL: fileURL)
+        configuration.ipcTargets = nil
+        configuration.wssEndpoint = nil
+        configuration.authorizationToken = nil
+        guard let watcher = try? Lattice(for: context.schema, configuration: configuration) else {
+            return nil
+        }
+        return UnsafeSendableBox(watcher)
     }
 
     /// Canonical channel-file key: channels shared across mounts (writer +

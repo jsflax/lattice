@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.7.0] - Unreleased
+## [1.7.0] - 2026-08-20
 
 LatticeCore dependency floor unchanged (`from: "1.4.2"`); zero core changes.
 
@@ -24,7 +24,12 @@ LatticeCore dependency floor unchanged (`from: "1.4.2"`); zero core changes.
   frames (observer acks) to same-channel peers. `SyncObserverPush.pageSize`
   is validated at init (`precondition`) and clamped positive per
   subscription, so a zero/negative page can never make a pump spin without
-  draining.
+  draining. The per-file watcher open runs OFF the process-wide manager
+  actor (concurrent first subscribers dedupe onto one in-flight open), so a
+  slow SQLite open on one channel cannot stall another channel's pumps,
+  nudges or teardowns; and a connection whose connect-time catch-up throws
+  releases its parked subscription and closes, so a failed catch-up can
+  neither strand a watch group nor leave a permanently silent observer.
 - `Lattice.observeCommits(_:)` — payload-free AuditLog commit signal (no
   per-row hydration, no delivery-worker hop; consumers re-query by cursor).
 - `Lattice.eventsAfter(id:)` — `Int64` primary-key-cursor overload beside

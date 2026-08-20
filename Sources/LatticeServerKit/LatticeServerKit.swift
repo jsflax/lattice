@@ -786,6 +786,12 @@ extension Lattice {
                     }
                     let lattice = held.value
 
+                    // TEST-ONLY fault injection (nil in production): proves
+                    // the catch block below releases a parked subscription.
+                    if let fault = _catchUpFaultForTesting.withLockedValue({ $0 }) {
+                        try fault(channel.id)
+                    }
+
                     let lastEventId = try? req.query.get(UUID?.self, at: "last-event-id")
                     let events = lattice.eventsAfter(globalId: lastEventId)
                     let count = events.count
@@ -829,6 +835,23 @@ extension Lattice {
                 }.value
             } catch {
                 print("Error bringing channel connection up to date: \(error.localizedDescription)")
+                // A throw here (encode failure, a send that fails mid-page)
+                // used to leave the push subscription PARKED: never
+                // activated, never unsubscribed. That pins the file's watch
+                // group — and its watcher `Lattice` — alive for the process
+                // lifetime on a socket that can never receive a pushed frame
+                // (no cursor), while the socket itself stayed OPEN so the
+                // client's redial fallback never fired either: a
+                // permanently silent observer plus a leaked watcher per
+                // occurrence. Release the subscription, then close, so the
+                // client redials and re-runs catch-up from its
+                // last-event-id.
+                if let sub = state.pushSubscription {
+                    state.pushSubscription = nil
+                    await watchManager?.unsubscribe(sub)
+                }
+                ws.pingInterval = .seconds(5)   // drop a peer that ignores the close
+                try? await ws.close(code: .unexpectedServerError)
             }
         }
         return SyncRelayHandle(manager: sockets, pushManager: watchManager)
@@ -943,3 +966,14 @@ final class ConnectionRelayState: @unchecked Sendable {
 /// client's opening burst, bounded against a peer that streams into a
 /// connection that will never go live.
 private let maxBufferedFrameBytes = 64 * 1024 * 1024
+
+/// TEST-ONLY (internal — `@testable` reach only) fault injection for the
+/// connect-time catch-up error path, which is otherwise unreachable from a
+/// test: nothing a client can send makes the catch-up encode or send throw
+/// on demand. When non-nil it is called once per connection at the top of
+/// the catch-up task — AFTER the parked push subscription is registered,
+/// BEFORE any frame is sent — with that connection's channel id, so a test
+/// can scope the fault to its own channel (this box is process-global and
+/// suites run in parallel). Nil in production: one lock-protected read per
+/// connection, alongside the catch-up query.
+let _catchUpFaultForTesting = NIOLockedValueBox<(@Sendable (String) throws -> Void)?>(nil)
