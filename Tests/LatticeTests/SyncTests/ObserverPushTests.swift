@@ -108,6 +108,9 @@ final class PushHarness: @unchecked Sendable {
     let writerHandle: SyncRelayHandle
     /// Push-enabled watch mount over the same channel files.
     let watchHandle: SyncRelayHandle
+    /// SECOND push-enabled watch mount over the same channel files — the
+    /// per-process manager must resolve both to ONE watch group per file.
+    let watch2Handle: SyncRelayHandle
 
     init(push: SyncObserverPush = SyncObserverPush(reconcileInterval: nil)) async throws {
         storageURL = FileManager.default.temporaryDirectory
@@ -122,6 +125,11 @@ final class PushHarness: @unchecked Sendable {
             channelExtractor: pushGroupExtractor)
         watchHandle = Lattice.configureSyncRelay(
             on: app.routes, path: ["watch", "group", ":groupID"],
+            for: [SimpleSyncObject.self], storageURL: storageURL,
+            observerPush: push,
+            channelExtractor: pushGroupExtractor)
+        watch2Handle = Lattice.configureSyncRelay(
+            on: app.routes, path: ["watch2", "group", ":groupID"],
             for: [SimpleSyncObject.self], storageURL: storageURL,
             observerPush: push,
             channelExtractor: pushGroupExtractor)
@@ -421,38 +429,256 @@ final class ObserverPushTests: BaseTest {
     /// Last subscriber out tears the per-file watch group down (watcher
     /// Lattice released — no fd/instance accumulation across cycles); a
     /// later observer forms a fresh group over the same file and push still
-    /// works.
+    /// works. Observability is key-scoped (`hasGroup(forFile:)`) because
+    /// the manager is process-wide and parallel suites hold their own
+    /// groups.
     @Test func groupTeardownReleasesWatcherAndAllowsRejoin() async throws {
         let harness = try await PushHarness()
         defer { Task { [harness] in await harness.shutdown() } }
         let manager = try #require(harness.watchHandle.pushManager)
+        let file = harness.channelFile("g1")
 
         let a = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
         let b = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
-        #expect(await pollGroupCount(manager, equals: 1))
+        #expect(await pollSubscriberCount(manager, file: file, equals: 2))
 
         try await a.socket!.close(code: .goingAway)
         try? await Task.sleep(nanoseconds: 300_000_000)
-        #expect(await manager.groupCount == 1)   // b still holds the group
+        #expect(await manager.hasGroup(forFile: file))   // b still holds the group
 
         try await b.socket!.close(code: .goingAway)
-        #expect(await pollGroupCount(manager, equals: 0))
+        #expect(await pollHasGroup(manager, file: file, equals: false))
 
         // Rejoin: fresh group over the same file, push still flows.
         let c = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
-        #expect(await pollGroupCount(manager, equals: 1))
+        #expect(await pollHasGroup(manager, file: file, equals: true))
         let co = try harness.coWriter("g1")
         try co.add(SimpleSyncObject(value: 7, floatValue: 7))
         #expect(await c.wait { $0.receivedGlobalIds.count >= 1 })
     }
 
-    private func pollGroupCount(_ manager: FileWatchManager, equals target: Int,
-                                timeout: TimeInterval = 10) async -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if await manager.groupCount == target { return true }
+    // MARK: per-process manager: two push mounts, one file, ONE watcher
+
+    /// The design invariant is one `FileWatchManager` per PROCESS, not per
+    /// mount: two push-enabled mounts whose channels resolve to the same
+    /// file must share one watch group — one watcher Lattice, one commit
+    /// observer — proven here by both handles exposing the SAME manager
+    /// instance and by both subscribers landing in the ONE group for the
+    /// file (per-mount managers would each hold a 1-subscriber group).
+    @Test func twoPushMountsOneFileShareOneWatcherGroup() async throws {
+        let harness = try await PushHarness()
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        let m1 = try #require(harness.watchHandle.pushManager)
+        let m2 = try #require(harness.watch2Handle.pushManager)
+        #expect(m1 === m2)   // process-wide, not per-mount
+
+        let file = harness.channelFile("g1")
+        let a = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
+        let b = try await harness.connect(pathSuffix: "watch2/group/g1", user: UUID())
+        // Exactly one group holds BOTH mounts' subscribers.
+        #expect(await pollSubscriberCount(m1, file: file, equals: 2))
+        #expect(await m1.hasGroup(forFile: file))
+
+        // One co-process commit reaches both mounts' sockets via that one
+        // shared watcher.
+        let co = try harness.coWriter("g1")
+        try co.add(SimpleSyncObject(value: 11, floatValue: 11))
+        let expected = gids(Array(co.eventsAfter(globalId: nil)))
+        #expect(await a.wait { $0.receivedGlobalIds.count >= 1 })
+        #expect(await b.wait { $0.receivedGlobalIds.count >= 1 })
+        #expect(a.receivedGlobalIds == expected)
+        #expect(b.receivedGlobalIds == expected)
+
+        // Cross-mount teardown: the group survives either mount's socket
+        // and dies with the last one.
+        try await a.socket!.close(code: .goingAway)
+        #expect(await pollSubscriberCount(m1, file: file, equals: 1))
+        #expect(await m1.hasGroup(forFile: file))
+        try await b.socket!.close(code: .goingAway)
+        #expect(await pollHasGroup(m1, file: file, equals: false))
+    }
+
+    // MARK: reconcile tick (safety net for missed cross-process wakeups)
+
+    /// With the commit-notification path suppressed (test-only knob), the
+    /// reconcile tick ALONE delivers within its interval — the recovery
+    /// layer the design promises for the documented best-effort
+    /// cross-process wakeup.
+    ///
+    /// Platform honesty: every writer in this suite is same-process (an
+    /// in-process co-writer reaches the watcher through the core's instance
+    /// registry, not the cross-process notifier), so the genuinely
+    /// cross-process wakeup — Linux inotify on the sibling signal file,
+    /// Darwin notify_post — is NOT exercised here, and the Linux CI leg
+    /// runs this same in-process suite. What this test pins down is the
+    /// recovery path that makes a missed wakeup an added-latency event
+    /// rather than a lost-delivery event; the retained client redial is the
+    /// outermost net (rollout §9).
+    @Test func reconcileTickAloneDeliversWhenCommitObserverSuppressed() async throws {
+        var push = SyncObserverPush(reconcileInterval: .milliseconds(250))
+        push._suppressCommitObserverForTesting = true
+        let harness = try await PushHarness(push: push)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        let watcher = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
+        let co = try harness.coWriter("g1")
+
+        // The first commit can race connect-time catch-up/activation (either
+        // of which would deliver it without any nudge) — wait it out so the
+        // NEXT commit is provably post-activation.
+        try co.add(SimpleSyncObject(value: 1, floatValue: 1))
+        #expect(await watcher.wait(timeout: 15) { $0.receivedGlobalIds.count >= 1 })
+
+        // Post-activation commit: with the commit observer suppressed, the
+        // ONLY thing that can deliver this is the reconcile tick.
+        try co.add(SimpleSyncObject(value: 2, floatValue: 2))
+        #expect(await watcher.wait(timeout: 15) { $0.receivedGlobalIds.count >= 2 })
+
+        // Tick-driven delivery preserves the same ordering/exactly-once
+        // guarantees (same pump, same cursor).
+        let expected = gids(Array(co.eventsAfter(globalId: nil)))
+        #expect(watcher.receivedGlobalIds == expected)
+    }
+
+    // MARK: teardown/pump race stress (adversarial review, MAJOR)
+
+    /// Subscribe/unsubscribe churn under a commit storm — the shape that
+    /// makes last-subscriber teardown overlap in-flight pumps. Each wave
+    /// joins `subscribersPerWave` observers, proves push is live on each,
+    /// fires a 150-commit BURST, and — *while the burst is still
+    /// committing* — mass-closes every socket, one of them by killing its
+    /// transport out from under the server (so that wave's teardown is
+    /// driven from INSIDE a pump's own send-failure path, not just from
+    /// `onClose`). The last unsubscribe of every wave therefore tears the
+    /// group down with pumps mid-pass, and the next wave rebuilds a fresh
+    /// group over the same file.
+    ///
+    /// What this pins down: across 10 such teardown/rebuild cycles the
+    /// relay never crashes, hangs, leaks a group, or loses/duplicates an
+    /// entry — the post-churn subscriber receives the ENTIRE log, ordered
+    /// and exactly once.
+    ///
+    /// Honest scope. This does NOT reproduce a nil-trap on the pre-fix
+    /// (force-unwrapping) shape: it was run 3× against a locally restored
+    /// pre-fix `maybePump`/`pump` and passed every time. The reason is that
+    /// every reachable `unsubscribe` today follows a closed or revoked
+    /// socket, and the pump re-checks `isClosed`/`isRevoked` immediately
+    /// before each `watcher` read — so the cleared-box window is not
+    /// reachable through the close path. The force-unwrap was a structural
+    /// hazard (one future caller that unsubscribed a still-open socket, or
+    /// one reordering of that guard, and it becomes a nil-trap /
+    /// use-after-free), and the fix removes the hazard class rather than
+    /// narrowing it: pumps take their own strong `WatcherRef` on the actor
+    /// and there are ZERO force-unwraps left on the pump path. This test is
+    /// the behavioral regression net around that churn, not a pre-fix
+    /// reproducer.
+    ///
+    /// Deliberately BOUNDED (`waves × burstPerWave` commits, no unpaced
+    /// writer loop): an unpaced loop mints hundreds of thousands of entries
+    /// and hundreds of MB of temp DB, starving the rest of the suite
+    /// without making the overlap any likelier — the overlap needs commits
+    /// *concurrent with* teardown, not a high commit count.
+    @Test(.timeLimit(.minutes(5))) func teardownRaceStressUnderCommitLoad() async throws {
+        let harness = try await PushHarness()
+        defer { Task { [harness] in await harness.shutdown() } }
+        let manager = try #require(harness.watchHandle.pushManager)
+        let file = harness.channelFile("g1")
+
+        let waves = 10
+        let subscribersPerWave = 4
+        let burstPerWave = 150
+        var minted = 0
+
+        // Seed one entry so every wave's subscribers have something to
+        // receive at connect time (an empty log delivers nothing, and the
+        // waves would then prove nothing about the pump).
+        let seed = try harness.coWriter("g1")
+        try seed.add(SimpleSyncObject(value: -100, floatValue: 0))
+
+        for _ in 0..<waves {
+            // One socket per wave gets its own event-loop group so it can be
+            // killed at the transport level mid-burst: that socket's pump
+            // fails its awaited send and unsubscribes from INSIDE the pump,
+            // which is the teardown path that overlaps pump execution most
+            // tightly.
+            let doomedGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+            var wave: [PushFrameCollector] = []
+            wave.append(try await harness.connect(
+                pathSuffix: "watch/group/g1", user: UUID(), on: doomedGroup))
+            for _ in 1..<subscribersPerWave {
+                wave.append(try await harness.connect(pathSuffix: "watch/group/g1", user: UUID()))
+            }
+            // Prove every subscriber is activated (cursor installed, pump
+            // path live) before the churn — a parked subscription would not
+            // exercise the pump at all.
+            for collector in wave {
+                #expect(await collector.wait(timeout: 30) { $0.receivedGlobalIds.count >= 1 })
+            }
+
+            // Commit storm on its own thread; do NOT await it before closing.
+            let burst = Task.detached { [harness] () -> Int in
+                guard let co = try? harness.coWriter("g1") else { return 0 }
+                var n = 0
+                for i in 0..<burstPerWave {
+                    if (try? co.add(SimpleSyncObject(value: i, floatValue: 0))) != nil { n += 1 }
+                }
+                return n
+            }
+            // Let the storm get going, then mass-close DURING it: the last
+            // unsubscribe tears the group down while the other sockets'
+            // pumps are still paging/sending against the watcher.
+            try? await Task.sleep(nanoseconds: 5_000_000)
+            try? await doomedGroup.shutdownGracefully()
+            for collector in wave.dropFirst() {
+                try? await collector.socket?.close(code: .goingAway)
+            }
+            minted += await burst.value
+            // Let the teardown fully land before the next wave rebuilds the
+            // group over the same file.
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
-        return await manager.groupCount == target
+
+        // The storm really ran. Not an equality: under full-suite parallel
+        // load a burst `add` can lose a busy-timeout race, and a dropped
+        // COMMIT is not what this test is about — delivery integrity of
+        // whatever did commit is. The floor keeps a silently no-op storm
+        // from passing.
+        #expect(minted >= waves * burstPerWave * 9 / 10)
+
+        // The system survived the churn: the group tore down cleanly and a
+        // fresh subscriber still gets live push over the same file.
+        #expect(await pollHasGroup(manager, file: file, equals: false))
+        let after = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
+        let co = try harness.coWriter("g1")
+        try co.add(SimpleSyncObject(value: -1, floatValue: -1))
+        // Full-log integrity end to end: the post-churn subscriber receives
+        // every entry the churn actually committed — ordered, exactly once.
+        let expected = gids(Array(co.eventsAfter(globalId: nil)))
+        #expect(expected.count >= minted + 1)
+        #expect(await after.wait(timeout: 60) { $0.receivedGlobalIds.count >= expected.count })
+        #expect(after.receivedGlobalIds == expected)
+    }
+
+    // MARK: polling helpers (key-scoped: the manager is process-wide)
+
+    private func pollHasGroup(_ manager: FileWatchManager, file: URL, equals target: Bool,
+                              timeout: TimeInterval = 10) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await manager.hasGroup(forFile: file) == target { return true }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return await manager.hasGroup(forFile: file) == target
+    }
+
+    private func pollSubscriberCount(_ manager: FileWatchManager, file: URL, equals target: Int,
+                                     timeout: TimeInterval = 10) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if await manager.subscriberCount(forFile: file) == target { return true }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        return await manager.subscriberCount(forFile: file) == target
     }
 }

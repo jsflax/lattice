@@ -443,6 +443,68 @@ final class ServerRelayTests: BaseTest {
         #expect(await okHeader.wait { !$0.acks.isEmpty })
     }
 
+    /// Query-param admission is OPT-IN: a legacy `minimumVersion` mount is
+    /// header-only, exactly as pre-1.7 — upgrading the package must not
+    /// silently widen its admission surface to `?schema=`.
+    @Test func legacyMinimumMountIgnoresQueryParameter() async throws {
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            handshake: SyncSchemaHandshake(headerName: "X-Engram-Schema", minimumVersion: 3),
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        // A valid version via query ONLY is a missing declaration on a
+        // legacy mount (would be admitted if the query were honored).
+        let queryOnly = try await harness.connect(
+            pathSuffix: "sync/group/g1?schema=3", user: UUID())
+        #expect(await queryOnly.wait { $0.isClosed })
+        #expect(queryOnly.closeCode == nil || queryOnly.closeCode == WebSocketErrorCode.policyViolation)
+
+        // A BELOW-minimum query value cannot override a valid header either
+        // (the query wins when honored, so admission here proves it was
+        // ignored, not merely outranked).
+        let headerWins = try await harness.connect(
+            pathSuffix: "sync/group/g1?schema=2", user: UUID(),
+            headers: ["X-Engram-Schema": "3"])
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 8, floatValue: 1)) }
+        try await headerWins.socket!.send(try makeFrame(entries: entries))
+        #expect(await headerWins.wait { !$0.acks.isEmpty })
+        #expect(!headerWins.isClosed)
+    }
+
+    /// The other half of opt-in: a minimum-mode mount that EXPLICITLY sets
+    /// `queryParameterName` does honor the query channel (checked before
+    /// the header), same as the exact-mode default.
+    @Test func minimumMountWithExplicitQueryParameterHonorsQuery() async throws {
+        var handshake = SyncSchemaHandshake(headerName: "X-Engram-Schema", minimumVersion: 3)
+        handshake.queryParameterName = "schema"
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            handshake: handshake,
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        // Query alone admits...
+        let ok = try await harness.connect(pathSuffix: "sync/group/g1?schema=3", user: UUID())
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 9, floatValue: 1)) }
+        try await ok.socket!.send(try makeFrame(entries: entries))
+        #expect(await ok.wait { !$0.acks.isEmpty })
+        #expect(!ok.isClosed)
+
+        // ...and a low query refuses, even past a valid header (query is
+        // checked FIRST once opted in).
+        let low = try await harness.connect(
+            pathSuffix: "sync/group/g1?schema=2", user: UUID(),
+            headers: ["X-Engram-Schema": "3"])
+        #expect(await low.wait { $0.isClosed })
+        #expect(low.closeCode == nil || low.closeCode == WebSocketErrorCode.policyViolation)
+        if !low.receivedTexts.isEmpty {
+            #expect(low.receivedTexts.contains { $0.contains("upgrade required") })
+        }
+    }
+
     // MARK: Policy fail-closed (adversarial review)
 
     /// The inspector (Foundation) and the applier (nlohmann) are different

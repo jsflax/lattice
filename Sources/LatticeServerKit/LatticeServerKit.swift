@@ -163,7 +163,11 @@ public struct SyncWritePolicy: Sendable {
 /// FIRST (browser WebSockets cannot set request headers, so `?schema=` is
 /// the only channel a wasm client has — previously every consumer needed a
 /// pre-upgrade middleware to lift it into the header), then from the
-/// `headerName` header.
+/// `headerName` header. Query-param admission is OPT-IN: legacy
+/// `minimumVersion` mounts stay header-only on upgrade (their admission
+/// surface must not silently widen); only mounts that set
+/// `queryParameterName` — the exact-mode init does so by default, since its
+/// purpose is browser clients — honor the query channel.
 public struct SyncSchemaHandshake: Sendable {
     /// How the declared version is matched.
     public enum Mode: Sendable {
@@ -178,8 +182,12 @@ public struct SyncSchemaHandshake: Sendable {
     }
 
     public var headerName: String
-    /// Query parameter consulted BEFORE the header (`"schema"` by default);
-    /// nil disables the query channel entirely.
+    /// Query parameter consulted BEFORE the header. OPT-IN: `nil` (the
+    /// legacy `minimumVersion` init's value) disables the query channel
+    /// entirely — an upgraded header-only mount must not silently start
+    /// admitting via `?schema=`. The exact-mode init defaults it to
+    /// `"schema"` (its raison d'être is browser clients, which cannot set
+    /// headers); a minimum-mode mount can opt in by setting it explicitly.
     public var queryParameterName: String?
     public var mode: Mode
     /// When false, clients that send no declaration at all are admitted
@@ -205,10 +213,12 @@ public struct SyncSchemaHandshake: Sendable {
         set { requireDeclaration = newValue }
     }
 
-    /// Minimum-version gate (source-compatible with pre-1.7).
+    /// Minimum-version gate (source- AND behavior-compatible with pre-1.7:
+    /// header-only — no query-param admission unless the mount opts in by
+    /// setting `queryParameterName` afterwards).
     public init(headerName: String = "X-Lattice-Schema", minimumVersion: Int, requireHeader: Bool = true) {
         self.headerName = headerName
-        self.queryParameterName = "schema"
+        self.queryParameterName = nil
         self.mode = .minimum(minimumVersion)
         self.requireDeclaration = requireHeader
     }
@@ -243,8 +253,11 @@ public struct SyncSchemaHandshake: Sendable {
         case .exact(let v): requirement = "== \(v)"
         }
         guard let declared else {
+            let channels = queryParameterName
+                .map { "send ?\($0)= or the \(headerName) header" }
+                ?? "send the \(headerName) header"
             return requireDeclaration
-                ? "missing schema declaration (server requires schema \(requirement); send ?\(queryParameterName ?? "schema")= or the \(headerName) header)"
+                ? "missing schema declaration (server requires schema \(requirement); \(channels))"
                 : nil
         }
         guard let version = Int(declared.raw) else {
@@ -365,9 +378,12 @@ actor SocketManager {
 /// visibility. Returned by `configureSyncRelay`; safe to hold anywhere.
 public struct SyncRelayHandle: Sendable {
     let manager: SocketManager
-    /// Present on observer-push mounts (`observerPush != nil`): the per-mount
-    /// watch-group owner. Internal — exposed for teardown observability in
-    /// tests (`groupCount`), not part of the public surface.
+    /// Present on observer-push mounts (`observerPush != nil`): the
+    /// PROCESS-WIDE watch-group owner (`FileWatchManager.shared` — every
+    /// push mount shares it, so mounts over one file share one watcher).
+    /// Internal — exposed for key-scoped teardown observability in tests
+    /// (`hasGroup(forFile:)` / `subscriberCount(forFile:)`), not part of the
+    /// public surface.
     let pushManager: FileWatchManager?
 
     init(manager: SocketManager, pushManager: FileWatchManager? = nil) {
@@ -433,6 +449,11 @@ extension Lattice {
     ///     pushed as ordinary `ServerSentEvent.auditLog` catch-up frames,
     ///     exactly-once and commit-ordered per socket. Intended for deny-all
     ///     watch mounts; `nil` (the default) keeps pre-1.7 behavior exactly.
+    ///     Watch groups live on ONE process-wide manager: push mounts over
+    ///     the same channel file share one watcher `Lattice` and one commit
+    ///     observer (the group's watcher open + reconcile tick come from the
+    ///     first subscriber's mount; `pageSize` follows each socket's own
+    ///     mount).
     ///     Note: a push-enabled mount does NOT fan client frames to
     ///     same-channel peers (delivery is the pump's job; on a watch mount
     ///     the only client frames are acks, and echoing every observer's ack
@@ -452,10 +473,14 @@ extension Lattice {
     ) -> SyncRelayHandle {
         let sockets = SocketManager()
         nonisolated(unsafe) let schema = schema
-        // One watch manager per push-enabled mount, captured by the handler
-        // like `sockets` is; `nil` on legacy mounts (zero new work anywhere).
-        let watchManager = observerPush.map {
-            FileWatchManager(schema: schema, storeConfiguration: storeConfiguration, options: $0)
+        // ONE watch manager per PROCESS: push-enabled mounts share
+        // `FileWatchManager.shared`, so two push mounts over the same
+        // channel file share one watcher Lattice and one commit observer.
+        // Mount-specific configuration rides each subscribe call in the
+        // context below; `nil` on legacy mounts (zero new work anywhere).
+        let watchManager: FileWatchManager? = observerPush != nil ? .shared : nil
+        let pushContext = observerPush.map {
+            MountPushContext(schema: schema, storeConfiguration: storeConfiguration, options: $0)
         }
         routes.webSocket(path, maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 300 * 1024 * 1024)) { req, ws in
             // Per-connection state, confined to the socket's event loop.
@@ -682,9 +707,10 @@ extension Lattice {
             // pump (which reads strictly beyond the catch-up boundary) picks
             // it up — no gaps, no dupes, in order. A nil subscription
             // (watcher open failure) leaves this socket catch-up-only.
-            if let watchManager, let latticeURL {
+            if let watchManager, let pushContext, let latticeURL {
                 state.pushSubscription = await watchManager.subscribe(
-                    fileURL: latticeURL, socket: ws, revocation: state.revocation)
+                    fileURL: latticeURL, context: pushContext,
+                    socket: ws, revocation: state.revocation)
             }
 
             // Go live: replay anything that arrived during the open, in
@@ -780,7 +806,11 @@ extension Lattice {
                             await ws.send(ByteBuffer(data: encoded))
                             boundary = page.last?.primaryKey ?? boundary
                         }
-                    } else if let lastEventId {
+                    } else if let lastEventId, state.pushSubscription != nil {
+                        // The boundary only feeds push activation — legacy
+                        // mounts (and sockets whose watcher open failed)
+                        // skip this SELECT entirely rather than paying it
+                        // on every redial for a value nobody reads.
                         boundary = lattice.objects(AuditLog.self)
                             .where { $0.globalId == lastEventId }
                             .snapshot(limit: 1)
@@ -835,6 +865,10 @@ final class UnsafeSendableBox<T>: @unchecked Sendable {
     private var stored: T?
     init(_ value: T) { self.stored = value }
     var value: T { stored! }
+    /// Non-trapping read for callers that can lose a release race and must
+    /// exit cleanly instead (the observer-push pump path): `nil` after
+    /// `clear()`.
+    var valueIfPresent: T? { stored }
     func clear() { stored = nil }
 }
 

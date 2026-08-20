@@ -15,9 +15,16 @@ LatticeCore dependency floor unchanged (`from: "1.4.2"`); zero core changes.
   commit-ordered per socket ("nudge + pump": a payload-free per-file commit
   observer nudges per-socket pumps that re-run the catch-up machinery from a
   monotone AuditLog-pk cursor, with awaited sends for slow-consumer
-  isolation). Clients apply pushed frames with zero changes; app-level
-  redial loops become cheap no-op fallbacks. Push-enabled mounts no longer
-  fan client frames (observer acks) to same-channel peers.
+  isolation). Watch groups live on ONE process-wide manager, so push mounts
+  over the same channel file share one watcher Lattice and one commit
+  observer; every pump holds its own strong watcher reference, so
+  last-subscriber teardown can never trap or dangle an in-flight pump.
+  Clients apply pushed frames with zero changes; app-level redial loops
+  become cheap no-op fallbacks. Push-enabled mounts no longer fan client
+  frames (observer acks) to same-channel peers. `SyncObserverPush.pageSize`
+  is validated at init (`precondition`) and clamped positive per
+  subscription, so a zero/negative page can never make a pump spin without
+  draining.
 - `Lattice.observeCommits(_:)` — payload-free AuditLog commit signal (no
   per-row hydration, no delivery-worker hop; consumers re-query by cursor).
 - `Lattice.eventsAfter(id:)` — `Int64` primary-key-cursor overload beside
@@ -26,9 +33,12 @@ LatticeCore dependency floor unchanged (`from: "1.4.2"`); zero core changes.
   (checked before the header — browser WebSockets cannot set headers) and
   `Mode.exact(Int)`, which refuses both older ("upgrade required") and
   newer ("server behind client") clients with distinct legible close
-  reasons. The existing `minimumVersion` init and semantics are preserved;
-  consumers can delete their query-lift middleware and app-level
-  newer-schema checks.
+  reasons. Query-param admission is OPT-IN: the legacy `minimumVersion`
+  init stays header-only (behavior-identical to pre-1.7 — an upgrade never
+  silently widens a mount's admission surface); the exact-mode init
+  defaults `queryParameterName` to `"schema"`, and minimum-mode mounts can
+  set it explicitly. Consumers adopting exact mode can delete their
+  query-lift middleware and app-level newer-schema checks.
 
 ## [1.2.0] - 2026-08-04
 

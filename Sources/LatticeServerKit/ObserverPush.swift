@@ -9,10 +9,12 @@ import Combine
 // Observer push (1.7): live fan-out of committed changes to watch sockets.
 //
 // Mechanism: commit-notification → per-socket incremental catch-up
-// ("nudge + pump"), NOT a writer-frame tee. One `FileWatchManager` actor per
-// push-enabled mount, keyed by canonical channel-file path, opens ONE watcher
-// `Lattice` per live file (via the mount's `storeConfiguration`, sync config
-// stripped) and registers a payload-free AuditLog commit observer. Each watch
+// ("nudge + pump"), NOT a writer-frame tee. ONE `FileWatchManager` actor per
+// PROCESS (`FileWatchManager.shared`, shared by every push-enabled mount),
+// keyed by canonical channel-file path, opens ONE watcher `Lattice` per live
+// file (via the subscribing mount's `storeConfiguration`, sync config
+// stripped) and registers a payload-free AuditLog commit observer — two push
+// mounts over one file share one watcher and one observer. Each watch
 // socket owns a monotone Int64 AuditLog-pk cursor and a serial pump that
 // re-runs the existing catch-up machinery — `eventsAfter(id:)` → page →
 // `ServerSentEvent.auditLog` → awaited `ws.send` — advancing the cursor as it
@@ -57,10 +59,48 @@ public struct SyncObserverPush: Sendable {
     /// writer is same-process (exactly-once delivery path).
     public var reconcileInterval: Duration?
 
+    /// TEST-ONLY knob (internal — reachable via `@testable` only): when
+    /// true, the watch group registers NO commit observer, making the
+    /// reconcile tick the only nudge source, so tests can prove the tick
+    /// alone delivers within its interval. Production mounts always run the
+    /// commit observer.
+    var _suppressCommitObserverForTesting = false
+
     public init(pageSize: Int = 256, reconcileInterval: Duration? = .seconds(30)) {
+        precondition(pageSize > 0,
+                     "SyncObserverPush.pageSize must be at least 1 (got \(pageSize)) — "
+                     + "each pushed frame pages the AuditLog by pageSize rows")
         self.pageSize = pageSize
         self.reconcileInterval = reconcileInterval
     }
+}
+
+// MARK: - MountPushContext
+
+/// Per-mount push configuration handed to the process-wide
+/// `FileWatchManager` at subscribe time (the manager itself is shared, so
+/// mount-specific state cannot live on it). `@unchecked`: the schema array
+/// is a non-Sendable `[any Model.Type]` that is only ever read — the same
+/// claim `configureSyncRelay` makes with its `nonisolated(unsafe)` capture.
+struct MountPushContext: @unchecked Sendable {
+    let schema: [any Lattice.Model.Type]
+    let storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)?
+    let options: SyncObserverPush
+}
+
+// MARK: - WatcherRef
+
+/// A pump's own strong reference to the watcher `Lattice`, held for the
+/// pump task's whole lifetime. Created ON the manager actor (where the
+/// group's box is still guaranteed populated) and released when the pump
+/// task ends — always in a detached-task context, never inline on the actor
+/// or an event loop. This is what makes last-subscriber teardown safe: the
+/// group's box can be cleared while a pump is mid-pass and the pump keeps a
+/// valid instance, exiting cleanly on its next inactive/closed check instead
+/// of trapping on a cleared box.
+private final class WatcherRef: @unchecked Sendable {
+    let lattice: Lattice
+    init(_ lattice: Lattice) { self.lattice = lattice }
 }
 
 // MARK: - PushSubscription
@@ -81,6 +121,10 @@ final class PushSubscription: @unchecked Sendable {
     let revocation: RevocationFlag
     /// Canonical channel-file path — the watch-group key.
     let key: String
+    /// AuditLog entries per pushed frame, from the subscribing MOUNT's
+    /// options (the manager is process-wide, so per-mount tuning rides the
+    /// subscription). Clamped positive at construction.
+    let pageSize: Int
     /// `nil` = parked (connect-time catch-up in flight). Installed once by
     /// `activate(_:cursor:)` with the catch-up boundary, then only advanced
     /// by the pump after a successful awaited send.
@@ -94,10 +138,11 @@ final class PushSubscription: @unchecked Sendable {
     /// Cleared by `unsubscribe`; in-flight pump passes check it and stop.
     var active = true
 
-    init(socket: WebSocket, revocation: RevocationFlag, key: String) {
+    init(socket: WebSocket, revocation: RevocationFlag, key: String, pageSize: Int) {
         self.socket = socket
         self.revocation = revocation
         self.key = key
+        self.pageSize = max(1, pageSize)
     }
 }
 
@@ -107,11 +152,13 @@ final class PushSubscription: @unchecked Sendable {
 /// observer, shared by every push subscriber whose channel resolves to the
 /// same canonical file path. Actor-confined to `FileWatchManager`.
 private final class FileWatchGroup {
-    /// Opened via the mount's `storeConfiguration` (sync config stripped so
-    /// the watcher never joins sync channels or mints spurious entries).
-    /// Boxed because `Lattice` is non-Sendable and pump tasks read it
-    /// off-actor; released off-actor at teardown (`~lattice_db` tears down
-    /// sync threads — never inline that on the actor).
+    /// Opened via the creating mount's `storeConfiguration` (sync config
+    /// stripped so the watcher never joins sync channels or mints spurious
+    /// entries). Boxed because `Lattice` is non-Sendable and the group's
+    /// reference is released off-actor at teardown (`~lattice_db` tears
+    /// down sync threads — never inline that on the actor). Pumps do NOT
+    /// read this box off-actor: each takes its own strong `WatcherRef` on
+    /// the actor in `maybePump`, so clearing the box never races a pump.
     let watcher: UnsafeSendableBox<Lattice>
     /// `watcher.observeCommits { nudge }` registration.
     var token: AnyCancellable?
@@ -126,37 +173,40 @@ private final class FileWatchGroup {
 
 // MARK: - FileWatchManager
 
-/// One per push-enabled relay mount; owns the per-file watch groups.
+/// ONE per relay process (the design's invariant), owning every per-file
+/// watch group: push-enabled mounts all share `FileWatchManager.shared`, so
+/// two push mounts over the same channel file resolve to ONE watcher
+/// `Lattice` and ONE commit observer. Per-mount configuration (schema,
+/// `storeConfiguration`, options) travels with each subscribe call as a
+/// `MountPushContext`; the group-level parts (watcher open, reconcile tick)
+/// are taken from the FIRST subscriber's mount, per-socket parts (pageSize)
+/// from each subscription's own mount.
 ///
-/// Files shared across mounts — a writer mount and a watch mount over one
-/// `rooms-<code>.sqlite` — resolve to one canonical path, but only
-/// push-enabled mounts create a manager, so a legacy writer mount adds no
-/// group here; its commits reach this mount's watcher through the core's
+/// Legacy (non-push) mounts never subscribe, so they add no group here;
+/// their commits reach a shared file's watcher through the core's
 /// same-process instance registry.
 actor FileWatchManager {
+    /// The process-wide instance every push-enabled mount shares.
+    static let shared = FileWatchManager()
+
     /// Keyed by canonical channel-file path.
     private var groups: [String: FileWatchGroup] = [:]
 
-    // Per-mount constants, captured once at mount configuration. The schema
-    // array is non-Sendable ([any Model.Type]); it is only read, mirroring
-    // the `nonisolated(unsafe)` capture in `configureSyncRelay`.
-    private nonisolated(unsafe) let schema: [any Lattice.Model.Type]
-    private let storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)?
-    private let options: SyncObserverPush
     private let log = Logger(label: "lattice.observer-push")
 
-    init(schema: [any Lattice.Model.Type],
-         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)?,
-         options: SyncObserverPush) {
-        self.schema = schema
-        self.storeConfiguration = storeConfiguration
-        self.options = options
+    /// Whether a live watch group exists for the given channel file —
+    /// key-scoped teardown observability (the manager is process-wide, so a
+    /// global count would be cross-mount/cross-suite noise). Tests assert
+    /// this goes false after the last subscriber leaves, so a big fleet
+    /// cannot accumulate watcher opens/fds.
+    func hasGroup(forFile fileURL: URL) -> Bool {
+        groups[Self.canonicalKey(for: fileURL)] != nil
     }
 
-    /// Number of live watch groups — group-teardown observability (tests
-    /// assert 0 after the last subscriber leaves, so a big fleet cannot
-    /// accumulate watcher opens/fds).
-    var groupCount: Int { groups.count }
+    /// Live subscriber count on the given file's group (0 when no group).
+    func subscriberCount(forFile fileURL: URL) -> Int {
+        groups[Self.canonicalKey(for: fileURL)]?.subscribers.count ?? 0
+    }
 
     /// Registers a PARKED subscription (no cursor yet). MUST be called
     /// before the caller takes its catch-up snapshot: the commit observer is
@@ -167,17 +217,19 @@ actor FileWatchManager {
     /// Returns `nil` when the watcher cannot be opened (file deleted, fd
     /// exhaustion): logged once, subscribers stay catch-up-only (the client
     /// redial fallback remains correct), retried on the next subscriber join.
-    func subscribe(fileURL: URL, socket: WebSocket, revocation: RevocationFlag) -> PushSubscription? {
+    func subscribe(fileURL: URL, context: MountPushContext,
+                   socket: WebSocket, revocation: RevocationFlag) -> PushSubscription? {
         let key = Self.canonicalKey(for: fileURL)
         let group: FileWatchGroup
         if let existing = groups[key] {
             group = existing
         } else {
-            guard let created = makeGroup(key: key, fileURL: fileURL) else { return nil }
+            guard let created = makeGroup(key: key, fileURL: fileURL, context: context) else { return nil }
             groups[key] = created
             group = created
         }
-        let sub = PushSubscription(socket: socket, revocation: revocation, key: key)
+        let sub = PushSubscription(socket: socket, revocation: revocation, key: key,
+                                   pageSize: context.options.pageSize)
         group.subscribers.append(sub)
         return sub
     }
@@ -197,9 +249,15 @@ actor FileWatchManager {
 
     /// Idempotent: `onClose`, pump send-failure, and the abandoned-connection
     /// paths all funnel here. Last subscriber out tears the group down —
-    /// observer token cancelled, reconcile tick cancelled, watcher `Lattice`
-    /// released OFF the actor (same discipline as the relay's off-loop
-    /// per-connection release).
+    /// observer token cancelled, reconcile tick cancelled, the group's
+    /// watcher reference released OFF the actor (same discipline as the
+    /// relay's off-loop per-connection release). In-flight pumps are NOT
+    /// waited on: each holds its own strong `WatcherRef` (taken in
+    /// `maybePump`) and exits cleanly on its next inactive/closed/revoked
+    /// check, so clearing the box here can never trap or dangle a pump —
+    /// the underlying Lattice is destroyed only when the last holder
+    /// (this detached clear or the final pump task) lets go, always in a
+    /// detached-task context.
     func unsubscribe(_ sub: PushSubscription) {
         sub.active = false
         guard let group = groups[sub.key] else { return }
@@ -232,10 +290,23 @@ actor FileWatchManager {
 
     private func maybePump(_ sub: PushSubscription) {
         guard sub.active, sub.cursor != nil, !sub.pumping,
-              let group = groups[sub.key] else { return }
+              let group = groups[sub.key],
+              // NEVER force-unwrap on the pump path: a subscription that
+              // loses the teardown race (box already cleared by a stale
+              // group's release) exits cleanly instead of trapping. With
+              // teardown ordered under this actor the guard can't actually
+              // fire — it is the structural backstop.
+              let lattice = group.watcher.valueIfPresent else { return }
         sub.pumping = true
-        let watcher = group.watcher
-        let pageSize = options.pageSize
+        // The pump's OWN strong reference, taken on the actor while the
+        // group is provably alive and held for the pump task's lifetime —
+        // last-subscriber teardown can clear the group's box mid-pass
+        // without invalidating this pump; it finishes its pass (or exits on
+        // its next closed/revoked/inactive check) against a live instance,
+        // and the Lattice is finally released off-actor when the last
+        // holder (the teardown task or this pump task) drops it.
+        let watcher = WatcherRef(lattice)
+        let pageSize = sub.pageSize
         // Detached: page queries + JSON encoding never run on this actor or
         // on any socket's event loop (the B3.2 lesson). One task per
         // subscription; every other subscription pumps independently, so a
@@ -250,7 +321,7 @@ actor FileWatchManager {
     /// watcher's read connection, and the nudge itself fired from the
     /// writer's post-commit WAL hook, so "don't hold the apply/write
     /// transaction while fanning" is satisfied by construction.
-    private nonisolated func pump(_ sub: PushSubscription, watcher: UnsafeSendableBox<Lattice>, pageSize: Int) async {
+    private nonisolated func pump(_ sub: PushSubscription, watcher: WatcherRef, pageSize: Int) async {
         while true {
             guard var cursor = await beginPass(sub) else { return }
             while true {
@@ -261,7 +332,7 @@ actor FileWatchManager {
                     await clearPumping(sub)
                     return
                 }
-                let page = watcher.value.eventsAfter(id: cursor).snapshot(limit: Int64(pageSize))
+                let page = watcher.lattice.eventsAfter(id: cursor).snapshot(limit: Int64(pageSize))
                 guard !page.isEmpty, let last = page.last?.primaryKey else { break }
                 guard let encoded = try? JSONEncoder().encode(ServerSentEvent.auditLog(page)) else {
                     log.error("observer-push: failed to encode page after id \(cursor); dropping subscriber")
@@ -328,17 +399,20 @@ actor FileWatchManager {
 
     // MARK: group construction
 
-    private func makeGroup(key: String, fileURL: URL) -> FileWatchGroup? {
-        // The mount's own storeConfiguration (the 1.6.3 per-mount factory) —
-        // mandatory, or a watcher on a projector-migrated file would refuse
-        // the open exactly like the pre-1.6.3 relay did — then strip sync
-        // config the way `changeStream`'s query lattice does, so the watcher
-        // never joins sync channels or mints spurious entries.
-        var configuration = storeConfiguration?(fileURL) ?? .init(fileURL: fileURL)
+    private func makeGroup(key: String, fileURL: URL, context: MountPushContext) -> FileWatchGroup? {
+        // The subscribing mount's own storeConfiguration (the 1.6.3
+        // per-mount factory) — mandatory, or a watcher on a
+        // projector-migrated file would refuse the open exactly like the
+        // pre-1.6.3 relay did — then strip sync config the way
+        // `changeStream`'s query lattice does, so the watcher never joins
+        // sync channels or mints spurious entries. The group is created from
+        // the FIRST subscriber's mount context; later subscribers from other
+        // mounts over the same file share it as-is.
+        var configuration = context.storeConfiguration?(fileURL) ?? .init(fileURL: fileURL)
         configuration.ipcTargets = nil
         configuration.wssEndpoint = nil
         configuration.authorizationToken = nil
-        guard let watcher = try? Lattice(for: schema, configuration: configuration) else {
+        guard let watcher = try? Lattice(for: context.schema, configuration: configuration) else {
             log.error("observer-push: could not open watcher for \(key); subscribers stay catch-up-only")
             return nil
         }
@@ -347,11 +421,13 @@ actor FileWatchManager {
         // notification thread: flag-set + task-spawn ONLY (no SQL, no
         // encoding, no hydration) — the pump re-queries by cursor, which is
         // the correctness mechanism.
-        group.token = watcher.observeCommits { [weak self] in
-            guard let self else { return }
-            Task { await self.nudge(key: key) }
+        if !context.options._suppressCommitObserverForTesting {
+            group.token = watcher.observeCommits { [weak self] in
+                guard let self else { return }
+                Task { await self.nudge(key: key) }
+            }
         }
-        if let interval = options.reconcileInterval {
+        if let interval = context.options.reconcileInterval {
             group.reconcile = Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: interval)
