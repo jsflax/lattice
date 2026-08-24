@@ -712,15 +712,34 @@ extension Lattice {
                         ws.send(ByteBuffer(data: encoded))
                     }
                 } else if let error = outcome.lastError {
-                    // A non-upload frame (an ack's bookkeeping write) that
-                    // failed: nothing to nack — the client's entries are
-                    // already durable — but never silent.
-                    relayLog.warning("""
-                        relay bookkeeping apply failed: channel=\(channel.id) \
-                        user=\(channel.userId) sqlite=\(outcome.errorClass.rawValue) \
-                        frameBytes=\(frame.byteCount) attempts=\(outcome.attempts) \
-                        elapsedMs=\(Int(outcome.elapsedMs)) error=\(error)
-                        """)
+                    if frame.root == nil || frame.claimsUpload {
+                        // An UPLOAD this relay could not parse (or whose
+                        // entries yielded no extractable globalIds) failed
+                        // terminally. There is nothing to nack BY ID — and
+                        // this used to log as bookkeeping noise while the
+                        // sender's entries were LOST. Be loud and CLOSE: a
+                        // native writer redials and resends; a browser
+                        // writer at least sees the break instead of a
+                        // healthy socket over a dropped frame.
+                        relayLog.error("""
+                            relay apply failed on a frame it could not parse as an upload: \
+                            channel=\(channel.id) user=\(channel.userId) \
+                            sqlite=\(outcome.errorClass.rawValue) frameBytes=\(frame.byteCount) \
+                            attempts=\(outcome.attempts) elapsedMs=\(Int(outcome.elapsedMs)) \
+                            — closing so the client redials error=\(error)
+                            """)
+                        try? await ws.close(code: .unexpectedServerError)
+                    } else {
+                        // A non-upload frame (an ack's bookkeeping write) that
+                        // failed: nothing to nack — the client's entries are
+                        // already durable — but never silent.
+                        relayLog.warning("""
+                            relay bookkeeping apply failed: channel=\(channel.id) \
+                            user=\(channel.userId) sqlite=\(outcome.errorClass.rawValue) \
+                            frameBytes=\(frame.byteCount) attempts=\(outcome.attempts) \
+                            elapsedMs=\(Int(outcome.elapsedMs)) error=\(error)
+                            """)
+                    }
                 }
 
                 // Legacy same-channel fan-out — unchanged on mounts without

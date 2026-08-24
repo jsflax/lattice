@@ -102,10 +102,10 @@ public enum SyncRelayApplyPolicy: Sendable {
     ///
     /// A mount's `storeConfiguration` still decides schema/migration (that is
     /// what it exists for), but the relay's busy budget is applied on top
-    /// UNLESS the mount asked for a specific one: a configuration still
-    /// carrying the library default (`Lattice.Configuration.defaultBusyTimeoutMs`)
-    /// is treated as "didn't think about it" and gets the relay budget, while
-    /// any explicit value is respected verbatim.
+    /// UNLESS the mount asked for a specific one — tracked by
+    /// `busyTimeoutMsWasCustomized`, not value equality, so a mount that
+    /// deliberately sets 30_000 (matching a slow-volume foreign writer) is
+    /// respected verbatim rather than silently clobbered to the relay budget.
     ///
     /// Note on aliasing: LatticeCore's instance cache keys on
     /// (path, scheduler, wss url, schema, target version, ipc, sync tuning) —
@@ -117,7 +117,7 @@ public enum SyncRelayApplyPolicy: Sendable {
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)?
     ) -> Lattice.Configuration {
         var configuration = fileURL.flatMap { storeConfiguration?($0) } ?? .init(fileURL: fileURL)
-        if configuration.busyTimeoutMs == Lattice.Configuration.defaultBusyTimeoutMs {
+        if !configuration.busyTimeoutMsWasCustomized {
             configuration.busyTimeoutMs = busyTimeoutMs
         }
         return configuration
@@ -302,6 +302,7 @@ func applyWithRetry(
 
     while true {
         outcome.attempts += 1
+        let attemptStarted = DispatchTime.now()
         var thrown: String?
         do {
             if let fault = _applyFaultForTesting.withLockedValue({ $0 }) {
@@ -320,10 +321,33 @@ func applyWithRetry(
         outcome.errorClass = RelayApplyErrorClass.classify(thrown)
         outcome.elapsedMs = elapsedMs()
 
+        // FIRST-OPENER-WINS DETECTOR: the core's instance cache does not key
+        // on busyTimeoutMs, so whichever open of this file happened first
+        // installed ITS budget for every aliased handle. A single contended
+        // attempt parking far beyond the relay's own budget is that exact
+        // signature — the incident's 30s park sneaking back in through a
+        // co-writer's default-budget open. Detection is the best a library
+        // can do here; the fix is aligning every co-writer's
+        // `Configuration.busyTimeoutMs` (as orbital-server does).
+        let attemptMs = Double(DispatchTime.now().uptimeNanoseconds &- attemptStarted.uptimeNanoseconds) / 1e6
+        if outcome.errorClass.isContention,
+           attemptMs > Double(SyncRelayApplyPolicy.busyTimeoutMs) * 2 + 500 {
+            relayLog.error("""
+                relay apply parked \(Int(attemptMs))ms against a \(SyncRelayApplyPolicy.busyTimeoutMs)ms                 budget: channel=\(channelId) — another open of this channel file installed a larger                 busyTimeoutMs (the instance cache does not key on it); align every co-writer's                 Configuration.busyTimeoutMs with the relay's
+                """)
+        }
+
         // Nothing missing and nothing raised: done. (An ack/replay frame has
         // no requested ids, so it exits here unless its bookkeeping write
         // threw — those are writes too, and they are worth retrying.)
         if missing.isEmpty && thrown == nil { return outcome }
+
+        // A DETERMINISTIC failure (schema error, a frame the core's parser
+        // rejects — `.other`) re-fails identically on every attempt: retrying
+        // would re-run a potentially huge frame five times inside the
+        // per-file gate, delaying every queued apply, to end at the same
+        // nack. One attempt is the answer; contention classes retry below.
+        if thrown != nil, !outcome.errorClass.isContention { return outcome }
 
         guard outcome.attempts < SyncRelayApplyPolicy.maxAttempts,
               outcome.elapsedMs < Double(SyncRelayApplyPolicy.retryBudgetMs) else {

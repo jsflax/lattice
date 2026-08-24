@@ -574,7 +574,17 @@ public struct Lattice {
         /// (30s); interactive apps that write on the main thread should set a
         /// small value (e.g. 5000) so a stuck writer can't hang the UI, and
         /// anything serving a live socket should be smaller still.
-        public var busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs
+        public var busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs {
+            didSet { busyTimeoutMsWasCustomized = true }
+        }
+        /// Whether `busyTimeoutMs` was chosen by the caller — assigned after
+        /// init, or passed non-default AT init. How the relay distinguishes
+        /// "didn't think about it" (gets the relay budget) from an explicit
+        /// choice (respected verbatim, even 30s). One residual blind spot:
+        /// `init(busyTimeoutMs: 30_000)` — explicitly passing the default
+        /// VALUE at init — is indistinguishable from omission; assign the
+        /// property post-init to state that intent.
+        public private(set) var busyTimeoutMsWasCustomized = false
 
         /// Sync tuning knobs (1.0 item I2), forwarded into every synchronizer
         /// this database creates (WSS and IPC). Every field is optional: nil
@@ -694,6 +704,7 @@ public struct Lattice {
             self.migration = migration
             self.syncFilter = syncFilter
             self.busyTimeoutMs = busyTimeoutMs
+            self.busyTimeoutMsWasCustomized = (busyTimeoutMs != Configuration.defaultBusyTimeoutMs)
             self.syncTuning = syncTuning
         }
 
