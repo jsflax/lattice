@@ -423,8 +423,8 @@ final class BusySafeApplyForensicsTests: BaseTest {
 
         #expect(acked, "A's live-socket upload was never applied server-side")
         #expect(latencyMs ?? .infinity < 1_000,
-                "A's upload took \(latencyMs.map { String(format: "%.0f", $0) } ?? "NEVER")ms to become "
-                + "visible under B's catch-up ack burst (budget: 1000ms)")
+                Comment(rawValue: "A's upload took \(latencyMs.map { String(format: "%.0f", $0) } ?? "NEVER")ms to become "
+                + "visible under B's catch-up ack burst (budget: 1000ms)"))
         #expect(a.nacks.isEmpty, "nothing should be nacked on the healthy path")
         #expect(a.rejected.isEmpty)
     }
@@ -594,8 +594,8 @@ final class BusySafeApplyForensicsTests: BaseTest {
 
         #expect(nacked, "a contended apply must answer with a nack, not silence")
         #expect(nackMs ?? .infinity < 9_000,
-                "the nack took \(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER")ms — "
-                + "the relay is parking again instead of failing fast")
+                Comment(rawValue: "the nack took \(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER")ms — "
+                + "the relay is parking again instead of failing fast"))
         #expect(!ackedWhileLocked, "nothing can be acked while the write lock is held elsewhere")
         #expect(!ackedEventually, "a nacked frame is dropped, not applied behind the client's back")
         #expect(!fannedOut, "a frame the relay could not store must never reach a peer")
