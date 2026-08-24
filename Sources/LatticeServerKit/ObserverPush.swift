@@ -522,7 +522,14 @@ actor FileWatchManager {
     /// subscribers from other mounts over the same file share it as-is.
     private static func openWatcher(fileURL: URL,
                                     context: MountPushContext) -> UnsafeSendableBox<Lattice>? {
-        var configuration = context.storeConfiguration?(fileURL) ?? .init(fileURL: fileURL)
+        // Same bounded busy budget as the relay's per-connection open: the
+        // core's instance cache does not key on `busyTimeoutMs`, so whichever
+        // open wins the race for a file installs the budget every aliased
+        // handle then runs with — a watcher opening first with the library's
+        // 30s default would silently restore the parking behavior 1.7.1
+        // removes.
+        var configuration = SyncRelayApplyPolicy.configuration(
+            fileURL: fileURL, storeConfiguration: context.storeConfiguration)
         configuration.ipcTargets = nil
         configuration.wssEndpoint = nil
         configuration.authorizationToken = nil

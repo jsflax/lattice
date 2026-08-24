@@ -103,7 +103,14 @@ public struct SyncWritePolicy: Sendable {
 
     /// First violation in the frame, or nil when the frame passes.
     func violation(inFrame data: Data) -> String? {
-        guard let parsed = try? JSONSerialization.jsonObject(with: data) else {
+        violation(inFrame: RelayFrame(data))
+    }
+
+    /// Parse-once form: the relay inspects every frame anyway (to know which
+    /// globalIds an upload asked it to store, so a shortfall can be nacked),
+    /// so the policy reads that same parse instead of re-running its own.
+    func violation(inFrame frame: RelayFrame) -> String? {
+        guard let parsed = frame.json else {
             // The applier's parser is more permissive than Foundation's
             // (nesting depth, number forms). Anything we cannot read, we
             // cannot vet — refuse it.
@@ -492,9 +499,21 @@ extension Lattice {
             // uploaded within the open window lost that frame, its entries
             // sat unACKed until the resend/reconnect, and the relay tests
             // that await that first delivery hung (the intermittent CI hang
-            // class). ONE lattice per connection, held for the socket's
-            // lifetime (a fresh Lattice per frame raced the weak instance
-            // cache and segfaulted under real bursts — exit 139).
+            // class). ONE `Lattice` REFERENCE per connection, held for the
+            // socket's lifetime (a fresh Lattice per frame raced the weak
+            // instance cache and segfaulted under real bursts — exit 139).
+            //
+            // NOT one SQLite connection per socket: every relay-shaped open of
+            // the same file+schema aliases ONE cached `swift_lattice`
+            // (LatticeCache::get_or_create) and therefore ONE
+            // FULLMUTEX-serialized SQLite connection — leaked per-connection
+            // Lattices retain that shared instance rather than adding
+            // connections. That is why concurrent applies on a channel
+            // contend inside `begin_transaction` (they are siblings on one
+            // connection, not rivals for a file lock) and why 1.7.1
+            // serializes them per file instead. The instance cache does NOT
+            // key on `busyTimeoutMs`, so the first open of a file installs the
+            // budget every later aliased handle runs with.
             let state = ConnectionRelayState()
 
             // Handlers go live IMMEDIATELY — synchronously on the socket's
@@ -622,47 +641,117 @@ extension Lattice {
 
             let latticeURL: URL? = storageURL
                 .appending(path: channel.databaseFileName)
+            // Apply-serialization key: the SAME canonical channel-file key
+            // the observer-push watch groups use, so two mounts over one file
+            // (writer + watch, or two writer mounts) share one apply queue
+            // rather than inventing a second path normalization. The
+            // channel-id fallback is unreachable in practice (the URL is
+            // always built above) and only exists so the key is never empty.
+            let applyKey = latticeURL.map { FileWatchManager.canonicalKey(for: $0) }
+                ?? "channel:\(channel.id)"
 
-            @Sendable func processFrame(_ ws: WebSocket, _ bb: ByteBuffer, _ lattice: Lattice) {
+            @Sendable func processFrame(_ ws: WebSocket, _ bb: ByteBuffer, _ lattice: Lattice) async {
                 // Authoritative revocation: a kicked connection stops
                 // affecting the channel immediately, even if its transport
                 // lingers because the peer never answered the close frame.
                 guard !state.revocation.isRevoked else { return }
                 let data = Data(buffer: bb)
+                // ONE parse for the whole path: the write-policy gate reads
+                // it, and so does the shortfall diff below (which globalIds
+                // did this frame ask us to store?).
+                let frame = RelayFrame(data)
                 // Write-policy gate: a violating frame is refused whole —
                 // not applied, not fanned out, its entries left unACKed.
-                if let policy = writePolicy, let reason = policy.violation(inFrame: data) {
+                if let policy = writePolicy, let reason = policy.violation(inFrame: frame) {
                     print(">>> Sync frame rejected on \(channel.id): \(reason)")
                     if let encoded = try? JSONEncoder().encode(ServerSentEvent.rejected(reason: reason)) {
                         ws.send(ByteBuffer(data: encoded))
                     }
                     return
                 }
-                do {
-                    let globalIds = try lattice.receive(data)
-                    // B3.8: never ack an empty apply — in particular incoming
-                    // ACK frames used to be re-acked (ack-of-ack ping-pong,
-                    // one empty bookkeeping round trip per client download
-                    // ack, forever).
-                    if !globalIds.isEmpty {
-                        ws.send(try JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
-                    }
-                } catch {
-                    print("Error:", error)
+
+                // Per-FILE serialization + bounded busy retry. Every write
+                // through this relay — uploads AND the catch-up ack
+                // bookkeeping, which is also a BEGIN + UPDATE burst
+                // (`mark_audit_entries_synced`) — queues on the channel
+                // file's apply slot, so concurrent connections take turns
+                // instead of burning each other's busy budget inside
+                // `begin_transaction` on the ONE shared, serialized SQLite
+                // connection they all alias.
+                let outcome = await withApplyLock(applyKey) {
+                    applyWithRetry(lattice: lattice, data: data, frame: frame,
+                                   channelId: channel.id, userId: channel.userId)
                 }
+
+                // B3.8: never ack an empty apply — in particular incoming
+                // ACK frames used to be re-acked (ack-of-ack ping-pong, one
+                // empty bookkeeping round trip per client download ack,
+                // forever).
+                if !outcome.applied.isEmpty,
+                   let encoded = try? JSONEncoder().encode(ServerSentEvent.ack(outcome.applied)) {
+                    ws.send(ByteBuffer(data: encoded))
+                }
+
+                // The silent-drop hole, closed. Before 1.7.1 a frame whose
+                // apply came back short produced NOTHING: no ack (the id list
+                // was empty), no nack (there was no nack), and no log line
+                // (nothing threw, so the print-only catch never ran). Now the
+                // shortfall is loud and the client is told exactly which
+                // entries to resend.
+                if !outcome.unapplied.isEmpty {
+                    relayLog.error("""
+                        relay apply INCOMPLETE: channel=\(channel.id) user=\(channel.userId) \
+                        sqlite=\(outcome.errorClass.rawValue) frameBytes=\(frame.byteCount) \
+                        requested=\(frame.requestedIds.count) applied=\(outcome.applied.count) \
+                        unapplied=\(outcome.unapplied.count) attempts=\(outcome.attempts) \
+                        elapsedMs=\(Int(outcome.elapsedMs)) — nacking\
+                        \(outcome.lastError.map { " error=\($0)" } ?? "")
+                        """)
+                    if let encoded = try? JSONEncoder().encode(
+                        ServerSentEvent.nack(ids: outcome.unapplied, reason: outcome.nackReason)) {
+                        ws.send(ByteBuffer(data: encoded))
+                    }
+                } else if let error = outcome.lastError {
+                    // A non-upload frame (an ack's bookkeeping write) that
+                    // failed: nothing to nack — the client's entries are
+                    // already durable — but never silent.
+                    relayLog.warning("""
+                        relay bookkeeping apply failed: channel=\(channel.id) \
+                        user=\(channel.userId) sqlite=\(outcome.errorClass.rawValue) \
+                        frameBytes=\(frame.byteCount) attempts=\(outcome.attempts) \
+                        elapsedMs=\(Int(outcome.elapsedMs)) error=\(error)
+                        """)
+                }
+
                 // Legacy same-channel fan-out — unchanged on mounts without
                 // observer push (writer mounts keep verbatim fan-out
-                // byte-for-byte). On push-enabled mounts it is skipped
-                // entirely: delivery is the pump's job (commit-ordered,
-                // cursor-deduped), uploads are policy-refused anyway, and
-                // fanning every frame would echo each observer's ack to
-                // every other observer — N² frames per commit.
-                if watchManager == nil {
-                    Task {
-                        for socket in await sockets.sockets(channelId: channel.id) where socket !== ws {
-                            socket.send(bb)
-                        }
-                    }
+                // byte-for-byte on the healthy path). On push-enabled mounts
+                // it is skipped entirely: delivery is the pump's job
+                // (commit-ordered, cursor-deduped), uploads are policy-refused
+                // anyway, and fanning every frame would echo each observer's
+                // ack to every other observer — N² frames per commit.
+                //
+                // Fan out ONLY what the channel database actually holds. A
+                // frame that failed to apply used to be fanned out anyway:
+                // live peers applied entries the relay store never got, so
+                // catch-up replay could never deliver them to anyone who
+                // reconnected or joined later — permanent divergence between
+                // live observers and the channel of record (program-plan
+                // sync-M7, reproduced during this incident). A PARTIAL apply
+                // fans the applied subset; a total failure fans nothing.
+                guard watchManager == nil else { return }
+                let fanOut: ByteBuffer?
+                if outcome.isComplete {
+                    fanOut = bb
+                } else if !outcome.applied.isEmpty,
+                          let reduced = frame.reencoded(keeping: Set(outcome.applied)) {
+                    fanOut = ByteBuffer(data: reduced)
+                } else {
+                    fanOut = nil
+                }
+                guard let fanOut else { return }
+                for socket in await sockets.sockets(channelId: channel.id) where socket !== ws {
+                    socket.send(fanOut)
                 }
             }
 
@@ -688,9 +777,12 @@ extension Lattice {
             // mount open files another writer created at a higher schema
             // version; the default raw open targets version 1 and would
             // refuse them (the "Could not open lattice for url" close-1001
-            // class on projector-owned channel files).
-            let configuration = latticeURL.flatMap { url in storeConfiguration?(url) }
-                ?? .init(fileURL: latticeURL)
+            // class on projector-owned channel files). The relay's bounded
+            // busy budget is layered on top (2s instead of the library's 30s)
+            // unless the mount asked for a specific one — a live socket must
+            // never park half a minute inside one `BEGIN IMMEDIATE`.
+            let configuration = SyncRelayApplyPolicy.configuration(
+                fileURL: latticeURL, storeConfiguration: storeConfiguration)
             guard let connectionLattice = try? Lattice(for: schema, configuration: configuration) else {
                 print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
                 await sockets.remove(socket: ws, channelId: channel.id)
@@ -741,7 +833,7 @@ extension Lattice {
                 state.applyConsumer = Task.detached {
                     for await frame in stream {
                         guard !state.revocation.isRevoked else { continue }
-                        processFrame(ws, frame, lattice)
+                        await processFrame(ws, frame, lattice)
                         let n = frame.readableBytes
                         ws.eventLoop.execute { state.queuedApplyBytes -= n }
                     }
@@ -904,7 +996,7 @@ final class ConnectionRelayState: @unchecked Sendable {
     var lattice: Lattice?
     /// Installed at go-live: the frame processor bound to this connection's
     /// channel (handlers register before the channel is known).
-    var process: ((WebSocket, ByteBuffer, Lattice) -> Void)?
+    var process: ((WebSocket, ByteBuffer, Lattice) async -> Void)?
     var buffered: [ByteBuffer] = []
     var bufferedBytes: Int = 0
 

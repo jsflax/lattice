@@ -120,9 +120,25 @@ public enum ServerSentEvent: Codable {
     /// neither applied nor fanned out; its entries stay unACKed client-side.
     /// Legacy clients ignore the unknown kind (C++ `from_json` → nullopt).
     case rejected(reason: String)
+    /// Server ACCEPTED the frame but could not store these entries (write-lock
+    /// contention that outlived the relay's bounded retry, or a per-entry
+    /// failure the core contained). The named ids are NOT in the channel
+    /// database and were NOT fanned out: release them from in-flight and
+    /// resend. Applies are idempotent (`ON CONFLICT(globalId) DO UPDATE`, plus
+    /// an already-applied probe per entry), so an immediate resend is safe
+    /// even if one of them raced to completion.
+    ///
+    /// Wire-compatible with every existing client: the C++
+    /// `server_sent_event::from_json` dispatches on the presence of
+    /// `auditLog` / `ack` / `replayRequest` and returns `nullopt` for anything
+    /// else, so a nack frame — which carries neither key — is ignored, and
+    /// those clients still recover through their own ack-timeout resend.
+    /// Acting on it (an immediate resend) is a client-side change; see the
+    /// 1.7.1 changelog.
+    case nack(ids: [UUID], reason: String)
 
     private enum CodingKeys: String, CodingKey {
-        case kind, auditLog, ack, rejected
+        case kind, auditLog, ack, rejected, nack, nackReason
     }
 
     public init(from decoder: any Decoder) throws {
@@ -139,6 +155,10 @@ public enum ServerSentEvent: Codable {
         case "rejected":
             let reason = try container.decode(String.self, forKey: .rejected)
             self = .rejected(reason: reason)
+        case "nack":
+            let ids = try container.decode([UUID].self, forKey: .nack)
+            let reason = try container.decodeIfPresent(String.self, forKey: .nackReason) ?? ""
+            self = .nack(ids: ids, reason: reason)
         default:
             throw DecodingError.dataCorruptedError(forKey: .kind, in: container, debugDescription: "Unknown kind: \(kind)")
         }
@@ -157,6 +177,14 @@ public enum ServerSentEvent: Codable {
         case .rejected(let reason):
             try container.encode("rejected", forKey: .kind)
             try container.encode(reason, forKey: .rejected)
+        case .nack(let ids, let reason):
+            // Deliberately NOT keyed `ack`/`auditLog`: the C++ client's
+            // `from_json` dispatches on those keys, and a nack must decode to
+            // nullopt (ignored) on clients that predate this case — never to
+            // an ack of entries the server did not store.
+            try container.encode("nack", forKey: .kind)
+            try container.encode(ids, forKey: .nack)
+            try container.encode(reason, forKey: .nackReason)
         }
     }
 }
