@@ -559,11 +559,32 @@ public struct Lattice {
         /// IPC sync targets for cross-process database synchronization.
         public var ipcTargets: [IPCSyncTarget]?
 
+        /// The library default busy timeout (30s). Named so callers that layer
+        /// their own policy on top of a caller-supplied configuration can tell
+        /// "the default nobody thought about" from an explicit choice — the
+        /// relay does exactly that when it applies its own bounded apply budget
+        /// (`SyncRelayApplyPolicy.busyTimeoutMs`).
+        public static let defaultBusyTimeoutMs = 30_000
+
         /// Statement-level SQLite busy timeout in milliseconds, applied to all
-        /// connections of this database. Headless/server processes can keep the
-        /// default (30s); interactive apps that write on the main thread should
-        /// set a small value (e.g. 5000) so a stuck writer can't hang the UI.
-        public var busyTimeoutMs: Int = 30_000
+        /// connections of this database. It is ALSO the wall-clock budget
+        /// LatticeCore gives `BEGIN IMMEDIATE` to acquire the write lock, so a
+        /// large value is a long park under contention, not just a long
+        /// statement timeout. Headless/server processes can keep the default
+        /// (30s); interactive apps that write on the main thread should set a
+        /// small value (e.g. 5000) so a stuck writer can't hang the UI, and
+        /// anything serving a live socket should be smaller still.
+        public var busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs {
+            didSet { busyTimeoutMsWasCustomized = true }
+        }
+        /// Whether `busyTimeoutMs` was chosen by the caller — assigned after
+        /// init, or passed non-default AT init. How the relay distinguishes
+        /// "didn't think about it" (gets the relay budget) from an explicit
+        /// choice (respected verbatim, even 30s). One residual blind spot:
+        /// `init(busyTimeoutMs: 30_000)` — explicitly passing the default
+        /// VALUE at init — is indistinguishable from omission; assign the
+        /// property post-init to state that intent.
+        public private(set) var busyTimeoutMsWasCustomized = false
 
         /// Sync tuning knobs (1.0 item I2), forwarded into every synchronizer
         /// this database creates (WSS and IPC). Every field is optional: nil
@@ -669,7 +690,8 @@ public struct Lattice {
         public init(storage: Storage? = nil, fileURL: URL? = nil,
                     authorizationToken: String? = nil, wssEndpoint: URL? = nil,
                     isReadOnly: Bool = false, migration: [Int: Migration]? = nil,
-                    syncFilter: SyncFilter? = nil, busyTimeoutMs: Int = 30_000,
+                    syncFilter: SyncFilter? = nil,
+                    busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs,
                     syncTuning: SyncTuning? = nil) {
             // storage wins; fileURL is the long-standing convenience spelling;
             // neither → the default documents-directory database.
@@ -682,6 +704,7 @@ public struct Lattice {
             self.migration = migration
             self.syncFilter = syncFilter
             self.busyTimeoutMs = busyTimeoutMs
+            self.busyTimeoutMsWasCustomized = (busyTimeoutMs != Configuration.defaultBusyTimeoutMs)
             self.syncTuning = syncTuning
         }
 
@@ -1804,6 +1827,34 @@ public struct Lattice {
                     }
                 }
             }
+        }
+
+        let token = TableObservationToken(backend: backend, tableName: AuditLog.entityName, observerId: observerId)
+
+        return AnyCancellable {
+            token.cancel()
+        }
+    }
+
+    /// Payload-free commit signal: fires once per committed WAL flush that
+    /// minted AuditLog rows — from THIS instance, from sibling same-process
+    /// instances sharing the file (exactly-once, commit-ordered per the
+    /// delivery contract on `observe(_:)`), and — best-effort — from other
+    /// processes via the cross-process notifier (a race can drop the wakeup;
+    /// the data itself is durable — poll or re-query to recover).
+    ///
+    /// Consumers that need the entries re-query by cursor (e.g.
+    /// `eventsAfter(id:)`); that re-query — not the notification — is the
+    /// correctness mechanism, so this deliberately skips the per-row
+    /// `AuditLog` hydration and the `ObserverDeliveryWorker` hop that
+    /// `observe(_:)` performs. The block runs on the core's notification
+    /// thread: it MUST be cheap (set a flag, spawn a task) and hop off
+    /// immediately — any SQL or encoding in the callback recreates the C0a
+    /// stack/stall class.
+    public func observeCommits(_ block: @escaping @Sendable () -> Void) -> AnyCancellable {
+        let backend = self.backend
+        let observerId = backend.addTableObserver(table: AuditLog.entityName) { _ in
+            block()
         }
 
         let token = TableObservationToken(backend: backend, tableName: AuditLog.entityName, observerId: observerId)

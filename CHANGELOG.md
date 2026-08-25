@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.7.0] - 2026-08-20
+
+LatticeCore dependency floor unchanged (`from: "1.4.2"`); zero core changes.
+
+### Added
+- **Observer push** (`LatticeServerKit`): `configureSyncRelay` gains
+  `observerPush: SyncObserverPush?` (default `nil` — pre-1.7 behavior
+  byte-for-byte). On a push-enabled mount, every commit to a channel's
+  database file — a relay-socket apply on any mount sharing the file, an
+  in-process co-writer such as a projector actor, or (best-effort) another
+  process — is pushed to that mount's sockets as ordinary
+  `ServerSentEvent.auditLog` catch-up frames, exactly-once and
+  commit-ordered per socket ("nudge + pump": a payload-free per-file commit
+  observer nudges per-socket pumps that re-run the catch-up machinery from a
+  monotone AuditLog-pk cursor, with awaited sends for slow-consumer
+  isolation). Watch groups live on ONE process-wide manager, so push mounts
+  over the same channel file share one watcher Lattice and one commit
+  observer; every pump holds its own strong watcher reference, so
+  last-subscriber teardown can never trap or dangle an in-flight pump.
+  Clients apply pushed frames with zero changes; app-level redial loops
+  become cheap no-op fallbacks. Push-enabled mounts no longer fan client
+  frames (observer acks) to same-channel peers. `SyncObserverPush.pageSize`
+  is validated at init (`precondition`) and clamped positive per
+  subscription, so a zero/negative page can never make a pump spin without
+  draining. The per-file watcher open runs OFF the process-wide manager
+  actor (concurrent first subscribers dedupe onto one in-flight open), so a
+  slow SQLite open on one channel cannot stall another channel's pumps,
+  nudges or teardowns; and a connection whose connect-time catch-up throws
+  releases its parked subscription and closes, so a failed catch-up can
+  neither strand a watch group nor leave a permanently silent observer.
+- `Lattice.observeCommits(_:)` — payload-free AuditLog commit signal (no
+  per-row hydration, no delivery-worker hop; consumers re-query by cursor).
+- `Lattice.eventsAfter(id:)` — `Int64` primary-key-cursor overload beside
+  the existing `eventsAfter(globalId:)`.
+- `SyncSchemaHandshake`: native `?schema=` query-parameter declaration
+  (checked before the header — browser WebSockets cannot set headers) and
+  `Mode.exact(Int)`, which refuses both older ("upgrade required") and
+  newer ("server behind client") clients with distinct legible close
+  reasons. Query-param admission is OPT-IN: the legacy `minimumVersion`
+  init stays header-only (behavior-identical to pre-1.7 — an upgrade never
+  silently widens a mount's admission surface); the exact-mode init
+  defaults `queryParameterName` to `"schema"`, and minimum-mode mounts can
+  set it explicitly. Consumers adopting exact mode can delete their
+  query-lift middleware and app-level newer-schema checks.
+
 ## [1.2.0] - 2026-08-04
 
 ### Added

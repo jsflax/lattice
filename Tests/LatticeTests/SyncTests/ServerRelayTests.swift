@@ -95,6 +95,7 @@ private final class RelayHarness: @unchecked Sendable {
         schema: [any Lattice.Model.Type],
         writePolicy: SyncWritePolicy? = nil,
         handshake: SyncSchemaHandshake? = nil,
+        storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) async throws {
         storageURL = FileManager.default.temporaryDirectory
@@ -106,6 +107,7 @@ private final class RelayHarness: @unchecked Sendable {
         handle = Lattice.configureSyncRelay(
             on: app.routes, path: path, for: schema, storageURL: storageURL,
             writePolicy: writePolicy, handshake: handshake,
+            storeConfiguration: storeConfiguration,
             channelExtractor: channelExtractor)
         try await app.startup()
         guard let assigned = app.http.server.shared.localAddress?.port else {
@@ -387,6 +389,133 @@ final class ServerRelayTests: BaseTest {
         #expect(await ok.wait { !$0.acks.isEmpty })
     }
 
+    /// `.exact` mode refuses BOTH older and newer clients, with distinct
+    /// legible reasons, via either declaration channel — the `?schema=`
+    /// query parameter (checked first: browser WebSockets cannot set
+    /// headers) or the header. Replaces the consumer-side pre-upgrade
+    /// query-lift middleware + app-level newer-schema check.
+    @Test func exactMatchRefusesAboveAndBelowViaQueryAndHeader() async throws {
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            handshake: SyncSchemaHandshake(exactVersion: 3),
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        // Both reasons are asserted UNCONDITIONALLY: the refusal text is
+        // sent on the connection BEFORE the close frame, so it is ordered
+        // ahead of the close on the same channel — waiting for the text is
+        // the assertion, and a refusal that closed silently (or with the
+        // wrong reason) fails here instead of being skipped by an
+        // `if !receivedTexts.isEmpty` guard, which is exactly how a
+        // regression in the distinct-reasons behavior would hide.
+
+        // Below, via header → refused: upgrade required.
+        let low = try await harness.connect(
+            pathSuffix: "sync/group/g1", user: UUID(), headers: ["X-Lattice-Schema": "2"])
+        #expect(await low.wait { collector in
+            collector.receivedTexts.contains { $0.contains("upgrade required") }
+        })
+        #expect(await low.wait { $0.isClosed })
+        #expect(low.closeCode == nil || low.closeCode == WebSocketErrorCode.policyViolation)
+        // ...and NOT the newer-client reason.
+        #expect(!low.receivedTexts.contains { $0.contains("server behind client") })
+
+        // Above, via query → refused: server behind client (a distinct
+        // reason — this client must NOT be told to upgrade).
+        let high = try await harness.connect(
+            pathSuffix: "sync/group/g1?schema=4", user: UUID())
+        #expect(await high.wait { collector in
+            collector.receivedTexts.contains { $0.contains("server behind client") }
+        })
+        #expect(await high.wait { $0.isClosed })
+        #expect(high.closeCode == nil || high.closeCode == WebSocketErrorCode.policyViolation)
+        #expect(!high.receivedTexts.contains { $0.contains("upgrade required") })
+
+        // Missing declaration entirely → refused (requireDeclaration).
+        let missing = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+        #expect(await missing.wait { $0.isClosed })
+
+        // Exact via query → admitted and functional; the query is checked
+        // FIRST, so it wins over a (stale) low header.
+        let ok = try await harness.connect(
+            pathSuffix: "sync/group/g1?schema=3", user: UUID(),
+            headers: ["X-Lattice-Schema": "1"])
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 6, floatValue: 1)) }
+        try await ok.socket!.send(try makeFrame(entries: entries))
+        #expect(await ok.wait { !$0.acks.isEmpty })
+        #expect(!ok.isClosed)
+
+        // Exact via header alone → admitted too.
+        let okHeader = try await harness.connect(
+            pathSuffix: "sync/group/g2", user: UUID(), headers: ["X-Lattice-Schema": "3"])
+        let more = try donorEntries { try $0.add(SimpleSyncObject(value: 7, floatValue: 1)) }
+        try await okHeader.socket!.send(try makeFrame(entries: more))
+        #expect(await okHeader.wait { !$0.acks.isEmpty })
+    }
+
+    /// Query-param admission is OPT-IN: a legacy `minimumVersion` mount is
+    /// header-only, exactly as pre-1.7 — upgrading the package must not
+    /// silently widen its admission surface to `?schema=`.
+    @Test func legacyMinimumMountIgnoresQueryParameter() async throws {
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            handshake: SyncSchemaHandshake(headerName: "X-Engram-Schema", minimumVersion: 3),
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        // A valid version via query ONLY is a missing declaration on a
+        // legacy mount (would be admitted if the query were honored).
+        let queryOnly = try await harness.connect(
+            pathSuffix: "sync/group/g1?schema=3", user: UUID())
+        #expect(await queryOnly.wait { $0.isClosed })
+        #expect(queryOnly.closeCode == nil || queryOnly.closeCode == WebSocketErrorCode.policyViolation)
+
+        // A BELOW-minimum query value cannot override a valid header either
+        // (the query wins when honored, so admission here proves it was
+        // ignored, not merely outranked).
+        let headerWins = try await harness.connect(
+            pathSuffix: "sync/group/g1?schema=2", user: UUID(),
+            headers: ["X-Engram-Schema": "3"])
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 8, floatValue: 1)) }
+        try await headerWins.socket!.send(try makeFrame(entries: entries))
+        #expect(await headerWins.wait { !$0.acks.isEmpty })
+        #expect(!headerWins.isClosed)
+    }
+
+    /// The other half of opt-in: a minimum-mode mount that EXPLICITLY sets
+    /// `queryParameterName` does honor the query channel (checked before
+    /// the header), same as the exact-mode default.
+    @Test func minimumMountWithExplicitQueryParameterHonorsQuery() async throws {
+        var handshake = SyncSchemaHandshake(headerName: "X-Engram-Schema", minimumVersion: 3)
+        handshake.queryParameterName = "schema"
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            handshake: handshake,
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        // Query alone admits...
+        let ok = try await harness.connect(pathSuffix: "sync/group/g1?schema=3", user: UUID())
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 9, floatValue: 1)) }
+        try await ok.socket!.send(try makeFrame(entries: entries))
+        #expect(await ok.wait { !$0.acks.isEmpty })
+        #expect(!ok.isClosed)
+
+        // ...and a low query refuses, even past a valid header (query is
+        // checked FIRST once opted in).
+        let low = try await harness.connect(
+            pathSuffix: "sync/group/g1?schema=2", user: UUID(),
+            headers: ["X-Engram-Schema": "3"])
+        #expect(await low.wait { $0.isClosed })
+        #expect(low.closeCode == nil || low.closeCode == WebSocketErrorCode.policyViolation)
+        if !low.receivedTexts.isEmpty {
+            #expect(low.receivedTexts.contains { $0.contains("upgrade required") })
+        }
+    }
+
     // MARK: Policy fail-closed (adversarial review)
 
     /// The inspector (Foundation) and the applier (nlohmann) are different
@@ -601,5 +730,77 @@ final class ServerRelayTests: BaseTest {
         #expect(FileManager.default.fileExists(atPath: dbURL.path))
         let db = try Lattice(SimpleSyncObject.self, configuration: .init(fileURL: dbURL))
         #expect(db.objects(SimpleSyncObject.self).contains { $0.value == 77 })
+    }
+
+    // MARK: Store configuration
+
+    /// A mount can serve channel files it did NOT create: a projector that
+    /// opens with `migration:` leaves the file at `user_version == max key`,
+    /// and the relay's default open (target version 1) refuses it — every
+    /// observer's socket closed at connect, forever. `storeConfiguration`
+    /// hands the mount the projector's own migration dictionary so the open
+    /// succeeds; a mount left at the default keeps today's behavior for its
+    /// own relay-created (version-1) files.
+    @Test func storeConfigurationOpensProjectorMigratedChannelFiles() async throws {
+        let migrations: [Int: Migration] = [2: Migration(), 3: Migration()]
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            storeConfiguration: { url in .init(fileURL: url, migration: migrations) },
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        // Projector-shaped creation: the channel file exists BEFORE any
+        // connection, migrated to user_version 3, with a projected row.
+        try FileManager.default.createDirectory(at: harness.storageURL,
+                                                withIntermediateDirectories: true)
+        let fileURL = harness.storageURL.appending(path: "group-g1.sqlite")
+        do {
+            let projector = try Lattice(SimpleSyncObject.self, configuration: .init(
+                fileURL: fileURL, migration: migrations))
+            try projector.add(SimpleSyncObject(value: 33, floatValue: 1))
+        }
+
+        // The configured mount opens the v3 file: connection survives and
+        // the catch-up delivers the projected row.
+        let observer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+        #expect(await observer.wait { $0.count(of: "auditLog") > 0 })
+        #expect(!observer.isClosed)
+
+        // Uploads still work through the configured open.
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 34, floatValue: 1)) }
+        try await observer.socket!.send(try makeFrame(entries: entries))
+        #expect(await observer.wait { !$0.acks.isEmpty })
+    }
+
+    /// The bug this parameter fixes, pinned as a regression shape: a DEFAULT
+    /// mount pointed at a projector-migrated (v3) file refuses the open and
+    /// closes the socket — while the same default mount on its own fresh
+    /// file keeps working exactly as before.
+    @Test func defaultMountRefusesMigratedFileButStillServesOwnFiles() async throws {
+        let harness = try await RelayHarness(
+            path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self],
+            channelExtractor: groupExtractor)
+        defer { Task { [harness] in await harness.shutdown() } }
+
+        try FileManager.default.createDirectory(at: harness.storageURL,
+                                                withIntermediateDirectories: true)
+        do {
+            let projector = try Lattice(SimpleSyncObject.self, configuration: .init(
+                fileURL: harness.storageURL.appending(path: "group-g1.sqlite"),
+                migration: [2: Migration(), 3: Migration()]))
+            try projector.add(SimpleSyncObject(value: 33, floatValue: 1))
+        }
+
+        // Version-skewed file → open fails → connect-then-close.
+        let refused = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+        #expect(await refused.wait { $0.isClosed })
+
+        // Cookie-1 path unchanged: a fresh relay-created channel file works.
+        let ok = try await harness.connect(pathSuffix: "sync/group/g2", user: UUID())
+        let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 21, floatValue: 1)) }
+        try await ok.socket!.send(try makeFrame(entries: entries))
+        #expect(await ok.wait { !$0.acks.isEmpty })
     }
 }
