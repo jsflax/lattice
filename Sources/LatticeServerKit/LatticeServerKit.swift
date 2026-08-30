@@ -420,6 +420,17 @@ public struct SyncRelayHandle: Sendable {
     public func activeConnections() async -> [(channelId: String, userId: UUID)] {
         await manager.activeConnections()
     }
+
+    /// §1.7.2 PRE-STOP DRAIN: checkpoint one store through the governor — the host's
+    /// graceful-shutdown hook (and any admin drain endpoint) calls this for every open
+    /// channel store BEFORE the process exits, so the epoch's committed frames are
+    /// integrated into the main db rather than left to boot-time WAL recovery (which at
+    /// least one production restart failed to run). Safe on wedged files: the governed
+    /// checkpoint returns could-not-run and disturbs nothing — but its WEDGE ALARM will
+    /// have fired long before shutdown, which is the signal NOT to restart that process.
+    public func drainForShutdown(lattice: Lattice, storeURL: URL) {
+        RelayCheckpointGovernor.shared.checkpoint(lattice: lattice, storePath: storeURL.path)
+    }
 }
 
 // MARK: - Relay
@@ -681,6 +692,13 @@ extension Lattice {
                 let outcome = await withApplyLock(applyKey) {
                     applyWithRetry(lattice: lattice, data: data, frame: frame,
                                    channelId: channel.id, userId: channel.userId)
+                }
+
+                // §1.7.2 governor: apply-coupled checkpoint (threshold- or time-due), OUTSIDE the
+                // apply gate so the slot hold is never extended — RelayCheckpoint.swift carries the
+                // starvation mechanism and the wedge-alarm law.
+                if let url = latticeURL {
+                    RelayCheckpointGovernor.shared.afterApply(lattice: lattice, storePath: url.path)
                 }
 
                 // B3.8: never ack an empty apply — in particular incoming
