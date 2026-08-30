@@ -85,10 +85,19 @@ let package = Package(
                 "Lattice",
                 "LatticeMCP",
                 "LatticeServerKit",
+                "WalEpochWriterChild",
                     .product(name: "Vapor", package: "vapor")
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
+        // Child-process writer for the WAL-epoch forensics harness
+        // (Tests/LatticeTests/SyncTests/WalEpochForensicsTests.swift): kill -9
+        // semantics need a real separate process holding a relay-shaped handle.
+        // Test-only support; not a shipped product.
+        .executableTarget(
+            name: "WalEpochWriterChild",
+            dependencies: ["Lattice"],
+            swiftSettings: [.interoperabilityMode(.Cxx)]),
         // Cross-SDK conformance runner (plan WS-C item C4a): interprets the
         // declarative corpus in latticecore/conformance/corpus against the
         // public Lattice API. Skips gracefully when the corpus checkout is
