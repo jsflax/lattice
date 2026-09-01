@@ -922,6 +922,36 @@ extension Lattice {
                     }
 
                     let lastEventId = try? req.query.get(UUID?.self, at: "last-event-id")
+
+                    // §1.7.2 FLOOR HONESTY: a claimed floor the durable history cannot back was
+                    // previously swallowed (the probe returned nil, the filter dropped, and a
+                    // full replay proceeded with NO signal) — the exact shape under which a client
+                    // whose acked rows were lost never learns to re-upload them. Detect it, say it
+                    // on the wire BEFORE the pages (shipped C++ clients ignore the unknown kind),
+                    // attribute it via the boot ledger, and keep the socket open — the full replay
+                    // that follows is now explicit, not accidental.
+                    if let claimed = lastEventId, let url = latticeURL {
+                        let floorSuspect = DurableHeadLedger.shared.bootCheck(lattice: lattice, storePath: url.path)
+                        let known = !lattice.objects(AuditLog.self).where { $0.globalId == claimed }
+                            .snapshot(limit: 1).isEmpty
+                        if !known {
+                            let head = lattice.objects(AuditLog.self)
+                                .sortedBy(\.primaryKey, order: .reverse).snapshot(limit: 1).first
+                            let reason = floorSuspect
+                                ? "server lost history (durable head regressed at boot)"
+                                : "client floor unknown to this channel"
+                            relayLog.error("""
+                                FLOOR VIOLATION: channel=\(channel.id) user=\(channel.userId) \
+                                claimed=\(claimed) durableHead=\(head?.globalId?.uuidString ?? "nil") \
+                                — \(reason); serving explicit full-history replay
+                                """)
+                            if let encoded = try? JSONEncoder().encode(
+                                ServerSentEvent.floorReset(durableHead: head?.globalId, reason: reason)) {
+                                await ws.send(ByteBuffer(data: encoded))
+                            }
+                        }
+                    }
+
                     let events = lattice.eventsAfter(globalId: lastEventId)
                     let count = events.count
                     // Observer-push activation boundary: the pk of the last

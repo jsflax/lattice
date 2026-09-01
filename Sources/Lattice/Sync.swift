@@ -137,8 +137,24 @@ public enum ServerSentEvent: Codable {
     /// 1.7.1 changelog.
     case nack(ids: [UUID], reason: String)
 
+    /// §1.7.2 FLOOR HONESTY: the client's claimed catch-up floor (`last-event-id`) names a globalId
+    /// the channel's DURABLE history does not contain. Before 1.7.2 this was swallowed silently (the
+    /// floor filter dropped, full-history replay, no signal) — the exact shape under which a client
+    /// whose acked rows were LOST never learns it should re-upload them. The relay now says so BEFORE
+    /// the catch-up pages: `durableHead` is the channel's newest durable audit globalId (nil on an
+    /// empty log); `reason` attributes the violation ("server lost history" when the boot ledger shows
+    /// the head regressed, "client floor unknown to this channel" otherwise).
+    ///
+    /// Downlink semantics are unchanged (full replay proceeds; applies are idempotent). This event is
+    /// the UPLINK instruction for 1.7.2+ clients: verify local AuditLog above `durableHead`, re-mark
+    /// unsynchronized, re-upload. Wire-compatible with every shipped client — fresh JSON keys, so the
+    /// C++ `from_json` (dispatching on auditLog/ack/replayRequest presence) returns nullopt and
+    /// ignores it: the same discipline nack rode in on. nack itself is NOT reusable here: its ids mean
+    /// "not stored — resend these", and a relay that lost history cannot name the ids it lost.
+    case floorReset(durableHead: UUID?, reason: String)
+
     private enum CodingKeys: String, CodingKey {
-        case kind, auditLog, ack, rejected, nack, nackReason
+        case kind, auditLog, ack, rejected, nack, nackReason, floorReset, floorReason
     }
 
     public init(from decoder: any Decoder) throws {
@@ -159,6 +175,10 @@ public enum ServerSentEvent: Codable {
             let ids = try container.decode([UUID].self, forKey: .nack)
             let reason = try container.decodeIfPresent(String.self, forKey: .nackReason) ?? ""
             self = .nack(ids: ids, reason: reason)
+        case "floorReset":
+            let head = try container.decodeIfPresent(UUID.self, forKey: .floorReset)
+            let reason = try container.decodeIfPresent(String.self, forKey: .floorReason) ?? ""
+            self = .floorReset(durableHead: head, reason: reason)
         default:
             throw DecodingError.dataCorruptedError(forKey: .kind, in: container, debugDescription: "Unknown kind: \(kind)")
         }
@@ -185,6 +205,12 @@ public enum ServerSentEvent: Codable {
             try container.encode("nack", forKey: .kind)
             try container.encode(ids, forKey: .nack)
             try container.encode(reason, forKey: .nackReason)
+        case .floorReset(let durableHead, let reason):
+            // Fresh keys, same rationale as nack: the C++ dispatch must see
+            // none of auditLog/ack/replayRequest and return nullopt.
+            try container.encode("floorReset", forKey: .kind)
+            try container.encodeIfPresent(durableHead, forKey: .floorReset)
+            try container.encode(reason, forKey: .floorReason)
         }
     }
 }
