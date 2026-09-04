@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.7.2] - 2026-09-03
+
+LatticeCore dependency floor unchanged; zero core changes. Closes the
+WAL-epoch durability loss class on relay channel files (the checkpoint-
+starvation / wedge / unlink triad — committed frames in an on-path -wal
+always survived kill -9, but three shapes could lose an entire WAL epoch).
+
+### Added
+- **`RelayCheckpointGovernor`** (`LatticeServerKit`): apply-coupled WAL
+  checkpointing for relay-shaped stores (4MiB threshold + 30s backstop),
+  whose custom change hook otherwise displaces SQLite's autocheckpoint
+  forever. TRUNCATE passes make a plain external read the durable view.
+  Wedge alarm on repeated could-not-run with a non-shrinking WAL (never
+  disturbs the open transaction); registry-driven `drain(stores:)` for
+  shutdown; quiet-store sweep for mounts with no apply traffic.
+- **`DurableHeadLedger`**: a sidecar `<db>-ledger` JSON recording the
+  durable audit head at each successful checkpoint; `bootCheck` flags a
+  regressed head as FLOOR-SUSPECT (sticky, attributed) so an epoch loss is
+  loud and diagnosable forever after.
+- **`ServerSentEvent.floorReset(durableHead:reason:)`**: floor honesty on
+  the wire. When a client's claimed `last-event-id` names a globalId the
+  channel's durable history does not contain, the relay says so BEFORE the
+  catch-up pages instead of silently replaying from zero. Fresh JSON keys —
+  every shipped client (dispatching on `auditLog`/`ack`/`replayRequest`)
+  decodes it to nullopt and ignores it, the same wire-compat discipline
+  `nack` rode in on. 1.7.2+ clients treat it as the uplink instruction to
+  re-mark and re-upload rows above `durableHead`.
+
+### Fixed
+- Relay floor validation: claimed catch-up floors are probed against
+  durable history; a floor violation emits `floorReset` (attributed to
+  "server lost history" when the boot ledger shows head regression,
+  "client floor unknown to this channel" otherwise) and the socket stays
+  open for the full replay.
+
+
 ## [1.7.0] - 2026-08-20
 
 LatticeCore dependency floor unchanged (`from: "1.4.2"`); zero core changes.
