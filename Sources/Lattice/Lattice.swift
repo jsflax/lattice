@@ -423,7 +423,11 @@ public struct Lattice {
     ///
     /// Semantics:
     /// - `nil` (default on Configuration) → sync everything (backwards compatible)
-    /// - `SyncFilter()` (empty) → sync nothing
+    /// - `SyncFilter()` (empty) → for UPLOADS this behaves like `nil` (LatticeCore
+    ///   builds no WHERE clause for an empty entry list — it is NOT a "sync
+    ///   nothing" switch; it only empties the filtered sync SET). To upload
+    ///   nothing, open the handle read-only, or list tables with a predicate
+    ///   that matches no row.
     /// - `SyncFilter` with entries → whitelist: only listed tables, with optional per-row SQL predicates
     ///
     /// The filter is **upload-only** — it controls what leaves the device.
@@ -613,6 +617,14 @@ public struct Lattice {
             public var checkpointTruncateIntervalMs: Int?
             /// Incremental upload cursor (core default true).
             public var useUploadFloor: Bool?
+            /// This database's OWN sync connections register their replication
+            /// slot as an OBSERVER: a read-only dial whose upload floor never
+            /// advances. Observer slots are excluded from every compaction
+            /// floor, so a read-only replica can still prune its history.
+            /// `isReadOnly` implies it; set it explicitly for an observer-token
+            /// dial on a writable handle. Never inferred from the sync filter
+            /// (an empty filter means "upload everything").
+            public var registersAsObserver: Bool?
 
             public init(chunkSize: Int? = nil,
                         maxReconnectAttempts: Int? = nil,
@@ -622,7 +634,8 @@ public struct Lattice {
                         uploadCoalesceMs: Int? = nil,
                         checkpointPassiveIntervalMs: Int? = nil,
                         checkpointTruncateIntervalMs: Int? = nil,
-                        useUploadFloor: Bool? = nil) {
+                        useUploadFloor: Bool? = nil,
+                        registersAsObserver: Bool? = nil) {
                 self.chunkSize = chunkSize
                 self.maxReconnectAttempts = maxReconnectAttempts
                 self.baseDelaySeconds = baseDelaySeconds
@@ -632,11 +645,27 @@ public struct Lattice {
                 self.checkpointPassiveIntervalMs = checkpointPassiveIntervalMs
                 self.checkpointTruncateIntervalMs = checkpointTruncateIntervalMs
                 self.useUploadFloor = useUploadFloor
+                self.registersAsObserver = registersAsObserver
             }
         }
 
         /// nil = all core defaults.
         public var syncTuning: SyncTuning?
+
+        /// Audit-history retention. `nil` (default) keeps every audit entry
+        /// forever — the pre-1.8 behavior. A value arms one small maintenance
+        /// thread in LatticeCore that prunes entries every attached process has
+        /// already delivered (an entry is dead milliseconds after its commit:
+        /// every live change feed seeds its cursor from `MAX(id)` and reads
+        /// forward, and a fresh open never replays history). The prune is
+        /// insertion-time based (recorded watermarks, not the row's own
+        /// `timestamp`), capped by non-observer replication-slot floors, and
+        /// never renumbers ids — so it is safe with any number of processes on
+        /// the file. N handles on one file coordinate through the store and do
+        /// ONE prune per half-window. Ten minutes is plenty for a store whose
+        /// only audit readers are live feeds; a store that syncs keeps what its
+        /// synchronizers still need regardless of this value.
+        public var auditRetention: TimeInterval?
 
         /// Live-results tuning knobs (item A §1.7): shape/page cache bounds
         /// active from Commit 1; belt/TTL/keeper knobs consumed by later
@@ -720,6 +749,12 @@ public struct Lattice {
                 currentScheduler.scheduler)
             config.read_only = isReadOnly
             config.busy_timeout_ms = Int32(busyTimeoutMs)
+            if let auditRetention, auditRetention > 0 {
+                config.audit_retention_seconds = Int64(auditRetention.rounded(.up))
+            }
+            // A read-only handle can never advance an upload floor: its slot
+            // (if it dials anything) is an observer's by construction.
+            config.sync_is_observer = isReadOnly || (syncTuning?.registersAsObserver ?? false)
             if let t = syncTuning {
                 if let v = t.chunkSize { config.set_sync_chunk_size(Int64(v)) }
                 if let v = t.maxReconnectAttempts { config.set_sync_max_reconnect_attempts(Int32(v)) }
@@ -1342,12 +1377,59 @@ public struct Lattice {
 
     // MARK: Maintenance
 
-    /// Slot-aware compaction: deletes only entries all synchronizers have confirmed.
-    /// Safe during active sync. Returns entries deleted, or -1 if no slots exist.
+    /// Slot-aware compaction: deletes only entries all NON-observer synchronizers
+    /// have confirmed (their upload floor). Safe during active sync. Returns
+    /// entries deleted, or -1 when the store has no writer slots — which is
+    /// every store that never dialed a sync endpoint: this method then deletes
+    /// NOTHING. For those, use ``pruneHistory(olderThan:)`` or set
+    /// ``Configuration/auditRetention`` and let the store prune itself.
     /// - Parameter staleThresholdSeconds: If > 0, evict slots inactive for this long.
     @discardableResult
     public func compactHistory(staleThresholdSeconds: Int64 = 0) -> Int64 {
         backend.safeCompactAuditLog(staleThresholdSeconds: staleThresholdSeconds)
+    }
+
+    /// Cursor-safe, age-based history prune — the tear-out for a store WITHOUT
+    /// sync partners, and an additional bound for one with them.
+    ///
+    /// Deletes audit entries that existed at least `retention` ago, judged by
+    /// recorded insertion-time watermarks (not the row's own `timestamp`, which
+    /// an applied remote row carries from its origin), capped by the floor of
+    /// non-observer replication slots. Never renumbers ids, so every other
+    /// process's live change feed keeps working. The first prune lands one
+    /// window after sampling began (``recordAuditWatermark()`` or a previous
+    /// call records a sample; the automatic thread armed by
+    /// ``Configuration/auditRetention`` does this for you).
+    /// - Returns: entries removed (0 when nothing is provably dead yet).
+    @discardableResult
+    public func pruneHistory(olderThan retention: TimeInterval) -> Int64 {
+        let removed = backend.pruneAuditLog(retentionSeconds: Int64(retention.rounded(.up)))
+        // The delete happened in core, below this handle's write funnel: tell
+        // the live-results layer the table moved (what `delete(AuditLog.self)`
+        // does on its own path), or a memory-family store keeps serving the
+        // pre-prune count from its generation cache.
+        if removed > 0 { _noteWrite(tables: [AuditLog.entityName]) }
+        return removed
+    }
+
+    /// Record a (now, MAX(id)) watermark for ``pruneHistory(olderThan:)``.
+    public func recordAuditWatermark() {
+        backend.recordAuditWatermark()
+    }
+
+    /// Backdate every recorded audit watermark by `seconds`. Test-only (the
+    /// ``backdateReplicationSlots(seconds:)`` counterpart): makes "a retention
+    /// window elapsed" deterministic without wall-clock sleeps.
+    public func backdateAuditWatermarks(seconds: Int64) {
+        backend.backdateAuditWatermarks(seconds: seconds)
+    }
+
+    /// Flag one of this database's OWN replication slots as an observer (a
+    /// read-only dial whose floor never advances; excluded from compaction
+    /// bounds). ``Configuration/SyncTuning/registersAsObserver`` sets it at
+    /// registration; this is for a connection whose scope is learned later.
+    public func setReplicationSlotObserver(syncId: String, isObserver: Bool) {
+        backend.setReplicationSlotObserver(syncId: syncId, isObserver: isObserver)
     }
 
     /// Backdate all replication slots' last_active_at by the given number of seconds.
@@ -1356,8 +1438,12 @@ public struct Lattice {
         backend.backdateReplicationSlots(seconds: seconds)
     }
 
-    /// Nuclear compaction: deletes ALL history, regenerates snapshots, resets slots.
-    /// Active synchronizers will re-sync all data.
+    /// Nuclear compaction: deletes ALL history, regenerates snapshots (model
+    /// rows AND link/list rows, since 1.8), resets slots. Active synchronizers
+    /// will re-sync all data. The AuditLog id sequence is KEPT: regenerated
+    /// rows take ids above the old maximum, so other processes' change feeds
+    /// and the relay's push cursors keep delivering (ids used to restart at 1,
+    /// which left every sibling silent until it reopened).
     /// - Returns: Number of snapshot entries created.
     @discardableResult
     public func forceCompactHistory() -> Int64 {
@@ -1376,12 +1462,15 @@ public struct Lattice {
 
     /// Flushes WAL contents to the main database file and truncates the WAL.
     /// Called automatically on deinitialization but can be invoked explicitly
-    /// to ensure durability or reduce WAL file size.
+    /// to ensure durability or reduce WAL file size. Returns what actually
+    /// happened — a TRUNCATE checkpoint silently loses to a concurrent reader,
+    /// and an ignored outcome is how multi-GB WAL files accumulate.
     ///
     /// - Warning: TRUNCATE waits out readers up to the connection's FULL busy
     ///   timeout (30s) while holding the writer gate. Teardown-only; from
     ///   maintenance paths between write batches use ``checkpointBounded(busyBudgetMs:)``.
-    public func checkpoint() {
+    @discardableResult
+    public func checkpoint() -> CheckpointResult {
         backend.checkpoint()
     }
 
@@ -1416,14 +1505,29 @@ public struct Lattice {
         return backend.vacuumVec0(table: tableName, column: column ?? "")
     }
 
-    /// Rebuilds the database file, reclaiming disk space from deleted rows
-    /// and eliminating fragmentation. Temporarily closes the read connection
-    /// to obtain exclusive access.
+    /// Rebuilds the database file's live pages (`VACUUM`). Temporarily closes
+    /// this handle's read connections. Returns false when VACUUM failed (the
+    /// message is in ``lastQueryError()``) — it never throws, and it used to
+    /// report nothing either way.
     ///
-    /// - Important: Requires exclusive database access. Will throw if another
-    ///   process has the database open. Do not call during active queries.
-    public func vacuum() {
+    /// - Important: In WAL mode the rebuilt image lands in the WAL; the main
+    ///   file only shrinks at the NEXT checkpoint. To get disk space back use
+    ///   ``reclaimSpace(maxPasses:)``, which orders the two steps. Another
+    ///   connection's open WRITE transaction makes VACUUM fail (busy);
+    ///   readers do not block it.
+    @discardableResult
+    public func vacuum() -> Bool {
         backend.vacuum()
+    }
+
+    /// Give the disk space back: release this handle's readers, `VACUUM`,
+    /// TRUNCATE-checkpoint, reopen — the order WAL mode needs for the main
+    /// file to actually shrink (a checkpoint-then-vacuum sequence leaves it at
+    /// its peak). A second pass runs only when the checkpoint lost to a
+    /// concurrent reader. Returns page counts before/after so the caller can
+    /// see whether it worked instead of inferring from file sizes.
+    public func reclaimSpace(maxPasses: Int = 2) -> ReclaimResult {
+        backend.reclaimSpace(maxPasses: maxPasses)
     }
 
     /// Whether the sync WebSocket connection is currently active.
@@ -1596,8 +1700,16 @@ public struct Lattice {
                 // the serial xproc callback (no concurrent access), captured
                 // by the @Sendable callback closure.
                 nonisolated(unsafe) var previousPending = 0
+                // The pending count is an unindexed COUNT with a correlated
+                // EXISTS over the audit log, and idle hints arrive per commit
+                // burst — rate-limit the probe to once a second so a busy
+                // writer does not pay it on every hint.
+                nonisolated(unsafe) var lastProbe = Date.distantPast
 
                 backend.setOnXprocIdle {
+                    let now = Date()
+                    guard now.timeIntervalSince(lastProbe) >= 1 else { return }
+                    lastProbe = now
                     let pending = Int(backend.pendingSyncEntryCount())
                     let diff = previousPending - pending
                     let acked = max(0, diff)
@@ -1922,14 +2034,15 @@ public struct Lattice {
             // from one transaction) reaches the peer as one frame and applies
             // atomically. See the notify_changes_batched comment in
             // LatticeCore for the full rationale.
-            let emit: @Sendable (Lattice, [TableChangeEvent]) -> Void = { queryLattice, changes in
-                let refs: [AnySendableReference<AuditLog>] = changes.compactMap { c in
-                    guard let auditLog = queryLattice.object(AuditLog.self, primaryKey: c.rowId) else {
-                        log.warning("changeStream: no AuditLog for pk=\(c.rowId)")
-                        return nil
-                    }
-                    log.debug("changeStream entry: table=\(auditLog.tableName) modelOp=\(auditLog.operation) modelRowId=\(auditLog.rowId)")
-                    return AnySendableReference(auditLog.sendableReference)
+            let emit: @Sendable (Lattice, [TableChangeEvent]) -> Void = { _, changes in
+                // A reference is just the pk. This used to LOAD each AuditLog
+                // row (the whole changedFields payload) only to read its key
+                // back and log it, and the consumer's `resolve(on:)` loaded it
+                // again — two payload reads per change per process. Consumers
+                // that resolve still get the row; consumers that only need the
+                // header should use `changeHeaders`.
+                let refs: [AnySendableReference<AuditLog>] = changes.map { c in
+                    AnySendableReference(ModelThreadSafeReference<AuditLog>(primaryKey: c.rowId))
                 }
                 if !refs.isEmpty {
                     log.debug("changeStream yield: count=\(refs.count)")
@@ -1966,6 +2079,7 @@ public struct Lattice {
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
                 queryConfig.authorizationToken = nil
+                queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
                     let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
                     state.ready(queryLattice, emit)
@@ -1974,6 +2088,59 @@ public struct Lattice {
                     // surfaces at the consumer's first `try await` instead of
                     // trapping the host process (was `try!`). finish fires
                     // onTermination, which removes the observer.
+                    stream.finish(throwing: error)
+                }
+            }
+
+            stream.onTermination = { _ in
+                backend.removeTableObserver(table: AuditLog.entityName, observerId: observerId)
+                state.terminate()
+            }
+        }
+    }
+
+    /// `changeStream` without the payload: one frame per WAL flush, each change
+    /// as a ``ChangeHeader`` (table, operation, row id, global row id, audit
+    /// id). Reads only the header columns of each audit row — never
+    /// `changedFields`, which for a streamed column is the whole growing body.
+    /// Same registration and exactly-once, commit-ordered delivery contract as
+    /// `changeStream`; use this when you branch on table/operation and re-read
+    /// live rows yourself (every in-repo consumer does).
+    public var changeHeaders: AsyncThrowingStream<[ChangeHeader], any Swift.Error> {
+        AsyncThrowingStream { [backend, modelTypes, configuration] stream in
+            let log = Logger.sync
+            let state = ChangeStreamState()
+            let types = UncheckedSendable(modelTypes)
+
+            let emit: @Sendable (Lattice, [TableChangeEvent]) -> Void = { queryLattice, changes in
+                let headers: [ChangeHeader] = changes.compactMap { c in
+                    guard let h = queryLattice.backend.auditHeader(id: c.rowId) else {
+                        // Pruned/compacted between commit and delivery — the
+                        // header is gone with the row; nothing to say about it.
+                        log.debug("changeHeaders: no AuditLog for pk=\(c.rowId)")
+                        return nil
+                    }
+                    return h
+                }
+                if !headers.isEmpty { stream.yield(headers) }
+            }
+
+            let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
+                ObserverDeliveryWorker.shared.enqueue {
+                    state.deliver(changes, emit)
+                }
+            }
+
+            Task.detached {
+                var queryConfig = configuration
+                queryConfig.ipcTargets = nil
+                queryConfig.wssEndpoint = nil
+                queryConfig.authorizationToken = nil
+                queryConfig.auditRetention = nil   // a query handle never prunes
+                do {
+                    let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
+                    state.ready(queryLattice, emit)
+                } catch {
                     stream.finish(throwing: error)
                 }
             }

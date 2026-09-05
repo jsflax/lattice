@@ -282,6 +282,33 @@ final class ObserverPushTests: BaseTest {
         }
     }
 
+    // MARK: (b2) push survives a server-side compaction
+
+    /// The pump's cursor is a raw AuditLog pk. Before core 1.5.0 a
+    /// `forceCompactHistory()` on the channel file restarted ids at 1, so
+    /// every regenerated row — and every later commit — sat BELOW the cursor
+    /// and the socket went silent until it redialed. Ids now continue past
+    /// the old maximum: the regenerated snapshot and the next commit both
+    /// reach the live socket.
+    @Test func observerPushSurvivesServerCompaction() async throws {
+        try await withPushHarness { harness in
+            let watcher = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
+            let co = try harness.coWriter("g1")
+            try co.add(SimpleSyncObject(value: 1, floatValue: 1))
+            #expect(await watcher.wait { $0.receivedGlobalIds.count >= 1 })
+
+            // Server-side compaction on the live channel file.
+            #expect(co.forceCompactHistory() >= 1)
+
+            try co.add(SimpleSyncObject(value: 2, floatValue: 2))
+            // The newest audit entry is row 2's INSERT (its id continues past the old maximum).
+            let second = try #require(gids(Array(co.eventsAfter(globalId: nil))).last)
+            #expect(await watcher.wait { $0.receivedGlobalIds.contains(second) },
+                    "a commit after compaction must still reach the live socket (ids continue)")
+            #expect(!watcher.isClosed)
+        }
+    }
+
     // MARK: (c) dead socket doesn't stall peers
 
     /// One observer's transport dies abruptly mid-stream (its event-loop

@@ -33,6 +33,12 @@ public struct ModelThreadSafeReference<NonSendable: Model>: SendableReference, E
     public init(_ model: NonSendable) {
         self.key = model.primaryKey
     }
+    /// A reference from a primary key alone — no row is loaded to make it.
+    /// `changeStream` builds its `AuditLog` references this way: hydrating the
+    /// row just to read its key back read the whole audit payload per change.
+    public init(primaryKey: Int64) {
+        self.key = primaryKey
+    }
     
     public func resolve(isolation: isolated (any Actor)? = #isolation,
                         on lattice: Lattice) -> NonSendable? {

@@ -966,7 +966,9 @@ extension Lattice {
                         print(">>> Bringing channel \(channel.id) connection up to date with \(count) events")
                         for i in stride(from: 0, to: count, by: 1000) {
                             guard !state.revocation.isRevoked else { break }
-                            let page = Array(events[i..<min(count, i + 1000)])
+                            // Late-bind @NoHistory columns — this page is serialized
+                            // here in Swift, outside core's upload-side fill.
+                            let page = lattice.lateBindNoHistory(Array(events[i..<min(count, i + 1000)]))
                             let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
                             await ws.send(ByteBuffer(data: encoded))
                             boundary = page.last?.primaryKey ?? boundary

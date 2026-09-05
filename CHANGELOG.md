@@ -1,5 +1,62 @@
 # Changelog
 
+## [1.8.0] - 2026-09-05
+
+LatticeCore dependency floor raised to `1.5.0` (audit-history hygiene: see
+its changelog). An Orbital room store reached 17 GB with under 1 MB of live
+data — every streamed rewrite of one message row was kept in full in the
+audit log, nothing pruned it on a store without sync partners, and the one
+nuclear tool renumbered ids and silenced every other process.
+
+### Added
+- **`@NoHistory`** property attribute: the column's UPDATE audit rows record
+  the column name but not its value (INSERT/DELETE rows keep values). Live
+  observers, `changeStream` and `changeHeaders` fire exactly as before. Sync
+  delivers the row's latest value at upload/push time — core fills it on the
+  upload path; `Lattice.lateBindNoHistory(_:)` does the same for audit rows
+  serialized in Swift, and the relay's observer push and connect-time catch-up
+  call it. `Model.noHistoryProperties` exposes the set. Applies to stored
+  primitive columns only (a macro error otherwise).
+- **`Configuration.auditRetention`** (`TimeInterval?`, default nil = keep
+  forever): arms LatticeCore's retention thread — cursor-safe, insertion-time
+  pruning that never renumbers ids, coordinated across processes.
+  **`pruneHistory(olderThan:)`**, **`recordAuditWatermark()`** for callers
+  that drive it themselves. `compactHistory` is documented as slot-only
+  (returns -1 and deletes nothing on a store that never synced).
+- **`changeHeaders`**: `changeStream` without the payload — `[ChangeHeader]`
+  frames (audit id, table, operation, row id, global row id) read from the
+  header columns only. `changeStream` itself no longer hydrates each audit
+  row to build its references (it read the whole `changedFields` payload per
+  change; consumers' `resolve(on:)` read it again).
+- **`reclaimSpace(maxPasses:)`** → `ReclaimResult`: VACUUM then TRUNCATE
+  checkpoint — the order WAL mode needs for the main file to shrink (a
+  checkpoint-then-vacuum sequence leaves it at its peak). `vacuum()` now
+  returns `Bool` and never lied about failing; `checkpoint()` returns
+  `CheckpointResult` (busy / partial / complete).
+- **`Configuration.SyncTuning.registersAsObserver`** (and `isReadOnly`
+  implies it): this handle's own sync slot is an observer's — excluded from
+  compaction floors, evicted on clean disconnect. `setReplicationSlotObserver
+  (syncId:isObserver:)` for a connection whose scope is learned later.
+- `Backend` protocol: `reclaimSpace`, `pruneAuditLog`, `recordAuditWatermark`,
+  `setReplicationSlotObserver`, `noHistoryLiveValuesJSON`, `auditHeader`;
+  `vacuum()`/`checkpoint()` now return values.
+
+### Changed
+- **`forceCompactHistory()` keeps the audit id sequence** and regenerates
+  link/list rows (core 1.5.0). Fixes the relay's observer-push cursor going
+  silent after a server-side compaction.
+- `syncProgressStream`'s cross-process pending count is probed at most once
+  per second (it is an unindexed COUNT over the audit log; idle hints arrive
+  per commit burst).
+- Doc fix: `SyncFilter()` (empty) is NOT a "sync nothing" switch — for
+  uploads core treats it like `nil`.
+
+### Fixed
+- `@Transient` detection in the macro compared against `"@Transient"` while
+  the attribute key holds the bare identifier; the predicate could never
+  match (the separate string compare in `MemberAttributeMacro` was carrying
+  it). Attribute detection now scans every attribute name on a declaration.
+
 ## [1.7.2] - 2026-09-03
 
 LatticeCore dependency floor unchanged; zero core changes. Closes the

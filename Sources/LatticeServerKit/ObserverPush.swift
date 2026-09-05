@@ -357,7 +357,10 @@ actor FileWatchManager {
                     await clearPumping(sub)
                     return
                 }
-                let page = watcher.lattice.eventsAfter(id: cursor).snapshot(limit: Int64(pageSize))
+                // Late-bind @NoHistory columns: this page is serialized in
+                // Swift, so core's upload-side fill never sees it.
+                let page = watcher.lattice.lateBindNoHistory(
+                    watcher.lattice.eventsAfter(id: cursor).snapshot(limit: Int64(pageSize)))
                 guard !page.isEmpty, let last = page.last?.primaryKey else { break }
                 guard let encoded = try? JSONEncoder().encode(ServerSentEvent.auditLog(page)) else {
                     log.error("observer-push: failed to encode page after id \(cursor); dropping subscriber")
