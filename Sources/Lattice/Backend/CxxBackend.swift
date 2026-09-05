@@ -370,12 +370,52 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func trainUntrainedVec0Tables() { ref.trainUntrainedVec0Tables() }
     func waitForVec0Training() { ref.waitForVec0Training() }
     func vacuumVec0(table: String, column: String) -> Int64 { Int64(ref.vacuum_vec0(std.string(table), std.string(column))) }
-    func vacuum() { ref.vacuum() }
+    func vacuum() -> Bool {
+        let ok = ref.vacuum()
+        reportQueryFailureIfAny()   // the sealed failure used to vanish here
+        return ok
+    }
+    func reclaimSpace(maxPasses: Int) -> ReclaimResult {
+        let r = ref.reclaimSpace(maxPasses: Int32(maxPasses))
+        reportQueryFailureIfAny()
+        return ReclaimResult(ok: r.ok, pagesBefore: Int64(r.pages_before), pagesAfter: Int64(r.pages_after),
+                             walBytesAfter: Int64(r.wal_bytes_after), passes: Int(r.passes),
+                             checkpointBusy: r.checkpoint_busy, error: String(r.error))
+    }
     func safeCompactAuditLog(staleThresholdSeconds: Int64) -> Int64 { Int64(ref.safe_compact_audit_log(staleThresholdSeconds)) }
     func forceCompactAuditLog() -> Int64 { Int64(ref.force_compact_audit_log()) }
+    func pruneAuditLog(retentionSeconds: Int64) -> Int64 {
+        let n = Int64(ref.pruneAuditLog(retentionSeconds: retentionSeconds))
+        reportQueryFailureIfAny()
+        return n
+    }
+    func recordAuditWatermark() { ref.recordAuditWatermark(); reportQueryFailureIfAny() }
+    func backdateAuditWatermarks(seconds: Int64) { ref.backdateAuditWatermarks(seconds: seconds); reportQueryFailureIfAny() }
+    func setReplicationSlotObserver(syncId: String, isObserver: Bool) {
+        ref.setReplicationSlotObserver(syncId: std.string(syncId), isObserver: isObserver)
+        reportQueryFailureIfAny()
+    }
+    func noHistoryLiveValuesJSON(tableName: String, globalRowId: String, columns: [String]) -> String {
+        let cols = columns.reduce(into: lattice.StringVector()) { $0.push_back(std.string($1)) }
+        let json = String(ref.noHistoryLiveValuesJSON(tableName: std.string(tableName),
+                                                      globalRowId: std.string(globalRowId), columns: cols))
+        reportQueryFailureIfAny()
+        return json
+    }
+    func auditHeader(id: Int64) -> ChangeHeader? {
+        let h = ref.auditHeader(id: id)
+        guard h.found else { return nil }
+        let op = AuditLog.Operation(rawValue: String(h.operation)) ?? .insert
+        return ChangeHeader(auditId: id, tableName: String(h.table_name), operation: op,
+                            rowId: Int64(h.row_id), globalRowId: UUID(uuidString: String(h.global_row_id)))
+    }
     func normalizeAuditTimestamps() -> Int64 { Int64(ref.normalizeAuditTimestamps()) }
     func backdateReplicationSlots(seconds: Int64) { ref.backdate_replication_slots(seconds) }
-    func checkpoint() { ref.checkpoint() }
+    func checkpoint() -> CheckpointResult {
+        let c = ref.checkpoint()
+        return CheckpointResult(busy: c.busy, complete: c.complete,
+                                logFrames: Int64(c.log_frames), checkpointed: Int64(c.checkpointed))
+    }
     func checkpointBounded(busyBudgetMs: Int64) -> Int64 {
         ref.checkpointBounded(busyBudgetMs: busyBudgetMs)
     }

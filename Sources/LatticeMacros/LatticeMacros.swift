@@ -53,17 +53,27 @@ private struct MemberView {
     let unwrappedType: String
     var isOptional: Bool = false
     var attributeKey: String?
+    /// Every attribute NAME on the declaration (`attributeKey` keeps only the
+    /// first, which is how `@NoHistory @Indexed` would otherwise lose one).
+    var attributeNames: [String] = []
     var isTransient: Bool {
-        attributeKey == "@Transient"
+        // `attributeKey` holds the bare identifier ("Transient"), never the
+        // "@" spelling — the old "@Transient" comparison could never match.
+        attributeKey == "Transient" || attributeNames.contains("Transient")
     }
     var isRelation: Bool {
         attributeKey == "Relation"
     }
     var isFullText: Bool {
-        attributeKey == "FullText"
+        attributeKey == "FullText" || attributeNames.contains("FullText")
     }
     var isIndexed: Bool {
-        attributeKey == "Indexed"
+        attributeKey == "Indexed" || attributeNames.contains("Indexed")
+    }
+    /// `@NoHistory`: UPDATE audit rows record that the column changed, not its
+    /// value (see `noHistoryProperties` on `Lattice.Model`).
+    var isNoHistory: Bool {
+        attributeKey == "NoHistory" || attributeNames.contains("NoHistory")
     }
     var constraint: Constraint?
     var assignment: String?
@@ -108,6 +118,9 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
 //       let literal = firstArgument.expression.as(StringLiteralExprSyntax.self) {
 //        memberView.attributeKey = "\(literal.segments)"
 //    }
+    memberView.attributeNames = decl.attributes.compactMap {
+        $0.as(AttributeSyntax.self)?.attributeName.as(IdentifierTypeSyntax.self)?.name.text
+    }
     if memberView.attributeKey == nil {
         if let attribute = decl.attributes.first?.as(AttributeSyntax.self) {
 //            throw MacroError.message(attribute.debugDescription)
@@ -229,6 +242,15 @@ class FullTextMacro: PeerMacro {
 }
 
 class IndexedMacro: PeerMacro {
+    static func expansion(of node: SwiftSyntax.AttributeSyntax, providingPeersOf declaration: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.DeclSyntax] {
+        []
+    }
+}
+
+/// `@NoHistory` — a syntax marker like `@Indexed`; `@Model` reads it into
+/// `noHistoryProperties`, and LatticeCore turns that into an UPDATE trigger
+/// that records the column NAME but not its value.
+class NoHistoryMacro: PeerMacro {
     static func expansion(of node: SwiftSyntax.AttributeSyntax, providingPeersOf declaration: some SwiftSyntax.DeclSyntaxProtocol, in context: some SwiftSyntaxMacros.MacroExpansionContext) throws -> [SwiftSyntax.DeclSyntax] {
         []
     }
@@ -1081,6 +1103,15 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
         let indexedNames = members.filter { $0.isIndexed && !$0.isComputed }
             .map { "\"\($0.mappedName ?? $0.name)\"" }
         let indexedSet = indexedNames.joined(separator: ", ")
+        // @NoHistory applies to a stored primitive column only: a relation/list
+        // has no value column to omit, and an FTS5 external-content shadow
+        // table is maintained from the row's value on every change.
+        if let bad = members.first(where: { $0.isNoHistory && ($0.isRelation || $0.isFullText || $0.isTransient) }) {
+            throw MacroError.message("@NoHistory on '\(bad.name)' — it applies to a stored primitive column, not a @Relation, @FullText, or @Transient property.")
+        }
+        let noHistoryNames = members.filter { $0.isNoHistory && !$0.isComputed }
+            .map { "\"\($0.mappedName ?? $0.name)\"" }
+        let noHistorySet = noHistoryNames.joined(separator: ", ")
         dtoInheritedTypes.append(InheritedTypeSyntax(type: TypeSyntax("Sendable")))
             return [
                 ExtensionDeclSyntax(
@@ -1105,6 +1136,10 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
 
                         public static var indexedProperties: Set<String> {
                             [\(raw: indexedSet)]
+                        }
+
+                        public static var noHistoryProperties: Set<String> {
+                            [\(raw: noHistorySet)]
                         }
                     }
                     """
@@ -1455,7 +1490,7 @@ struct LatticeMacrosPlugin: CompilerPlugin {
         ModelMacro.self, TransientMacro.self, PropertyMacro.self,
 //        LatticeMemberMacro.self,
         UniqueMacro.self, CodableMacro.self, EnumMacro.self, UnionMacro.self, EmbeddedModelMacro.self,
-        VirtualModelMacro.self, FullTextMacro.self, IndexedMacro.self,
+        VirtualModelMacro.self, FullTextMacro.self, IndexedMacro.self, NoHistoryMacro.self,
         VirtualLinkPropertyMacro.self, CodingKeyMacro.self, CodableIgnoredMacro.self,
         DetachedMacro.self
     ]

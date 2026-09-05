@@ -424,14 +424,34 @@ public protocol LatticeBackend: AnyObject, Sendable {
     @discardableResult func vacuumVec0(table: String, column: String) -> Int64
 
     // Maintenance
-    func vacuum()
+    /// false when VACUUM failed (the sealed message is in `lastQueryError()`).
+    @discardableResult func vacuum() -> Bool
+    /// VACUUM + TRUNCATE checkpoint in the order WAL mode needs so the main
+    /// file actually shrinks; reports page counts instead of pretending.
+    func reclaimSpace(maxPasses: Int) -> ReclaimResult
     @discardableResult func safeCompactAuditLog(staleThresholdSeconds: Int64) -> Int64
     @discardableResult func forceCompactAuditLog() -> Int64
+    /// Cursor-safe, age-based history prune (1.8): rows removed, or -1 on error.
+    @discardableResult func pruneAuditLog(retentionSeconds: Int64) -> Int64
+    /// Record a (now, MAX(id)) watermark for `pruneAuditLog`.
+    func recordAuditWatermark()
+    /// Test-only: shift every recorded watermark into the past.
+    func backdateAuditWatermarks(seconds: Int64)
+    /// Flag one of this database's own replication slots as an observer.
+    func setReplicationSlotObserver(syncId: String, isObserver: Bool)
+    /// Live values of `columns` for one row as the wire JSON object — the
+    /// `@NoHistory` late-binding for audit rows serialized in Swift. "{}" when
+    /// the row is gone.
+    func noHistoryLiveValuesJSON(tableName: String, globalRowId: String, columns: [String]) -> String
+    /// One audit row's header (columns before the payload), or nil when the
+    /// row is gone — `changeHeaders` reads these instead of hydrating rows.
+    func auditHeader(id: Int64) -> ChangeHeader?
     /// Repair audit rows whose timestamp was stored as TEXT in the REAL
     /// column (pre-fix remote-apply path). Idempotent; returns rows fixed.
     @discardableResult func normalizeAuditTimestamps() -> Int64
     func backdateReplicationSlots(seconds: Int64)
-    func checkpoint()
+    /// The TRUNCATE checkpoint's real outcome (busy / partial / complete).
+    @discardableResult func checkpoint() -> CheckpointResult
     /// Bounded WAL checkpoint (TRUNCATE with a small busy budget, PASSIVE
     /// fallback + generation-advance on busy). Safe to call between write
     /// batches; returns frames checkpointed (-1 when nothing ran).
