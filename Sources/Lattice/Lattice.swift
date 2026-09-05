@@ -1403,7 +1403,13 @@ public struct Lattice {
     /// - Returns: entries removed (0 when nothing is provably dead yet).
     @discardableResult
     public func pruneHistory(olderThan retention: TimeInterval) -> Int64 {
-        backend.pruneAuditLog(retentionSeconds: Int64(retention.rounded(.up)))
+        let removed = backend.pruneAuditLog(retentionSeconds: Int64(retention.rounded(.up)))
+        // The delete happened in core, below this handle's write funnel: tell
+        // the live-results layer the table moved (what `delete(AuditLog.self)`
+        // does on its own path), or a memory-family store keeps serving the
+        // pre-prune count from its generation cache.
+        if removed > 0 { _noteWrite(tables: [AuditLog.entityName]) }
+        return removed
     }
 
     /// Record a (now, MAX(id)) watermark for ``pruneHistory(olderThan:)``.
