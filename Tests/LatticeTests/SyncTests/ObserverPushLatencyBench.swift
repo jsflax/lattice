@@ -3,6 +3,9 @@ import Testing
 import Vapor
 import Lattice
 @testable import LatticeServerKit
+#if os(macOS)
+import Darwin
+#endif
 
 // ============================================================================
 // Observer-push latency bench: co-process write → watch-socket frame arrival
@@ -77,6 +80,9 @@ final class ObserverPushLatencyBench: BaseTest {
             // Diagnostic stages do not replace the full commit-to-frame gate.
             var stageSamples: [(writeMs: Double, lookupMs: Double, frameMs: Double)] = []
             stageSamples.reserveCapacity(n)
+            #if os(macOS)
+            let stackMarker = PushLatencyStackMarker()
+            #endif
             for i in 0..<n {
                 let t0 = DispatchTime.now()
                 try co.add(SimpleSyncObject(value: i, floatValue: Float(i)))
@@ -84,7 +90,13 @@ final class ObserverPushLatencyBench: BaseTest {
                 let gid = try #require(
                     Array(co.eventsAfter(globalId: nil)).last?.globalId?.uuidString.lowercased())
                 let lookupReturned = DispatchTime.now()
+                #if os(macOS)
+                if i == 0 { stackMarker?.send(open: true) }
+                #endif
                 let arrived = await watcher.wait(timeout: 10) { $0.arrivalTime(of: gid) != nil }
+                #if os(macOS)
+                if i == 0 { stackMarker?.send(open: false, arrived: arrived) }
+                #endif
                 if !arrived {
                     // Failure-only diagnostics: this is an incomplete iteration,
                     // not a callback latency sample or a completed p95 run.
@@ -325,3 +337,62 @@ private final class PushLatencyPipelineLog: @unchecked Sendable {
         }
     }
 }
+
+#if os(macOS)
+private final class PushLatencyStackMarker {
+    private var fd: Int32 = -1
+    private var address = sockaddr_un()
+    private let nonce: String
+    private let pid: pid_t
+
+    init?() {
+        let env = ProcessInfo.processInfo.environment
+        guard let path = env["LATTICE_STACK_MARKER_SOCKET"],
+              let nonce = env["LATTICE_STACK_MARKER_NONCE"],
+              nonce.utf8.count == 32,
+              nonce.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) })
+        else { return nil }
+        self.nonce = nonce
+        pid = Darwin.getpid()
+        let pathBytes = Array(path.utf8)
+        guard pathBytes.first == 47, !pathBytes.contains(0),
+              pathBytes.count < MemoryLayout.size(ofValue: address.sun_path)
+        else { return nil }
+        address.sun_family = sa_family_t(AF_UNIX)
+        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: pathBytes) }
+        fd = Darwin.socket(AF_UNIX, SOCK_DGRAM, 0)
+        guard fd >= 0 else { return nil }
+        var one: Int32 = 1
+        guard fcntl(fd, F_SETFL, O_NONBLOCK) == 0,
+              fcntl(fd, F_SETFD, FD_CLOEXEC) == 0,
+              setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one,
+                         socklen_t(MemoryLayout.size(ofValue: one))) == 0
+        else { stop(); return nil }
+    }
+
+    deinit { stop() }
+
+    private func stop() {
+        if fd >= 0 { _ = Darwin.close(fd); fd = -1 }
+    }
+
+    func send(open: Bool, arrived: Bool? = nil) {
+        guard fd >= 0 else { return }
+        let ticks = mach_absolute_time()
+        let row = "LATTICE_STACK_V1 \(nonce) \(pid) 0 \(open ? "open" : "closed")"
+            + " \(ticks) \(arrived.map { String($0) } ?? "missing")\n"
+        let bytes = Array(row.utf8)
+        guard bytes.count <= 256 else { stop(); return }
+        let sent = bytes.withUnsafeBytes { buffer in
+            withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.sendto(fd, buffer.baseAddress, buffer.count, MSG_DONTWAIT,
+                                  $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                }
+            }
+        }
+        if sent != bytes.count || !open { stop() }
+    }
+}
+#endif

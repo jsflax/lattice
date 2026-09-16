@@ -232,26 +232,14 @@ jobs:
       - *after_build
       - *before_test
 
-      # A known intermittent Darwin hang (never-resuming await in the relay
-      # test family; .timeLimit cannot interrupt it) occasionally wedges the
-      # run until timeout-minutes kills it. The watchdog samples the test
-      # process at 20 minutes so a cancelled run leaves the stuck stacks in
-      # the log instead of nothing.
+      # One optional live stack capture is associated with the benchmark's
+      # first measured arrival wait. Sampling perturbs timing; retain its
+      # status separately from the unchanged native test command and gates.
+      # The controller replaces the independent 20-minute name-based sampler.
       - name: Test
         id: test
         run: |
-          (
-            sleep 1200
-            PID=$(pgrep -f LatticePackageTests | head -1)
-            if [ -n "$PID" ]; then
-              echo "=== HANG WATCHDOG: test process $PID still alive at 20min — sampling ==="
-              sample "$PID" 5 -file /tmp/hang-sample.txt 2>/dev/null || true
-              cat /tmp/hang-sample.txt || true
-            fi
-          ) &
-          WATCHDOG=$!
-          swift test --force-resolved-versions
-          kill $WATCHDOG 2>/dev/null || true
+          python3 Scripts/capture-wrapper-live-stack.py             --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer/live-stack"             -- swift test --force-resolved-versions
 
       - *after_test
       - *consumer_finalize
