@@ -62,29 +62,41 @@ private final class ForensicClient: @unchecked Sendable {
         self.autoAck = autoAck
     }
 
-    func attach(_ ws: WebSocket) {
+    func attach(_ ws: WebSocket, ackPath: ACKPathConnection? = nil) {
         socket = ws
-        ws.onBinary { [weak self] ws, bb in
+        ws.onBinary { [weak self, ackPath] ws, bb in
             guard let self else { return }
+            ackPath?.record(.clientBinaryEntered, bytes: bb.readableBytes)
             let now = DispatchTime.now()
             let data = Data(buffer: bb)
             guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                  let kind = root["kind"] as? String else { return }
+                  let kind = root["kind"] as? String else {
+                ackPath?.record(.clientDecodeError)
+                return
+            }
             switch kind {
             case "ack":
                 let ids = (root["ack"] as? [String] ?? []).compactMap(UUID.init(uuidString:))
+                ackPath?.record(.clientDecodedAck, count: ids.count, matching: ids)
+                if ackPath?.containsWarmID(ids) == true {
+                    ackPath?.record(.clientWarmAckMatch, count: ids.count, matching: ids)
+                }
                 self.lock.lock()
                 self.ackFrameCount += 1
                 for id in ids where self.ackArrival[id] == nil { self.ackArrival[id] = now }
                 self.ackedIds.formUnion(ids)
                 self.lock.unlock()
+                // Recorder admission is strictly outside the client lock.
+                ackPath?.record(.clientAckStored, count: ids.count, matching: ids)
             case "nack":
+                ackPath?.record(.clientDecodedNack)
                 let ids = (root["nack"] as? [String] ?? []).compactMap(UUID.init(uuidString:))
                 self.lock.lock()
                 for id in ids where self.nackArrival[id] == nil { self.nackArrival[id] = now }
                 self.nackReasons.append(root["nackReason"] as? String ?? "")
                 self.lock.unlock()
             case "auditLog":
+                ackPath?.record(.clientDecodedAudit)
                 let logs = root["auditLog"] as? [[String: Any]] ?? []
                 let ids = logs.compactMap { $0["globalId"] as? String }
                     .compactMap(UUID.init(uuidString:))
@@ -100,13 +112,16 @@ private final class ForensicClient: @unchecked Sendable {
                     ws.send(ByteBuffer(data: encoded))
                 }
             case "rejected":
+                ackPath?.record(.clientDecodedRejected)
                 self.lock.lock()
                 self.rejections.append(String(decoding: data, as: UTF8.self))
                 self.lock.unlock()
             default:
+                ackPath?.record(.clientDecodedOther)
                 break
             }
         }
+        ackPath?.record(.clientHandlersAttached)
     }
 
     func ackTime(for id: UUID) -> DispatchTime? { lock.withLock { ackArrival[id] } }
@@ -132,13 +147,16 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
     let port: Int
     let channelId: String
     let channelFileName: String
+    private let ackPathRecorder: ACKPathRecorder?
 
     var channelFileURL: URL { storageURL.appending(path: channelFileName) }
 
     /// `channelId` is scoped per harness where a test installs a process-global
     /// fault (`_applyFaultForTesting`): suites run in parallel, so a fault must
     /// only fire for its own channel.
-    init(schema: [any Lattice.Model.Type], channelId: String = "forensics") async throws {
+    init(schema: [any Lattice.Model.Type], channelId: String = "forensics",
+         ackPathRecorder: ACKPathRecorder? = nil) async throws {
+        self.ackPathRecorder = ackPathRecorder
         self.channelId = channelId
         self.channelFileName = "\(channelId).sqlite"
         storageURL = FileManager.default.temporaryDirectory
@@ -150,6 +168,14 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
         app.http.server.configuration.port = 0
         let fileName = channelFileName
         let id = channelId
+        let diagnosticMount = storageURL
+        var mountInitialized = false
+        if let ackPathRecorder { ACKPathDiagnostics.install(ackPathRecorder, for: diagnosticMount) }
+        defer {
+            if !mountInitialized, let ackPathRecorder {
+                ACKPathDiagnostics.remove(ackPathRecorder, for: diagnosticMount)
+            }
+        }
         Lattice.configureSyncRelay(
             on: app.routes, path: ["sync"], for: schema, storageURL: storageURL,
             channelExtractor: { req in
@@ -162,24 +188,41 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
             throw Abort(.internalServerError, reason: "no port")
         }
         port = assigned
+        mountInitialized = true
     }
 
-    func connect(_ client: ForensicClient, lastEventId: UUID? = nil) async throws {
+    func removeACKPathRecorder() {
+        if let ackPathRecorder { ACKPathDiagnostics.remove(ackPathRecorder, for: storageURL) }
+    }
+
+    @discardableResult
+    func connect(_ client: ForensicClient, lastEventId: UUID? = nil,
+                 diagnosticRole: ACKPathRole = .uploader) async throws -> ACKPathConnection? {
         var headers = HTTPHeaders()
-        headers.add(name: "X-Test-User", value: UUID().uuidString)
+        let connectionID = UUID()
+        headers.add(name: "X-Test-User", value: connectionID.uuidString)
+        let ackPath = ackPathRecorder?.registerConnection(id: connectionID, role: diagnosticRole)
         var config = WebSocketClient.Configuration()
         config.maxFrameSize = 1 << 27
         var url = "ws://127.0.0.1:\(port)/sync"
         if let lastEventId { url += "?last-event-id=\(lastEventId.uuidString)" }
         let once = AtomicOnce()
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            WebSocket.connect(to: url, headers: headers, configuration: config,
-                              on: app.eventLoopGroup) { ws in
-                client.attach(ws)
-                if once.tryFire() { cont.resume() }
-            }.whenFailure { error in
-                if once.tryFire() { cont.resume(throwing: error) }
+        ackPath?.record(.connectBegin)
+        do {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                WebSocket.connect(to: url, headers: headers, configuration: config,
+                                  on: app.eventLoopGroup) { [ackPath] ws in
+                    client.attach(ws, ackPath: ackPath)
+                    if once.tryFire() { cont.resume() }
+                }.whenFailure { error in
+                    if once.tryFire() { cont.resume(throwing: error) }
+                }
             }
+            ackPath?.record(.connectEnd)
+            return ackPath
+        } catch {
+            ackPath?.record(.connectError)
+            throw error
         }
     }
 
@@ -480,20 +523,52 @@ final class BusySafeApplyForensicsTests: BaseTest {
     /// drifted entry, the 1.7.1 shortfall diff sees no shortfall and nacks
     /// nothing.
     @Test func unknownTableEntryIsAckedAsNoOpNotDropped() async throws {
-        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self])
+        let ackPathRecorder = ProcessInfo.processInfo.environment["LATTICE_ACK_PATH_DIAGNOSTICS"] == "1"
+            ? ACKPathRecorder(testRunID: UUID()) : nil
+        // Synchronous fallback closes exactly once, even if setup/encoding/send throws.
+        defer { ackPathRecorder?.emitSnapshot(partial: true) }
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self], ackPathRecorder: ackPathRecorder)
+        defer { harness.removeACKPathRecorder() }
 
         // Peer observes the fan-out; it must not ack (we want raw arrivals).
         let peer = ForensicClient(label: "peer", autoAck: false)
-        try await harness.connect(peer)
+        try await harness.connect(peer, diagnosticRole: .peer)
 
         let uploader = ForensicClient(label: "uploader", autoAck: false)
-        try await harness.connect(uploader)
+        let uploaderProbe = try await harness.connect(uploader, diagnosticRole: .uploader)
 
         // Warm the uploader so we know its pipeline acks a healthy frame.
         let warm = try makeUploadEntries(donorPath: "donor-pw-\(String.random(length: 8)).sqlite", value: -1)
         let warmId = try #require(warm.first?.globalId)
-        try await uploader.socket!.send(Array(buffer: try frame(warm)))
-        try #require(await poll(timeout: 60) { uploader.ackTime(for: warmId) != nil },
+        uploaderProbe?.selectWarmID(warmId, entryCount: warm.count)
+        // Preserve the original nil-probe expression and send overload.
+        if let uploaderProbe {
+            let warmSocket = uploader.socket!
+            uploaderProbe.record(.warmEncodeBegin, count: warm.count)
+            let warmFrame: ByteBuffer
+            do {
+                warmFrame = try frame(warm)
+                uploaderProbe.record(.warmEncodeEnd, bytes: warmFrame.readableBytes, count: warm.count)
+            } catch {
+                uploaderProbe.record(.warmEncodeError)
+                throw error
+            }
+            uploaderProbe.record(.warmSendBegin, bytes: warmFrame.readableBytes, count: warm.count)
+            do {
+                try await warmSocket.send(Array(buffer: warmFrame))
+                uploaderProbe.record(.warmSendReturn)
+            } catch {
+                uploaderProbe.record(.warmSendError)
+                throw error
+            }
+        } else {
+            try await uploader.socket!.send(Array(buffer: try frame(warm)))
+        }
+        uploaderProbe?.record(.pollBegin)
+        let warmAcknowledged = await poll(timeout: 60) { uploader.ackTime(for: warmId) != nil }
+        uploaderProbe?.record(.pollEnd, result: warmAcknowledged)
+        ackPathRecorder?.emitSnapshot(partial: false)
+        try #require(warmAcknowledged,
                      "warmup frame was not acked — harness is wrong, not the relay")
 
         let good = try makeUploadEntries(donorPath: "donor-poison-\(String.random(length: 8)).sqlite", count: 60)

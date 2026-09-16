@@ -144,6 +144,8 @@ jobs:
 
       - name: Test
         id: test
+        env:
+          LATTICE_ACK_PATH_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
         run: swift test --force-resolved-versions
 
       - &after_test
@@ -232,14 +234,12 @@ jobs:
       - *after_build
       - *before_test
 
-      # One optional live stack capture is associated with the benchmark's
-      # first measured arrival wait. Sampling perturbs timing; retain its
-      # status separately from the unchanged native test command and gates.
-      # The controller replaces the independent 20-minute name-based sampler.
+      # ACK-path diagnostics run within the unchanged full native suite.
       - name: Test
         id: test
-        run: |
-          python3 Scripts/capture-wrapper-live-stack.py             --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer/live-stack"             -- swift test --force-resolved-versions
+        env:
+          LATTICE_ACK_PATH_DIAGNOSTICS: '1'
+        run: swift test --force-resolved-versions
 
       - *after_test
       - *consumer_finalize
