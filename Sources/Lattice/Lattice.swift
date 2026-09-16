@@ -2251,6 +2251,10 @@ public struct Lattice {
                                      diagnostic: PayloadObserverDiagnostic?,
                                      block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
         let backend = self.backend
+        // Resolving on the worker gives SQL its own nonisolated handle. Keep
+        // the attaching actor separately so resolution cannot change where
+        // the observer's block is delivered.
+        let isolation = self.isolation
 
         let block = UnsafeBlock(block: block)
 
@@ -2285,8 +2289,6 @@ public struct Lattice {
                     return
                 }
                 diagnosticBatch?.record("collection_resolution_completed")
-
-                let isolation = self.isolation
 
                 // Filtered observers fire on RESULT-SET membership, not on
                 // "did the changed fields satisfy the predicate". The old

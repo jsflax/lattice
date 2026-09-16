@@ -1,0 +1,1432 @@
+name: Observer isolation five-case diagnostic
+
+# Diagnostic only. Existing CI, WAL, N30 and full-suite outcomes remain authoritative.
+# Publishing this file on the exact branch below starts a cold hosted build.
+# ROOT must authorize that publication/event separately from source preparation.
+on:
+  push:
+    branches: [codex/observer-isolation-five-case-20260916-2]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: observer-isolation-five-case-20260916-2
+  cancel-in-progress: false
+
+jobs:
+  five-case:
+    name: Five-case diagnostic (Linux stable; not full qualification)
+    if: github.repository == 'jsflax/lattice' && github.run_attempt == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: swift@sha256:8de8ea332a61e961ead4ef41029c2552b18e1a70dd5942d25ecf7d8de2eec5b5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Start bounded diagnostic custody clock
+        timeout-minutes: 1
+        run: |
+          set -eu
+          FIVE_CASE_EVIDENCE="$RUNNER_TEMP/observer-isolation-five-case"
+          mkdir -m 700 "$FIVE_CASE_EVIDENCE"
+          read -r FIVE_CASE_UPTIME _ < /proc/uptime
+          printf '%s\n' "$FIVE_CASE_UPTIME" > "$FIVE_CASE_EVIDENCE/clock-start-uptime"
+          printf '%s\n' 'Diagnostic only; missing RESULT.json or incomplete artifact custody is NONPASS.' > "$FIVE_CASE_EVIDENCE/SCOPE.txt"
+
+      # The recorded Swift container has no Python. This platform-managed action
+      # supplies a prebuilt supervisor; it is not evidence of native phase closure.
+      - name: Supply Python supervisor runtime
+        uses: actions/setup-python@v5
+        timeout-minutes: 2
+        with:
+          python-version: '3.12'
+          architecture: x64
+          check-latest: false
+
+      - name: Checkout exact published push and its parent
+        uses: actions/checkout@v4
+        timeout-minutes: 2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+          submodules: false
+          lfs: false
+
+      - name: Materialize containment.py part 1
+        timeout-minutes: 1
+        run: |
+          set -eu
+          FIVE_CASE_PROGRAM="$RUNNER_TEMP/observer-isolation-five-case/program"
+          mkdir -p "$FIVE_CASE_PROGRAM"
+          cat > "$FIVE_CASE_PROGRAM/containment.py" <<'FIVE_CASE_CONTAINMENT_PY_1'
+          """Linux phase containment for a dedicated, sequential hosted Python runner.
+          
+          Production entry point: run_phase(). No runtime setup happens at import.
+          The caller reserves 20 seconds AFTER each supplied monotonic work deadline.
+          Kernel/filesystem calls are not claimed to be forcibly interruptible by Python.
+          """
+          import ctypes
+          import errno
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import selectors
+          import shutil
+          import signal
+          import subprocess
+          import sys
+          import threading
+          import time
+          
+          LOG_CAP = 256 * 1024 * 1024
+          CLEANUP_BUDGETS = (5.0, 5.0, 10.0)
+          POLL = 0.05
+          MAX_PROC = 65_536
+          MAX_OWNED = 4096
+          _active = False
+          _poisoned = False
+          
+          
+          def _key(row):
+              return row["pid"], row["start_ticks"]
+          
+          
+          def _stat(pid):
+              raw = Path("/proc", str(pid), "stat").read_text()
+              end = raw.rfind(")")
+              if end < 0 or raw[:raw.find(" (")] != str(pid):
+                  raise RuntimeError("invalid /proc stat envelope")
+              fields = raw[end + 2:].split()
+              if len(fields) < 20:
+                  raise RuntimeError("short /proc stat")
+              return {"pid": pid, "state": fields[0], "ppid": int(fields[1]),
+                      "pgid": int(fields[2]), "session": int(fields[3]),
+                      "start_ticks": int(fields[19])}
+          
+          
+          def _snapshot():
+              rows = {}
+              with os.scandir("/proc") as entries:
+                  for entry in entries:
+                      if not entry.name.isdigit():
+                          continue
+                      if len(rows) >= MAX_PROC:
+                          raise RuntimeError("process census bound exceeded")
+                      pid = int(entry.name)
+                      try:
+                          rows[pid] = _stat(pid)
+                      except OSError as exc:
+                          if exc.errno not in (errno.ENOENT, errno.ESRCH):
+                              raise
+              return rows
+          
+          
+          class _LinuxTracker:
+              """Single-runner child-subreaper + generation-pinned signaling.
+          
+              No name-wide/group-wide kill. Every signal uses a pidfd captured across
+              matching /proc start-tick reads. Group membership is checked independently.
+              """
+              def __init__(self):
+                  if sys.platform != "linux" or threading.current_thread() is not threading.main_thread():
+                      raise RuntimeError("requires a dedicated Linux main-thread runner")
+                  if threading.active_count() != 1:
+                      raise RuntimeError("concurrent runner threads are not admitted")
+                  if not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+                      raise RuntimeError("Python/kernel pidfd support required")
+                  self.controller = os.getpid()
+                  self.rows = {}
+                  self.fds = {}
+                  self.root = None
+                  self.root_key = None
+                  self.unknown_group = []
+                  self.reaped = []
+                  self.signal_events = {}
+                  self.last_snapshot = {}
+                  self.previous_subreaper = None
+                  self.libc = None
+                  if any(r["ppid"] == self.controller for r in _snapshot().values()):
+                      raise RuntimeError("runner already owns children")
+                  probe = os.pidfd_open(self.controller, 0)
+                  os.close(probe)
+                  self.libc = ctypes.CDLL(None, use_errno=True)
+                  self.libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong,
+                                            ctypes.c_ulong, ctypes.c_ulong]
+                  self.libc.prctl.restype = ctypes.c_int
+                  previous = ctypes.c_int()
+                  self._prctl(37, ctypes.addressof(previous))  # PR_GET_CHILD_SUBREAPER
+                  self.previous_subreaper = previous.value
+                  self._prctl(36, 1)  # PR_SET_CHILD_SUBREAPER
+          
+              def _prctl(self, option, value):
+                  if self.libc.prctl(option, value, 0, 0, 0) != 0:
+                      raise OSError(ctypes.get_errno(), "prctl child-subreaper")
+          
+              def admit(self, child):
+                  self.root = child
+                  row = _stat(child.pid)
+                  if row["ppid"] != self.controller or row["pgid"] != child.pid or row["session"] != child.pid:
+                      raise RuntimeError("new child session identity mismatch")
+                  self.root_key = _key(row)
+                  self._capture(row)
+          
+              def _capture(self, row):
+                  key = _key(row)
+                  if key in self.fds:
+                      self.rows[key]["last"] = row
+                      return
+                  if len(self.fds) >= MAX_OWNED:
+                      raise RuntimeError("owned identity bound exceeded")
+                  try:
+                      fd = os.pidfd_open(row["pid"], 0)
+                  except ProcessLookupError:
+                      return
+                  try:
+                      again = _stat(row["pid"])
+                      if _key(again) != key:
+                          return
+                      self.fds[key] = fd
+                      self.rows[key] = {"first": row, "last": again}
+                      fd = None
+                  except FileNotFoundError:
+                      pass
+                  finally:
+                      if fd is not None:
+                          os.close(fd)
+          
+              def refresh(self):
+                  snap = _snapshot()
+                  self.last_snapshot = snap
+                  # Direct children include reparented double-fork/session escapes because
+                  # this dedicated controller remains their nearest live subreaper.
+                  owned = {pid for pid, row in snap.items() if row["ppid"] == self.controller}
+                  owned.update(pid for pid, row in snap.items() if _key(row) in self.rows)
+                  while True:
+                      added = {pid for pid, row in snap.items() if row["ppid"] in owned}
+                      if added <= owned:
+                          break
+                      owned.update(added)
+                  for pid in sorted(owned):
+                      self._capture(snap[pid])
+                  self.unknown_group = []
+                  if self.root is not None:
+                      for pid, row in snap.items():
+                          if row["pgid"] == self.root.pid and pid not in owned:
+                              self.unknown_group.append(row)
+                  return self.live()
+          
+              def live(self):
+                  # Zombies are still custody until wait/reaping makes them disappear.
+                  return [row for row in self.last_snapshot.values() if _key(row) in self.rows]
+          
+              def signal_owned(self, signum):
+                  errors = []
+                  for key, fd in list(self.fds.items()):
+                      try:
+                          signal.pidfd_send_signal(fd, signum)
+                          self.signal_events.setdefault((key, signum), {"pid": key[0], "start_ticks": key[1], "signal": signum, "firstMonotonic": time.monotonic()})
+                      except ProcessLookupError:
+                          pass
+                      except OSError as exc:
+                          errors.append(str(exc))
+                  # Admission itself may fail before a root pidfd was captured. Popen's
+                  # unreaped direct-child ownership prevents PID reuse for this fallback.
+                  if self.root is not None and self.root.poll() is None and not any(k[0] == self.root.pid for k in self.fds):
+                      try:
+                          self.root.send_signal(signum)
+                          self.signal_events.setdefault((("direct-child", self.root.pid), signum), {"pid": self.root.pid, "signal": signum, "directUnreapedChildFallback": True, "firstMonotonic": time.monotonic()})
+                      except ProcessLookupError:
+                          pass
+                  return errors
+          
+              def reap(self):
+                  if self.root is not None:
+                      self.root.poll()
+                  while True:
+                      try:
+                          pid, status = os.waitpid(-1, os.WNOHANG)
+                      except ChildProcessError:
+                          return
+                      if pid == 0:
+                          return
+                      rc = os.waitstatus_to_exitcode(status)
+                      self.reaped.append({"pid": pid, "returncode": rc})
+                      if self.root is not None and pid == self.root.pid:
+                          self.root.returncode = rc
+          
+              def closed(self):
+                  self.reap()
+                  self.refresh()
+                  direct = [r for r in self.last_snapshot.values() if r["ppid"] == self.controller]
+                  group = [] if self.root is None else [r for r in self.last_snapshot.values() if r["pgid"] == self.root.pid]
+                  return not self.live() and not direct and not group and not self.unknown_group
+          
+              def evidence(self):
+                  return {"identities": list(self.rows.values()), "remaining": self.live(),
+                          "unknownGroupMembers": self.unknown_group, "reapedAdoptedChildren": self.reaped,
+                          "subreaperPrevious": self.previous_subreaper,
+                          "signalsSent": list(self.signal_events.values()),
+                          "signaling": "pidfd, no process-name or group-wide signaling"}
+          
+              def finish(self, closure):
+                  try:
+                      for fd in self.fds.values():
+                          os.close(fd)
+                  finally:
+                      # Leave subreaper ownership active if a child remains unknown/live.
+                      if closure and self.previous_subreaper is not None:
+                          self._prctl(36, self.previous_subreaper)
+          
+          
+          def _native_exit(rc):
+              return rc if rc >= 0 else 128 - rc
+          
+          
+          def _run_phase(name, argv, deadline, env, cwd, evidence_dir, reserve_free_bytes,
+                         tracker_factory, disk_usage, cleanup_budgets=CLEANUP_BUDGETS,
+                         log_cap=LOG_CAP):
+              global _active, _poisoned
+              if _active or _poisoned:
+                  raise RuntimeError("runner has an active phase or unclosed prior custody")
+              if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", name):
+                  raise ValueError("invalid exclusive phase name")
+              if not isinstance(argv, list) or not argv or not all(isinstance(x, str) and "\0" not in x for x in argv):
+                  raise ValueError("argv must be a nonempty string list")
+              if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
+                  raise ValueError("explicit string environment required")
+              if not isinstance(deadline, (int, float)) or isinstance(deadline, bool) or not time.monotonic() < deadline < float("inf"):
+                  raise ValueError("future finite absolute monotonic work deadline required")
+              if type(reserve_free_bytes) is not int or reserve_free_bytes < 0:
+                  raise ValueError("invalid free-space reserve")
+              cwd = os.fspath(cwd)
+              directory = Path(evidence_dir) / name
+              directory.mkdir(mode=0o700, parents=False, exist_ok=False)
+              _active = True
+              start = time.monotonic()
+              result = {"schema": "orbital.linux-phase-containment/1", "name": name,
+                        "argv": argv, "cwd": cwd, "workDeadlineMonotonic": deadline,
+                        "startedMonotonic": start, "cleanupBudgetsSeconds": list(cleanup_budgets),
+                        "environmentSHA256": hashlib.sha256(json.dumps(env, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+                        "reserveFreeBytes": reserve_free_bytes, "combinedLogCapBytes": log_cap,
+                        "nativeLaunched": False, "native_returncode": None,
+                        "exit_code": None, "reason": None, "errors": [], "omittedErrorCount": 0,
+                        "logs": {}, "closure": {"verified": False},
+                        "cancelSignal": None, "qualified": False,
+                        "deadlineOverrun": False, "deadlineOverrunObservation": None,
+                        "workDeadlineOverrunObservation": None}
+              tracker = child = selector = None
+              streams = {}
+              output_files = {}
+              hashes = {"stdout": hashlib.sha256(), "stderr": hashlib.sha256()}
+              counts = {"stdout": 0, "stderr": 0}
+              discarded = 0
+              old_handlers = {}
+              canceled = []
+              cleanup_start = None
+              closure = False
+              clean_scans = 0
+              term_end = kill_end = cleanup_end = None
+              primary = None
+          
+              def fail(reason, code, detail=None):
+                  nonlocal primary, cleanup_start, term_end, kill_end, cleanup_end
+                  if detail is not None:
+                      if len(result["errors"]) < 128:
+                          result["errors"].append({"reason": reason, "detail": str(detail)[:2048]})
+                      else:
+                          result["omittedErrorCount"] += 1
+                  if primary is None or (primary[1] == 0 and code != 0):
+                      primary = (reason, code)
+                  if cleanup_start is None:
+                      cleanup_start = time.monotonic()
+                      term_end = cleanup_start + cleanup_budgets[0]
+                      kill_end = term_end + cleanup_budgets[1]
+                      cleanup_end = kill_end + cleanup_budgets[2]
+          
+              def check_cleanup_deadline(stage):
+                  observed = time.monotonic()
+                  if cleanup_end is not None and observed >= cleanup_end:
+                      if not result["deadlineOverrun"]:
+                          result["deadlineOverrun"] = True
+                          result["deadlineOverrunObservation"] = {
+                              "stage": stage, "monotonic": observed,
+                              "cleanupDeadlineMonotonic": cleanup_end}
+                          fail("cleanup_deadline_overrun", 125)
+                      return True
+                  return False
+          
+              def cancel(signum, _frame):
+                  if not canceled:
+                      canceled.append(signum)
+          
+              def free_guard(extra=0):
+                  if disk_usage(directory).free < reserve_free_bytes + extra:
+                      fail("disk_reserve", 125)
+          
+              def close_pipe(fd):
+                  stream = streams.pop(fd)
+                  try:
+                      if selector is not None:
+                          selector.unregister(fd)
+                  except (KeyError, ValueError):
+                      pass
+                  stream[0].close()
+          
+              def pump(timeout):
+                  nonlocal discarded
+                  if selector is None:
+                      time.sleep(timeout)
+                      return
+                  for event, _ in selector.select(timeout):
+                      fd = event.fd
+                      try:
+                          chunk = os.read(fd, 64 * 1024)
+                      except BlockingIOError:
+                          continue
+                      if not chunk:
+                          close_pipe(fd)
+                          continue
+                      label = streams[fd][1]
+                      free_guard(len(chunk))
+                      left = log_cap - sum(counts.values())
+                      if len(chunk) > left:
+                          fail("combined_log_cap", 125)
+                      # After a disk/evidence fault, drain/discard instead of writing more.
+                      keep = 0 if primary and primary[0] in ("disk_reserve", "evidence_error") else min(len(chunk), left)
+                      written = 0
+                      while written < keep:
+                          amount = output_files[label].write(chunk[written:keep])
+                          if not amount:
+                              raise OSError("zero-byte log write")
+                          hashes[label].update(chunk[written:written + amount])
+                          counts[label] += amount
+                          written += amount
+                      discarded += len(chunk) - keep
+          
+              try:
+                  for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                      old_handlers[sig] = signal.getsignal(sig)
+                      signal.signal(sig, cancel)
+                  free_guard()
+                  if primary is None:
+                      tracker = tracker_factory()
+                  if canceled:
+                      fail("canceled", 128 + canceled[0])
+                  if time.monotonic() >= deadline:
+                      fail("work_deadline", 124)
+                  if primary is None:
+                      for label in ("stdout", "stderr"):
+                          output_files[label] = (directory / (label + ".log")).open("xb", buffering=0)
+                      selector = selectors.DefaultSelector()
+                      child = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                               start_new_session=True, close_fds=True)
+                      result["nativeLaunched"] = True
+                      result["pid"] = child.pid
+                      # Ownership is established before any fallible pipe setup.
+                      tracker.root = child
+                      for stream, label in ((child.stdout, "stdout"), (child.stderr, "stderr")):
+                          streams[stream.fileno()] = (stream, label)
+                      tracker.admit(child)
+                      for fd in streams:
+                          os.set_blocking(fd, False)
+                          selector.register(fd, selectors.EVENT_READ)
+                  while child is not None:
+                      now = time.monotonic()
+                      if canceled:
+                          fail("canceled", 128 + canceled[0])
+                      if cleanup_start is None and now >= deadline:
+                          fail("work_deadline", 124)
+                      rc = child.poll()
+                      polled_at = time.monotonic()
+                      if cleanup_start is None and polled_at >= deadline:
+                          result["workDeadlineOverrunObservation"] = {
+                              "stage": "after_child_poll", "monotonic": polled_at,
+                              "workDeadlineMonotonic": deadline}
+                          if rc is not None and rc != 0:
+          FIVE_CASE_CONTAINMENT_PY_1
+      - name: Materialize containment.py part 2
+        timeout-minutes: 1
+        run: |
+          set -eu
+          FIVE_CASE_PROGRAM="$RUNNER_TEMP/observer-isolation-five-case/program"
+          mkdir -p "$FIVE_CASE_PROGRAM"
+          cat >> "$FIVE_CASE_PROGRAM/containment.py" <<'FIVE_CASE_CONTAINMENT_PY_2'
+                              fail("native_exit", _native_exit(rc))
+                          fail("work_deadline", 124)
+                      if rc is not None:
+                          result["native_returncode"] = rc
+                          if rc != 0:
+                              fail("native_exit", _native_exit(rc))
+                          elif cleanup_start is None:
+                              # Normal root completion still drains/reaps all descendants.
+                              fail("native_exit", 0)
+                      if cleanup_start is None and now >= deadline:
+                          fail("work_deadline", 124)
+                      try:
+                          free_guard()
+                          tracker.refresh()
+                      except Exception as exc:
+                          fail("custody_error", 125, exc)
+                      if cleanup_start is not None:
+                          if check_cleanup_deadline("before_cleanup"):
+                              break
+                          try:
+                              signum = signal.SIGTERM if now < term_end else signal.SIGKILL
+                              for error in tracker.signal_owned(signum):
+                                  fail("signal_error", 125, error)
+                              if tracker.closed():
+                                  clean_scans += 1
+                              else:
+                                  clean_scans = 0
+                              if clean_scans >= 2 and not streams:
+                                  closure = True  # Physical closure is distinct from timeliness.
+                                  check_cleanup_deadline("after_normal_closure")
+                                  break
+                              if check_cleanup_deadline("after_normal_closure_scan"):
+                                  break
+                          except Exception as exc:
+                              clean_scans = 0
+                              fail("custody_error", 125, exc)
+                      try:
+                          bound = deadline if cleanup_start is None else cleanup_end
+                          pump(max(0.0, min(POLL, bound - time.monotonic())))
+                      except Exception as exc:
+                          fail("evidence_error", 125, exc)
+                  if child is None:
+                      closure = True
+              except Exception as exc:
+                  fail("setup_or_supervision_error", 125, exc)
+              finally:
+                  if child is None:
+                      closure = True
+                  # Exceptions during launch/setup use the same single cleanup reserve.
+                  if child is not None and not closure:
+                      if cleanup_start is None:
+                          fail("cleanup_required", 125)
+                      while time.monotonic() < cleanup_end:
+                          try:
+                              tracker.refresh()
+                          except Exception as exc:
+                              fail("custody_error", 125, exc)
+                          try:
+                              if check_cleanup_deadline("before_fallback_cleanup"):
+                                  break
+                              now = time.monotonic()
+                              signum = signal.SIGTERM if now < term_end else signal.SIGKILL
+                              for error in tracker.signal_owned(signum):
+                                  fail("signal_error", 125, error)
+                              tracker.reap()
+                              if tracker.closed():
+                                  clean_scans += 1
+                              else:
+                                  clean_scans = 0
+                              # Pipe registration may have failed. Unregistered pipe FDs
+                              # are still owned and will be closed after containment.
+                              registered = {key.fd for key in selector.get_map().values()} if selector else set()
+                              if clean_scans >= 2 and not (set(streams) & registered):
+                                  closure = True
+                                  check_cleanup_deadline("after_fallback_closure")
+                                  break
+                              if check_cleanup_deadline("after_fallback_closure_scan"):
+                                  break
+                              pump(max(0.0, min(POLL, cleanup_end - time.monotonic())))
+                          except Exception as exc:
+                              fail("cleanup_error", 125, exc)
+                              time.sleep(min(POLL, max(0.0, cleanup_end - time.monotonic())))
+                      if not closure:
+                          fail("closure_unverified", 125, "owned group/descendants or pipe EOF not verified before cleanup deadline")
+                  for fd in list(streams):
+                      try:
+                          close_pipe(fd)
+                      except Exception as exc:
+                          fail("pipe_close_error", 125, exc)
+                  if selector is not None:
+                      try:
+                          selector.close()
+                      except Exception as exc:
+                          fail("selector_close_error", 125, exc)
+                  for label, stream in output_files.items():
+                      try:
+                          stream.close()
+                      except Exception as exc:
+                          fail("log_close_error", 125, exc)
+                  if child is not None:
+                      try:
+                          result["native_returncode"] = child.poll()
+                      except Exception as exc:
+                          fail("native_poll_error", 125, exc)
+                  if tracker is not None:
+                      try:
+                          result["closure"].update(tracker.evidence())
+                          tracker.finish(closure)
+                      except Exception as exc:
+                          closure = False
+                          fail("tracker_finish_error", 125, exc)
+                  for sig, handler in old_handlers.items():
+                      try:
+                          signal.signal(sig, handler)
+                      except Exception as exc:
+                          fail("signal_restore_error", 125, exc)
+                  if canceled:
+                      fail("canceled", 128 + canceled[0])
+                  result["closure"]["verified"] = closure
+                  result["closure"]["cleanupStartedMonotonic"] = cleanup_start
+                  result["closure"]["cleanupDeadlineMonotonic"] = cleanup_end
+                  result["cancelSignal"] = canceled[0] if canceled else None
+                  # Includes pipe/log close, tracker finish and handler restoration.
+                  check_cleanup_deadline("after_terminal_cleanup")
+                  result["endedMonotonic"] = time.monotonic()
+                  result["discardedOutputBytes"] = discarded
+                  result["logs"] = {label: {"path": str(directory / (label + ".log")),
+                                           "bytes": counts[label], "sha256": hashes[label].hexdigest()}
+                                    for label in output_files}
+                  if primary is None:
+                      primary = ("not_launched", 125)
+                  reason, code = primary
+                  # Never replace an observed nonzero original outcome with cleanup code.
+                  # Conversely, cleanup/evidence faults cannot preserve an apparent zero.
+                  if code == 0 and (not closure or result["errors"]):
+                      code, reason = 125, "closure_or_evidence_failure"
+                  result["exit_code"], result["reason"] = code, reason
+                  result["qualified"] = code == 0 and closure and result["native_returncode"] == 0
+                  overrun_before_publication = result["deadlineOverrun"]
+                  try:
+                      with (directory / "RESULT.json").open("x", encoding="utf-8") as stream:
+                          json.dump(result, stream, indent=2, allow_nan=False)
+                          stream.write("\n")
+                      # Serialization, writes and file close can themselves return late.
+                      # Correct this invocation's own provisional receipt if it advertised
+                      # success before a now-known publication overrun. No reserve rearm.
+                      if check_cleanup_deadline("after_result_publication"):
+                          result["exit_code"], result["reason"] = primary[1], primary[0]
+                          result["qualified"] = False
+                          result["endedMonotonic"] = time.monotonic()
+                          if not overrun_before_publication:
+                              with (directory / "RESULT.json").open("w", encoding="utf-8") as stream:
+                                  json.dump(result, stream, indent=2, allow_nan=False)
+                                  stream.write("\n")
+                  except Exception as exc:
+                      fail("result_publication_error", 125, exc)
+                      result["qualified"] = False
+                      if result["exit_code"] == 0:
+                          result["exit_code"], result["reason"] = 125, "result_publication_error"
+                  _poisoned = not closure
+                  _active = False
+              return result
+          
+          
+          def run_phase(name, argv, deadline, env, cwd, evidence_dir, reserve_free_bytes=2 * 1024**3):
+              """Run one Linux phase; return receipt dict including exit_code.
+          
+              evidence_dir must exist; its exclusive name child must not exist.
+              deadline is the work cutoff, not the cleanup cutoff. Caller reserves the
+              additional fixed 20 seconds before its whole-job custody deadline.
+              This function is synchronous; a dedicated runner must never concurrently
+              spawn other children or start another phase. Cancellation is returned as a
+              nonzero result after cleanup; caller must not launch subsequent phases.
+              """
+              return _run_phase(name, argv, deadline, env, cwd, evidence_dir,
+                                reserve_free_bytes, _LinuxTracker, shutil.disk_usage)
+          FIVE_CASE_CONTAINMENT_PY_2
+      - name: Materialize selection.py part 1
+        timeout-minutes: 1
+        run: |
+          set -eu
+          FIVE_CASE_PROGRAM="$RUNNER_TEMP/observer-isolation-five-case/program"
+          mkdir -p "$FIVE_CASE_PROGRAM"
+          cat > "$FIVE_CASE_PROGRAM/selection.py" <<'FIVE_CASE_SELECTION_PY_1'
+          """Exact owner-selected Swift Testing text acceptance; no process or file access.
+          
+          The caller must independently require the original successful process exit,
+          unchanged selected test image/source/options, and completed cleanup. These
+          functions establish only what the bounded discovery/result streams report.
+          Input is direct decoded capture, not GitHub's timestamp-prefixed log export.
+          Only ANSI SGR colour escapes are normalized. No cross-stream order is inferred.
+          """
+          
+          import re
+          
+          
+          OWNER_MANIFEST_SHA256 = "5cbcda3ca2f08388e797a5020abc58d48cc9a1662e4f5f0a6f2940b73c488dc5"
+          OWNER_FILTER = (
+              r"^LatticeTests\.(ObserverIsolationTests/(mainActorCollectionDeliveryRetainsAttachingIsolation|"
+              r"customActorCollectionDeliveryRetainsAttachingIsolation|nilIsolationCollectionDeliveryUsesDeepWorkerExactlyOnce)|"
+              r"ObserveCloseRaceTests/(test_PerIsolationResolve_SurvivesCloseOnMain|"
+              r"test_PerIsolationResolve_SurvivesCloseOnCustomActor))(\(\))?$"
+          )
+          EXPECTED_SPECIFIERS = (
+              "LatticeTests.ObserverIsolationTests/mainActorCollectionDeliveryRetainsAttachingIsolation()",
+              "LatticeTests.ObserverIsolationTests/customActorCollectionDeliveryRetainsAttachingIsolation()",
+              "LatticeTests.ObserverIsolationTests/nilIsolationCollectionDeliveryUsesDeepWorkerExactlyOnce()",
+              "LatticeTests.ObserveCloseRaceTests/test_PerIsolationResolve_SurvivesCloseOnMain()",
+              "LatticeTests.ObserveCloseRaceTests/test_PerIsolationResolve_SurvivesCloseOnCustomActor()",
+          )
+          EXPECTED_SUITES = ("Collection observer isolation", "Observe close race")
+          _NAMES = tuple(s.rsplit("/", 1)[1][:-2] for s in EXPECTED_SPECIFIERS)
+          MAX_INPUT_BYTES = 64 * 1024 * 1024  # combined stdout/stderr; below caller capture cap
+          MAX_LINES = 250_000
+          MAX_LINE_CHARACTERS = 65_536
+          _SGR = re.compile(r"\x1b\[[0-9;]*m")
+          _DURATION = r"((?:0|[1-9][0-9]{0,5})\.[0-9]{3})"
+          _TEST_START = re.compile(r"◇ Test ([A-Za-z_][A-Za-z_0-9]*)\(\) started\.")
+          _TEST_PASS = re.compile(r"✔ Test ([A-Za-z_][A-Za-z_0-9]*)\(\) passed after " + _DURATION + r" seconds\.")
+          _SUITE_START = re.compile(r'◇ Suite "([^"\r\n]+)" started\.')
+          _SUITE_PASS = re.compile(r'✔ Suite "([^"\r\n]+)" passed after ' + _DURATION + r" seconds\.")
+          _SUMMARY = re.compile(r"✔ Test run with 5 tests in 2 suites passed after " + _DURATION + r" seconds\.")
+          _XCT_SUITE = re.compile(r"Test Suite '(?:All tests|Selected tests|debug\.xctest)' (?:started|passed) at [0-9 .:+-]+")
+          _XCT_ZERO = re.compile(r"\s*Executed 0 tests?, with 0 failures \(0 unexpected\) in [0-9.]+ \([0-9.]+\) seconds")
+          _INFO = re.compile(r"↳ (?:Testing Library Version|Target Platform): [^\x00-\x1f]+")
+          _REPORT_PREFIX = re.compile(r"^(?:[◇✔✘✗✓↷➜⊘○●↳]|Test (?:Case|Suite)\b|Executed\b|(?:Test|Suite)\b.*\b(?:started|passed|failed|skipped|issue))")
+          
+          
+          class SelectionError(ValueError):
+              """The streams cannot prove exact selected-case acceptance."""
+          
+          
+          def _inputs(*texts):
+              total = 0
+              for value in texts:
+                  if not isinstance(value, str):
+                      raise SelectionError("input must be decoded text")
+                  if len(value) > MAX_INPUT_BYTES:
+                      raise SelectionError("input size bound exceeded")
+                  try:
+                      total += len(value.encode("utf-8", errors="strict"))
+                  except UnicodeError as exc:
+                      raise SelectionError("invalid Unicode input") from exc
+                  if total > MAX_INPUT_BYTES:
+                      raise SelectionError("combined input size bound exceeded")
+          
+          
+          def _lines(text):
+              # Count before splitting. split('\n') deliberately does not treat arbitrary
+              # Unicode separators as reporter record boundaries.
+              if text.count("\n") + 1 > MAX_LINES:
+                  raise SelectionError("line count bound exceeded")
+              for number, raw in enumerate(text.split("\n"), 1):
+                  if len(raw) > MAX_LINE_CHARACTERS:
+                      raise SelectionError("line length bound exceeded")
+                  line = raw[:-1] if raw.endswith("\r") else raw
+                  line = _SGR.sub("", line)
+                  if any(ord(c) < 32 and c != "\t" for c in line) or "\x7f" in line:
+                      raise SelectionError(f"unsupported control character on line {number}")
+                  yield number, line
+          
+          
+          def validate_discovery(text):
+              """Accept five exact qualified specifiers, optional (), each exactly once.
+          
+              Discovery stdout must contain only specifiers and empty lines. Compiler or
+              resolver diagnostics belong to separately captured stderr, not this proof.
+              """
+              _inputs(text)
+              seen = set()
+              for number, line in _lines(text):
+                  if not line:
+                      continue
+                  if re.fullmatch(OWNER_FILTER, line) is None:
+                      raise SelectionError(f"unexpected discovery line {number}")
+                  canonical = line if line.endswith("()") else line + "()"
+                  if canonical not in EXPECTED_SPECIFIERS or canonical in seen:
+                      raise SelectionError(f"unexpected or duplicate discovery specifier on line {number}")
+                  seen.add(canonical)
+              if seen != set(EXPECTED_SPECIFIERS):
+                  raise SelectionError("discovery does not contain exactly the five selected cases")
+              return {"schema": "lattice.five-case-discovery-text/1", "accepted": True,
+                      "manifestSHA256": OWNER_MANIFEST_SHA256, "count": 5,
+                      "specifiers": list(EXPECTED_SPECIFIERS), "scope": "text-only"}
+          
+          
+          def _duration(value):
+              seconds, milliseconds = value.split(".")
+              return {"seconds": value, "milliseconds": int(seconds) * 1000 + int(milliseconds)}
+          
+          
+          def validate_results(stdout, stderr):
+              """Accept exact default Swift Testing case/suite records and final summary.
+          
+              Reporter identities may arrive on either stream. A start must precede its
+              pass when both are in one stream; no chronology is invented between streams.
+              Non-reporter application logs are ignored. Unknown reporter-shaped records,
+              parameterized cases, XCTest test bodies, skips, failures, and issues refuse.
+              Only the XCTest empty-harness form is tolerated, if XCTest was not disabled.
+              """
+              _inputs(stdout, stderr)
+              starts, passes, suite_starts, suite_passes = {}, {}, {}, {}
+              run_start, summary = [], []
+              reporter_positions = {"stdout": [], "stderr": []}
+              ignored = 0
+          
+              def add(table, name, expected, stream, line, duration=None):
+                  if name not in expected or name in table:
+                      raise SelectionError(f"unexpected or duplicate reporter identity: {name}")
+                  entry = {"stream": stream, "line": line}
+                  if duration is not None:
+                      entry["duration"] = _duration(duration)
+                  table[name] = entry
+          
+              for stream, text in (("stdout", stdout), ("stderr", stderr)):
+                  for number, line in _lines(text):
+                      if not line:
+                          continue
+                      if line == "◇ Test run started.":
+                          run_start.append({"stream": stream, "line": number})
+                      elif (match := _TEST_START.fullmatch(line)):
+                          add(starts, match[1], _NAMES, stream, number)
+                      elif (match := _TEST_PASS.fullmatch(line)):
+                          add(passes, match[1], _NAMES, stream, number, match[2])
+                      elif (match := _SUITE_START.fullmatch(line)):
+                          add(suite_starts, match[1], EXPECTED_SUITES, stream, number)
+                      elif (match := _SUITE_PASS.fullmatch(line)):
+                          add(suite_passes, match[1], EXPECTED_SUITES, stream, number, match[2])
+                      elif (match := _SUMMARY.fullmatch(line)):
+                          summary.append({"stream": stream, "line": number,
+                                          "duration": _duration(match[1])})
+                      elif _INFO.fullmatch(line):
+                          pass
+                      elif _XCT_SUITE.fullmatch(line) or _XCT_ZERO.fullmatch(line):
+                          # No nonzero XCTest case count or any Test Case line is admitted.
+                          continue
+                      elif _REPORT_PREFIX.match(line.lstrip()) or any(
+                              marker in line for marker in ("◇ Test", "✔ Test", "✘ Test", "➜ Test", "◇ Suite", "✔ Suite", "✘ Suite", "➜ Suite")):
+                          # Interleaved/prefixed reporter text is ambiguous, not ordinary app logging.
+                          raise SelectionError(f"unrecognized or unsuccessful reporter record at {stream}:{number}")
+                      else:
+                          ignored += 1
+                          continue
+                      reporter_positions[stream].append(number)
+          
+              if len(run_start) != 1 or len(summary) != 1:
+                  raise SelectionError("require one run start and one successful five-test/two-suite summary")
+              for table, expected in ((starts, _NAMES), (passes, _NAMES),
+                                      (suite_starts, EXPECTED_SUITES), (suite_passes, EXPECTED_SUITES)):
+                  if set(table) != set(expected):
+                      raise SelectionError("missing selected test or suite reporter records")
+              for first, last in ((starts, passes), (suite_starts, suite_passes)):
+                  for name in first:
+                      a, b = first[name], last[name]
+                      if a["stream"] == b["stream"] and a["line"] >= b["line"]:
+                          raise SelectionError(f"pass precedes start in one stream: {name}")
+              for boundary, first in ((run_start[0], True), (summary[0], False)):
+                  positions = reporter_positions[boundary["stream"]]
+                  if boundary["line"] != (positions[0] if first else positions[-1]):
+                      raise SelectionError("run boundary is not first/final reporter record in its stream")
+              return {"schema": "lattice.five-case-result-text/1", "accepted": True,
+                      "manifestSHA256": OWNER_MANIFEST_SHA256,
+                      "started": 5, "passed": 5, "skipped": 0, "failed": 0, "issues": 0,
+                      "extraCases": 0, "runStart": run_start[0], "summary": summary[0],
+                      "cases": [{"specifier": specifier, "start": starts[name], "pass": passes[name]}
+                                for specifier, name in zip(EXPECTED_SPECIFIERS, _NAMES)],
+                      "suites": [{"name": name, "start": suite_starts[name], "pass": suite_passes[name]}
+                                 for name in EXPECTED_SUITES],
+                      "ignoredApplicationLines": ignored, "scope": "text-only",
+                      "originalProcessExitVerified": False, "sourceOrImageVerified": False,
+                      "cleanupVerified": False, "crossStreamChronologyInferred": False}
+          
+          
+          _INVENTORY_IDENTIFIER = r"[A-Za-z_][A-Za-z_0-9]*"
+          _INVENTORY_SPECIFIER = re.compile(
+              _INVENTORY_IDENTIFIER + r"\."
+              + r"(?:" + _INVENTORY_IDENTIFIER + r"/)*"
+              + _INVENTORY_IDENTIFIER
+              + r"(?:\((?:" + _INVENTORY_IDENTIFIER + r":)*\))?"
+          )
+          
+          
+          def validate_discovery_inventory(text):
+              """Validate unfiltered Swift Testing list stdout, then select the owner five.
+          
+              Swift 6.3.3 lists all visible non-suite tests. Test.ID uses a module period,
+              slash-separated suite components, and a terminal function name. Accept
+              ASCII identifier names, nested suites, global functions and argument-label
+              signatures; normalize bare/() aliases only for duplicate detection. Source
+              locations (including ambiguity disambiguators), generic contexts, operators,
+              quoted/Unicode names and non-specifier diagnostics conservatively refuse.
+          
+              Existing input bounds, CRLF and SGR-only normalization apply. Every nonempty
+              line must validate, including lines outside OWNER_FILTER. The caller retains
+              the complete raw phase log; this proof neither drops malformed inventory
+              lines nor establishes process success, declaration completeness or execution.
+              """
+              _inputs(text)
+              seen, selected = set(), []
+              for number, line in _lines(text):
+                  if not line:
+                      continue
+                  if _INVENTORY_SPECIFIER.fullmatch(line) is None:
+                      raise SelectionError(f"invalid or ambiguous inventory specifier on line {number}")
+                  canonical = line if "(" in line else line + "()"
+                  if canonical in seen:
+                      raise SelectionError(f"duplicate inventory specifier on line {number}")
+                  seen.add(canonical)
+                  if re.fullmatch(OWNER_FILTER, line) is not None:
+                      selected.append(line)
+              if not seen:
+                  raise SelectionError("empty discovery inventory")
+              proof = validate_discovery("\n".join(selected))
+              return {"schema": "lattice.five-case-discovery-inventory-text/1", "accepted": True,
+                      "manifestSHA256": OWNER_MANIFEST_SHA256, "ownerFilter": OWNER_FILTER,
+                      "totalCount": len(seen), "outsideFilterCount": len(seen) - len(selected),
+                      "selectedCount": len(selected), "selectedProof": proof, "scope": "text-only",
+                      "specifierGrammar": "ascii-identifiers-module-dot-suite-slashes-function-labels/1",
+                      "originalProcessExitVerified": False, "sourceOrImageVerified": False,
+                      "cleanupVerified": False, "declarationCompletenessVerified": False}
+          FIVE_CASE_SELECTION_PY_1
+      - name: Materialize provenance.py part 1
+        timeout-minutes: 1
+        run: |
+          set -eu
+          FIVE_CASE_PROGRAM="$RUNNER_TEMP/observer-isolation-five-case/program"
+          mkdir -p "$FIVE_CASE_PROGRAM"
+          cat > "$FIVE_CASE_PROGRAM/provenance.py" <<'FIVE_CASE_PROVENANCE_PY_1'
+          """Exact-source/whole-lock checks for the separately allocated five-case job."""
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import stat
+          
+          BASE = "d18f80408a0cb992cdc98ce616c9b28813e99bf7"
+          BRANCH = "refs/heads/codex/observer-isolation-five-case-20260916-2"
+          WORKFLOW = ".github/workflows/observer-isolation-five-case.yml"
+          LOCK_HASH = "75b458a70858804e570dfa1abd7a94511b714a3ce170fb0def480b04d8d5aebd"
+          SOURCE_HASHES = {
+              "Sources/Lattice/Lattice.swift": "d1f49df7b1b18ce208a90a2afa7f70e3631191a0b9f586f2a94b4a587557c649",
+              "Tests/LatticeTests/ObserveCloseRaceTests.swift": "0f2078446721c5c3559c042fb3685f94d380235a7a6276babe355b5cbd30d1e3",
+              "Tests/LatticeTests/ObserverIsolationTests.swift": "6ab1de74642fd8b09b9c399f52803c0d7cad299b4dd7b36f74da969068e30dbc",
+          }
+          SELECTED = set(SOURCE_HASHES) | {WORKFLOW, "Package.resolved", "Package.swift",
+              ".github/workflows/ci.yml", ".github/workflows/docs.yml", ".github/workflows/release.yml",
+              "Tests/LatticeTests/CIEnvironment.swift", "Scripts/wrapper-expected-bindings.json"}
+          
+          
+          def unique_json(data):
+              def pairs(items):
+                  out = {}
+                  for k, v in items:
+                      if k in out:
+                          raise ValueError("duplicate JSON key: " + k)
+                      out[k] = v
+                  return out
+              def bad(value):
+                  raise ValueError("non-JSON constant: " + value)
+              return json.loads(data, object_pairs_hook=pairs, parse_constant=bad)
+          
+          
+          def regular_bytes(path, root, limit=8 * 1024**2):
+              path, root = Path(path), Path(root)
+              relative = path.relative_to(root)
+              if not stat.S_ISDIR(root.lstat().st_mode):
+                  raise ValueError("nonphysical root")
+              current = root
+              for part in relative.parts[:-1]:
+                  current /= part
+                  if not stat.S_ISDIR(current.lstat().st_mode):
+                      raise ValueError("nonphysical parent: " + str(current))
+              before = path.lstat()
+              if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+                  raise ValueError("nonregular or oversized file: " + str(path))
+              def ident(s):
+                  return s.st_dev, s.st_ino, s.st_mode, s.st_size, s.st_mtime_ns, s.st_ctime_ns
+              with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as f:
+                  if ident(before) != ident(os.fstat(f.fileno())):
+                      raise ValueError("file changed before open")
+                  data = f.read(limit + 1)
+                  if ident(before) != ident(os.fstat(f.fileno())):
+                      raise ValueError("file changed while reading")
+              if ident(before) != ident(path.lstat()) or len(data) != before.st_size:
+                  raise ValueError("file changed after read")
+              return data
+          
+          
+          def tree_entries(raw):
+              if not raw.endswith(b"\0") or len(raw) > 2 * 1024**2:
+                  raise ValueError("invalid tree inventory")
+              out = {}
+              for row in raw[:-1].split(b"\0"):
+                  head, path = row.split(b"\t", 1)
+                  mode, kind, oid = head.decode().split()
+                  name = path.decode("utf-8")
+                  if (mode not in ("100644", "100755") or kind != "blob"
+                          or not re.fullmatch("[0-9a-f]{40}", oid)
+                          or name.startswith("/") or any(p in ("", ".", "..") for p in name.split("/"))
+                          or any(ord(c) < 32 for c in name) or name in out):
+                      raise ValueError("unsafe tree entry")
+                  out[name] = (mode, oid)
+              if not 1 <= len(out) <= 1000:
+                  raise ValueError("tree count bound")
+              return out
+          
+          
+          def verify_checkout(workspace, destination, git):
+              """git(argv, cwd) is supplied by the bounded native-phase supervisor."""
+              workspace, destination = Path(workspace), Path(destination)
+              destination.mkdir(parents=True, exist_ok=False)
+              if (os.environ.get("GITHUB_EVENT_NAME") != "push" or os.environ.get("GITHUB_REF") != BRANCH
+                      or os.environ.get("GITHUB_RUN_ATTEMPT") != "1"):
+                  raise ValueError("wrong event/ref or disallowed retry")
+              sha = os.environ["GITHUB_SHA"]
+              if not re.fullmatch("[0-9a-f]{40}", sha):
+                  raise ValueError("invalid event SHA")
+              if git(["rev-parse", "HEAD"], workspace).decode().strip() != sha:
+                  raise ValueError("checkout differs from event SHA")
+              parents = git(["rev-list", "--parents", "-n", "1", sha], workspace).decode().split()
+              if parents != [sha, BASE]:
+                  raise ValueError("requires exactly one d18 parent")
+              raw = git(["ls-tree", "-r", "-z", sha], workspace)
+              current = tree_entries(raw)
+              base = tree_entries(git(["ls-tree", "-r", "-z", BASE], workspace))
+              changed = {k for k in set(current) | set(base) if current.get(k) != base.get(k)}
+              if changed != set(SOURCE_HASHES) | {WORKFLOW}:
+                  raise ValueError("publication is not the exact four-path successor")
+              if set(base) - set(current) or WORKFLOW in base:
+                  raise ValueError("deleted source or workflow already existed")
+              record = {"sha": sha, "tree": git(["rev-parse", sha + "^{tree}"], workspace).decode().strip(),
+                        "parent": BASE, "changedPaths": sorted(changed), "files": []}
+              (destination / "ls-tree.z").write_bytes(raw)
+              for relative, (mode, oid) in sorted(current.items()):
+                  path = workspace / relative
+                  data = regular_bytes(path, workspace)
+                  actual_mode = "100755" if path.stat().st_mode & 0o111 else "100644"
+                  actual_oid = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+                  digest = hashlib.sha256(data).hexdigest()
+                  if actual_mode != mode or actual_oid != oid:
+                      raise ValueError("tracked worktree drift: " + relative)
+                  if relative in SOURCE_HASHES and digest != SOURCE_HASHES[relative]:
+                      raise ValueError("candidate postimage drift: " + relative)
+                  record["files"].append({"path": relative, "mode": mode, "blob": oid,
+                                          "bytes": len(data), "sha256": digest})
+                  if relative in SELECTED or relative.endswith("Package.resolved"):
+                      target = destination / "files" / relative
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      target.write_bytes(data)
+              # No extra untracked product/test sources or package configuration can enter compilation.
+              status = git(["status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching"], workspace)
+              (destination / "status.stdout").write_bytes(status)
+              if status.strip():
+                  raise ValueError("checkout not clean, including untracked files")
+              lock = regular_bytes(workspace / "Package.resolved", workspace)
+              if len(lock) != 9511 or hashlib.sha256(lock).hexdigest() != LOCK_HASH:
+                  raise ValueError("complete lock drift")
+              pins = unique_json(lock)["pins"]
+              if len(pins) != 34 or len({p["identity"] for p in pins}) != 34:
+                  raise ValueError("whole-lock count/identity mismatch")
+              # Detect untracked/ignored root SwiftPM overrides and alternate metadata locks.
+              metadata = workspace / ".swiftpm"
+              if os.path.lexists(metadata):
+                  if not stat.S_ISDIR(metadata.lstat().st_mode):
+                      raise ValueError("nonphysical SwiftPM metadata root")
+                  count = 0
+                  for parent, directories, files in os.walk(metadata, followlinks=False):
+                      if len(Path(parent).relative_to(metadata).parts) > 8:
+                          raise ValueError("metadata depth bound")
+                      for child in directories + files:
+                          p = Path(parent) / child
+                          count += 1
+                          if count > 4096 or p.is_symlink():
+                              raise ValueError("metadata bound or symlink")
+                      for filename in files:
+                          relative = str((Path(parent) / filename).relative_to(workspace))
+                          if relative not in current:
+                              raise ValueError("uncommitted SwiftPM override/metadata: " + relative)
+              (destination / "SOURCE.json").write_text(json.dumps(record, indent=2) + "\n")
+              return record, pins
+          
+          
+          def verify_graph(scratch, pins, destination, git):
+              scratch, destination = Path(scratch), Path(destination)
+              destination.mkdir(parents=True, exist_ok=False)
+              raw = regular_bytes(scratch / "workspace-state.json", scratch)
+              (destination / "workspace-state.json").write_bytes(raw)
+              state = unique_json(raw)
+              deps = state["object"]["dependencies"]
+              if len(deps) != 34:
+                  raise ValueError("actual workspace graph does not contain exactly 34 dependencies")
+              expected = {p["identity"]: p for p in pins}
+              seen, result = set(), []
+              for dep in deps:
+                  ref = dep["packageRef"]
+                  key = ref["identity"]
+                  if key in seen or key not in expected:
+                      raise ValueError("extra/duplicate actual dependency")
+                  seen.add(key)
+                  pin = expected[key]
+                  actual = dep["state"]
+                  if (ref["kind"] != pin["kind"] or ref["location"] != pin["location"]
+                          or actual.get("name") != "sourceControlCheckout" or dep.get("basedOn") is not None
+                          or actual.get("checkoutState") != pin["state"]):
+                      raise ValueError("workspace dependency differs from lock: " + key)
+                  subpath = dep["subpath"]
+                  if not re.fullmatch(r"[A-Za-z0-9_.-]+", subpath) or subpath in (".", ".."):
+                      raise ValueError("unsafe dependency checkout path")
+                  checkout = scratch / "checkouts" / subpath
+                  if checkout.is_symlink() or not checkout.is_dir():
+                      raise ValueError("nonphysical checkout")
+                  revision = git(["rev-parse", "HEAD"], checkout).decode().strip()
+                  status = git(["status", "--porcelain=v1", "--untracked-files=all"], checkout)
+                  if revision != pin["state"]["revision"] or status.strip():
+                      raise ValueError("dependency checkout revision/source drift: " + key)
+                  result.append({"identity": key, "location": ref["location"], "state": actual["checkoutState"],
+                                 "checkout": str(checkout), "actualHEAD": revision, "clean": True})
+              if seen != set(expected):
+                  raise ValueError("missing dependency")
+              (destination / "GRAPH.json").write_text(json.dumps(result, indent=2) + "\n")
+              return result
+          FIVE_CASE_PROVENANCE_PY_1
+      - name: Materialize runner.py part 1
+        timeout-minutes: 1
+        run: |
+          set -eu
+          FIVE_CASE_PROGRAM="$RUNNER_TEMP/observer-isolation-five-case/program"
+          mkdir -p "$FIVE_CASE_PROGRAM"
+          cat > "$FIVE_CASE_PROGRAM/runner.py" <<'FIVE_CASE_RUNNER_PY_1'
+          """Single-use hosted diagnostic orchestrator. Never run in preparation."""
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import shutil
+          import signal
+          import stat
+          import sys
+          import tarfile
+          import time
+          import traceback
+          
+          sys.path.insert(0, str(Path(__file__).resolve().parent))
+          from containment import run_phase
+          from selection import OWNER_FILTER, validate_discovery_inventory, validate_results
+          from provenance import verify_checkout, verify_graph, regular_bytes
+          
+          GiB = 1024**3
+          MiB = 1024**2
+          IMAGE = "swift@sha256:8de8ea332a61e961ead4ef41029c2552b18e1a70dd5942d25ecf7d8de2eec5b5"
+          
+          
+          def uptime():
+              return float(Path("/proc/uptime").read_text().split()[0])
+          
+          
+          def hashed_file(path):
+              before = path.stat()
+              if not stat.S_ISREG(before.st_mode) or before.st_size > 2 * GiB:
+                  raise ValueError("invalid/oversized native image")
+              digest = hashlib.sha256()
+              with path.open("rb") as f:
+                  for chunk in iter(lambda: f.read(MiB), b""):
+                      digest.update(chunk)
+              after = path.stat()
+              if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+                      after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+                  raise ValueError("native image changed while hashing")
+              return {"path": str(path), "bytes": before.st_size, "sha256": digest.hexdigest()}
+          
+          
+          def main():
+              evidence = Path(os.environ["RUNNER_TEMP"]) / "observer-isolation-five-case"
+              evidence.mkdir(exist_ok=True)
+              (evidence / "commands").mkdir(exist_ok=False)
+              work = Path(os.environ["GITHUB_WORKSPACE"])
+              owned = evidence.parent / ("five-case-owned-" + os.environ["GITHUB_RUN_ID"])
+              started = float((evidence / "clock-start-uptime").read_text().strip())
+              pre_end, native_end = started + 1440, started + 2360
+              sequence = 0
+              environment = dict(os.environ)
+              environment.update(GIT_OPTIONAL_LOCKS="0", GIT_NO_LAZY_FETCH="1", DEBIAN_FRONTEND="noninteractive",
+                                 PYTHONDONTWRITEBYTECODE="1", TERM="dumb", NO_COLOR="1")
+              report = {"schema": "lattice.observer-five-case-diagnostic/1", "diagnosticOnly": True,
+                        "productQualified": False, "accepted": False, "errors": [], "phases": [],
+                        "configuredContainer": IMAGE, "containerId": os.environ.get("FIVE_CASE_CONTAINER_ID"),
+                        "runId": os.environ["GITHUB_RUN_ID"], "attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                        "sourceSHA": os.environ["GITHUB_SHA"], "ref": os.environ["GITHUB_REF"],
+                        "clockStartUptime": started, "supervisorStartUptime": uptime(),
+                        "diskAdmissionBytes": 10 * GiB, "diskStopReserveBytes": 2 * GiB,
+                        "platformBootstrapOutsideOwnedProcessProof": True,
+                        "limits": {"preTestSecondsFromFirstStep": 1440, "testSeconds": 900,
+                                   "phaseCleanupSeconds": 20, "jobMinutes": 45},
+                        "temporaryDisposition": "not-created"}
+              fixed_log = Path("/tmp/lattice_swift_tests.log")
+              fixed_admitted = False
+              completed_selection = False
+              test_phase = None
+              canceled = False
+          
+              def save():
+                  report["recordedUptime"] = uptime()
+                  temporary = evidence / "RESULT.json.tmp"
+                  temporary.write_text(json.dumps(report, indent=2) + "\n")
+                  temporary.replace(evidence / "RESULT.json")
+          
+              def command(label, argv, until=None, cwd=None, timeout=None):
+                  nonlocal sequence, test_phase, canceled
+                  if canceled:
+                      raise InterruptedError("no new phase after cancellation")
+                  sequence += 1
+                  # Preserve the 20-second cleanup allowance before either phase boundary.
+                  bound = pre_end - 20 if until is None else until
+                  available = bound - uptime()
+                  if timeout is not None:
+                      available = min(available, timeout)
+                  if available <= 0:
+                      raise TimeoutError("phase budget exhausted before " + label)
+                  work_deadline = time.monotonic() + available
+                  name = "%03d-%s" % (sequence, label)
+                  if label == "test":
+                      test_phase = evidence / "commands" / name
+                  entry = {"name": name, "result": None, "startedUptime": uptime()}
+                  report["phases"].append(entry)
+                  save()
+                  result = run_phase(name, argv, work_deadline, environment,
+                                     str(cwd or work), evidence / "commands", reserve_free_bytes=2 * GiB)
+                  entry["result"] = result
+                  if result.get("cancelSignal"):
+                      canceled = True
+                  save()
+                  if result["exit_code"] != 0:
+                      raise RuntimeError("phase failed: " + name)
+                  return (evidence / "commands" / name / "stdout.log").read_bytes()
+          
+              # Source checks use only the read-only Git interface through the same containment.
+              current_git_deadline = None
+              def git(arguments, directory):
+                  return command("git", ["git", "-c", "safe.directory=" + str(directory),
+                                 "-c", "core.fsmonitor=false", *arguments],
+                                 until=current_git_deadline, cwd=directory, timeout=15)
+          
+              def snapshot(label, graph=False):
+                  source, pins = verify_checkout(work, evidence / label / "source", git)
+                  if graph:
+                      verify_graph(owned / "scratch", pins, evidence / label / "graph", git)
+                  return source
+          
+              def cancel(signum, frame):
+                  nonlocal canceled
+                  canceled = True
+                  raise InterruptedError("runner received signal " + str(signum))
+          
+              signal.signal(signal.SIGTERM, cancel)
+              signal.signal(signal.SIGINT, cancel)
+              save()
+              try:
+                  if platform.system() != "Linux" or platform.machine() != "x86_64" or os.getuid() != 0:
+                      raise ValueError("requires root in the allocated Linux x64 job container")
+                  if os.environ.get("CI") != "true" or os.environ.get("GITHUB_RUN_ATTEMPT") != "1":
+                      raise ValueError("ordinary hosted CI and first attempt required")
+                  if uptime() >= pre_end - 20:
+                      raise TimeoutError("bootstrap consumed pre-test allocation")
+                  free = shutil.disk_usage(evidence).free
+                  report["initialFreeBytes"] = free
+                  if free < 10 * GiB:
+                      raise ValueError("fresh disk admission requires at least 10 GiB free")
+                  if owned.exists() or os.path.lexists(fixed_log):
+                      raise ValueError("owned route or fixed test log is not fresh/exclusive")
+                  owned.mkdir(mode=0o700)
+                  for child in ("scratch", "cache", "config", "security", "tmp"):
+                      (owned / child).mkdir(mode=0o700)
+                  report["ownedDirectory"] = str(owned)
+                  report["temporaryDisposition"] = "created-owned"
+                  fixed_admitted = True
+                  environment.update(TMPDIR=str(owned / "tmp"))
+                  report["relevantEnvironment"] = {k: environment[k] for k in
+                      ("CI", "TMPDIR", "GIT_NO_LAZY_FETCH", "TERM", "NO_COLOR")}
+                  report["platform"] = {"uname": list(platform.uname()),
+                                        "osRelease": Path("/etc/os-release").read_text(),
+                                        "python": sys.version, "pythonExecutable": sys.executable}
+                  report["sourceBaseline"] = snapshot("before-setup")["tree"]
+                  command("apt-index", ["apt-get", "-o", "Acquire::Retries=0", "update"], timeout=180)
+                  command("apt-sqlite", ["apt-get", "-o", "Acquire::Retries=0", "install", "-y",
+                                         "--no-install-recommends", "libsqlite3-dev", "sqlite3"], timeout=180)
+                  swift = shutil.which("swift", path=environment.get("PATH"))
+                  if not swift:
+                      raise ValueError("Swift not found in pinned container")
+                  # Preserve the swift symlink basename: the driver selects its mode from argv[0].
+                  report["swiftExecutable"] = hashed_file(Path(swift).resolve())
+                  report["swiftInvocationPath"] = swift
+                  version = command("swift-version", [swift, "--version"], timeout=30).decode()
+                  report["swiftVersion"] = version
+                  if "Swift version 6.3.3" not in version or "Target: x86_64-unknown-linux-gnu" not in version:
+                      raise ValueError("toolchain differs from recorded stable Linux image")
+                  report["configuration"] = "debug"
+                  common_argv = [swift, "test", "--package-path", str(work), "--scratch-path", str(owned / "scratch"),
+                          "--cache-path", str(owned / "cache"), "--config-path", str(owned / "config"),
+                          "--security-path", str(owned / "security"), "--configuration", "debug",
+                          "--force-resolved-versions", "--skip-update", "--jobs", "4", "--disable-xctest",
+                          "--enable-swift-testing"]
+                  # List all visible tests without executing their bodies. Swift Testing's
+                  # list path ignores the run filter; validate the exact owner subset below.
+                  discovery_argv = common_argv + ["list"]
+                  argv = common_argv + ["--no-parallel", "--filter", OWNER_FILTER]
+                  report["baseTestArgv"] = argv
+                  report["discoveryArgv"] = discovery_argv
+                  listed = command("build-discover", discovery_argv)
+                  report["discovery"] = validate_discovery_inventory(listed.decode("utf-8"))
+                  snapshot("after-discovery", graph=True)
+                  # Expected SwiftPM output for this package/configuration/triple; never directly launched.
+                  image = owned / "scratch" / "x86_64-unknown-linux-gnu" / "debug" / "LatticePackageTests.xctest"
+                  if not image.is_file() or image.is_symlink():
+                      raise ValueError("expected just-built test executable is missing/nonphysical")
+                  with image.open("rb") as f:
+                      if f.read(4) != b"\x7fELF":
+                          raise ValueError("test image is not an ELF executable")
+                  report["testImage"] = hashed_file(image)
+                  snapshot("before-test", graph=True)
+                  if hashed_file(image) != report["testImage"]:
+                      raise ValueError("test executable changed before execution")
+                  if uptime() > pre_end or uptime() + 920 > native_end:
+                      raise TimeoutError("insufficient reserved execution and cleanup budget")
+                  # --skip-build can only use this just-built, provenance-checked scratch/image.
+                  command("test", argv + ["--skip-build"], until=min(uptime() + 900, native_end - 20))
+                  case_phase = evidence / "commands" / report["phases"][-1]["name"]
+                  report["selection"] = validate_results((case_phase / "stdout.log").read_text(),
+                                                          (case_phase / "stderr.log").read_text())
+                  completed_selection = True
+                  if hashed_file(image) != report["testImage"]:
+                      raise ValueError("test image changed during execution")
+              except Exception as error:
+                  report["errors"].append({"type": type(error).__name__, "message": str(error)})
+                  (evidence / "exception.txt").write_text(traceback.format_exc())
+              finally:
+                  report["canceled"] = canceled
+                  if test_phase is not None and "selection" not in report:
+                      try:
+                          report["selection"] = validate_results((test_phase / "stdout.log").read_text(),
+                                                                 (test_phase / "stderr.log").read_text())
+                      except Exception as error:
+                          report["selectionIncomplete"] = str(error)
+                  # Final source/dependency custody remains inside the evidence reserve; no native tests follow.
+                  current_git_deadline = started + 2490
+                  try:
+                      if canceled or any(not (p["result"] or {}).get("closure", {}).get("verified", False)
+                                         for p in report["phases"]):
+                          raise RuntimeError("final native custody skipped after cancellation/unverified closure")
+                      snapshot("final", graph=(owned / "scratch" / "workspace-state.json").is_file())
+                      report["finalProvenance"] = True
+                  except Exception as error:
+                      report["errors"].append({"phase": "final-provenance", "message": str(error)})
+                  try:
+                      if fixed_admitted and os.path.lexists(fixed_log):
+                          data = regular_bytes(fixed_log, Path("/tmp"), limit=128 * MiB)
+                          (evidence / "lattice_swift_tests.log").write_bytes(data)
+                          report["fixedLog"] = {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+                      if owned.exists():
+                          temp = owned / "tmp"
+                          closure_ok = all((p["result"] or {}).get("closure", {}).get("verified", False)
+                                           for p in report["phases"])
+                          report["allOwnedPhaseClosuresVerified"] = closure_ok
+                          if not closure_ok:
+                              raise ValueError("incomplete process closure; owned data retained without archiving")
+                          entries, queue, size = [], [(temp, 0)], 0
+                          while queue:
+                              directory, depth = queue.pop()
+                              if depth > 16:
+                                  raise ValueError("temporary evidence depth bound")
+                              with os.scandir(directory) as scan:
+                                  for child in scan:
+                                      p = Path(child.path)
+                                      entries.append(p)
+                                      if len(entries) > 4096 or child.is_symlink():
+                                          raise ValueError("temporary evidence count/symlink bound")
+                                      if child.is_dir(follow_symlinks=False):
+                                          queue.append((p, depth + 1))
+                                      elif child.is_file(follow_symlinks=False):
+                                          size += child.stat(follow_symlinks=False).st_size
+                                          if size > 256 * MiB:
+                                              raise ValueError("temporary evidence exceeds retention cap")
+                                      else:
+                                          raise ValueError("nonregular temporary evidence")
+                          report["temporaryEvidenceBytes"] = size
+                          if size > 256 * MiB or shutil.disk_usage(evidence).free < 512 * MiB + size:
+                              raise ValueError("temporary evidence exceeds retention/reserve cap; kept owned directory")
+                          # Keep failure/success temporary data before deleting any of it.
+                          with tarfile.open(evidence / "owned-temporary-data.tar", "w") as archive:
+                              archive.add(temp, arcname="owned-temp", recursive=False)
+                              for p in entries:
+                                  archive.add(p, arcname="owned-temp/" + str(p.relative_to(temp)), recursive=False)
+                          shutil.rmtree(temp)
+                          if fixed_admitted and fixed_log.exists():
+                              fixed_log.unlink()
+                          report["temporaryDisposition"] = "archived-and-removed-owned-tmp"
+                          report["scratchCacheDisposition"] = "retained-in-ephemeral-job-until-platform-disposal"
+                  except Exception as error:
+                      report["errors"].append({"phase": "evidence-cleanup", "message": str(error)})
+                  report["accepted"] = bool(completed_selection and not report["errors"]
+                                            and report.get("finalProvenance")
+                                            and report.get("allOwnedPhaseClosuresVerified"))
+                  save()
+                  inventory = []
+                  for p in sorted(evidence.rglob("*")):
+                      if p.is_file() and not p.is_symlink() and p.name != "FILES.json":
+                          item = hashed_file(p)
+                          item["path"] = str(p.relative_to(evidence))
+                          inventory.append(item)
+                  (evidence / "FILES.json").write_text(json.dumps(inventory, indent=2) + "\n")
+                  # Receiving requires this completion marker AND successful outer step/upload.
+                  # A late hash/write failure cannot be accepted from RESULT.json alone.
+                  completion = {"schema": "lattice.five-case-local-custody/1",
+                                "accepted": report["accepted"], "result": hashed_file(evidence / "RESULT.json"),
+                                "inventory": hashed_file(evidence / "FILES.json"),
+                                "requiresSuccessfulDiagnosticStepAndArtifactUpload": True}
+                  with (evidence / "COMPLETION.json").open("x") as f:
+          FIVE_CASE_RUNNER_PY_1
+      - name: Materialize runner.py part 2
+        timeout-minutes: 1
+        run: |
+          set -eu
+          FIVE_CASE_PROGRAM="$RUNNER_TEMP/observer-isolation-five-case/program"
+          mkdir -p "$FIVE_CASE_PROGRAM"
+          cat >> "$FIVE_CASE_PROGRAM/runner.py" <<'FIVE_CASE_RUNNER_PY_2'
+                      json.dump(completion, f, indent=2)
+                      f.write("\n")
+                  print(json.dumps({"accepted": report["accepted"], "diagnosticOnly": True,
+                                    "errors": report["errors"]}))
+              return 0 if report["accepted"] else 1
+          
+          
+          if __name__ == "__main__":
+              sys.exit(main())
+          FIVE_CASE_RUNNER_PY_2
+      - name: Run contained five-case diagnostic
+        id: diagnostic
+        timeout-minutes: 42
+        env:
+          FIVE_CASE_CONTAINER_ID: ${{ job.container.id }}
+        run: |
+          set -eu
+          FIVE_CASE_PROGRAM="$RUNNER_TEMP/observer-isolation-five-case/program"
+          python -I -B "$FIVE_CASE_PROGRAM/runner.py"
+
+      - name: Record platform step outcomes
+        if: always()
+        timeout-minutes: 1
+        env:
+          FIVE_CASE_STEP_OUTCOMES: ${{ toJSON(steps) }}
+        run: |
+          set -eu
+          FIVE_CASE_EVIDENCE="$RUNNER_TEMP/observer-isolation-five-case"
+          mkdir -p "$FIVE_CASE_EVIDENCE"
+          printf '%s\n' "$FIVE_CASE_STEP_OUTCOMES" > "$FIVE_CASE_EVIDENCE/platform-step-outcomes.json"
+          if [ ! -f "$FIVE_CASE_EVIDENCE/RESULT.json" ]; then
+            printf '%s\n' '{"accepted":false,"diagnosticOnly":true,"reason":"supervisor-result-missing","processClosure":"unverified"}' > "$FIVE_CASE_EVIDENCE/BOOTSTRAP-INCOMPLETE.json"
+          fi
+
+      - name: Preserve diagnostic evidence including failure
+        if: always()
+        id: custody
+        timeout-minutes: 4
+        uses: actions/upload-artifact@v4
+        with:
+          name: observer-isolation-five-case-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/observer-isolation-five-case
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 1
