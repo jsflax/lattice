@@ -1,14 +1,34 @@
 # Changelog
 
-## [1.8.0] - 2026-09-05
+## [2.0.0] - Unreleased
 
-LatticeCore dependency floor raised to `1.5.0` (audit-history hygiene: see
+LatticeCore dependency floor raised to `2.0.0` (audit-history hygiene: see
 its changelog). An Orbital room store reached 17 GB with under 1 MB of live
 data — every streamed rewrite of one message row was kept in full in the
 audit log, nothing pruned it on a store without sync partners, and the one
 nuclear tool renumbered ids and silenced every other process.
 
+### Breaking changes
+- `Lattice.vacuum()` and the corresponding `LatticeBackend` requirement now
+  return `Bool`; `checkpoint()` returns `CheckpointResult`. Update typed
+  method references and backend conformances. Ordinary calls can discard
+  these results.
+- Custom `LatticeBackend` conformers must implement `reclaimSpace`,
+  `pruneAuditLog`, `recordAuditWatermark`, `backdateAuditWatermarks`,
+  `setReplicationSlotObserver`, `noHistoryLiveValuesJSON` and `auditHeader`.
+  These inherited audit requirements do not have default implementations.
+- Bind this wrapper to the qualified LatticeCore 2.0.0 release, with matching
+  manifest minimum and resolved tag revision.
+
 ### Added
+- Add the optional **`LatticeMCPTransport`** product with serialized sends
+  and shutdown that retains its connection, reader and queued writes until
+  their owners finish. Its MCP dependency requires iOS 16; the plain Lattice
+  product retains its existing platform declaration.
+- **`withTransaction`** provides synchronous checked BEGIN/COMMIT handling,
+  preserves the first captured operation failure, attempts rollback on
+  failure, and rejects nested checked transactions before the nested body
+  runs. Checked backend BEGIN/COMMIT hooks include default implementations.
 - **`@NoHistory`** property attribute: the column's UPDATE audit rows record
   the column name but not its value (INSERT/DELETE rows keep values). Live
   observers, `changeStream` and `changeHeaders` fire exactly as before. Sync
@@ -43,7 +63,7 @@ nuclear tool renumbered ids and silenced every other process.
 
 ### Changed
 - **`forceCompactHistory()` keeps the audit id sequence** and regenerates
-  link/list rows (core 1.5.0). Fixes the relay's observer-push cursor going
+  link/list rows (core 2.0.0). Fixes the relay's observer-push cursor going
   silent after a server-side compaction.
 - `syncProgressStream`'s cross-process pending count is probed at most once
   per second (it is an unindexed COUNT over the audit log; idle hints arrive
@@ -52,10 +72,19 @@ nuclear tool renumbered ids and silenced every other process.
   uploads core treats it like `nil`.
 
 ### Fixed
+- Surface preserving-global-ID insertion failures through the existing
+  throwing `add` API instead of allowing a bridge failure to escape.
+- Capture covered primitive, list, removal and query failures before later
+  bridge calls can clear their error messages.
 - `@Transient` detection in the macro compared against `"@Transient"` while
   the attribute key holds the bare identifier; the predicate could never
   match (the separate string compare in `MemberAttributeMacro` was carrying
   it). Attribute detection now scans every attribute name on a declaration.
+
+### Transaction scope
+- Legacy `transaction` behavior is unchanged. The checked API does not
+  guarantee rollback of in-memory caches, external closure effects, every
+  operation category or non-standard C++ exceptions.
 
 ## [1.7.2] - 2026-09-03
 
