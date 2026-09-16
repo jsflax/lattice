@@ -49,10 +49,12 @@ class ObservationOrderingTests: BaseTest {
     }
 
     @Test func collectionChanges_deliverExactlyOnce() async throws {
+        let diagnosticLog = PayloadObserverDiagnosticLog("collection_exactly_once")
+        defer { diagnosticLog.emit() }
         let lattice = try Lattice(OrderedItem.self, configuration: .init(storage: .memory()))
 
         let collector = OrderCollector()
-        let token = lattice.observe(OrderedItem.self) { change in
+        let token = diagnosticLog.observeCollection(OrderedItem.self, on: lattice) { change in
             if case .insert(let rowId) = change {
                 collector.append(contentsOf: [rowId])
             }

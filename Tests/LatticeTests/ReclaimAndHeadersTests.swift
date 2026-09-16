@@ -37,8 +37,10 @@ final class ReclaimAndHeadersTests: BaseTest {
 
     @Test(.timeLimit(.minutes(1)))
     func changeHeadersDeliverTableOperationAndRowWithoutResolving() async throws {
+        let diagnosticLog = PayloadObserverDiagnosticLog("change_headers")
+        defer { diagnosticLog.emit() }
         let l = try testLattice(BulkRow.self)
-        var it = l.changeHeaders.makeAsyncIterator()
+        var it = l._changeHeaders(diagnostic: diagnosticLog.diagnostic("headers")).makeAsyncIterator()
         let r = BulkRow(); r.payload = "p"
         try l.add(r)
         let batch = try #require(try await it.next())

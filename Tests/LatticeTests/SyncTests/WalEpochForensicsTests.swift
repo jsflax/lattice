@@ -386,6 +386,8 @@ final class WalEpochForensicsTests: BaseTest {
     /// alive the whole time — the relay's observer-push shape. Measures
     /// whether any of those pins fresh-reader visibility or checkpointability.
     @Test func freshReadersUnderHeldObservationAndResults() async throws {
+        let diagnosticLog = PayloadObserverDiagnosticLog("held_observation")
+        defer { diagnosticLog.emit() }
         let dir = try forensicTempDir("a2")
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appending(path: "channel.sqlite")
@@ -393,10 +395,10 @@ final class WalEpochForensicsTests: BaseTest {
         let lattice = try Lattice(for: [SimpleSyncObject.self, WalEpochBlob.self],
                                   configuration: SyncRelayApplyPolicy.configuration(fileURL: url, storeConfiguration: nil))
         let observed = LockedBox(0)
-        let token = lattice.observe { batch in observed.withLock { $0 += batch.count } }
+        let token = lattice._observeAuditLog(diagnostic: diagnosticLog.diagnostic("audit")) { batch in observed.withLock { $0 += batch.count } }
         defer { token.cancel() }
         let streamed = LockedBox(0)
-        let stream = lattice.changeStream
+        let stream = lattice._changeStream(diagnostic: diagnosticLog.diagnostic("stream"))
         let streamTask = Task {
             for try await batch in stream {
                 streamed.withLock { $0 += batch.count }

@@ -42,7 +42,11 @@ final class ObserverPushLatencyBench: BaseTest {
         let n = ProcessInfo.processInfo.environment["LATTICE_BENCH_FULL"] == "1" ? 200 : 30
 
         let sendLog = PushLatencySendLog()
-        let probe = ObserverSendBoundaryProbe(channelID: "group-bench") { route, ids, uptime in
+        let pipelineLog = PushLatencyPipelineLog()
+        let pipeline = ObserverSendBoundaryProbe.Pipeline { event, uptime in
+            pipelineLog.record(event: event, uptime: uptime)
+        }
+        let probe = ObserverSendBoundaryProbe(channelID: "group-bench", pipeline: pipeline) { route, ids, uptime in
             sendLog.record(route: route, ids: ids, uptime: uptime)
         }
         let push = SyncObserverPush(
@@ -51,13 +55,19 @@ final class ObserverPushLatencyBench: BaseTest {
             var sendSamples: [PushLatencySendSample] = []
             sendSamples.reserveCapacity(n)
             // Runs after measurement ends, including an incomplete/throwing run.
-            defer { sendLog.emit(samples: sendSamples) }
+            defer {
+                // Close the pipeline capture before either recorder formats.
+                // No waiting for callbacks/pumps that outlive this snapshot.
+                let pipelineSnapshot = pipelineLog.close()
+                sendLog.emit(samples: sendSamples)
+                pipelineLog.emit(pipelineSnapshot)
+            }
             let watcher = try await harness.connect(pathSuffix: "watch/group/bench", user: UUID())
             let co = try harness.coWriter("bench")
 
-            // Warmup: prove the pipeline (watcher group, pump, socket) is live
-            // before measuring, so the numbers are commit→frame latency — not
-            // connection/open/first-group latency.
+            // Keep the existing first-frame warmup. That frame can arrive via
+            // catch-up: it is NOT an activation barrier. The pipeline trace
+            // separately records the actual activate(cursor:) call.
             try co.add(SimpleSyncObject(value: -1, floatValue: 0))
             let warmed = await watcher.wait(timeout: 30) { $0.receivedGlobalIds.count >= 1 }
             try #require(warmed, "warmup commit never reached the watch socket")
@@ -240,6 +250,78 @@ private final class PushLatencySendLog: @unchecked Sendable {
                     + " write_to_send_ms=missing send_to_callback_ms=missing"
             }
             print(line)
+        }
+    }
+}
+
+
+/// Passive, bounded per-benchmark metadata. Row IDs are append order under the
+/// lock; their uptime timestamps were taken BEFORE this lock and may interleave.
+/// Parent/related edges describe control scopes, never callback→audit causation.
+private final class PushLatencyPipelineLog: @unchecked Sendable {
+    fileprivate struct Row {
+        let event: ObserverSendBoundaryProbe.Pipeline.Event
+        let uptime: UInt64
+    }
+    struct Snapshot {
+        fileprivate let rows: [Row]
+        fileprivate let dropped: Int
+        fileprivate let retainedIDs: Int
+    }
+    private let lock = NSLock()
+    private let maximumRows = 8192
+    private let maximumIDsPerRow = 1000
+    private let maximumTotalIDs = 65536
+    private var rows: [Row] = []
+    private var retainedIDs = 0
+    private var dropped = 0
+    private var closed = false
+
+    init() { rows.reserveCapacity(maximumRows) }
+
+    func record(event: ObserverSendBoundaryProbe.Pipeline.Event, uptime: UInt64) -> UInt64? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed else { return nil }
+        guard rows.count < maximumRows, event.auditIDs.count <= maximumIDsPerRow,
+              event.auditIDs.count <= maximumTotalIDs - retainedIDs else {
+            if dropped < Int.max { dropped += 1 }
+            return nil
+        }
+        let token = UInt64(rows.count)
+        rows.append(Row(event: event, uptime: uptime))
+        retainedIDs += event.auditIDs.count
+        return token
+    }
+
+    func close() -> Snapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        closed = true
+        return Snapshot(rows: rows, dropped: dropped, retainedIDs: retainedIDs)
+    }
+
+    func emit(_ snapshot: Snapshot) {
+        // Formatting/output only after capture closes; there is no scheduling
+        // wait for late work. An incomplete snapshot cannot prove a missing event.
+        print("BENCH ObserverPushLatencyPipelineCapture: rows=\(snapshot.rows.count)"
+              + " dropped_rows=\(snapshot.dropped) retained_ids=\(snapshot.retainedIDs)"
+              + " max_rows=\(maximumRows) max_ids_per_row=\(maximumIDsPerRow)"
+              + " max_total_ids=\(maximumTotalIDs) channel=group-bench clock=dispatch_uptime"
+              + " same_process=true capture_closed=true late_events_unobserved=true"
+              + " overhead_subtracted=false callback_audit_causality=false warmup_activation_barrier=false")
+        func number<T: BinaryInteger>(_ value: T?) -> String {
+            value.map { String($0) } ?? "missing"
+        }
+        func flag(_ value: Bool?) -> String { value.map { String($0) } ?? "missing" }
+        for (index, row) in snapshot.rows.enumerated() {
+            let event = row.event
+            let ids = event.auditIDs.map { $0?.uuidString.lowercased() ?? "nil" }.joined(separator: ",")
+            print("BENCH ObserverPushLatencyPipelineRow: event=\(index) stage=\(event.stage.rawValue)"
+                  + " uptime_ns=\(row.uptime) parent=\(number(event.parent)) related=\(number(event.related))"
+                  + " cursor=\(number(event.cursor)) count=\(number(event.count)) last_pk=\(number(event.lastPK))"
+                  + " active=\(flag(event.active)) dirty=\(flag(event.dirty)) pumping=\(flag(event.pumping))"
+                  + " callback_covered=\(flag(event.callbackCovered)) page_audit_ids=[\(ids)]")
         }
     }
 }

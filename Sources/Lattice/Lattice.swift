@@ -1914,6 +1914,11 @@ public struct Lattice {
     /// carry no payload and may coalesce; the row itself always reads
     /// latest-committed. Pinned by ObservationOrderingTests.
     public func observe(_ block: @escaping ([AuditLog]) -> ()) -> AnyCancellable {
+        _observeAuditLog(diagnostic: nil, block)
+    }
+
+    func _observeAuditLog(diagnostic: PayloadObserverDiagnostic?,
+                          _ block: @escaping ([AuditLog]) -> ()) -> AnyCancellable {
         let backend = self.backend
         // The C++ side delivers batches per WAL flush; this public Swift API has
         // historically fired the block ONCE PER ROW with a one-element array
@@ -1929,14 +1934,22 @@ public struct Lattice {
         let s = UncheckedSendable(self)
         let blk = UncheckedSendable(block)
         let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
+            let diagnosticBatch = diagnostic?.begin(changes)
+            diagnosticBatch?.record("enqueue_boundary")
             // C0a: the per-row hydration used to run directly on the sync
             // scheduler's thread (a default-stack std::thread — the same
             // 512KB class as the crashed cooperative pool). Deliver from the
             // big-stack worker instead.
             ObserverDeliveryWorker.shared.enqueue {
+                diagnosticBatch?.record("job_started")
                 for change in changes {
+                    diagnosticBatch?.record("audit_hydration_started")
                     if let auditLog = s.value.object(AuditLog.self, primaryKey: change.rowId) {
+                        diagnosticBatch?.record("audit_hydrated")
                         blk.value([auditLog])
+                        diagnosticBatch?.record("audit_callback_returned", count: 1)
+                    } else {
+                        diagnosticBatch?.record("audit_row_missing")
                     }
                 }
             }
@@ -1945,7 +1958,9 @@ public struct Lattice {
         let token = TableObservationToken(backend: backend, tableName: AuditLog.entityName, observerId: observerId)
 
         return AnyCancellable {
+            diagnostic?.record("cancel_requested")
             token.cancel()
+            diagnostic?.record("cancel_returned")
         }
     }
 
@@ -1985,29 +2000,37 @@ public struct Lattice {
     /// the buffered flush against live callback delivery, preserving order.
     private final class ChangeStreamState: @unchecked Sendable {
         private let lock = NSLock()
-        private var buffered: [[TableChangeEvent]] = []
+        private var buffered: [(changes: [TableChangeEvent], diagnostic: PayloadObserverDiagnosticBatch?)] = []
         private var queryLattice: UncheckedSendable<Lattice>?
         private var terminated = false
 
         /// Observer-callback path: buffer while the open is in flight,
         /// resolve + emit inline once ready.
-        func deliver(_ batch: [TableChangeEvent], _ emit: (Lattice, [TableChangeEvent]) -> Void) {
+        func deliver(_ batch: [TableChangeEvent], diagnostic: PayloadObserverDiagnosticBatch?,
+                     _ emit: (Lattice, [TableChangeEvent], PayloadObserverDiagnosticBatch?) -> Void) {
             lock.lock(); defer { lock.unlock() }
-            guard !terminated else { return }
+            guard !terminated else {
+                diagnostic?.record("batch_ignored_after_termination")
+                return
+            }
             if let queryLattice {
-                emit(queryLattice.value, batch)
+                diagnostic?.record("ready_batch_delivery")
+                emit(queryLattice.value, batch, diagnostic)
             } else {
-                buffered.append(batch)
+                diagnostic?.record("batch_buffered")
+                buffered.append((batch, diagnostic))
             }
         }
 
         /// Open-complete path: flush the buffer in order, then deliver inline.
-        func ready(_ lattice: UncheckedSendable<Lattice>, _ emit: (Lattice, [TableChangeEvent]) -> Void) {
+        func ready(_ lattice: UncheckedSendable<Lattice>,
+                   _ emit: (Lattice, [TableChangeEvent], PayloadObserverDiagnosticBatch?) -> Void) {
             lock.lock(); defer { lock.unlock() }
             guard !terminated else { return }
             queryLattice = lattice
             for batch in buffered {
-                emit(lattice.value, batch)
+                batch.diagnostic?.record("buffered_batch_flush")
+                emit(lattice.value, batch.changes, batch.diagnostic)
             }
             buffered.removeAll()
         }
@@ -2021,6 +2044,10 @@ public struct Lattice {
     }
 
     public var changeStream: AsyncThrowingStream<[AnySendableReference<AuditLog>], any Swift.Error> {
+        _changeStream(diagnostic: nil)
+    }
+
+    func _changeStream(diagnostic: PayloadObserverDiagnostic?) -> AsyncThrowingStream<[AnySendableReference<AuditLog>], any Swift.Error> {
         AsyncThrowingStream { [backend, modelTypes, configuration] stream in
             let log = Logger.sync
             let state = ChangeStreamState()
@@ -2035,7 +2062,8 @@ public struct Lattice {
             // from one transaction) reaches the peer as one frame and applies
             // atomically. See the notify_changes_batched comment in
             // LatticeCore for the full rationale.
-            let emit: @Sendable (Lattice, [TableChangeEvent]) -> Void = { _, changes in
+            let emit: @Sendable (Lattice, [TableChangeEvent], PayloadObserverDiagnosticBatch?) -> Void = { _, changes, diagnosticBatch in
+                diagnosticBatch?.record("stream_emission_started")
                 // A reference is just the pk. This used to LOAD each AuditLog
                 // row (the whole changedFields payload) only to read its key
                 // back and log it, and the consumer's `resolve(on:)` loaded it
@@ -2047,7 +2075,15 @@ public struct Lattice {
                 }
                 if !refs.isEmpty {
                     log.debug("changeStream yield: count=\(refs.count)")
-                    stream.yield(refs)
+                    let result = stream.yield(refs)
+                    switch result {
+                    case .enqueued(_): diagnosticBatch?.record("stream_yield_enqueued", count: refs.count)
+                    case .dropped(_): diagnosticBatch?.record("stream_yield_dropped", count: refs.count)
+                    case .terminated: diagnosticBatch?.record("stream_yield_terminated", count: refs.count)
+                    @unknown default: diagnosticBatch?.record("stream_yield_unknown", count: refs.count)
+                    }
+                } else {
+                    diagnosticBatch?.record("stream_empty_batch", count: 0)
                 }
             }
 
@@ -2056,10 +2092,13 @@ public struct Lattice {
             // subsequent commits are captured" — an async registration would
             // lose any commit that lands during the open below.
             let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
+                let diagnosticBatch = diagnostic?.begin(changes)
+                diagnosticBatch?.record("enqueue_boundary")
                 // C0a: emit resolves the batch with SQL — off the sync
                 // scheduler's default-stack thread, onto the 8MB worker.
                 ObserverDeliveryWorker.shared.enqueue {
-                    state.deliver(changes, emit)
+                    diagnosticBatch?.record("job_started")
+                    state.deliver(changes, diagnostic: diagnosticBatch, emit)
                 }
             }
 
@@ -2069,6 +2108,7 @@ public struct Lattice {
             // work that would otherwise wedge the caller's context, starving
             // cooperative cancellation (`.timeLimit` traits could never fire).
             Task.detached {
+                diagnostic?.record("query_open_started")
                 // One Lattice for all queries instead of one per notification:
                 // a per-notification open blocks the synchronizer's scheduler
                 // thread and risks SQLITE_BUSY under load.
@@ -2083,8 +2123,11 @@ public struct Lattice {
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
                     let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
+                    diagnostic?.record("query_open_completed")
                     state.ready(queryLattice, emit)
+                    diagnostic?.record("query_ready_returned")
                 } catch {
+                    diagnostic?.record("query_open_failed")
                     // A failed open (deleted file, exhausted descriptors)
                     // surfaces at the consumer's first `try await` instead of
                     // trapping the host process (was `try!`). finish fires
@@ -2093,9 +2136,15 @@ public struct Lattice {
                 }
             }
 
-            stream.onTermination = { _ in
+            stream.onTermination = { termination in
+                switch termination {
+                case .cancelled: diagnostic?.record("stream_cancelled")
+                case .finished(_): diagnostic?.record("stream_finished")
+                @unknown default: diagnostic?.record("stream_termination_unknown")
+                }
                 backend.removeTableObserver(table: AuditLog.entityName, observerId: observerId)
                 state.terminate()
+                diagnostic?.record("stream_termination_returned")
             }
         }
     }
@@ -2108,31 +2157,52 @@ public struct Lattice {
     /// `changeStream`; use this when you branch on table/operation and re-read
     /// live rows yourself (every in-repo consumer does).
     public var changeHeaders: AsyncThrowingStream<[ChangeHeader], any Swift.Error> {
+        _changeHeaders(diagnostic: nil)
+    }
+
+    func _changeHeaders(diagnostic: PayloadObserverDiagnostic?) -> AsyncThrowingStream<[ChangeHeader], any Swift.Error> {
         AsyncThrowingStream { [backend, modelTypes, configuration] stream in
             let log = Logger.sync
             let state = ChangeStreamState()
             let types = UncheckedSendable(modelTypes)
 
-            let emit: @Sendable (Lattice, [TableChangeEvent]) -> Void = { queryLattice, changes in
+            let emit: @Sendable (Lattice, [TableChangeEvent], PayloadObserverDiagnosticBatch?) -> Void = { queryLattice, changes, diagnosticBatch in
+                diagnosticBatch?.record("headers_resolution_started")
                 let headers: [ChangeHeader] = changes.compactMap { c in
                     guard let h = queryLattice.backend.auditHeader(id: c.rowId) else {
                         // Pruned/compacted between commit and delivery — the
                         // header is gone with the row; nothing to say about it.
                         log.debug("changeHeaders: no AuditLog for pk=\(c.rowId)")
+                        diagnosticBatch?.record("header_row_missing")
                         return nil
                     }
+                    diagnosticBatch?.record("header_resolved")
                     return h
                 }
-                if !headers.isEmpty { stream.yield(headers) }
+                if !headers.isEmpty {
+                    let result = stream.yield(headers)
+                    switch result {
+                    case .enqueued(_): diagnosticBatch?.record("headers_yield_enqueued", count: headers.count)
+                    case .dropped(_): diagnosticBatch?.record("headers_yield_dropped", count: headers.count)
+                    case .terminated: diagnosticBatch?.record("headers_yield_terminated", count: headers.count)
+                    @unknown default: diagnosticBatch?.record("headers_yield_unknown", count: headers.count)
+                    }
+                } else {
+                    diagnosticBatch?.record("headers_empty_after_resolution", count: 0)
+                }
             }
 
             let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
+                let diagnosticBatch = diagnostic?.begin(changes)
+                diagnosticBatch?.record("enqueue_boundary")
                 ObserverDeliveryWorker.shared.enqueue {
-                    state.deliver(changes, emit)
+                    diagnosticBatch?.record("job_started")
+                    state.deliver(changes, diagnostic: diagnosticBatch, emit)
                 }
             }
 
             Task.detached {
+                diagnostic?.record("query_open_started")
                 var queryConfig = configuration
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
@@ -2140,15 +2210,24 @@ public struct Lattice {
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
                     let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
+                    diagnostic?.record("query_open_completed")
                     state.ready(queryLattice, emit)
+                    diagnostic?.record("query_ready_returned")
                 } catch {
+                    diagnostic?.record("query_open_failed")
                     stream.finish(throwing: error)
                 }
             }
 
-            stream.onTermination = { _ in
+            stream.onTermination = { termination in
+                switch termination {
+                case .cancelled: diagnostic?.record("stream_cancelled")
+                case .finished(_): diagnostic?.record("stream_finished")
+                @unknown default: diagnostic?.record("stream_termination_unknown")
+                }
                 backend.removeTableObserver(table: AuditLog.entityName, observerId: observerId)
                 state.terminate()
+                diagnostic?.record("stream_termination_returned")
             }
         }
     }
@@ -2165,6 +2244,12 @@ public struct Lattice {
     /// delivery-ordering contract on `observe(_:)` ([AuditLog] overload).
     func observe<T: Model>(_ modelType: T.Type, where: Query<Bool>? = nil,
                            block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
+        _observeCollection(modelType, where: `where`, diagnostic: nil, block: block)
+    }
+
+    func _observeCollection<T: Model>(_ modelType: T.Type, where: Query<Bool>? = nil,
+                                     diagnostic: PayloadObserverDiagnostic?,
+                                     block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
         let backend = self.backend
 
         let block = UnsafeBlock(block: block)
@@ -2175,6 +2260,8 @@ public struct Lattice {
         let ref = self.sendableReference
 
         let observerId = backend.addTableObserver(table: T.entityName) { changes in
+            let diagnosticBatch = diagnostic?.begin(changes)
+            diagnosticBatch?.record("enqueue_boundary")
             // Walk the batch and dispatch one CollectionChange per row,
             // preserving input commit order. Same per-row semantics as
             // the legacy callback — just delivered in one fire instead
@@ -2191,9 +2278,13 @@ public struct Lattice {
             // an isolation still runs on that actor — only the decision SQL
             // moves.
             ObserverDeliveryWorker.shared.enqueue {
+                diagnosticBatch?.record("job_started")
+                diagnosticBatch?.record("collection_resolution_started")
                 guard let self = ref.resolve() else {
+                    diagnosticBatch?.record("collection_resolution_nil")
                     return
                 }
+                diagnosticBatch?.record("collection_resolution_completed")
 
                 let isolation = self.isolation
 
@@ -2221,6 +2312,7 @@ public struct Lattice {
                 }
                 // Decision SQL runs synchronously here on the worker's 8MB
                 // stack; delivery happens per decision below.
+                diagnosticBatch?.record("collection_decisions_started")
                 var decisions: [CollectionChange] = []
                 for entry in changes {
                     let operation = entry.operation
@@ -2255,21 +2347,27 @@ public struct Lattice {
                         break
                     }
                 }
+                diagnosticBatch?.record("collection_decisions_completed", count: decisions.count)
                 guard !decisions.isEmpty else { return }
                 if let isolation {
                     // One hop per batch: the user's block runs on its actor,
                     // in commit order, exactly as before.
                     let batch = decisions
+                    diagnosticBatch?.record("collection_actor_hop")
                     Task {
                         await isolation.invoke { _ in
+                            diagnosticBatch?.record("collection_emission_started", count: batch.count)
                             for change in batch { block(change) }
+                            diagnosticBatch?.record("collection_emission_returned", count: batch.count)
                         }
                     }
                 } else {
                     // No isolation requested: deliver ON the worker — the
                     // block's own SQL (per-row hydration in UI observers)
                     // inherits the deep stack too.
+                    diagnosticBatch?.record("collection_emission_started", count: decisions.count)
                     for change in decisions { block(change) }
+                    diagnosticBatch?.record("collection_emission_returned", count: decisions.count)
                 }
             }
         }
@@ -2277,7 +2375,9 @@ public struct Lattice {
         let token = TableObservationToken(backend: backend, tableName: T.entityName, observerId: observerId)
 
         return AnyCancellable {
+            diagnostic?.record("cancel_requested")
             token.cancel()
+            diagnostic?.record("cancel_returned")
         }
     }
 

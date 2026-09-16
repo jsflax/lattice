@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -103,5 +104,50 @@ final class NIOLockedValueBoxCompat<T>: @unchecked Sendable {
     func withLocked<R>(_ body: (inout T) -> R) -> R {
         lock.lock(); defer { lock.unlock() }
         return body(&value)
+    }
+}
+
+// Internal, per-observer diagnostics for selected tests. Public entry points
+// pass nil. No process-global hook, new task or worker scheduling is involved.
+struct PayloadObserverDiagnosticEvent: Sendable {
+    let observer: String
+    let batch: UUID?
+    let stage: String
+    let uptime: UInt64
+    let rowIDs: [Int64]
+    let operations: [String]
+    let omittedRows: Int
+    let count: Int?
+}
+
+struct PayloadObserverDiagnostic: Sendable {
+    let observer: String
+    let capture: @Sendable (PayloadObserverDiagnosticEvent) -> Void
+
+    func record(_ stage: String, batch: UUID? = nil, count: Int? = nil) {
+        capture(.init(observer: observer, batch: batch, stage: stage,
+                      uptime: DispatchTime.now().uptimeNanoseconds,
+                      rowIDs: [], operations: [], omittedRows: 0, count: count))
+    }
+
+    func begin(_ changes: [TableChangeEvent]) -> PayloadObserverDiagnosticBatch {
+        let uptime = DispatchTime.now().uptimeNanoseconds
+        let batch = UUID()
+        let retainIDs = changes.count <= 1024
+        capture(.init(observer: observer, batch: batch, stage: "callback_entry",
+                      uptime: uptime,
+                      rowIDs: retainIDs ? changes.map { $0.rowId } : [],
+                      operations: retainIDs ? changes.map { $0.operation } : [],
+                      omittedRows: retainIDs ? 0 : changes.count, count: changes.count))
+        return .init(diagnostic: self, id: batch)
+    }
+}
+
+struct PayloadObserverDiagnosticBatch: Sendable {
+    let diagnostic: PayloadObserverDiagnostic
+    let id: UUID
+
+    func record(_ stage: String, count: Int? = nil) {
+        diagnostic.record(stage, batch: id, count: count)
     }
 }
