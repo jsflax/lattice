@@ -44,7 +44,9 @@ let package = Package(
         // busy-timeout fix, vec0 reconcile idempotence, and apply-chunk ack
         // survival — a 1.6.2 wrapper on a 1.4.1 core would still livelock
         // IPC sync under the vec0 storm it claims to have fixed.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "1.4.2"),
+        // 2.0.0 floor: required for audit APIs, checked-transaction failures,
+        // and coordinated vec0 maintenance used by this wrapper.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.0.0"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -52,7 +54,8 @@ let package = Package(
         ),
         .package(url: "https://github.com/vapor/vapor.git", from: "4.76.0"),
         .package(url: "https://github.com/vapor/websocket-kit.git", from: "2.15.0"),
-        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.0"),
+        // Owned SDK fork pins the cooperative transport lifetime correction.
+        .package(url: "https://github.com/jsflax/swift-sdk.git", exact: "0.13.0-orbital.1"),
         // Docs-time only: enables `swift package generate-documentation` over
         // the catalog at Sources/Lattice/Lattice.docc (and the docs.yml Pages
         // deploy). No target depends on it; it adds nothing to consumer builds.
