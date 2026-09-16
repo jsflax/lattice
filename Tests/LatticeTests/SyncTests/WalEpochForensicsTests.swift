@@ -208,10 +208,14 @@ private final class WriterChild: @unchecked Sendable {
     private let outAcc = LockedBox("")
 
     static var binaryURL: URL {
-        // swift test builds executable target deps next to the xctest bundle.
-        Bundle(for: WalEpochForensicsTests.self).bundleURL
-            .deletingLastPathComponent()
-            .appending(path: "WalEpochWriterChild")
+        // Executable target deps are in the products directory. On macOS the
+        // test bundle is an .xctest child; on Linux Bundle already names that
+        // directory, so removing its last component would drop debug/release.
+        let bundleURL = Bundle(for: WalEpochForensicsTests.self).bundleURL
+        let productsURL = bundleURL.pathExtension == "xctest"
+            ? bundleURL.deletingLastPathComponent()
+            : bundleURL
+        return productsURL.appending(path: "WalEpochWriterChild")
     }
 
     init(dbURL: URL, mode: String, extra: [String] = []) throws {

@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 import Vapor
 import Lattice
 #if canImport(Combine)
@@ -39,6 +40,24 @@ import Combine
 // zero client changes. No kick-signaling: push carries only real sync frames.
 // ============================================================================
 
+// MARK: - Benchmark-only send boundary
+
+/// Immutable, channel-scoped opt-in. Production options contain nil. The
+/// callback receives only the IDs of this already-encoded page, never payloads.
+/// This is a send-attempt timestamp, not completion or proof of client receipt.
+struct ObserverSendBoundaryProbe: Sendable {
+    enum Route: String, Sendable { case catchup, push }
+    let channelID: String
+    let record: @Sendable (Route, [UUID?], UInt64) -> Void
+
+    func capture(page: [AuditLog], route: Route) {
+        // Preserve every entry in order, including coalesced IDs and nil IDs.
+        let ids = page.map { $0.globalId }
+        let uptime = DispatchTime.now().uptimeNanoseconds
+        record(route, ids, uptime)
+    }
+}
+
 // MARK: - SyncObserverPush
 
 /// Per-mount opt-in + tuning for committed-change push.
@@ -66,12 +85,23 @@ public struct SyncObserverPush: Sendable {
     /// commit observer.
     var _suppressCommitObserverForTesting = false
 
+    /// Immutable diagnostic selection; only the benchmark copies in a probe.
+    let _sendBoundaryProbeForTesting: ObserverSendBoundaryProbe?
+
     public init(pageSize: Int = 256, reconcileInterval: Duration? = .seconds(30)) {
         precondition(pageSize > 0,
                      "SyncObserverPush.pageSize must be at least 1 (got \(pageSize)) — "
                      + "each pushed frame pages the AuditLog by pageSize rows")
         self.pageSize = pageSize
         self.reconcileInterval = reconcileInterval
+        self._sendBoundaryProbeForTesting = nil
+    }
+
+    init(copying options: SyncObserverPush, sendBoundaryProbe: ObserverSendBoundaryProbe) {
+        self.pageSize = options.pageSize
+        self.reconcileInterval = options.reconcileInterval
+        self._suppressCommitObserverForTesting = options._suppressCommitObserverForTesting
+        self._sendBoundaryProbeForTesting = sendBoundaryProbe
     }
 }
 
@@ -125,6 +155,8 @@ final class PushSubscription: @unchecked Sendable {
     /// options (the manager is process-wide, so per-mount tuning rides the
     /// subscription). Clamped positive at construction.
     let pageSize: Int
+    /// Already selected for this connection's exact channel by the mount.
+    let sendBoundaryProbe: ObserverSendBoundaryProbe?
     /// `nil` = parked (connect-time catch-up in flight). Installed once by
     /// `activate(_:cursor:)` with the catch-up boundary, then only advanced
     /// by the pump after a successful awaited send.
@@ -138,11 +170,13 @@ final class PushSubscription: @unchecked Sendable {
     /// Cleared by `unsubscribe`; in-flight pump passes check it and stop.
     var active = true
 
-    init(socket: WebSocket, revocation: RevocationFlag, key: String, pageSize: Int) {
+    init(socket: WebSocket, revocation: RevocationFlag, key: String, pageSize: Int,
+         sendBoundaryProbe: ObserverSendBoundaryProbe? = nil) {
         self.socket = socket
         self.revocation = revocation
         self.key = key
         self.pageSize = max(1, pageSize)
+        self.sendBoundaryProbe = sendBoundaryProbe
     }
 }
 
@@ -247,13 +281,15 @@ actor FileWatchManager {
     /// exhaustion): logged once, subscribers stay catch-up-only (the client
     /// redial fallback remains correct), retried on the next subscriber join.
     func subscribe(fileURL: URL, context: MountPushContext,
-                   socket: WebSocket, revocation: RevocationFlag) async -> PushSubscription? {
+                   socket: WebSocket, revocation: RevocationFlag,
+                   sendBoundaryProbe: ObserverSendBoundaryProbe? = nil) async -> PushSubscription? {
         let key = Self.canonicalKey(for: fileURL)
         guard let group = await resolveGroup(key: key, fileURL: fileURL, context: context) else {
             return nil
         }
         let sub = PushSubscription(socket: socket, revocation: revocation, key: key,
-                                   pageSize: context.options.pageSize)
+                                   pageSize: context.options.pageSize,
+                                   sendBoundaryProbe: sendBoundaryProbe)
         group.subscribers.append(sub)
         return sub
     }
@@ -373,6 +409,7 @@ actor FileWatchManager {
                     // self-throttles to THIS socket's drain rate instead of
                     // stuffing the unbounded outbound buffer; memory bound is
                     // one page in flight per socket.
+                    sub.sendBoundaryProbe?.capture(page: page, route: .push)
                     try await sub.socket.send(raw: encoded, opcode: .binary)
                 } catch {
                     await unsubscribe(sub)

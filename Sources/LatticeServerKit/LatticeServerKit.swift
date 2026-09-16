@@ -836,10 +836,18 @@ extension Lattice {
             // pump (which reads strictly beyond the catch-up boundary) picks
             // it up — no gaps, no dupes, in order. A nil subscription
             // (watcher open failure) leaves this socket catch-up-only.
+            let sendBoundaryProbe: ObserverSendBoundaryProbe?
+            if let probe = pushContext?.options._sendBoundaryProbeForTesting,
+               probe.channelID == channel.id {
+                sendBoundaryProbe = probe
+            } else {
+                sendBoundaryProbe = nil
+            }
             if let watchManager, let pushContext, let latticeURL {
                 state.pushSubscription = await watchManager.subscribe(
                     fileURL: latticeURL, context: pushContext,
-                    socket: ws, revocation: state.revocation)
+                    socket: ws, revocation: state.revocation,
+                    sendBoundaryProbe: sendBoundaryProbe)
             }
 
             // Go live: replay anything that arrived during the open, in
@@ -970,6 +978,7 @@ extension Lattice {
                             // here in Swift, outside core's upload-side fill.
                             let page = lattice.lateBindNoHistory(Array(events[i..<min(count, i + 1000)]))
                             let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
+                            sendBoundaryProbe?.capture(page: page, route: .catchup)
                             await ws.send(ByteBuffer(data: encoded))
                             boundary = page.last?.primaryKey ?? boundary
                         }

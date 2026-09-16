@@ -41,7 +41,17 @@ final class ObserverPushLatencyBench: BaseTest {
     @Test func coProcessWriteToWatchSocketLatency() async throws {
         let n = ProcessInfo.processInfo.environment["LATTICE_BENCH_FULL"] == "1" ? 200 : 30
 
-        try await withPushHarness { harness in
+        let sendLog = PushLatencySendLog()
+        let probe = ObserverSendBoundaryProbe(channelID: "group-bench") { route, ids, uptime in
+            sendLog.record(route: route, ids: ids, uptime: uptime)
+        }
+        let push = SyncObserverPush(
+            copying: SyncObserverPush(reconcileInterval: nil), sendBoundaryProbe: probe)
+        try await withPushHarness(push: push) { harness in
+            var sendSamples: [PushLatencySendSample] = []
+            sendSamples.reserveCapacity(n)
+            // Runs after measurement ends, including an incomplete/throwing run.
+            defer { sendLog.emit(samples: sendSamples) }
             let watcher = try await harness.connect(pathSuffix: "watch/group/bench", user: UUID())
             let co = try harness.coWriter("bench")
 
@@ -79,6 +89,8 @@ final class ObserverPushLatencyBench: BaseTest {
                           + " lookup_ms=" + String(format: "%.1f", lookupMs)
                           + " arrival_wait_ms=" + String(format: "%.1f", waitMs)
                           + " arrived=false frame_ms=missing partial=true p95_available=false")
+                    sendSamples.append(.init(iteration: i, id: gid,
+                                             writeStart: t0.uptimeNanoseconds, callback: nil))
                 }
                 try #require(arrived, "commit \(i) never reached the watch socket")
                 let t1 = try #require(watcher.arrivalTime(of: gid))
@@ -88,6 +100,9 @@ final class ObserverPushLatencyBench: BaseTest {
                     lookupMs: Double(lookupReturned.uptimeNanoseconds &- writeReturned.uptimeNanoseconds) / 1e6,
                     frameMs: Double(t1.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
                 ))
+                sendSamples.append(.init(iteration: i, id: gid,
+                                         writeStart: t0.uptimeNanoseconds,
+                                         callback: t1.uptimeNanoseconds))
             }
 
             samples.sort()
@@ -136,6 +151,95 @@ final class ObserverPushLatencyBench: BaseTest {
                     + "the redial path it replaces"
                 #expect(p95 < softGateMs, "\(breach)")
             }
+        }
+    }
+}
+
+
+/// No global state: one recorder belongs to this benchmark's mount/channel.
+private struct PushLatencySendSample {
+    let iteration: Int
+    let id: String
+    let writeStart: UInt64
+    let callback: UInt64?
+}
+
+private final class PushLatencySendLog: @unchecked Sendable {
+    private struct Page {
+        let route: ObserverSendBoundaryProbe.Route
+        let ids: [UUID?]
+        let uptime: UInt64
+    }
+    private let lock = NSLock()
+    private let maximumPages = 256
+    private let maximumIDsPerPage = 1000
+    private var pages: [Page] = []
+    private var droppedPages = 0
+    private var closed = false
+
+    init() { pages.reserveCapacity(maximumPages) }
+
+    func record(route: ObserverSendBoundaryProbe.Route, ids: [UUID?], uptime: UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed else { return }
+        guard pages.count < maximumPages, ids.count <= maximumIDsPerPage else {
+            droppedPages += 1
+            return
+        }
+        pages.append(Page(route: route, ids: ids, uptime: uptime))
+    }
+
+    func emit(samples: [PushLatencySendSample]) {
+        lock.lock()
+        closed = true
+        let snapshot = pages
+        let dropped = droppedPages
+        lock.unlock()
+        // Formatting, ID matching and output are entirely after measurement.
+        // Late attempts after this snapshot are unobserved, not proof of no send.
+        print("BENCH ObserverPushLatencySendCapture: pages=\(snapshot.count) dropped_pages=\(dropped)"
+              + " max_pages=\(maximumPages) max_ids_per_page=\(maximumIDsPerPage)"
+              + " clock=dispatch_uptime same_process=true send_attempt_only=true"
+              + " capture_closed=true late_attempts_unobserved=true")
+        for (index, page) in snapshot.enumerated() {
+            let ids = page.ids.map { $0?.uuidString.lowercased() ?? "nil" }.joined(separator: ",")
+            print("BENCH ObserverPushLatencySendPage: page=\(index) route=\(page.route.rawValue)"
+                  + " send_uptime_ns=\(page.uptime) page_count=\(page.ids.count)"
+                  + " page_audit_ids=[\(ids)]")
+        }
+        func deltaMs(_ later: UInt64, _ earlier: UInt64) -> String {
+            let value = later >= earlier
+                ? Double(later - earlier) / 1e6 : -Double(earlier - later) / 1e6
+            return String(format: "%.3f", value)
+        }
+        for sample in samples {
+            let id = UUID(uuidString: sample.id)
+            let matches = snapshot.enumerated().filter { _, page in
+                guard let id else { return false }
+                return page.ids.contains { $0 == id }
+            }
+            // Earliest timestamp, not lock-acquisition/append order. Retain all
+            // page rows above so coalescing/repeated send attempts stay visible.
+            let first = matches.min { $0.element.uptime < $1.element.uptime }
+            var line = "BENCH ObserverPushLatencySendMatch: iteration=\(sample.iteration)"
+                + " audit_id=\(sample.id) matching_pages=\(matches.count)"
+                + " write_start_uptime_ns=\(sample.writeStart)"
+                + " callback_uptime_ns=\(sample.callback.map { String($0) } ?? "missing")"
+            if let first {
+                line += " route=\(first.element.route.rawValue) page=\(first.offset)"
+                    + " send_uptime_ns=\(first.element.uptime)"
+                    + " write_to_send_ms=" + deltaMs(first.element.uptime, sample.writeStart)
+                if let callback = sample.callback {
+                    line += " send_to_callback_ms=" + deltaMs(callback, first.element.uptime)
+                } else {
+                    line += " send_to_callback_ms=missing"
+                }
+            } else {
+                line += " route=unobserved page=missing send_uptime_ns=missing"
+                    + " write_to_send_ms=missing send_to_callback_ms=missing"
+            }
+            print(line)
         }
     }
 }
