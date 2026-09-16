@@ -84,7 +84,7 @@ struct CheckedTransactionTests {
             try? Lattice.delete(for: .init(fileURL: url))
             try? Lattice.delete(for: .init(fileURL: attachedURL))
         }
-        let local = CheckedTransactionItem(); local.value = 7
+        var local = CheckedTransactionItem(); local.value = 7
         let remote = CheckedTransactionItem(); remote.value = 11
         try db.add(local)
         try attached.add(remote)
@@ -96,6 +96,9 @@ struct CheckedTransactionTests {
             try sql(connection, "CREATE TRIGGER checked_attached_write_fault BEFORE UPDATE OF value ON CheckedTransactionItem BEGIN SELECT RAISE(ABORT, 'checked-attached-write-fault'); END")
         }
         try db.attach(lattice: attached)
+        // ATTACH replaces the unqualified table with a union view. Re-fetch
+        // the local row so its writes use the hydrated main-table binding.
+        local = try #require(db.object(CheckedTransactionItem.self, globalId: localID))
         let foreign = try #require(db.object(CheckedTransactionItem.self, globalId: remoteID))
         var bodyEntered = false
         var earlierLocalWriteObserved = false

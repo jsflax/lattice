@@ -54,15 +54,25 @@ final class ObserverPushLatencyBench: BaseTest {
 
             var samples: [Double] = []
             samples.reserveCapacity(n)
+            // Diagnostic stages do not replace the full commit-to-frame gate.
+            var stageSamples: [(writeMs: Double, lookupMs: Double, frameMs: Double)] = []
+            stageSamples.reserveCapacity(n)
             for i in 0..<n {
                 let t0 = DispatchTime.now()
                 try co.add(SimpleSyncObject(value: i, floatValue: Float(i)))
+                let writeReturned = DispatchTime.now()
                 let gid = try #require(
                     Array(co.eventsAfter(globalId: nil)).last?.globalId?.uuidString.lowercased())
+                let lookupReturned = DispatchTime.now()
                 let arrived = await watcher.wait(timeout: 10) { $0.arrivalTime(of: gid) != nil }
                 try #require(arrived, "commit \(i) never reached the watch socket")
                 let t1 = try #require(watcher.arrivalTime(of: gid))
                 samples.append(Double(t1.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6)
+                stageSamples.append((
+                    writeMs: Double(writeReturned.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6,
+                    lookupMs: Double(lookupReturned.uptimeNanoseconds &- writeReturned.uptimeNanoseconds) / 1e6,
+                    frameMs: Double(t1.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
+                ))
             }
 
             samples.sort()
@@ -81,6 +91,16 @@ final class ObserverPushLatencyBench: BaseTest {
             line += " soft_gate_ms=\(Int(softGateMs))"
             line += " parallel_load=\(underParallelLoad)"
             print(line)
+            // Emit only after measurement, retaining iteration order so slow
+            // writes, event-ID lookups and frame arrivals remain distinguishable.
+            print("BENCH ObserverPushLatencyHost: processors=\(ProcessInfo.processInfo.processorCount)"
+                  + " active_processors=\(ProcessInfo.processInfo.activeProcessorCount)")
+            for (iteration, sample) in stageSamples.enumerated() {
+                print("BENCH ObserverPushLatencySample: iteration=\(iteration)"
+                      + " write_ms=" + ms(sample.writeMs)
+                      + " lookup_ms=" + ms(sample.lookupMs)
+                      + " frame_ms=" + ms(sample.frameMs))
+            }
             // The design target is reported, never asserted: it is a
             // performance goal measured against a shared machine, and the
             // recorded number is what a regression review reads.
