@@ -13,10 +13,12 @@ let package = Package(
             targets: ["Lattice"]),
         .library(name: "LatticeServerKit", targets: ["LatticeServerKit"]),
         .library(name: "LatticeMCP", targets: ["LatticeMCP"]),
+        .library(name: "LatticeMCPTransport", targets: ["LatticeMCPTransport"]),
         .executable(name: "LatticeMain", targets: ["LatticeMain"]),
         .executable(name: "lattice-mcp", targets: ["lattice-mcp"]),
     ],
     dependencies: [
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
         // Versioned so lattice tags are consumable via `from:` (SwiftPM forbids
         // unversioned deps inside version-required packages). For the two-repo
         // dev loop use an UNCOMMITTED override:
@@ -130,6 +132,15 @@ let package = Package(
         .target(name: "LatticeMCP",
                 dependencies: ["Lattice"],
                 swiftSettings: [.interoperabilityMode(.Cxx)]),
+        .target(name: "LatticeMCPTransport", dependencies: [.product(name: "MCP", package: "swift-sdk"), .product(name: "Logging", package: "swift-log")]),
+        .testTarget(
+            name: "LatticeMCPTransportTests",
+            dependencies: [
+                "LatticeMCPTransport",
+                .product(name: "MCP", package: "swift-sdk"),
+                .product(name: "Logging", package: "swift-log"),
+            ]
+        ),
         .executableTarget(name: "lattice-mcp",
                           dependencies: [
                             "LatticeMCP",
