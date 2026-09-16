@@ -11,15 +11,15 @@
       "identity": "swift-sdk",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/swift-sdk.git",
-      "revision": "c96b8a041b0e4687dc6a00aee997db95920e1dc3",
-      "version": "0.13.0-orbital.1"
+      "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
+      "version": "0.13.0"
     }
   ],
   "qualificationNote": "Qualified means the recorded Core and SDK release/source joins only. The strict consumer independently verifies a complete committed lock and drift; these expectations do not qualify the wrapper graph, compilation, tests or products.",
   "qualificationScope": "upstream-release-source-joins-only",
   "qualified": true,
   "releaseEvidence": {
-    "receiptSHA256": "fadf60eaa74cf0bcbdb78d6639a075a5b9d03c93aa7a59eb14d5f451c254cc8a",
+    "receiptSHA256": "58ce8f33d6e79fc86f7de6781b3d57b767cbdab186a46c865c28d82b7ddda6fa",
     "releases": [
       {
         "commit": "f8f72e97ae94d1e40b2a9663cb7d15df62c8ac2a",
@@ -28,10 +28,10 @@
         "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.0.0"
       },
       {
-        "commit": "c96b8a041b0e4687dc6a00aee997db95920e1dc3",
-        "releaseURL": "https://github.com/jsflax/swift-sdk/releases/tag/0.13.0-orbital.1",
+        "commit": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
+        "releaseURL": "https://github.com/jsflax/swift-sdk/releases/tag/0.13.0",
         "repository": "https://github.com/jsflax/swift-sdk",
-        "tagURL": "https://github.com/jsflax/swift-sdk/tree/0.13.0-orbital.1"
+        "tagURL": "https://github.com/jsflax/swift-sdk/tree/0.13.0"
       }
     ],
     "scope": "Observed upstream tag/source joins; receipt is not a runtime file dependency."
