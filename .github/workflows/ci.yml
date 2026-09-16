@@ -1,7 +1,7 @@
 name: CI
 
-# First-stage producer diagnostics only. Generated locks are observations, not
-# final graph acceptance. A later strict-lock successor removes normal resolve.
+# Strict consumer verifies committed dependency bindings and complete lock integrity.
+# Build and test outcomes remain independent qualification gates.
 
 # Single source of truth for the test gates. `release.yml` calls this
 # workflow (workflow_call) instead of copy-pasting the jobs, so the gates
@@ -31,155 +31,55 @@ jobs:
           # error can surface.
           - image: swift:6.3-noble
             experimental: false
-            producerLeg: linux-stable
+            consumerLeg: linux-stable
           # Early warning against the next toolchain. Informational only
           # (continue-on-error). Nightly images live under the swiftlang/
           # Docker org — `swift:nightly-*` does NOT exist.
           - image: swiftlang/swift:nightly-main-noble
             experimental: true
-            producerLeg: linux-nightly
+            consumerLeg: linux-nightly
     # Marks the job green even when the nightly leg fails; the stable leg
     # still gates.
     continue-on-error: ${{ matrix.experimental }}
     container: ${{ matrix.image }}
     env:
-      PRODUCER_LEG: ${{ matrix.producerLeg }}
+      CONSUMER_LEG: ${{ matrix.consumerLeg }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: apt-get update && apt-get install -y libsqlite3-dev
 
-      - name: Install producer evidence tooling
+      - name: Install consumer evidence tooling
         run: apt-get install -y python3
 
-      - &producer_metadata
-        name: Capture producer source and toolchain metadata
-        id: producer_metadata
+      - &consumer_metadata
+        name: Capture strict consumer source and toolchain metadata
+        id: consumer_metadata
         shell: bash
         run: |
           set -eu
-          PRODUCER_DIR="$RUNNER_TEMP/wrapper-hosted-producer"
-          mkdir -p "$PRODUCER_DIR"
-          cat > "$PRODUCER_DIR/capture-command.sh" <<'CAPTURE'
+          CONSUMER_DIR="$RUNNER_TEMP/wrapper-strict-consumer"
+          mkdir -p "$CONSUMER_DIR"
+          cat > "$CONSUMER_DIR/capture-command.sh" <<'CAPTURE'
           #!/usr/bin/env bash
           # Capture exact stdout/stderr/status, returning the original command status.
           capture_command() {
             local name="$1"
             shift
             local status=0
-            if "$@" > "$PRODUCER_DIR/$name.stdout" 2> "$PRODUCER_DIR/$name.stderr"; then
+            printf '%s\0' "$@" > "$CONSUMER_DIR/$name.argv.nul"
+            if "$@" > "$CONSUMER_DIR/$name.stdout" 2> "$CONSUMER_DIR/$name.stderr"; then
               status=0
             else
               status=$?
             fi
-            printf '%s\n' "$status" > "$PRODUCER_DIR/$name.exit-code"
+            printf '%s\n' "$status" > "$CONSUMER_DIR/$name.exit-code"
             return "$status"
           }
           CAPTURE
-          cat > "$PRODUCER_DIR/snapshot.py" <<'SNAPSHOT'
-          import datetime, hashlib, json, os, stat, sys
-          from pathlib import Path
-
-          workspace = Path(os.environ["GITHUB_WORKSPACE"])
-          phase = sys.argv[1]
-          assert phase in {"before", "after-resolve", "after"}
-          out = Path(os.environ["RUNNER_TEMP"]) / "wrapper-hosted-producer" / phase
-          out.mkdir(parents=True, exist_ok=True)
-          record = {
-              "schema": "lattice.hosted-lock-producer/1", "phase": phase,
-              "recordedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-              "workspace": str(workspace), "producerOnly": True, "graphAccepted": False,
-              "github": {key: os.environ.get(key) for key in (
-                  "GITHUB_REPOSITORY", "GITHUB_SHA", "GITHUB_REF", "GITHUB_RUN_ID",
-                  "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "RUNNER_OS", "RUNNER_ARCH", "PRODUCER_LEG")},
-              "outcomes": {key: os.environ.get(key) for key in (
-                  "METADATA_OUTCOME", "RESOLVE_OUTCOME", "BUILD_OUTCOME", "TEST_OUTCOME")},
-              "files": [], "errors": [], "skippedSymlinks": [],
-              "discovery": {"rootLock": "Package.resolved", "metadataRoot": ".swiftpm",
-                            "maximumDepth": 8, "maximumDirectories": 128, "maximumEntries": 4096},
-          }
-
-          def capture(path, role):
-              relative = path.relative_to(workspace)
-              item = {"path": str(path), "relativePath": str(relative), "role": role}
-              record["files"].append(item)
-              try:
-                  before = path.lstat()
-              except FileNotFoundError:
-                  item["present"] = False
-                  return
-              item["present"] = True
-              try:
-                  if not stat.S_ISREG(before.st_mode):
-                      raise ValueError("Not a regular file; no link target was read")
-                  if before.st_size > 4 * 1024 * 1024:
-                      raise ValueError("Metadata exceeds 4 MiB capture bound")
-                  with path.open("rb") as handle:
-                      data = handle.read(4 * 1024 * 1024 + 1)
-                  after = path.lstat()
-                  if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
-                      after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
-                  ) or len(data) != before.st_size:
-                      raise ValueError("Metadata changed during capture")
-                  destination = out / "files" / relative
-                  destination.parent.mkdir(parents=True, exist_ok=True)
-                  destination.write_bytes(data)
-                  item.update(bytes=len(data), sha256=hashlib.sha256(data).hexdigest(),
-                              artifactPath=str(destination.relative_to(out.parent)))
-                  if path.name == "Package.resolved":
-                      parsed = json.loads(data)
-                      item["formatVersion"] = parsed.get("version")
-                      item["pinCount"] = len(parsed["pins"]) if isinstance(parsed.get("pins"), list) else None
-              except Exception as error:
-                  item["error"] = str(error)
-                  record["errors"].append({"path": str(path), "error": str(error)})
-
-          capture(workspace / "Package.swift", "manifest")
-          capture(workspace / "Package.resolved", "swiftpm-root-lock")
-          metadata = workspace / ".swiftpm"
-          record["discovery"]["metadataRootPresent"] = os.path.lexists(metadata)
-          try:
-              if metadata.is_symlink():
-                  raise ValueError(".swiftpm is a symlink; bounded discovery refused")
-              queue = [(metadata, 0)] if metadata.is_dir() else []
-              directories = entries = 0
-              while queue:
-                  directory, depth = queue.pop()
-                  directories += 1
-                  if directories > 128:
-                      raise ValueError("Metadata discovery directory bound exceeded")
-                  with os.scandir(directory) as scanned:
-                      children = []
-                      for entry in scanned:
-                          entries += 1
-                          if entries > 4096:
-                              raise ValueError("Metadata discovery entry bound exceeded")
-                          children.append(entry)
-                  for entry in sorted(children, key=lambda item: item.name):
-                      path = Path(entry.path)
-                      if entry.is_symlink():
-                          record["skippedSymlinks"].append(str(path.relative_to(workspace)))
-                          record["errors"].append({"path": str(path), "error": "Symlink not followed; complete confined metadata discovery is not claimed"})
-                      elif entry.is_dir(follow_symlinks=False):
-                          if depth >= 8:
-                              raise ValueError("Metadata discovery depth bound exceeded")
-                          queue.append((path, depth + 1))
-                      elif entry.name == "Package.resolved":
-                          capture(path, "swiftpm-metadata-lock")
-              record["discovery"].update(directoriesVisited=directories, entriesVisited=entries)
-          except Exception as error:
-              record["errors"].append({"path": str(metadata), "error": str(error)})
-          record["lockPaths"] = [item["path"] for item in record["files"]
-                                 if item["role"].endswith("lock") and item.get("present")]
-          record["completeWithinDeclaredBounds"] = not record["errors"]
-          (out / "INDEX.json").write_text(json.dumps(record, sort_keys=True, indent=2) + "\n")
-          if record["errors"]:
-              raise SystemExit(1)
-          SNAPSHOT
-          source "$PRODUCER_DIR/capture-command.sh"
+          source "$CONSUMER_DIR/capture-command.sh"
           status=0
-          python3 "$PRODUCER_DIR/snapshot.py" before || status=$?
           capture_command checkout-sha git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD || status=$?
           capture_command checkout-tree git -c safe.directory="$GITHUB_WORKSPACE" rev-parse 'HEAD^{tree}' || status=$?
           capture_command checkout-status git -c safe.directory="$GITHUB_WORKSPACE" status --porcelain || status=$?
@@ -199,84 +99,83 @@ jobs:
             capture_command ios-simulator-sdk-version xcrun --sdk iphonesimulator --show-sdk-version || status=$?
             capture_command xcodebuild-help xcodebuild -help || status=$?
           fi
-          printf '%s\n' 'PRODUCER ONLY: locks are observations, not graph acceptance.' > "$PRODUCER_DIR/QUALIFICATION.txt"
+          printf '%s\n' 'STRICT CONSUMER: committed lock integrity and upstream pin checks do not establish final graph acceptance.' > "$CONSUMER_DIR/QUALIFICATION.txt"
           exit "$status"
 
-      - &producer_resolve
-        name: Normal resolution (producer only)
-        id: producer_resolve
+      - &strict_baseline
+        name: Authenticate complete committed lock and source baseline
+        id: strict_baseline
+        shell: bash
+        run: python3 Scripts/verify-wrapper-lock-integrity.py --phase baseline --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer"
+
+      - &binding_check
+        name: Verify qualified upstream Core and SDK bindings
+        id: binding_check
         shell: bash
         run: |
-          set -eu
-          PRODUCER_DIR="$RUNNER_TEMP/wrapper-hosted-producer"
-          source "$PRODUCER_DIR/capture-command.sh"
-          case "$PRODUCER_LEG" in
-            ios-xcode)
-              producer=xcode
-              resolution_command=(xcodebuild -resolvePackageDependencies -scheme Lattice -destination 'generic/platform=iOS Simulator' -skipMacroValidation ARCHS=arm64)
-              ;;
-            linux-stable|linux-nightly|macos-swiftpm)
-              producer=swiftpm
-              resolution_command=(swift package resolve)
-              ;;
-            *) printf '%s\n' "Unknown producer leg: $PRODUCER_LEG" >&2; exit 2 ;;
-          esac
-          python3 - "$PRODUCER_DIR/normal-resolution.command.json" "$producer" "${resolution_command[@]}" <<'COMMAND'
-          import datetime, json, os, sys
-          from pathlib import Path
-          Path(sys.argv[1]).write_text(json.dumps({
-              "producer": sys.argv[2], "argv": sys.argv[3:], "cwd": os.getcwd(),
-              "leg": os.environ["PRODUCER_LEG"], "producerOnly": True,
-              "recordedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-          }, sort_keys=True, indent=2) + "\n")
-          COMMAND
-          resolution_status=0
-          capture_command normal-resolution "${resolution_command[@]}" || resolution_status=$?
-          snapshot_status=0
-          python3 "$PRODUCER_DIR/snapshot.py" after-resolve || snapshot_status=$?
-          # Log mirroring is best-effort; captured bytes and resolver status remain authoritative.
-          cat "$PRODUCER_DIR/normal-resolution.stdout" || true
-          cat "$PRODUCER_DIR/normal-resolution.stderr" >&2 || true
-          # Snapshot failure must not replace a failed resolver's original status.
-          if [ "$resolution_status" -ne 0 ]; then exit "$resolution_status"; fi
-          exit "$snapshot_status"
+          python3 Scripts/verify-wrapper-bindings.py \
+            --expected Scripts/wrapper-expected-bindings.json \
+            --resolved "$RUNNER_TEMP/wrapper-strict-consumer/baseline/files/Package.resolved"
+
+      - &before_build
+        name: Verify full lock integrity before build
+        id: before_build
+        shell: bash
+        run: python3 Scripts/verify-wrapper-lock-integrity.py --phase before-build --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer"
 
       - name: Build
         id: build
-        run: swift build
+        run: swift build --force-resolved-versions
+
+      - &after_build
+        name: Capture and verify complete lock integrity after build
+        id: after_build
+        if: always()
+        env:
+          CONSUMER_STEP_OUTCOMES: ${{ toJSON(steps) }}
+        shell: bash
+        run: python3 Scripts/verify-wrapper-lock-integrity.py --phase after-build --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer"
+
+      - &before_test
+        name: Verify full lock integrity before test
+        id: before_test
+        shell: bash
+        run: python3 Scripts/verify-wrapper-lock-integrity.py --phase before-test --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer"
 
       - name: Test
         id: test
-        run: swift test
+        run: swift test --force-resolved-versions
 
-      - &producer_finalize
-        name: Capture final complete lock observations
-        id: producer_finalize
+      - &after_test
+        name: Capture and verify complete lock integrity after test
+        id: after_test
+        if: always()
+        env:
+          CONSUMER_STEP_OUTCOMES: ${{ toJSON(steps) }}
+        shell: bash
+        run: python3 Scripts/verify-wrapper-lock-integrity.py --phase after-test --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer"
+
+      - &consumer_finalize
+        name: Capture final complete lock integrity and step outcomes
+        id: consumer_finalize
         if: always()
         shell: bash
         env:
-          METADATA_OUTCOME: ${{ steps.producer_metadata.outcome }}
-          RESOLVE_OUTCOME: ${{ steps.producer_resolve.outcome }}
-          BUILD_OUTCOME: ${{ steps.build.outcome }}
-          TEST_OUTCOME: ${{ steps.test.outcome }}
+          CONSUMER_STEP_OUTCOMES: ${{ toJSON(steps) }}
         run: |
           set -eu
-          PRODUCER_DIR="$RUNNER_TEMP/wrapper-hosted-producer"
-          mkdir -p "$PRODUCER_DIR"
-          if [ -f "$PRODUCER_DIR/snapshot.py" ]; then
-            python3 "$PRODUCER_DIR/snapshot.py" after
-          else
-            printf '%s\n' 'Producer setup did not complete; no complete lock capture is claimed.' > "$PRODUCER_DIR/CAPTURE-INCOMPLETE.txt"
-            exit 1
-          fi
+          CONSUMER_DIR="$RUNNER_TEMP/wrapper-strict-consumer"
+          mkdir -p "$CONSUMER_DIR"
+          printf '%s\n' "$CONSUMER_STEP_OUTCOMES" > "$CONSUMER_DIR/step-outcomes.json"
+          python3 Scripts/verify-wrapper-lock-integrity.py --phase final --evidence-dir "$CONSUMER_DIR"
 
-      - &producer_upload
-        name: Retain producer evidence (including failure)
+      - &consumer_upload
+        name: Retain strict consumer evidence (including failure)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: wrapper-producer-${{ env.PRODUCER_LEG }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/wrapper-hosted-producer
+          name: wrapper-strict-consumer-${{ env.CONSUMER_LEG }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wrapper-strict-consumer
           include-hidden-files: true
           if-no-files-found: error
 
@@ -287,14 +186,16 @@ jobs:
   # target and xcodebuild refuses to run unvalidated macros non-interactively.
   ios-build:
     env:
-      PRODUCER_LEG: ios-xcode
+      CONSUMER_LEG: ios-xcode
     runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - *producer_metadata
-      - *producer_resolve
+      - *consumer_metadata
+      - *strict_baseline
+      - *binding_check
+      - *before_build
 
       # ARCHS=arm64: the x86_64 simulator slice trips an upstream LatticeCore
       # bug (SqliteVec's dependency scan pulls _Builtin_intrinsics.arm.neon,
@@ -303,26 +204,33 @@ jobs:
       # fixes the include.
       - name: Build (iOS Simulator)
         id: build
-        run: xcodebuild -scheme Lattice -destination 'generic/platform=iOS Simulator' build -skipMacroValidation ARCHS=arm64
+        run: xcodebuild -scheme Lattice -destination 'generic/platform=iOS Simulator' build -skipMacroValidation -onlyUsePackageVersionsFromResolvedFile ARCHS=arm64
 
-      - *producer_finalize
-      - *producer_upload
+      - *after_build
+
+      - *consumer_finalize
+      - *consumer_upload
 
   macos:
     env:
-      PRODUCER_LEG: macos-swiftpm
+      CONSUMER_LEG: macos-swiftpm
     runs-on: macos-26
     # Known intermittent relay-test hang (1.0 item D) — fail fast, re-run.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - *producer_metadata
-      - *producer_resolve
+      - *consumer_metadata
+      - *strict_baseline
+      - *binding_check
+      - *before_build
 
       - name: Build
         id: build
-        run: swift build
+        run: swift build --force-resolved-versions
+
+      - *after_build
+      - *before_test
 
       # A known intermittent Darwin hang (never-resuming await in the relay
       # test family; .timeLimit cannot interrupt it) occasionally wedges the
@@ -342,8 +250,9 @@ jobs:
             fi
           ) &
           WATCHDOG=$!
-          swift test
+          swift test --force-resolved-versions
           kill $WATCHDOG 2>/dev/null || true
 
-      - *producer_finalize
-      - *producer_upload
+      - *after_test
+      - *consumer_finalize
+      - *consumer_upload

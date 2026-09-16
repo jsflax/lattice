@@ -65,6 +65,21 @@ final class ObserverPushLatencyBench: BaseTest {
                     Array(co.eventsAfter(globalId: nil)).last?.globalId?.uuidString.lowercased())
                 let lookupReturned = DispatchTime.now()
                 let arrived = await watcher.wait(timeout: 10) { $0.arrivalTime(of: gid) != nil }
+                if !arrived {
+                    // Failure-only diagnostics: this is an incomplete iteration,
+                    // not a callback latency sample or a completed p95 run.
+                    // The wait duration includes polling and scheduling.
+                    let waitReturned = DispatchTime.now()
+                    let writeMs = Double(writeReturned.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
+                    let lookupMs = Double(lookupReturned.uptimeNanoseconds &- writeReturned.uptimeNanoseconds) / 1e6
+                    let waitMs = Double(waitReturned.uptimeNanoseconds &- lookupReturned.uptimeNanoseconds) / 1e6
+                    print("BENCH ObserverPushLatencyIncomplete: iteration=\(i)"
+                          + " completed_n=\(samples.count) requested_n=\(n)"
+                          + " write_ms=" + String(format: "%.1f", writeMs)
+                          + " lookup_ms=" + String(format: "%.1f", lookupMs)
+                          + " arrival_wait_ms=" + String(format: "%.1f", waitMs)
+                          + " arrived=false frame_ms=missing partial=true p95_available=false")
+                }
                 try #require(arrived, "commit \(i) never reached the watch socket")
                 let t1 = try #require(watcher.arrivalTime(of: gid))
                 samples.append(Double(t1.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6)

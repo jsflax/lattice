@@ -1,0 +1,42 @@
+{
+  "pins": [
+    {
+      "identity": "latticecore",
+      "kind": "remoteSourceControl",
+      "repository": "https://github.com/jsflax/LatticeCore.git",
+      "revision": "f8f72e97ae94d1e40b2a9663cb7d15df62c8ac2a",
+      "version": "2.0.0"
+    },
+    {
+      "identity": "swift-sdk",
+      "kind": "remoteSourceControl",
+      "repository": "https://github.com/jsflax/swift-sdk.git",
+      "revision": "c96b8a041b0e4687dc6a00aee997db95920e1dc3",
+      "version": "0.13.0-orbital.1"
+    }
+  ],
+  "qualificationNote": "Qualified means the recorded Core and SDK release/source joins only. The strict consumer independently verifies a complete committed lock and drift; these expectations do not qualify the wrapper graph, compilation, tests or products.",
+  "qualificationScope": "upstream-release-source-joins-only",
+  "qualified": true,
+  "releaseEvidence": {
+    "receiptSHA256": "fadf60eaa74cf0bcbdb78d6639a075a5b9d03c93aa7a59eb14d5f451c254cc8a",
+    "releases": [
+      {
+        "commit": "f8f72e97ae94d1e40b2a9663cb7d15df62c8ac2a",
+        "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.0.0",
+        "repository": "https://github.com/jsflax/LatticeCore",
+        "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.0.0"
+      },
+      {
+        "commit": "c96b8a041b0e4687dc6a00aee997db95920e1dc3",
+        "releaseURL": "https://github.com/jsflax/swift-sdk/releases/tag/0.13.0-orbital.1",
+        "repository": "https://github.com/jsflax/swift-sdk",
+        "tagURL": "https://github.com/jsflax/swift-sdk/tree/0.13.0-orbital.1"
+      }
+    ],
+    "scope": "Observed upstream tag/source joins; receipt is not a runtime file dependency."
+  },
+  "schema": "lattice.wrapper-dependency-bindings/1",
+  "status": "UPSTREAM_RELEASE_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",
+  "wrapperGraphAccepted": false
+}

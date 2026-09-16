@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(Combine)
 import Combine
+#endif
 import Testing
 @testable import Lattice
 @testable import LatticeServerKit

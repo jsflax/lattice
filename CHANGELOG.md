@@ -57,8 +57,9 @@ nuclear tool renumbered ids and silenced every other process.
   implies it): this handle's own sync slot is an observer's — excluded from
   compaction floors, evicted on clean disconnect. `setReplicationSlotObserver
   (syncId:isObserver:)` for a connection whose scope is learned later.
-- `Backend` protocol: `reclaimSpace`, `pruneAuditLog`, `recordAuditWatermark`,
-  `setReplicationSlotObserver`, `noHistoryLiveValuesJSON`, `auditHeader`;
+- `LatticeBackend` protocol: `reclaimSpace`, `pruneAuditLog`, `recordAuditWatermark`,
+  `backdateAuditWatermarks`, `setReplicationSlotObserver`, `noHistoryLiveValuesJSON`,
+  `auditHeader`;
   `vacuum()`/`checkpoint()` now return values.
 
 ### Changed
