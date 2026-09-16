@@ -461,6 +461,8 @@ public protocol LatticeBackend: AnyObject, Sendable {
 
     // Transactions
     func beginTransaction()
+    func beginTransactionChecked() throws
+    func commitChecked() throws
     func rollback()
     func commit()
 
@@ -619,6 +621,15 @@ public protocol LatticeBackend: AnyObject, Sendable {
 // matching, so the ergonomic optionals live in an extension that forwards.
 
 extension LatticeBackend {
+    public func beginTransactionChecked() throws {
+        beginTransaction()
+        if let error = lastQueryError() { throw LatticeError.transactionError(error) }
+    }
+    public func commitChecked() throws {
+        commit()
+        if let error = lastQueryError() { throw LatticeError.transactionError(error) }
+    }
+
     @inlinable
     public func objects(table: String) -> [any ObjectBackend] {
         objects(table: table, where: nil, orderBy: nil, limit: nil, offset: nil, groupBy: nil, distinctBy: nil,

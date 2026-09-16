@@ -57,6 +57,11 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
     ],
     targets: [
+        // Test-only real SQLite fault injection; the suite must compile on Linux.
+        .systemLibrary(
+            name: "CLatticeTestSQLite",
+            path: "Tests/CLatticeTestSQLite",
+            providers: [.apt(["libsqlite3-dev"]), .brew(["sqlite3"])]),
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .macro(
@@ -82,6 +87,7 @@ let package = Package(
         .testTarget(
             name: "LatticeTests",
             dependencies: [
+                "CLatticeTestSQLite",
                 "Lattice",
                 "LatticeMCP",
                 "LatticeServerKit",

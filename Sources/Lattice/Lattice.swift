@@ -1272,8 +1272,9 @@ public struct Lattice {
 
     /// Inserts an unmanaged object, preserving the given globalId.
     /// - Throws: `LatticeError.alreadyManaged` if the object is already
-    ///   managed by a Lattice. The backend bridge exposes no failure signal
-    ///   for this path today; the `throws` is for contract stability.
+    ///   managed by a Lattice; `LatticeError.addFailed` if the backend rejects
+    ///   the insert (for example, a duplicate identity, constraint, or I/O failure).
+    ///   Inside `withTransaction`, a thrown insert failure rolls back the transaction.
     public func add<T: Model>(_ object: borrowing T, preservingGlobalId globalId: UUID) throws {
         guard !object.isManaged else {
             throw LatticeError.alreadyManaged
@@ -2369,9 +2370,14 @@ public struct Lattice {
         }
     }
 
-    private static func _recordExplicitTxnEnd(identityHash: Int64) {
+    private static func _recordExplicitTxnEnd(identityHash: Int64,
+                                              expectedOwner: ObjectIdentifier? = nil) {
         _explicitTxnOwners.withLockUnchecked { owners in
             guard let entry = owners[identityHash] else { return }
+            // Checked transactions are synchronous: their cleanup must not
+            // erase ownership acquired by a waiting thread after COMMIT.
+            // Legacy begin/commit may cross threads and omit this condition.
+            if let expectedOwner, entry.owner != expectedOwner { return }
             if entry.depth <= 1 {
                 owners.removeValue(forKey: identityHash)
             } else {
@@ -2418,6 +2424,43 @@ public struct Lattice {
             return value
         } catch {
             rollbackTransaction()
+            throw error
+        }
+    }
+    
+    /// Run a synchronous write transaction with catchable backend failures.
+    /// A failed BEGIN never executes `block`. A reported query or primitive
+    /// write failure rolls back the transaction even if a later operation
+    /// succeeds and clears the bridge's last-error slot. Commit failures also
+    /// roll back. The original failure is preserved if rollback reports an
+    /// additional error. Nested checked transactions, including transactions on
+    /// different handles, are rejected before the inner body executes. The
+    /// synchronous failure scope cannot attribute writes to a different owner.
+    public func withTransaction<T>(isolation: isolated (any Actor)? = #isolation,
+                                   _ block: () throws -> T) throws -> T {
+        guard !TransactionFailureScope.isActive,
+              !Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) else {
+            throw LatticeError.transactionError("Nested checked transactions are not supported")
+        }
+        let failures = TransactionFailureScope()
+        defer { failures.restore() }
+        try backend.beginTransactionChecked()
+        let transactionOwner = ObjectIdentifier(Thread.current)
+        Self._recordExplicitTxnBegin(identityHash: backend.identityHash)
+        defer {
+            Self._recordExplicitTxnEnd(identityHash: backend.identityHash,
+                                      expectedOwner: transactionOwner)
+        }
+        do {
+            let value = try block()
+            if let message = failures.firstError {
+                throw LatticeError.transactionError(message)
+            }
+            try backend.commitChecked()
+            _noteWrite(tables: nil)
+            return value
+        } catch {
+            backend.rollback()
             throw error
         }
     }
