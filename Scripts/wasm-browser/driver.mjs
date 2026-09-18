@@ -125,7 +125,12 @@ const pwPackage = require('playwright/package.json');
 if (pwPackage.version !== config.playwrightVersion) throw new Error('Playwright version mismatch');
 const { chromium } = await import('playwright');
 const sourceRequire = createRequire(path.join(root, 'A', 'package.json'));
-const { createServer } = await import(pathToFileURL(sourceRequire.resolve('vite')).href);
+const vitePackagePath = sourceRequire.resolve('vite/package.json');
+const vitePackage = JSON.parse(fs.readFileSync(vitePackagePath, 'utf8'));
+const viteImportEntry = vitePackage.exports?.['.']?.import?.default;
+if (typeof viteImportEntry !== 'string') throw new Error('Locked Vite ESM entry is missing');
+const { createServer } = await import(pathToFileURL(path.resolve(path.dirname(vitePackagePath), viteImportEntry)).href);
+if (typeof createServer !== 'function') throw new Error('Locked Vite ESM entry has no createServer export');
 const pendingBodies = new Set();
 function recordLiveGroupIdentities() {
     for (const row of ownedSpawns) {

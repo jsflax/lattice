@@ -19,7 +19,7 @@
       "bytes": 2677
     },
     "OFFLINE-CHECKS.json": {
-      "sha256": "b0757eb84e1bf53e04e948ebcf2734a1cf89808e61f39e7206bd263fce47aed5",
+      "sha256": "fde8197725af3a428d1fcb4750d4cf3881209be38516f61241192b050d1569c5",
       "bytes": 2835
     },
     "README.md": {
@@ -39,8 +39,8 @@
       "bytes": 3787
     },
     "driver.mjs": {
-      "sha256": "48ee85f40574f64570dc9cee1edc22d240819772e4d2cd89f520da41826664fa",
-      "bytes": 20973
+      "sha256": "2e139b47f3f33f958fcb4ad0b002483a217807095a685631e54186bf4ff67786",
+      "bytes": 21418
     },
     "fixture.html": {
       "sha256": "a2b7e9b60a5dfc931ed97d32c302028b3026d2122a72306ed30a5f0c5557be03",
@@ -67,5 +67,17 @@
       "bytes": 12726
     }
   },
-  "npmCache": "Generated package metadata only; excluded from installable inputs; no node_modules or browser binary installed."
+  "npmCache": "Generated package metadata only; excluded from installable inputs; no node_modules or browser binary installed.",
+  "previousSealSHA256": "3cbb129599ef31e3329a71d3181ff8c86db46a290e01a0cfcac7b7fe82403690",
+  "correctedUTC": "2026-09-18T12:11:20.550239+00:00",
+  "correction": {
+    "failedRun": 35342731705,
+    "scope": "Resolve exact locked Vite published ESM entry; validate createServer before launch",
+    "driverSHA256": "2e139b47f3f33f958fcb4ad0b002483a217807095a685631e54186bf4ff67786",
+    "sourceReview": "SourceSwift six-line hunk source review: no concrete blocker",
+    "importOnlySmokeSHA256": "5110a06900197bde4b65805310d570bca855f928f9847e6cf230d9a50e4b5f63",
+    "importOnlySmokeNode": "v25.8.0 local; remote Node20.18.0 remains unchanged",
+    "exactRegistryViteFilesVerified": 31,
+    "serverOrBrowserLaunchedLocally": false
+  }
 }

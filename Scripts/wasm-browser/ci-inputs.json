@@ -8,7 +8,7 @@
   "artifactSHA256": "8c88e372b2a962ffaf06d60a62077e39fa2dd254598c45004f6d652a7bd6d145",
   "jsRepository": "https://github.com/jsflax/LatticeJS.git",
   "jsCommit": "ea5379bdffbf60a76f939d74ff1a2d7aa38f7b36",
-  "runtimePacketSealSHA256": "3cbb129599ef31e3329a71d3181ff8c86db46a290e01a0cfcac7b7fe82403690",
+  "runtimePacketSealSHA256": "420d2a72d0120768b00577c29f936d8164fdf7fe690bee7e0e4754c0a7544685",
   "node": {
     "version": "20.18.0",
     "archive": "node-v20.18.0-linux-x64.tar.xz",
