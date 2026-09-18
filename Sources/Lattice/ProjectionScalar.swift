@@ -16,6 +16,13 @@ public protocol ProjectionScalar: Sendable {
     static func decodeProjectionValue(_ value: ColumnValue) throws -> Self
 }
 
+// Like Lattice.Model, this alias lets generated code qualify the protocol
+// even inside this module, where the Lattice struct shadows the module name.
+public typealias LatticeProjectionScalar = ProjectionScalar
+extension Lattice {
+    public typealias ProjectionScalar = LatticeProjectionScalar
+}
+
 /// A cell failed strict projection decoding. Errors describe types rather than
 /// including potentially sensitive cell contents.
 public enum ProjectionDecodingError: Error, Equatable, Sendable {

@@ -156,7 +156,9 @@ private final class CxxProjectionReadOperation: ProjectionReadOperation, @unchec
 }
 
 private func checkProjectionBridgeError() throws {
-    let message = String(lattice.last_bridge_error())
+    // C++ returns a reference to its thread-local string. Copy its pointee
+    // immediately, before another sealed bridge call can clear the slot.
+    let message = String(lattice.last_bridge_error().pointee)
     if !message.isEmpty { throw ProjectionReadError.database(message) }
 }
 
