@@ -1,0 +1,26 @@
+--- a/Tests/LatticeTests/LatticeTests.swift
++++ b/Tests/LatticeTests/LatticeTests.swift
+@@ -179,10 +179,19 @@
+ 
+ class BaseTest {
+     private static let logFile: UnsafeMutablePointer<FILE>? = {
+-        let f = fopen("/tmp/lattice_swift_tests.log", "w")
+-        if let f {
+-            Lattice.setLogFile(f)
+-        }
++        guard let path = ProcessInfo.processInfo.environment["LATTICE_TEST_LOG_PATH"],
++              let directory = ProcessInfo.processInfo.environment["LATTICE_ATTACHED_LEGACY_LOG_DIRECTORY"],
++              path.hasPrefix("/"), directory.hasPrefix("/") else {
++            preconditionFailure("Owned legacy qualification log environment is required")
++        }
++        let logURL = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
++        let directoryURL = URL(fileURLWithPath: directory).standardizedFileURL.resolvingSymlinksInPath()
++        guard logURL.deletingLastPathComponent().path == directoryURL.path,
++              ["discovery.log", "legacy-tests.log"].contains(logURL.lastPathComponent),
++              let f = fopen(logURL.path, "w") else {
++            preconditionFailure("Owned legacy qualification log could not be opened")
++        }
++        Lattice.setLogFile(f)
+         return f
+     }()
+ 

@@ -83,7 +83,7 @@ class Oracle(unittest.TestCase):
             and any(isinstance(c, ast.List) and c is lists[0] for c in ast.walk(n))]
         self.assertEqual(len(loops), 1)
         loop = loops[0]
-        self.assertEqual(ast.literal_eval(loop.iter), ('original', 'corrected'))
+        self.assertEqual(ast.literal_eval(loop.iter), ('corrected',))
         test_calls = [n for n in ast.walk(tree) if isinstance(n, ast.List)
             and any(isinstance(x, ast.Constant) and x.value == '--xunit-output' for x in n.elts)]
         self.assertEqual(len(test_calls), 1)

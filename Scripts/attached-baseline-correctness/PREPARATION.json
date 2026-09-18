@@ -1,89 +1,53 @@
 {
-  "scope": "Source-only attached baseline correctness supervisor; not benchmark or whole SDK qualification",
-  "sourceReady": true,
-  "executionAuthorizedByThisReceipt": false,
-  "nativeBuildStarted": false,
-  "networkUsed": false,
-  "activeRepositoriesChanged": false,
-  "originalBenchmarkOrRunningPhysicalPacketChanged": false,
-  "source": {
-    "sdkCommit": "d18f80408a0cb992cdc98ce616c9b28813e99bf7",
-    "sdkTree": "995487abb0b9b0ef7446bc2780bb5a1b8a99c16e",
+  "benchmarkAdmissionAccepted": false,
+  "buildProofSHA256": "d527ba9d57fcae5bf91eae35bbb993e9d185fe13cfbb2aae8db34ebf34857720",
+  "guardSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+  "legacyRuntimeQualified": false,
+  "noNativeOrNetwork": true,
+  "oneFreshCorrectedBuild": true,
+  "originalArmReexecuted": false,
+  "predecessorAssessmentSHA256": "baca4a6fd9fac4bc461873307b99edf93ed1f668283eedf13f3c4e2bde63660e",
+  "predecessorRun": 35394332578,
+  "scope": "Source-only corrected historical baseline four-case follow-on",
+  "sourceBase": {
+    "buildSeconds": 5400,
     "coreCommit": "f8f72e97ae94d1e40b2a9663cb7d15df62c8ac2a",
+    "coreRepository": "https://github.com/jsflax/LatticeCore.git",
     "coreTree": "38ba9b586ff9944a49173c25de578b23f3b72263",
-    "productPatchSHA256": "2b4827d6db82a3d935aad91749323fe7995423a8d0ee301a3405a4109ed89eb2",
-    "testOverlaySHA256": "952e4b750c23ae54643b405e0d2b6e80679c7dbcee175e4c3fa2d4ee0a095321",
-    "completePinCount": 34
-  },
-  "expected": {
-    "original": {
-      "discoveredSelected": 2,
-      "executed": 2,
-      "failed": 1,
-      "passed": 1,
-      "issues": 1,
-      "skipped": 0,
-      "exitCode": 1,
-      "failure": "ATTACHED_DISPLAY_ORACLE"
-    },
-    "corrected": {
-      "discoveredSelected": 2,
-      "executed": 2,
-      "failed": 0,
-      "passed": 2,
-      "issues": 0,
-      "skipped": 0,
-      "exitCode": 0
+    "developerDirectory": "/Applications/Xcode.app/Contents/Developer",
+    "expectedPins": 34,
+    "freeFloorBytes": 12884901888,
+    "j": 2,
+    "logAfterSHA256": "f24d5eb9fee2965751e4b2a8dd24107dfc25a9eccefdfe06aa1d953146838ffa",
+    "logBeforeSHA256": "ad4e8bfd0d1f9a585a6ebc42487e9bde0b1e400b844403204db4b8afed5d3deb",
+    "logCeilingBytes": 536870912,
+    "logOverlayPath": "Tests/LatticeTests/LatticeTests.swift",
+    "overallSeconds": 18000,
+    "overlay": "Tests/LatticeTests/AttachedBaselineCorrectnessTests.swift",
+    "packetCeilingBytes": 32212254720,
+    "predecessorAssessmentSHA256": "baca4a6fd9fac4bc461873307b99edf93ed1f668283eedf13f3c4e2bde63660e",
+    "predecessorAssessmentSealSHA256": "5915e2b027c2a538c47f5b0232f8d6eeea4722475164d94b548ff95d3f7e8b98",
+    "predecessorQualificationSHA256": "e5163b5b208fb7c84df5ae48bb6de592dd940e1b040f20b26df3cd4e29f92b90",
+    "predecessorRun": 35394332578,
+    "productAfterSHA256": "9cd72274cc1e59629796b89b2e2e025d2dfae74107180ff4bc6061f425c63e6b",
+    "productBeforeSHA256": "f4e43207951a971feeabcd191d05472739d669da2f484efa3698decb3266c78b",
+    "productFile": "Sources/Lattice/Results/TableResults.swift",
+    "reserveSeconds": 600,
+    "scope": "Corrected historical attached baseline: four unchanged legacy prerequisites only; benchmark admission remains closed",
+    "sdkCommit": "d18f80408a0cb992cdc98ce616c9b28813e99bf7",
+    "sdkRepository": "https://github.com/jsflax/Lattice.git",
+    "sdkTree": "995487abb0b9b0ef7446bc2780bb5a1b8a99c16e",
+    "swift": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift",
+    "testSeconds": 180,
+    "unmodifiedLegacyFiles": {
+      "Tests/LatticeTests/AttachTests.swift": "f3f4bc40325e1c6fbe99c3fb2fb1c296ea79dd6e4d8c5805b070650ec69c8537",
+      "Tests/LatticeTests/LiveResultsIdentityTests.swift": "b322a5b14a7326460c58227bd8a4f05493666c69aaef667cb1d283bb198488c9",
+      "Tests/LatticeTests/LiveResultsKeysetTests.swift": "5d4a54102707e02e6ef97a029f9d91bb7becb91f17a5031ff3a2f2424e5bcf16"
     }
   },
-  "actualNative": {
-    "discovered": null,
-    "executed": null,
-    "failed": null,
-    "skipped": null,
-    "originalReproduced": null,
-    "correctedPassed": null
-  },
-  "qualified": {
-    "legacyTests": false,
-    "attachedBenchmark": false,
-    "performance": false,
-    "wholeSDK": false,
-    "release": false
-  },
-  "remainingGates": [
-    "Root source review and explicit execution admission",
-    "Actual target toolchain/API compilation and exact compiler/link source proof",
-    "Actual two-case discovery and original one-issue/corrected green native outcome",
-    "Separately reviewed owned log overlay and four existing legacy cases",
-    "Unchanged frozen benchmark correctness and corrected A/A before a later performance comparison"
-  ],
-  "resourceLimits": {
-    "freeFloorGiB": 12,
-    "ownedPacketGiB": 30,
-    "commandLogMiB": 512,
-    "buildSecondsPerArm": 5400,
-    "testSecondsPerArm": 180,
-    "wholeRunSeconds": 18000,
-    "finalizationReserveSeconds": 600,
-    "jobs": 2
-  },
-  "workflow": "Separate proposal only; root owns installation, exact-seal review, push and dispatch. All runner paths are derived under the execution host localdev.",
-  "priorPacketSealSHA256": "0ef36e80e956903c658f2983b1666d81ae47f9dd8c29e9c976d8bdc48192f9a8",
-  "revisionReason": "Exact threaded frontend/map join for only optional absent empty-key object; raw map retention and precise error context",
-  "syntheticChecks": {
-    "authored": 41,
-    "currentPacketExecuted": 41,
-    "failed": 0,
-    "receiptSHA256": "347055379213121253bac2fa2695fe05a97c2d877d7de5da1c78aeb480df02dc",
-    "scope": "Previous29+12 pure Python regressions; missing remote map bytes remain unavailable"
-  },
-  "priorRemoteRun": {
-    "runID": 35391067485,
-    "originalReleaseBuildSucceeded": true,
-    "correctedBuildStarted": false,
-    "testsRan": false,
-    "offendingMapKeyOrPath": null
-  },
-  "linkProofScope": "Canonical driver stable list members/hashes + object-map/source/object identities + output/link reachability; child temporary-list bytes unretained and not independently verified"
+  "sourceChecks": {
+    "legacyTestBodiesChanged": false,
+    "patchApplyToExactD18": true,
+    "python": 51
+  }
 }

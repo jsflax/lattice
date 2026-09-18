@@ -1,16 +1,34 @@
 {
-  "runtimeFilesChanged": [
-    "build_proof.py",
-    "qualify.py"
-  ],
-  "unchanged": {
-    "analyze.py": "b42bb22a757669451c51bae17013eeab7877201278679b5757c945e898b8d640",
-    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
-    "config.json": "e5d64b7d541320c28fd369b41e24e27a6654b8403469af3a41b31174535c9749",
-    "expected-tests.json": "ff1291247cb31d81bef733f99bd1def2441b55ff1f9a36c85991dae3636fb985",
-    "product.patch": "2b4827d6db82a3d935aad91749323fe7995423a8d0ee301a3405a4109ed89eb2",
-    "AttachedBaselineCorrectnessTests.swift": "952e4b750c23ae54643b405e0d2b6e80679c7dbcee175e4c3fa2d4ee0a095321",
-    "test_analysis.py": "4b7195bf18564b86c79c6f657ca605ff69ea4390920a11bab6685834d739d9a2"
+  "bothPatchesApplyToExactBaseline": true,
+  "compilerProofSHA256": "d527ba9d57fcae5bf91eae35bbb993e9d185fe13cfbb2aae8db34ebf34857720",
+  "guardSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+  "logAfterSHA256": "f24d5eb9fee2965751e4b2a8dd24107dfc25a9eccefdfe06aa1d953146838ffa",
+  "nativeExecuted": false,
+  "networkUsed": false,
+  "originalBounds": {
+    "buildSeconds": 5400,
+    "freeFloorBytes": 12884901888,
+    "j": 2,
+    "logCeilingBytes": 536870912,
+    "overallSeconds": 18000,
+    "packetCeilingBytes": 32212254720,
+    "reserveSeconds": 600,
+    "testSeconds": 180
   },
-  "checks": "All unchanged hashes equal005; both new Python files parse; postimages match; all native commands unchanged except extra map receipt keyword passed to local proof."
+  "productAfterSHA256": "9cd72274cc1e59629796b89b2e2e025d2dfae74107180ff4bc6061f425c63e6b",
+  "pythonChecks": 51,
+  "success": true,
+  "threeLegacyFilesByteIdentical": {
+    "Tests/LatticeTests/AttachTests.swift": "f3f4bc40325e1c6fbe99c3fb2fb1c296ea79dd6e4d8c5805b070650ec69c8537",
+    "Tests/LatticeTests/LiveResultsIdentityTests.swift": "b322a5b14a7326460c58227bd8a4f05493666c69aaef667cb1d283bb198488c9",
+    "Tests/LatticeTests/LiveResultsKeysetTests.swift": "5d4a54102707e02e6ef97a029f9d91bb7becb91f17a5031ff3a2f2424e5bcf16"
+  },
+  "unchangedSupervisorFunctionAST": {
+    "clone": true,
+    "command": true,
+    "common": true,
+    "graph": true,
+    "pristine": true,
+    "verify_build": true
+  }
 }

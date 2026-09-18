@@ -1,29 +1,18 @@
 {
   "success": true,
-  "scope": "41 Python checks (including existing synthetic SQLite oracles); no native Swift/Core build/test or network",
-  "executedSyntheticPythonTests": 41,
-  "failed": 0,
-  "commandReceiptSHA256": "eb1e5ecb9b2e9e07ac462122078d872ba5bf3978f8762e950cea0a509a996b58",
-  "logSHA256": "0928e3a0463c22a1925a206a77b1eaacdfc17a239588d325d2a1b30f671e42b9",
-  "cleanup": {
-    "errors": [],
-    "groupGone": true,
-    "leaderReaped": true,
-    "proof": "killpg ESRCH",
-    "signals": []
-  },
-  "elapsedSeconds": 2.5316234579950105,
-  "offlineSummaryCorrection": {
-    "errorReceiptSHA256": "bc06e416d315e0d6eeda68596aecb1771a025f6d422b1af0f125fb50402720fa",
-    "nativeOrTestRerun": false
-  },
-  "testedImplementation": {
-    "build_proof.py": "d527ba9d57fcae5bf91eae35bbb993e9d185fe13cfbb2aae8db34ebf34857720",
-    "qualify.py": "c23f9ce4253198dcef75ac33cb6fb28edd9b50c9159e750409739ad28cd7950d",
-    "test_analysis.py": "4b7195bf18564b86c79c6f657ca605ff69ea4390920a11bab6685834d739d9a2",
-    "test_maps.py": "6da9612f85410ac5f725e342d84d767cb57779f5be900bc91a553980e672bb5b",
-    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
-    "analyze.py": "b42bb22a757669451c51bae17013eeab7877201278679b5757c945e898b8d640"
-  },
-  "sourceManifestLimitation": "The first summary script did not persist its in-memory before/after manifest. Exact current implementation files remain equal to the prepared postimages and authored tests; this receipt does not invent a historical saved manifest."
+  "count": 51,
+  "seconds": 1.568,
+  "command": [
+    "python3",
+    "-B",
+    "-m",
+    "unittest",
+    "test_analysis",
+    "test_maps",
+    "test_legacy"
+  ],
+  "nativeProductExecuted": false,
+  "networkUsed": false,
+  "logSHA256": "dbe81ad5fc41cf1e36173419f90fbe3f41b5f0fca546add59794e135662e2b5e",
+  "allTemporaryOutputsUnder": "runner-007-legacy-review/python-tmp"
 }

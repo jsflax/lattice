@@ -17,8 +17,20 @@
   "overallSeconds": 18000,
   "reserveSeconds": 600,
   "j": 2,
-  "scope": "Focused attached correctness only; no benchmark, legacy tests, performance or release gate",
+  "scope": "Corrected historical attached baseline: four unchanged legacy prerequisites only; benchmark admission remains closed",
   "productAfterSHA256": "9cd72274cc1e59629796b89b2e2e025d2dfae74107180ff4bc6061f425c63e6b",
   "sdkRepository": "https://github.com/jsflax/Lattice.git",
-  "coreRepository": "https://github.com/jsflax/LatticeCore.git"
+  "coreRepository": "https://github.com/jsflax/LatticeCore.git",
+  "logOverlayPath": "Tests/LatticeTests/LatticeTests.swift",
+  "logBeforeSHA256": "ad4e8bfd0d1f9a585a6ebc42487e9bde0b1e400b844403204db4b8afed5d3deb",
+  "logAfterSHA256": "f24d5eb9fee2965751e4b2a8dd24107dfc25a9eccefdfe06aa1d953146838ffa",
+  "predecessorAssessmentSHA256": "baca4a6fd9fac4bc461873307b99edf93ed1f668283eedf13f3c4e2bde63660e",
+  "predecessorAssessmentSealSHA256": "5915e2b027c2a538c47f5b0232f8d6eeea4722475164d94b548ff95d3f7e8b98",
+  "predecessorQualificationSHA256": "e5163b5b208fb7c84df5ae48bb6de592dd940e1b040f20b26df3cd4e29f92b90",
+  "predecessorRun": 35394332578,
+  "unmodifiedLegacyFiles": {
+    "Tests/LatticeTests/LiveResultsIdentityTests.swift": "b322a5b14a7326460c58227bd8a4f05493666c69aaef667cb1d283bb198488c9",
+    "Tests/LatticeTests/LiveResultsKeysetTests.swift": "5d4a54102707e02e6ef97a029f9d91bb7becb91f17a5031ff3a2f2424e5bcf16",
+    "Tests/LatticeTests/AttachTests.swift": "f3f4bc40325e1c6fbe99c3fb2fb1c296ea79dd6e4d8c5805b070650ec69c8537"
+  }
 }

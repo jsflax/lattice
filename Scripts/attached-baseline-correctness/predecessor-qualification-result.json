@@ -1,0 +1,2076 @@
+{
+  "arms": {
+    "corrected": {
+      "actual": {
+        "executed": 2,
+        "failed": [],
+        "issues": 0,
+        "passed": [
+          "attachedDisplayWarmIdentityAndRoutedWrites",
+          "originalPerRowPrimingRemainsOneStatement"
+        ],
+        "skipped": 0
+      },
+      "buildIdentity": {
+        "binarySHA256": "519b9d3f3273267b41d05ab82cbcfb0c6b8bfa53bf89cdaee3762fbddaa509d9",
+        "commandReceiptSHA256": "0dc7b21e6c65ac9e1cf2794d52200f4c5bf606e1b152562bd1eeae2d337a067a",
+        "compilerProofSHA256": "a8b09fcd43e51ad7f6d2945d7ff0d1f42022ae60d7362fed38e4e27eebdc809a",
+        "packetSealSHA256": "6fe84df38a561dd9dd7c10075a78ed8c2e90d92adff3f3d58bcf1e22d4c85ec0",
+        "sourceProofSHA256": "fc584400066a7984f7cbf5e342cfee97fa37f197fb7c56a55b0ad2ae7d0a6606",
+        "success": true
+      },
+      "caseReceipts": {
+        "attachedDisplayWarmIdentityAndRoutedWrites": "45be8efcbc3b60eef356cd41b7db9af56c242b6fee7311919ace23da7e3ac7b1",
+        "originalPerRowPrimingRemainsOneStatement": "ca878a71b706795650b185d1a70e07a6e3425f94155d4e0f23e7f1db158e1aab"
+      },
+      "expectedRedConfirmed": false,
+      "experimentCompleted": true,
+      "physical": {
+        "afterNativeGroupGone": true,
+        "freshReadOnlyConnections": 8,
+        "independentReadRows": 40000,
+        "pythonSQLiteVersion": "3.53.4"
+      },
+      "safetyAccepted": true,
+      "success": true,
+      "xmlSHA256": "1b945440dab286f5b2b510eeec1807f6df2fa7d693e382140abc1b5920ae36d1"
+    },
+    "original": {
+      "actual": {
+        "executed": 2,
+        "failed": [
+          "attachedDisplayWarmIdentityAndRoutedWrites"
+        ],
+        "issues": 1,
+        "passed": [
+          "originalPerRowPrimingRemainsOneStatement"
+        ],
+        "skipped": 0
+      },
+      "buildIdentity": {
+        "binarySHA256": "e15a31b3a9bfcf33a95a197205e2f694f07dee392e206228cc2e4b01f62cb6ee",
+        "commandReceiptSHA256": "e2d81cfab3899f9bf93cb5c52316b76c47750566bc72a8424475fa4d3e0e1abc",
+        "compilerProofSHA256": "775e51e5636023b521fd2f89eba6287790f040263c917628dc2d16e65cd8c97d",
+        "packetSealSHA256": "6fe84df38a561dd9dd7c10075a78ed8c2e90d92adff3f3d58bcf1e22d4c85ec0",
+        "sourceProofSHA256": "2d26cd291144f520e692f545088f1b7b789a918a8bf31fd4b6c1a72481f2c89f",
+        "success": true
+      },
+      "caseReceipts": {
+        "attachedDisplayWarmIdentityAndRoutedWrites": "08c55c45aea04750f40ee8f2c1bae7c22350a2e86397557be560d9fda32c2f57",
+        "originalPerRowPrimingRemainsOneStatement": "e5f79a0279b4022abdfa8b8bc15b02aeddb9f7f37731ebe92847fee54367c117"
+      },
+      "expectedRedConfirmed": true,
+      "experimentCompleted": true,
+      "physical": {
+        "afterNativeGroupGone": true,
+        "freshReadOnlyConnections": 8,
+        "independentReadRows": 40000,
+        "pythonSQLiteVersion": "3.53.4"
+      },
+      "safetyAccepted": false,
+      "success": false,
+      "xmlSHA256": "550b6606bcb3b1ba4bfa7f074ccb1beeac5af9b55e375cfa9b28ae1bf955fceb"
+    }
+  },
+  "commandRecords": [
+    {
+      "label": "local-swift-version",
+      "success": true
+    },
+    {
+      "label": "local-macos-sdk",
+      "success": true
+    },
+    {
+      "label": "pristine-sdk-init",
+      "success": true
+    },
+    {
+      "label": "pristine-sdk-fetch",
+      "success": true
+    },
+    {
+      "label": "pristine-sdk-checkout",
+      "success": true
+    },
+    {
+      "label": "pristine-sdk-pristine-identity",
+      "success": true
+    },
+    {
+      "label": "pristine-sdk-pristine-status",
+      "success": true
+    },
+    {
+      "label": "pristine-sdk-pristine-files",
+      "success": true
+    },
+    {
+      "label": "pristine-core-init",
+      "success": true
+    },
+    {
+      "label": "pristine-core-fetch",
+      "success": true
+    },
+    {
+      "label": "pristine-core-checkout",
+      "success": true
+    },
+    {
+      "label": "pristine-core-pristine-identity",
+      "success": true
+    },
+    {
+      "label": "pristine-core-pristine-status",
+      "success": true
+    },
+    {
+      "label": "pristine-core-pristine-files",
+      "success": true
+    },
+    {
+      "label": "original-sdk-clone",
+      "success": true
+    },
+    {
+      "label": "original-sdk-checkout",
+      "success": true
+    },
+    {
+      "label": "original-sdk-pristine-identity",
+      "success": true
+    },
+    {
+      "label": "original-sdk-pristine-status",
+      "success": true
+    },
+    {
+      "label": "original-sdk-pristine-files",
+      "success": true
+    },
+    {
+      "label": "original-resolve",
+      "success": true
+    },
+    {
+      "label": "original-before-build-dependency-graph",
+      "success": true
+    },
+    {
+      "label": "original-before-build-async-http-client-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-async-http-client-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-async-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-async-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-console-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-console-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-eventsource-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-eventsource-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-latticecore-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-latticecore-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-core-source-identity",
+      "success": true
+    },
+    {
+      "label": "original-before-build-core-source-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-core-source-files",
+      "success": true
+    },
+    {
+      "label": "original-before-build-multipart-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-multipart-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-routing-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-routing-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-asn1-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-asn1-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-async-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-async-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-atomics-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-atomics-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-certificates-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-certificates-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-collections-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-collections-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-crypto-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-crypto-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-distributed-tracing-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-distributed-tracing-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-docc-plugin-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-docc-plugin-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-docc-symbolkit-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-docc-symbolkit-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-http-structured-headers-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-http-structured-headers-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-http-types-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-http-types-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-log-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-log-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-metrics-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-metrics-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-nio-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-nio-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-nio-extras-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-nio-extras-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-nio-http2-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-nio-http2-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-nio-ssl-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-nio-ssl-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-nio-transport-services-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-nio-transport-services-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-numerics-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-numerics-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-sdk-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-sdk-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-service-context-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-service-context-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-service-lifecycle-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-service-lifecycle-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-syntax-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-syntax-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-system-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-swift-system-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-vapor-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-vapor-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-websocket-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-before-build-websocket-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-sdk-identity",
+      "success": true
+    },
+    {
+      "label": "original-before-build-sdk-status",
+      "success": true
+    },
+    {
+      "label": "original-before-build-sdk-files",
+      "success": true
+    },
+    {
+      "label": "original-release-build",
+      "success": true
+    },
+    {
+      "label": "original-after-build-sdk-identity",
+      "success": true
+    },
+    {
+      "label": "original-after-build-sdk-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-sdk-files",
+      "success": true
+    },
+    {
+      "label": "original-after-build-dependency-graph",
+      "success": true
+    },
+    {
+      "label": "original-after-build-async-http-client-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-async-http-client-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-async-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-async-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-console-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-console-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-eventsource-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-eventsource-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-latticecore-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-latticecore-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-core-source-identity",
+      "success": true
+    },
+    {
+      "label": "original-after-build-core-source-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-core-source-files",
+      "success": true
+    },
+    {
+      "label": "original-after-build-multipart-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-multipart-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-routing-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-routing-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-asn1-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-asn1-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-async-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-async-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-atomics-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-atomics-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-certificates-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-certificates-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-collections-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-collections-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-crypto-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-crypto-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-distributed-tracing-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-distributed-tracing-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-docc-plugin-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-docc-plugin-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-docc-symbolkit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-docc-symbolkit-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-http-structured-headers-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-http-structured-headers-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-http-types-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-http-types-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-log-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-log-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-metrics-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-metrics-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-nio-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-nio-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-nio-extras-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-nio-extras-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-nio-http2-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-nio-http2-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-nio-ssl-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-nio-ssl-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-nio-transport-services-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-nio-transport-services-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-numerics-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-numerics-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-sdk-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-sdk-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-service-context-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-service-context-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-service-lifecycle-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-service-lifecycle-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-syntax-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-syntax-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-system-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-swift-system-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-vapor-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-vapor-status",
+      "success": true
+    },
+    {
+      "label": "original-after-build-websocket-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-build-websocket-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-sdk-clone",
+      "success": true
+    },
+    {
+      "label": "corrected-sdk-checkout",
+      "success": true
+    },
+    {
+      "label": "corrected-sdk-pristine-identity",
+      "success": true
+    },
+    {
+      "label": "corrected-sdk-pristine-status",
+      "success": true
+    },
+    {
+      "label": "corrected-sdk-pristine-files",
+      "success": true
+    },
+    {
+      "label": "corrected-product-overlay",
+      "success": true
+    },
+    {
+      "label": "corrected-resolve",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-dependency-graph",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-async-http-client-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-async-http-client-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-async-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-async-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-console-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-console-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-eventsource-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-eventsource-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-latticecore-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-latticecore-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-core-source-identity",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-core-source-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-core-source-files",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-multipart-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-multipart-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-routing-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-routing-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-asn1-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-asn1-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-async-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-async-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-atomics-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-atomics-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-certificates-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-certificates-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-collections-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-collections-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-crypto-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-crypto-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-distributed-tracing-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-distributed-tracing-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-docc-plugin-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-docc-plugin-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-docc-symbolkit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-docc-symbolkit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-http-structured-headers-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-http-structured-headers-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-http-types-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-http-types-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-log-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-log-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-metrics-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-metrics-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-nio-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-nio-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-nio-extras-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-nio-extras-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-nio-http2-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-nio-http2-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-nio-ssl-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-nio-ssl-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-nio-transport-services-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-nio-transport-services-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-numerics-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-numerics-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-sdk-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-sdk-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-service-context-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-service-context-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-service-lifecycle-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-service-lifecycle-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-syntax-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-syntax-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-system-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-swift-system-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-vapor-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-vapor-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-websocket-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-websocket-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-sdk-identity",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-sdk-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-build-sdk-files",
+      "success": true
+    },
+    {
+      "label": "corrected-release-build",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-sdk-identity",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-sdk-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-sdk-files",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-dependency-graph",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-async-http-client-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-async-http-client-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-async-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-async-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-console-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-console-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-eventsource-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-eventsource-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-latticecore-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-latticecore-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-core-source-identity",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-core-source-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-core-source-files",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-multipart-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-multipart-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-routing-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-routing-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-asn1-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-asn1-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-async-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-async-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-atomics-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-atomics-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-certificates-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-certificates-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-collections-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-collections-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-crypto-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-crypto-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-distributed-tracing-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-distributed-tracing-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-docc-plugin-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-docc-plugin-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-docc-symbolkit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-docc-symbolkit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-http-structured-headers-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-http-structured-headers-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-http-types-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-http-types-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-log-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-log-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-metrics-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-metrics-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-nio-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-nio-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-nio-extras-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-nio-extras-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-nio-http2-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-nio-http2-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-nio-ssl-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-nio-ssl-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-nio-transport-services-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-nio-transport-services-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-numerics-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-numerics-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-sdk-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-sdk-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-service-context-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-service-context-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-service-lifecycle-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-service-lifecycle-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-syntax-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-syntax-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-system-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-swift-system-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-vapor-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-vapor-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-websocket-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-build-websocket-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-before-tests-sdk-identity",
+      "success": true
+    },
+    {
+      "label": "original-before-tests-sdk-status",
+      "success": true
+    },
+    {
+      "label": "original-before-tests-sdk-files",
+      "success": true
+    },
+    {
+      "label": "original-discovery",
+      "success": true
+    },
+    {
+      "label": "original-focused-tests",
+      "success": false
+    },
+    {
+      "label": "original-after-tests-sdk-identity",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-sdk-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-sdk-files",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-dependency-graph",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-async-http-client-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-async-http-client-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-async-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-async-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-console-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-console-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-eventsource-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-eventsource-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-latticecore-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-latticecore-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-core-source-identity",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-core-source-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-core-source-files",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-multipart-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-multipart-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-routing-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-routing-kit-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-asn1-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-asn1-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-async-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-async-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-atomics-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-atomics-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-certificates-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-certificates-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-collections-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-collections-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-crypto-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-crypto-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-distributed-tracing-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-distributed-tracing-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-docc-plugin-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-docc-plugin-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-docc-symbolkit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-docc-symbolkit-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-http-structured-headers-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-http-structured-headers-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-http-types-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-http-types-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-log-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-log-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-metrics-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-metrics-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-nio-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-nio-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-nio-extras-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-nio-extras-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-nio-http2-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-nio-http2-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-nio-ssl-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-nio-ssl-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-nio-transport-services-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-nio-transport-services-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-numerics-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-numerics-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-sdk-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-sdk-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-service-context-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-service-context-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-service-lifecycle-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-service-lifecycle-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-syntax-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-syntax-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-system-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-swift-system-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-vapor-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-vapor-status",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-websocket-kit-head",
+      "success": true
+    },
+    {
+      "label": "original-after-tests-websocket-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-tests-sdk-identity",
+      "success": true
+    },
+    {
+      "label": "corrected-before-tests-sdk-status",
+      "success": true
+    },
+    {
+      "label": "corrected-before-tests-sdk-files",
+      "success": true
+    },
+    {
+      "label": "corrected-discovery",
+      "success": true
+    },
+    {
+      "label": "corrected-focused-tests",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-sdk-identity",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-sdk-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-sdk-files",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-dependency-graph",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-async-http-client-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-async-http-client-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-async-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-async-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-console-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-console-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-eventsource-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-eventsource-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-latticecore-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-latticecore-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-core-source-identity",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-core-source-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-core-source-files",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-multipart-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-multipart-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-routing-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-routing-kit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-asn1-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-asn1-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-async-algorithms-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-async-algorithms-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-atomics-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-atomics-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-certificates-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-certificates-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-collections-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-collections-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-crypto-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-crypto-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-distributed-tracing-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-distributed-tracing-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-docc-plugin-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-docc-plugin-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-docc-symbolkit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-docc-symbolkit-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-http-structured-headers-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-http-structured-headers-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-http-types-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-http-types-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-log-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-log-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-metrics-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-metrics-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-nio-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-nio-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-nio-extras-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-nio-extras-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-nio-http2-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-nio-http2-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-nio-ssl-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-nio-ssl-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-nio-transport-services-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-nio-transport-services-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-numerics-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-numerics-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-sdk-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-sdk-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-service-context-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-service-context-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-service-lifecycle-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-service-lifecycle-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-syntax-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-syntax-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-system-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-swift-system-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-vapor-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-vapor-status",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-websocket-kit-head",
+      "success": true
+    },
+    {
+      "label": "corrected-after-tests-websocket-kit-status",
+      "success": true
+    },
+    {
+      "label": "pristine-sdk-final-identity",
+      "success": true
+    },
+    {
+      "label": "pristine-sdk-final-status",
+      "success": true
+    },
+    {
+      "label": "pristine-sdk-final-files",
+      "success": true
+    },
+    {
+      "label": "pristine-core-final-identity",
+      "success": true
+    },
+    {
+      "label": "pristine-core-final-status",
+      "success": true
+    },
+    {
+      "label": "pristine-core-final-files",
+      "success": true
+    }
+  ],
+  "correctedFocusedAccepted": true,
+  "elapsedSeconds": 3849.6878618329997,
+  "evidenceErrors": [],
+  "experimentCompleted": true,
+  "finalResources": {
+    "freeBytes": 95991504896,
+    "logBytes": 0,
+    "packetBytes": 6529478656
+  },
+  "fullContractQualified": false,
+  "legacyChecksQualified": false,
+  "originalSafetyAccepted": false,
+  "packetSealSHA256": "6fe84df38a561dd9dd7c10075a78ed8c2e90d92adff3f3d58bcf1e22d4c85ec0",
+  "performanceQualified": false,
+  "primaryError": null,
+  "receivedSignals": [],
+  "reproductionConfirmed": true,
+  "scope": "Focused attached correctness only; no benchmark, legacy tests, performance or release gate",
+  "success": true
+}

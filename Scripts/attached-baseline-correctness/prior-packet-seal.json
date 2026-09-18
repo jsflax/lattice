@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "scope": "Complete source successor;41 Python checks passed; native qualification unrun",
+  "sourceOnly": true,
+  "actualNativeTests": null,
+  "attachedOverlayCompiledInThisSuccessor": false,
+  "priorPacketSealSHA256": "0ef36e80e956903c658f2983b1666d81ae47f9dd8c29e9c976d8bdc48192f9a8",
+  "authoredSyntheticPythonChecks": 41,
+  "currentFullSyntheticExecuted": true,
+  "files": {
+    "AttachedBaselineCorrectnessTests.swift": "952e4b750c23ae54643b405e0d2b6e80679c7dbcee175e4c3fa2d4ee0a095321",
+    "PREPARATION.json": "d5d94a9c49db11f82bbd267371458baa62a19a5f0647808d3b50d1c791b33955",
+    "PRIOR-RUN-DIAGNOSIS.json": "55f55363036d25cb6891af21d44bfe0f091ac775eee590b6e7707797a5cf54d0",
+    "README.md": "19c5f6bd0c4a8c1592b3f5aeb094fb8d3b78d57fe851a1a64cbf582e04ce9767",
+    "RUNNER004-FAILURE.md": "d55c47da683e85e36a4943abd28a5d8a12fe5a3e9340b9a3c3de86c3def12dea",
+    "RUNNER005-DIAGNOSIS.json": "f7ee8f548a0801e5e40d31e6d10ed08e0a2767adb888c81ae0ad1387d3f53434",
+    "STATIC-CHECKS.json": "dbd0d1313c1e1eeb50c738a5b5f81f6de7d7ff35204b394f0aeead50fe351240",
+    "SYNTHETIC-VALIDATION.json": "347055379213121253bac2fa2695fe05a97c2d877d7de5da1c78aeb480df02dc",
+    "analyze.py": "b42bb22a757669451c51bae17013eeab7877201278679b5757c945e898b8d640",
+    "build_proof.py": "d527ba9d57fcae5bf91eae35bbb993e9d185fe13cfbb2aae8db34ebf34857720",
+    "config.json": "e5d64b7d541320c28fd369b41e24e27a6654b8403469af3a41b31174535c9749",
+    "expected-tests.json": "ff1291247cb31d81bef733f99bd1def2441b55ff1f9a36c85991dae3636fb985",
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "observed-link-commands.json": "caced29f4de2148bd62c8983e5083be2f2be993d75dd81fb94c15f60cf7cf9c6",
+    "observed-swift-commands.json": "5d830d52f8d469340f461b13e74f83c2b8350adc93554f32d3e1892a7d807218",
+    "product.patch": "2b4827d6db82a3d935aad91749323fe7995423a8d0ee301a3405a4109ed89eb2",
+    "qualify.py": "c23f9ce4253198dcef75ac33cb6fb28edd9b50c9159e750409739ad28cd7950d",
+    "test_analysis.py": "4b7195bf18564b86c79c6f657ca605ff69ea4390920a11bab6685834d739d9a2",
+    "test_maps.py": "6da9612f85410ac5f725e342d84d767cb57779f5be900bc91a553980e672bb5b"
+  }
+}

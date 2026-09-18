@@ -1,4 +1,4 @@
-name: Attached baseline correctness red-green
+name: Attached corrected baseline legacy prerequisites
 # Proposal only. Root reviews and installs this plus the exact sealed packet.
 on:
   push:
@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 360
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      PACKET_SEAL_SHA256: 6fe84df38a561dd9dd7c10075a78ed8c2e90d92adff3f3d58bcf1e22d4c85ec0
+      PACKET_SEAL_SHA256: 8a1ba5bdd2282786caa14d00898c98e8e8507b794f093ec35000d32d63b07779
     steps:
       - name: Fetch exact qualification tools under localdev
         timeout-minutes: 10
@@ -37,7 +37,7 @@ jobs:
           record = {k: os.environ[k] for k in ('GITHUB_REPOSITORY', 'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'PACKET_SEAL_SHA256')}
           (root / 'workflow-source.json').write_text(json.dumps(record, indent=2) + '\n')
           PY
-      - name: Fresh exact Release builds then original and corrected correctness
+      - name: Fresh corrected Release build then four unchanged legacy prerequisites
         timeout-minutes: 310
         shell: bash
         run: |
@@ -46,7 +46,7 @@ jobs:
           python3 -B "$TASK_ROOT/tools/Scripts/attached-baseline-correctness/qualify.py" \
             --root "$TASK_ROOT/qualification" \
             --packet-seal-sha256 "$PACKET_SEAL_SHA256"
-      - name: Preserve expected red, corrected result, and failure evidence
+      - name: Preserve predecessor, legacy result, and failure evidence
         if: always() && env.TASK_ROOT != ''
         timeout-minutes: 15
         uses: actions/upload-artifact@v4
@@ -55,10 +55,8 @@ jobs:
           path: |
             ${{ env.TASK_ROOT }}/workflow-source.json
             ${{ env.TASK_ROOT }}/qualification/receipts
-            ${{ env.TASK_ROOT }}/qualification/original/logs
-            ${{ env.TASK_ROOT }}/qualification/original/case-run-001
             ${{ env.TASK_ROOT }}/qualification/corrected/logs
-            ${{ env.TASK_ROOT }}/qualification/corrected/case-run-001
+            ${{ env.TASK_ROOT }}/qualification/corrected/tmp
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 30

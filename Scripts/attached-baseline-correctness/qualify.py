@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-shot original/corrected attached correctness. No benchmark workload."""
+"""One fresh corrected historical build and four unchanged legacy prerequisites."""
 from pathlib import Path
 import argparse
 import json
@@ -11,6 +11,7 @@ import time
 import traceback
 import guarded_runner as guard
 import analyze
+import legacy_analysis
 import build_proof
 
 P = Path(__file__).resolve().parent
@@ -20,7 +21,50 @@ def finalize_acceptance(result):
     result['success'] = bool(result['success'] and result['primaryError'] is None
         and not result['evidenceErrors'] and not result.get('receivedSignals'))
     if not result['success']:
-        result.update(experimentCompleted=False, correctedFocusedAccepted=False)
+        result.update(experimentCompleted=False, correctedFocusedAccepted=False,
+            legacyChecksQualified=False, correctedBaselinePrerequisitesAccepted=False)
+
+def validate_packet(seal_sha):
+    seal_path = P / 'PACKET-SEAL.json'
+    assert guard.digest(seal_path) == seal_sha
+    seal = load(seal_path)
+    required = {'qualify.py', 'legacy_analysis.py', 'analyze.py', 'guarded_runner.py', 'build_proof.py',
+        'config.json', 'legacy-expected-tests.json', 'AttachedBaselineCorrectnessTests.swift',
+        'product.patch', 'owned-log.patch', 'prior-packet-seal.json', 'prior-config.json',
+        'predecessor-assessment.json', 'predecessor-assessment-seal.json', 'predecessor-qualification-result.json'}
+    assert required <= seal['files'].keys()
+    for name, digest in seal['files'].items():
+        path = P / name
+        assert path.resolve().is_relative_to(P) and not path.is_symlink()
+        assert guard.digest(path) == digest, 'prepared input changed: ' + name
+    config = load(P / 'config.json')
+    prior_config = load(P / 'prior-config.json')
+    prior_seal = load(P / 'prior-packet-seal.json')
+    assert guard.digest(P / 'prior-config.json') == prior_seal['files']['config.json']
+    assert all(config[key] == value for key, value in prior_config.items() if key != 'scope')
+    for name in ('product.patch', 'AttachedBaselineCorrectnessTests.swift', 'guarded_runner.py', 'build_proof.py'):
+        assert guard.digest(P / name) == prior_seal['files'][name]
+    evidence = load(P / 'predecessor-assessment.json')
+    previous = load(P / 'predecessor-qualification-result.json')
+    predecessor_seal = load(P / 'predecessor-assessment-seal.json')
+    assert guard.digest(P / 'predecessor-assessment.json') == config['predecessorAssessmentSHA256'] == predecessor_seal['files']['ASSESSMENT.json']
+    assert guard.digest(P / 'predecessor-assessment-seal.json') == config['predecessorAssessmentSealSHA256']
+    assert guard.digest(P / 'predecessor-qualification-result.json') == config['predecessorQualificationSHA256']
+    qualified_key = 'artifacts/attached-baseline-correctness-attempt-1/qualification/receipts/qualification-result.json'
+    assert evidence['inputInventory'][qualified_key]['sha256'] == config['predecessorQualificationSHA256']
+    assert evidence['success'] and evidence['workflowRun'] == config['predecessorRun'] == 35394332578
+    for key in ('sdkCommit', 'sdkTree', 'coreCommit', 'coreTree'):
+        assert evidence[key] == config[key]
+    assert evidence['sourcePacketSealSHA256'] == guard.digest(P / 'prior-packet-seal.json') == previous['packetSealSHA256']
+    assert previous['success'] and previous['experimentCompleted'] and previous['reproductionConfirmed']
+    assert previous['correctedFocusedAccepted'] and not previous['originalSafetyAccepted']
+    assert not previous['primaryError'] and not previous['evidenceErrors'] and not previous['receivedSignals']
+    assert previous['arms']['original']['expectedRedConfirmed'] and previous['arms']['corrected']['actual']['executed'] == 2
+    assert not previous['arms']['corrected']['actual']['failed'] and previous['arms']['corrected']['actual']['skipped'] == 0
+    return {'run': config['predecessorRun'], 'assessmentSHA256': config['predecessorAssessmentSHA256'],
+        'qualificationSHA256': config['predecessorQualificationSHA256'], 'expectedOriginalFailurePreserved': True,
+        'correctedFocusedAccepted': True, 'originalSafetyAccepted': False}
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -29,12 +73,9 @@ def main():
     parser.add_argument('--sdk-seed', type=Path)
     parser.add_argument('--core-seed', type=Path)
     args = parser.parse_args()
-    seal_path = P / 'PACKET-SEAL.json'
     def inputs():
-        assert guard.digest(seal_path) == args.packet_seal_sha256
-        for name, digest in load(seal_path)['files'].items():
-            assert guard.digest(P / name) == digest, 'prepared input changed: ' + name
-    inputs()
+        return validate_packet(args.packet_seal_sha256)
+    predecessor = inputs()
     config = load(P / 'config.json')
     root = args.root.absolute()
     allowed = (Path.home() / 'localdev').resolve(strict=True)
@@ -49,7 +90,9 @@ def main():
     result = {'success': False, 'experimentCompleted': False, 'originalSafetyAccepted': False,
         'correctedFocusedAccepted': False, 'reproductionConfirmed': False,
         'performanceQualified': False, 'fullContractQualified': False,
-        'legacyChecksQualified': False, 'scope': config['scope'], 'arms': {},
+        'legacyChecksQualified': False, 'correctedBaselinePrerequisitesAccepted': False,
+        'benchmarkAdmissionAccepted': False, 'predecessor': predecessor,
+        'scope': config['scope'], 'arms': {},
         'packetSealSHA256': args.packet_seal_sha256, 'primaryError': None, 'evidenceErrors': []}
     contexts = {}; expected_nonzero = set(); baseline_sources = {}
     with guard.Interrupts() as interrupts:
@@ -88,11 +131,12 @@ def main():
             runner.env = dict(env, TMPDIR=str(home / 'tmp'), TMP=str(home / 'tmp'), TEMP=str(home / 'tmp'),
                 CLANG_MODULE_CACHE_PATH=str(home / 'module-cache'), SWIFT_MODULECACHE_PATH=str(home / 'module-cache'),
                 SWIFTPM_MODULECACHE_OVERRIDE=str(home / 'module-cache'),
-                LATTICE_TEST_LOG_PATH=str(home / 'logs/native.log'),
+                LATTICE_TEST_LOG_PATH=str(home / 'logs/legacy-tests.log'),
+                LATTICE_ATTACHED_LEGACY_LOG_DIRECTORY=str(home / 'logs'),
                 LATTICE_ATTACHED_CORRECTNESS='1' if enabled else '0',
                 LATTICE_ATTACHED_CORRECTNESS_ROOT=str(home / 'case-run-001'))
         def sources(context, phase):
-            allowed_changes = [config['overlay'], 'Package.resolved']
+            allowed_changes = [config['overlay'], config['logOverlayPath'], 'Package.resolved']
             if context['arm'] == 'corrected': allowed_changes.append(config['productFile'])
             current = guard.authenticate_repository(runner, context['arm'] + '-' + phase + '-sdk',
                 context['sdk'], config['sdkCommit'], allowed_changes=tuple(allowed_changes))
@@ -101,11 +145,15 @@ def main():
             assert guard.digest(context['sdk'] / config['overlay']) == guard.digest(P / 'AttachedBaselineCorrectnessTests.swift')
             expected_product = config['productBeforeSHA256'] if context['arm'] == 'original' else config['productAfterSHA256']
             assert guard.digest(context['sdk'] / config['productFile']) == expected_product
+            assert guard.digest(context['sdk'] / config['logOverlayPath']) == config['logAfterSHA256']
+            for name, expected in config['unmodifiedLegacyFiles'].items():
+                assert guard.digest(context['sdk'] / name) == expected
             assert guard.pins(context['sdk'] / 'Package.resolved') == context['pins']
             return {'sdkCommit': config['sdkCommit'], 'sdkTree': config['sdkTree'],
                 'actualSDKFiles': guard.tracked_manifest(context['sdk'], context['pristine']['files']),
                 'overlaySHA256': guard.digest(context['sdk'] / config['overlay']),
-                'productSHA256': expected_product, 'completePins': context['pins']}
+                'productSHA256': expected_product, 'logOverlaySHA256': config['logAfterSHA256'],
+                'unchangedLegacySources': config['unmodifiedLegacyFiles'], 'completePins': context['pins']}
         def graph(context, phase):
             label = context['arm'] + '-' + phase
             log = command(label + '-dependency-graph', [config['swift'], 'package', *common(context), 'show-dependencies', '--format', 'json'], context['sdk'])
@@ -156,7 +204,7 @@ def main():
             baseline_sources['core'] = pristine('pristine-core', args.core_seed, config['coreRepository'], baseline_core, config['coreCommit'], config['coreTree'])
             pins = guard.pins(baseline_sdk / 'Package.resolved')
             assert len(pins) == config['expectedPins'] and pins['latticecore']['state']['revision'] == config['coreCommit']
-            for arm in ('original', 'corrected'):
+            for arm in ('corrected',):
                 home = root / arm; home.mkdir()
                 for name in ('tmp', 'scratch', 'cache', 'config', 'security', 'module-cache', 'logs'):
                     (home / name).mkdir()
@@ -168,6 +216,8 @@ def main():
                 overlay = sdk / config['overlay']; assert not overlay.exists()
                 shutil.copyfile(P / 'AttachedBaselineCorrectnessTests.swift', overlay)
                 if arm == 'corrected': command('corrected-product-overlay', ['git', 'apply', '--whitespace=error-all', str(P / 'product.patch')], sdk)
+                assert guard.digest(sdk / config['logOverlayPath']) == config['logBeforeSHA256']
+                command('corrected-owned-log-overlay', ['git', 'apply', '--whitespace=error-all', str(P / 'owned-log.patch')], sdk)
                 use(context)
                 command(arm + '-resolve', [config['swift'], 'package', *common(context), '--force-resolved-versions', 'resolve'], sdk, timeout=600)
                 assert guard.pins(sdk / 'Package.resolved') == pins
@@ -200,46 +250,41 @@ def main():
                     'commandReceiptSHA256': guard.digest(receipts / (arm + '-release-build.json')),
                     'packetSealSHA256': args.packet_seal_sha256, 'binarySHA256': proof['binarySHA256']}
                 guard.save_json(receipts / (arm + '-build-result.json'), context['buildIdentity'])
-            # Both fresh builds are finished before either correctness arm runs.
+            # One fresh corrected build precedes all four unchanged legacy cases.
             for arm, context in contexts.items():
-                inputs(); use(context, enabled=True)
+                inputs(); use(context)
                 verify_build(context)
                 assert sources(context, 'before-tests') == load(receipts / (arm + '-source-proof.json'))
-                expected = load(P / 'expected-tests.json')
+                expected = load(P / 'legacy-expected-tests.json')
+                runner.env['LATTICE_TEST_LOG_PATH'] = str(context['home'] / 'logs/discovery.log')
                 log = command(arm + '-discovery', [config['swift'], 'test', *common(context), '-c', 'release', '--skip-build', 'list'], context['sdk'])
-                discovered = analyze.discover(log.read_text(), expected)
+                discovered = legacy_analysis.discover(log.read_text(), expected)
                 guard.save_json(receipts / (arm + '-selected-discovery.json'), {'actual': discovered})
-                cases = context['home'] / 'case-run-001'; cases.mkdir(exist_ok=False)
-                xml = receipts / (arm + '-testing-cases.xml')
-                label = arm + '-focused-tests'
+                use(context)
+                xml = receipts / (arm + '-legacy-cases.xml')
+                label = arm + '-legacy-tests'
                 argv = [config['swift'], 'test', *common(context), '-c', 'release', '--skip-build', '--force-resolved-versions',
-                    '--disable-xctest', '--enable-swift-testing', '--filter', '^LatticeTests.AttachedBaselineCorrectnessTests/', '--xunit-output', str(xml)]
-                caught = None
-                try: runner.run(label, argv, cwd=context['sdk'], timeout=config['testSeconds'], require_full_timeout=True)
-                except BaseException as error: caught = error
-                record = load(receipts / (label + '.json'))
-                analyze.command(record, 1 if arm == 'original' else 0)
-                actual = analyze.framework(xml.read_text(), (receipts / (label + '.log')).read_text(), arm)
-                case_data = analyze.case_receipts(cases, arm)
-                physical = analyze.physical_postimages(cases, arm)
-                if arm == 'original':
-                    assert caught is not None
-                    expected_nonzero.add(label); result['reproductionConfirmed'] = True
-                else: assert caught is None
-                arm_result = {'experimentCompleted': True, 'success': arm == 'corrected',
-                    'safetyAccepted': arm == 'corrected', 'expectedRedConfirmed': arm == 'original',
-                    'actual': actual, 'buildIdentity': context['buildIdentity'], 'physical': physical,
-                    'xmlSHA256': guard.digest(xml), 'caseReceipts': {name: guard.digest(cases / name / 'RESULT.json') for name in case_data}}
-                guard.save_json(receipts / (arm + '-correctness-result.json'), arm_result)
+                    '--disable-xctest', '--enable-swift-testing', '--filter', expected['filter'], '--xunit-output', str(xml)]
+                command(label, argv, context['sdk'], timeout=config['testSeconds'])
+                actual = legacy_analysis.framework(xml.read_text(), (receipts / (label + '.log')).read_text(), expected)
+                native_log = context['home'] / 'logs/legacy-tests.log'
+                assert native_log.is_file() and not native_log.is_symlink()
+                assert native_log.resolve().parent == (context['home'] / 'logs').resolve()
+                assert native_log.stat().st_size <= config['logCeilingBytes']
+                arm_result = {'experimentCompleted': True, 'success': True, 'legacyChecksQualified': True,
+                    'actual': actual, 'buildIdentity': context['buildIdentity'],
+                    'xmlSHA256': guard.digest(xml), 'nativeLogSHA256': guard.digest(native_log),
+                    'nativeLogBytes': native_log.stat().st_size, 'nativeLogPath': str(native_log)}
+                guard.save_json(receipts / (arm + '-legacy-result.json'), arm_result)
                 result['arms'][arm] = arm_result
                 build_proof.verify(context['compilerProof'])
                 assert sources(context, 'after-tests') == load(receipts / (arm + '-source-proof.json'))
                 graph(context, 'after-tests')
             assert guard.authenticate_repository(runner, 'pristine-sdk-final', baseline_sdk, config['sdkCommit']) == baseline_sources['sdk']
             assert guard.authenticate_repository(runner, 'pristine-core-final', baseline_core, config['coreCommit']) == baseline_sources['core']
-            result.update(experimentCompleted=True, correctedFocusedAccepted=True)
-            # Original safety remains red. This exit/overall success is not a
-            # benchmark, release, or original-baseline qualification.
+            result.update(experimentCompleted=True, legacyChecksQualified=True, correctedBaselinePrerequisitesAccepted=True)
+            # Original safety and benchmark admission remain false. Predecessor
+            # focused evidence is retained, never rerun or relabeled here.
             result['success'] = True
         except BaseException as error:
             result['primaryError'] = guard.error_record(error)
@@ -250,6 +295,9 @@ def main():
                     for entry in runner.records:
                         analyze.command(load(receipts / (entry['label'] + '.json')), 1 if entry['label'] in expected_nonzero else 0)
                     for context in contexts.values():
+                        arm_result = result['arms'].get(context['arm'])
+                        if arm_result:
+                            assert guard.digest(Path(arm_result['nativeLogPath'])) == arm_result['nativeLogSHA256']
                         if 'buildIdentity' in context: verify_build(context)
                         elif 'compilerProof' in context: build_proof.verify(context['compilerProof'])
                     result['finalResources'] = runner.measure(receipts / 'final-resource-probe-unused.log')

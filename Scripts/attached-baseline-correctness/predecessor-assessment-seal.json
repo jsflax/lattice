@@ -1,0 +1,13 @@
+{
+  "copyInventory": "COPY-MANIFEST.json",
+  "files": {
+    "ASSESSMENT.json": "baca4a6fd9fac4bc461873307b99edf93ed1f668283eedf13f3c4e2bde63660e",
+    "ASSESSMENT.md": "b08e7f2a20733770996756df77978982d3019159745c5becd7f2c1cbff9b1bdf",
+    "AUDIT-EXECUTION.json": "4f17bea270afaca2f1ca4f532f69192068b0bfbe2d5589d0f0250fca5d4e3970",
+    "COPY-MANIFEST.json": "98f1189e22b0fe4bb2ec0b6f93141fb78dde1c6ba6c960a19dab0eea734ec518",
+    "audit.py": "02ee872a86ab5d39f14ea2067a47e2a46982cfabde93cc3dbdf433bcffe665b6"
+  },
+  "inputInventory": "ASSESSMENT.json:inputInventory",
+  "run": 35394332578,
+  "scope": "Independent offline two-case attached correctness assessment"
+}
