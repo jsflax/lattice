@@ -1,0 +1,22 @@
+{
+  "coreCommit": "234afb4ad4f74174bd875035e6bb47b1a878ac56",
+  "files": {
+    "Tests/LatticeTests/SyncTests/ObserverPushTests.swift": {
+      "afterSHA256": "cb1827aaeaa7d4a77ae98e65706bbea98358b02ce46845defc04e34f4ea9396a",
+      "beforeSHA256": "f0e2f64ac2374e3b221d3ac593f8515d2027298f1d32a71230f5059a665d78ce"
+    },
+    "Tests/LatticeTests/SyncTests/URLChangeSyncTests.swift": {
+      "afterSHA256": "98e38524318ad8f3f04f9b9fb4d1cdf3da2794adc200a5d9e01a48e13ed56946",
+      "beforeSHA256": "894dc148cda1438e538ab6c00eb147836037c201be6fdc8b783b1e7c44b49d2f"
+    },
+    "Tests/LatticeTests/VectorSearchTests.swift": {
+      "afterSHA256": "83974744a9eeab58b538ae2536fe5706d49de4260f44afdfd8293c584f69c9ad",
+      "beforeSHA256": "9edb9198f193a875b6a12668dd69f95466a3865a63e02dec8aaeddb85aa41c39",
+      "priorMarkerAfterSHA256": "04df8cf80a895a6aa654a13a382f84e08a9d2398c73db9cbb3c9892fce586609"
+    }
+  },
+  "ownedOutputCorrection": "Require runner-supplied LATTICE_TEST_LOG_PATH; existing logger uses its owned directory with separate nearest-count-performance.log basename; no /tmp fallback.",
+  "sdkCommit": "af7775a269d87c37f2ad9a25a5aa60bbcac7b88f",
+  "sdkTree": "ebce11cee9cac7d62e08c0ff830703d66c9c78d2",
+  "sourceReadySHA256": "aeb664eaab4e514a63076aceb17b44458fe38fcdcd5f3f95fc4765e733fb07c1"
+}

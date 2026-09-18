@@ -1,0 +1,266 @@
+import Foundation
+import NIOConcurrencyHelpers
+import NIOCore
+import Testing
+import Lattice
+import Vapor
+
+
+// Fixed-size phase facts for one timeout investigation. Direct stderr writes avoid
+// buffered print tails; no SQL, task, timer, lock, or model value is recorded.
+private func sameURLTimeoutPhase(_ phase: String, wave: Int = -1, slot: Int = -1) {
+    let line = "BROAD_LINUX_PHASE test=URLChangeSyncTests.sameURLDoesNotKick pid=\(ProcessInfo.processInfo.processIdentifier) ns=\(DispatchTime.now().uptimeNanoseconds) phase=\(phase) wave=\(wave) slot=\(slot)\n"
+    FileHandle.standardError.write(Data(line.utf8))
+}
+/// Regression tests for the WSS URL-change handover scenario.
+///
+/// Background: each `lattice_db` opened with a `wssEndpoint` competes for an
+/// `flock` on `<path>.sync.lock`. Pre-fix, when two in-process Lattices on the
+/// same path opened with *different* URLs, the second one silently lost the
+/// flock and ran with no synchronizer — for the lifetime of the first Lattice.
+/// When the first Lattice closed, its sibling-handoff block iterated for an
+/// instance with the SAME URL and (if it found a dormant ghost on the old URL)
+/// resurrected sync against the now-stale URL.
+///
+/// Post-fix, `setup_sync_if_configured` recognizes a same-process sibling on a
+/// different URL as a URL-change scenario and kicks the sibling out instead.
+/// `teardown_sync(fire_handoff: false)` is called from the kick path so the
+/// kicked sibling doesn't immediately resurrect another same-URL ghost.
+///
+/// All synchronization waits use observer-based primitives (`onSyncStateChange`,
+/// `changeStream`) — no polls, no sleeps, per project convention.
+@Suite("URLChange Sync Tests")
+actor URLChangeSyncTests {
+    let serverA: TestSyncServer
+    let serverB: TestSyncServer
+    let sharedPath = FileManager.default.temporaryDirectory
+        .appending(path: "\(String.random(length: 30)).sqlite")
+    let serverPathA = FileManager.default.temporaryDirectory
+        .appending(path: "\(String.random(length: 30)).sqlite")
+    let serverPathB = FileManager.default.temporaryDirectory
+        .appending(path: "\(String.random(length: 30)).sqlite")
+    var portA: Int = 0
+    var portB: Int = 0
+    private let serverConfigA: Lattice.Configuration
+    private let serverConfigB: Lattice.Configuration
+
+    enum URLChangeError: Error { case noPort }
+
+    deinit {
+        serverA.shutdown()
+        serverB.shutdown()
+        try? FileManager.default.removeItem(at: sharedPath)
+        try? FileManager.default.removeItem(at: serverPathA)
+        try? FileManager.default.removeItem(at: serverPathB)
+    }
+
+    init() async throws {
+        lattice_set_log_level(lattice.log_level.warn)
+        self.serverConfigA = .init(fileURL: serverPathA)
+        self.serverConfigB = .init(fileURL: serverPathB)
+
+        // D1b: shared TestSyncServer per endpoint (one server-lifetime
+        // lattice each, ordered persistence).
+        self.serverA = try await TestSyncServer(models: [SimpleSyncObject.self], configuration: serverConfigA, label: "URLChangeA")
+        self.serverB = try await TestSyncServer(models: [SimpleSyncObject.self], configuration: serverConfigB, label: "URLChangeB")
+        self.portA = serverA.port
+        self.portB = serverB.port
+    }
+
+    /// Wait for `lattice` to fire `onSyncStateChange(connected)` matching the
+    /// requested boolean. Resolves immediately if `lattice.isSyncConnected`
+    /// already matches the target — otherwise observes the next state change.
+    private func waitForSyncState(_ lattice: Lattice, connected target: Bool) async {
+        if lattice.isSyncConnected == target { return }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            let once = AtomicOnce()
+            lattice.onSyncStateChange { state in
+                guard state == target else { return }
+                if once.tryFire() { cont.resume() }
+            }
+        }
+    }
+
+    /// Open Lattice A on path P with URL_A. Open Lattice B on path P with
+    /// URL_B. The kick path makes B take over: A's sync transitions to
+    /// disconnected, B's transitions to connected. A write through B then
+    /// reaches server B (the new URL); writes that pre-dated the open of B
+    /// reach server A (the old URL) — confirming the kick happened only AT
+    /// the moment of B's open.
+    @Test(.disabled(if: isMacOSCI, "Darwin CI hang class — await never resumes and .timeLimit cannot interrupt on macOS; runs locally and on Linux CI. Owner: 1.0 item D1b/D2"), .timeLimit(.minutes(5)))
+    func laterOpenWithDifferentURLTakesOverSync() async throws {
+        let urlA = URL(string: "http://localhost:\(portA)/test")!
+        let urlB = URL(string: "http://localhost:\(portB)/test")!
+
+        let configA = Lattice.Configuration(
+            fileURL: sharedPath,
+            authorizationToken: "tokenA",
+            wssEndpoint: urlA)
+        let configB = Lattice.Configuration(
+            fileURL: sharedPath,
+            authorizationToken: "tokenB",
+            wssEndpoint: urlB)
+
+        // Open A; wait for connect.
+        let latticeA = try Lattice(SimpleSyncObject.self, configuration: configA)
+        await waitForSyncState(latticeA, connected: true)
+        #expect(latticeA.isSyncConnected, "A should be connected after open")
+
+        // Pre-kick write: lands on server A.
+        let preKickValue = 100
+        let preKickArrived: Task<Void, any Error> = Task.detached {
+            let serverLattice = try Lattice(for: [SimpleSyncObject.self],
+                                            configuration: self.serverConfigA)
+            for try await changes in serverLattice.changeStream {
+                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
+                let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
+                if touched, serverLattice.objects(SimpleSyncObject.self)
+                    .first(where: { $0.value == preKickValue }) != nil { break }
+            }
+        }
+        try latticeA.add(SimpleSyncObject(value: preKickValue, floatValue: 1.0))
+        try await preKickArrived.value
+
+        // Open B with a different URL on the same path. The fix kicks A
+        // synchronously inside B's `setup_sync_if_configured` —
+        // `victim->teardown_sync(false)` resets A's `synchronizer_` unique_ptr
+        // before B's constructor returns. We wait only for B's connect; A's
+        // state-change callback won't fire (the C++ handler is destroyed
+        // along with the synchronizer), but `isSyncConnected` reads false
+        // because `synchronizer_ == nullptr`.
+        let latticeB = try Lattice(SimpleSyncObject.self, configuration: configB)
+        await waitForSyncState(latticeB, connected: true)
+
+        #expect(!latticeA.isSyncConnected, "A should be disconnected after kick")
+        #expect(latticeB.isSyncConnected, "B should be connected after take-over")
+
+        // Post-kick write: lands on server B (B's URL).
+        let postKickValue = 7
+        let postKickArrived: Task<Void, any Error> = Task.detached {
+            let serverLattice = try Lattice(for: [SimpleSyncObject.self],
+                                            configuration: self.serverConfigB)
+            for try await changes in serverLattice.changeStream {
+                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
+                let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
+                if touched, serverLattice.objects(SimpleSyncObject.self)
+                    .first(where: { $0.value == postKickValue }) != nil { break }
+            }
+        }
+        try latticeB.add(SimpleSyncObject(value: postKickValue, floatValue: 7.0))
+        try await postKickArrived.value
+
+        // Server A should NOT have received the post-kick write.
+        let serverA = try Lattice(for: [SimpleSyncObject.self], configuration: serverConfigA)
+        #expect(serverA.objects(SimpleSyncObject.self)
+            .first(where: { $0.value == postKickValue }) == nil,
+                "Server A must not have received B's post-kick write")
+
+        latticeA.close()
+        latticeB.close()
+    }
+
+    /// Same-URL legitimate dormant-duplicate case: opening two Lattices on the
+    /// same path with the SAME URL must NOT kick either of them. The first to
+    /// acquire the flock owns sync; the second runs as a dormant duplicate.
+    /// Behavior unchanged from pre-fix.
+    @Test(.timeLimit(.minutes(5)))
+    func sameURLDoesNotKick() async throws {
+        sameURLTimeoutPhase("test_begin")
+        defer { sameURLTimeoutPhase("scope_exit") }
+        let urlA = URL(string: "http://localhost:\(portA)/test")!
+        let configA = Lattice.Configuration(
+            fileURL: sharedPath,
+            authorizationToken: "tokenA",
+            wssEndpoint: urlA)
+
+        sameURLTimeoutPhase("client_open_begin")
+        let latticeA1 = try Lattice(SimpleSyncObject.self, configuration: configA)
+        sameURLTimeoutPhase("client_open_end")
+        sameURLTimeoutPhase("connected_wait_begin")
+        await waitForSyncState(latticeA1, connected: true)
+        sameURLTimeoutPhase("connected_wait_end")
+
+        // Open a second Lattice with the same URL. A1 must keep sync; the
+        // second opens as a dormant duplicate. To detect that A1 is NOT
+        // kicked, race a "did A1 disconnect within a write round-trip" probe
+        // against an actual successful write through A1.
+        sameURLTimeoutPhase("duplicate_open_begin")
+        let latticeA2 = try Lattice(SimpleSyncObject.self, configuration: configA)
+        sameURLTimeoutPhase("duplicate_open_end")
+        let receiverConfiguration = serverConfigA
+        let ready = AsyncThrowingStream<Void, any Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let writeArrived: Task<Void, any Error> = Task.detached {
+            sameURLTimeoutPhase("receiver_task_begin")
+            defer { sameURLTimeoutPhase("receiver_scope_exit") }
+            do {
+                try Task.checkCancellation()
+                sameURLTimeoutPhase("receiver_open_begin")
+                let serverLattice = try Lattice(for: [SimpleSyncObject.self],
+                                                configuration: receiverConfiguration)
+                sameURLTimeoutPhase("receiver_open_end")
+                // Construction installs the observer before readiness is published.
+                sameURLTimeoutPhase("observer_construct_begin")
+                let changeStream = serverLattice.changeStream
+                sameURLTimeoutPhase("observer_construct_end")
+                sameURLTimeoutPhase("ready_publish")
+                ready.continuation.yield(())
+                ready.continuation.finish()
+                for try await changes in changeStream {
+                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
+                    let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
+                    if touched, serverLattice.objects(SimpleSyncObject.self)
+                        .first(where: { $0.value == 42 }) != nil {
+                        sameURLTimeoutPhase("receive_match")
+                        break
+                    }
+                }
+                sameURLTimeoutPhase("receive_loop_end")
+                try Task.checkCancellation()
+            } catch {
+                sameURLTimeoutPhase("receiver_error")
+                ready.continuation.finish(throwing: error)
+                throw error
+            }
+        }
+        defer {
+            sameURLTimeoutPhase("defer_cancel")
+            writeArrived.cancel(); ready.continuation.finish()
+        }
+        do {
+            try await withTaskCancellationHandler {
+                sameURLTimeoutPhase("ready_wait_begin")
+                for try await _ in ready.stream { break }
+                sameURLTimeoutPhase("ready_wait_end")
+                try Task.checkCancellation()
+                sameURLTimeoutPhase("send_begin")
+                try latticeA1.add(SimpleSyncObject(value: 42, floatValue: 4.2))
+                sameURLTimeoutPhase("send_end")
+                sameURLTimeoutPhase("receiver_join_begin")
+                try await writeArrived.value
+                sameURLTimeoutPhase("receiver_join_end")
+                try Task.checkCancellation()
+            } onCancel: {
+                sameURLTimeoutPhase("parent_cancel")
+                writeArrived.cancel()
+                ready.continuation.finish(throwing: CancellationError())
+            }
+        } catch {
+            sameURLTimeoutPhase("parent_error")
+            // Join on readiness/write failures too, preserving the original error.
+            writeArrived.cancel()
+            ready.continuation.finish()
+            sameURLTimeoutPhase("error_join_begin")
+            _ = await writeArrived.result
+            sameURLTimeoutPhase("error_join_end")
+            throw error
+        }
+
+        #expect(latticeA1.isSyncConnected, "A1 must NOT be kicked by same-URL A2")
+        _ = latticeA2  // suppress unused warning — keep alive through the test
+
+        sameURLTimeoutPhase("close_begin")
+        latticeA1.close()
+        latticeA2.close()
+        sameURLTimeoutPhase("close_end")
+    }
+}

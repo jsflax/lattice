@@ -1,0 +1,86 @@
+name: Broad Linux selected-three diagnostic
+
+on:
+  push:
+    branches: [codex/perf-qualification-20260918]
+    paths:
+      - .github/workflows/broad-linux-selected-three.yml
+      - Scripts/broad-linux-selected-three/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selected-three:
+    runs-on: ubuntu-latest
+    container: swift:6.3-noble
+    timeout-minutes: 240
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      REVIEWED_SEAL: cf65b49e3cf2052397189198634cb1fb3b3322b05f633b9ddc389db2b6e9c6ba
+    steps:
+      - name: Install Linux prerequisites
+        run: apt-get update && apt-get install -y git python3 libsqlite3-dev sqlite3
+
+      - name: Fetch isolated workflow and exact af777 SDK source
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          TASK_ROOT="$HOME/localdev/broad-linux-selected-three-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$TASK_ROOT"
+          mkdir -p "$TASK_ROOT/tmp"
+          echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          git init "$TASK_ROOT/qualification"
+          git -C "$TASK_ROOT/qualification" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C "$TASK_ROOT/qualification" checkout --detach "$GITHUB_SHA"
+          test "$(git -C "$TASK_ROOT/qualification" rev-parse HEAD)" = "$GITHUB_SHA"
+          git init "$TASK_ROOT/lattice"
+          git -C "$TASK_ROOT/lattice" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" af7775a269d87c37f2ad9a25a5aa60bbcac7b88f
+          git -C "$TASK_ROOT/lattice" checkout --detach af7775a269d87c37f2ad9a25a5aa60bbcac7b88f
+          test "$(git -C "$TASK_ROOT/lattice" rev-parse HEAD)" = af7775a269d87c37f2ad9a25a5aa60bbcac7b88f
+
+      - name: Authenticate packet and run existing development pipeline selected mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PACKET="$TASK_ROOT/qualification/Scripts/broad-linux-selected-three"
+          python3 -B - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          packet = Path(os.environ['PACKET'])
+          seal = packet / 'PACKET-SEAL.json'
+          assert not seal.is_symlink()
+          assert hashlib.sha256(seal.read_bytes()).hexdigest() == os.environ['REVIEWED_SEAL']
+          manifest = json.loads(seal.read_text())
+          required = {'run-development.py', 'overlay.json',
+                      'overlay/Tests/LatticeTests/SyncTests/URLChangeSyncTests.swift',
+                      'overlay/Tests/LatticeTests/SyncTests/ObserverPushTests.swift',
+                      'overlay/Tests/LatticeTests/VectorSearchTests.swift'}
+          assert set(manifest['files']) == required
+          for relative, expected in manifest['files'].items():
+              path = packet / relative
+              assert not any(p.is_symlink() for p in [path, *path.parents])
+              assert hashlib.sha256(path.read_bytes()).hexdigest() == expected
+          PY
+          python3 -B "$PACKET/run-development.py" \
+            --root "$TASK_ROOT" \
+            --core-sha 234afb4ad4f74174bd875035e6bb47b1a878ac56 \
+            --test-timeout 5400 \
+            --diagnostic-selected-three-overlay "$PACKET"
+
+      - name: Retain diagnostic evidence including failure
+        timeout-minutes: 10
+        if: always() && env.TASK_ROOT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: broad-linux-selected-three-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ env.TASK_ROOT }}/receipts
+            ${{ env.TASK_ROOT }}/test-logs
+            ${{ env.TASK_ROOT }}/qualification/Scripts/broad-linux-selected-three
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

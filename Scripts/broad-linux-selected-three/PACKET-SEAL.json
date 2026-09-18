@@ -1,0 +1,11 @@
+{
+  "files": {
+    "overlay.json": "89f3578a86bb75439b13c21609c3e67fda810b5c6583d21f7e89db17b46f42b3",
+    "overlay/Tests/LatticeTests/SyncTests/ObserverPushTests.swift": "cb1827aaeaa7d4a77ae98e65706bbea98358b02ce46845defc04e34f4ea9396a",
+    "overlay/Tests/LatticeTests/SyncTests/URLChangeSyncTests.swift": "98e38524318ad8f3f04f9b9fb4d1cdf3da2794adc200a5d9e01a48e13ed56946",
+    "overlay/Tests/LatticeTests/VectorSearchTests.swift": "83974744a9eeab58b538ae2536fe5706d49de4260f44afdfd8293c584f69c9ad",
+    "run-development.py": "75ec7bb9382cf37886c2a486bb05893bbb3748923ce45c5171fbc5467c8eb046"
+  },
+  "schemaVersion": 1,
+  "scope": "selected-three diagnostic only; not full SDK/release qualification"
+}
