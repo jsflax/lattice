@@ -53,8 +53,13 @@ class ObserveCloseRaceTests: BaseTest {
     @MainActor
     @Test(.disabled(if: isMacOSCI, "cooperative-pool starvation on small CI runners: the test blocks pool threads on DispatchSemaphore.wait inside observer closures; with ~3 pool threads the signaling tasks never schedule. Runs locally + Linux CI. Owner: 1.0 test hygiene (item F)"), .timeLimit(.minutes(5)))
     func test_PerIsolationResolve_SurvivesCloseOnMain() async throws {
-        let lattice = try testLattice(path: path, Person.self)
-        try Self.seed(lattice: lattice, count: 500)
+        let lattice: Lattice
+        do {
+            let phase = PayloadObserverDiagnosticLog.beginMainActorPhase("closeRace.openAndSeed")
+            defer { PayloadObserverDiagnosticLog.endMainActorPhase("closeRace.openAndSeed", started: phase) }
+            lattice = try testLattice(path: path, Person.self)
+            try Self.seed(lattice: lattice, count: 500)
+        }
 
         let reader = CloseRaceReadWorker(reference: lattice.sendableReference)
         defer { reader.cancel() }
@@ -73,7 +78,11 @@ class ObserveCloseRaceTests: BaseTest {
         reader.proceed()
         let reading = await reader.waitUntilReading()
         try #require(reading, "independent reader did not enter its read loop")
-        lattice.close()
+        do {
+            let phase = PayloadObserverDiagnosticLog.beginMainActorPhase("closeRace.close")
+            defer { PayloadObserverDiagnosticLog.endMainActorPhase("closeRace.close", started: phase) }
+            lattice.close()
+        }
         reader.finishClosing()
         let snapshotCount = try #require(await reader.waitUntilExited())
         #expect(snapshotCount >= 500)

@@ -2388,6 +2388,7 @@ public struct Lattice {
                     diagnosticBatch?.record("collection_actor_hop")
                     ObserverDeliveryWorker.shared.diagnosticPhase(.actorHandoff)
                     Task {
+                        diagnosticBatch?.record("collection_actor_task_started")
                         await isolation.invoke { _ in
                             diagnosticBatch?.record("collection_emission_started", count: batch.count)
                             for change in batch { block(change) }

@@ -176,9 +176,9 @@ actor SyncTests {
         let lattice2 = localLattice2!
         await server.sockets.waitForCount(2)
 
-        // Phase 1: insert parent + child, link them, wait for the
-        // SyncParent INSERT to land on lattice2 (the parent is the last
-        // write — by then the child + link rows have already arrived).
+        // Phase 1: wait for the linked child to be readable on lattice2.
+        // The parent INSERT precedes favorite's link write below, so seeing
+        // only that INSERT does not establish the required starting state.
         let localLattice2Configuration = self.localLattice2Configuration
         var task: Task<Void, any Error>?
         await withCheckedContinuation { continuation in
@@ -186,9 +186,9 @@ actor SyncTests {
                 let l2 = try await Lattice(SyncParent.self, SyncChild.self, configuration: localLattice2Configuration)
                 let changeStream = l2.changeStream
                 continuation.resume()
-                for try await changes in changeStream {
-                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: l2) }
-                    if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SyncParent" }) {
+                for try await _ in changeStream {
+                    let receivedParent = l2.objects(SyncParent.self).first { $0.name == "room" }
+                    if receivedParent?.favorite?.name == "alice" {
                         return
                     }
                 }

@@ -34,6 +34,27 @@ final class PayloadObserverDiagnosticLog: @unchecked Sendable {
         events.append(event)
     }
 
+    // Selected synchronous MainActor fixture scopes only. Fixed call-site
+    // labels and scalar timestamps; this is not exhaustive actor occupancy.
+    private static let mainActorPhaseDiagnosticsEnabled =
+        ProcessInfo.processInfo.environment["LATTICE_OBSERVER_WORKER_DIAGNOSTICS"] == "1"
+
+    static func beginMainActorPhase(_ site: StaticString) -> UInt64? {
+        guard mainActorPhaseDiagnosticsEnabled else { return nil }
+        let started = DispatchTime.now().uptimeNanoseconds
+        print("DIAGNOSTIC MainActorSyncPhase: site=\(site) event=begin"
+              + " pid=\(ProcessInfo.processInfo.processIdentifier) started_ns=\(started) uptime_ns=\(started)")
+        return started
+    }
+
+    static func endMainActorPhase(_ site: StaticString, started: UInt64?) {
+        guard let started else { return }
+        let ended = DispatchTime.now().uptimeNanoseconds
+        print("DIAGNOSTIC MainActorSyncPhase: site=\(site) event=end"
+              + " pid=\(ProcessInfo.processInfo.processIdentifier) started_ns=\(started) uptime_ns=\(ended)"
+              + " elapsed_ns=\(ended &- started)")
+    }
+
     static func emitWorkerSnapshot(reason: StaticString) {
         for line in ObserverDeliveryWorker.shared.diagnosticSnapshotLines(reason: reason) {
             print(line)
