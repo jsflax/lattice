@@ -27,3 +27,7 @@ Successor004 preserves the source003 freeze and changes only the birth-precision
 ## Source005 packaging correction
 
 Source004 is preserved. Source005 adds the exact CrashControl.swift from qualified OS-report control005 and requires the fixed ten-file runtime closure in SOURCE-SEAL before root creation or any toolchain command. Focused checks reject omission from the manifest, missing control bytes, and altered control bytes, and audit direct local imports/literal packet file references. Historical SDK/Core graph, argv, deadlines, caps and report ownership policy are unchanged. The parent's owned Python child probe validates only local Darwin libproc ABI; it does not qualify hosted SDK crash capture.
+
+## Source006 tool lookup correction
+
+Historical run35394332591 passed the control/report identity gate, then failed before SDK checkout because the two xcrun logs contained a privileged-backtrace warning plus the path. Source006 runs only these metadata commands through `/usr/bin/env -u SWIFT_BACKTRACE xcrun --find <name>`. The original control/SDK environment remains unchanged. A bounded strict parser requires one absolute existing file path with the exact tool basename; actual retained warning output remains rejected. No warning stripping or permissive last-line selection is used. The original failed run and source005 are preserved; this correction supplies no product crash evidence or current-release gate.

@@ -45,6 +45,29 @@ def packet(seal_sha):
     return data
 
 
+
+def tool_lookup_argv(name):
+    assert name in ('swift', 'xctest'), 'unexpected tool lookup'
+    # Only metadata lookups omit this diagnostic runtime setting. The control
+    # and both SDK arms retain the original shared environment unchanged.
+    return ['/usr/bin/env', '-u', 'SWIFT_BACKTRACE', 'xcrun', '--find', name]
+
+
+def selected_tool_path(log_path, name):
+    assert name in ('swift', 'xctest'), 'unexpected selected tool'
+    with log_path.open('rb') as stream:
+        data = stream.read(4098)
+    assert 0 < len(data) <= 4097, 'selected tool output exceeds path bound'
+    lines = data.decode('utf-8').splitlines()
+    assert len(lines) == 1, 'selected tool output must be exactly one path line'
+    value = lines[0]
+    assert value == value.strip() and not any(ord(c) < 32 or ord(c) == 127 for c in value), 'malformed selected tool path'
+    path = Path(value)
+    assert path.is_absolute() and path.name == name, 'unexpected selected tool path/name'
+    assert path.is_file(), 'selected tool path does not exist as a file'
+    return str(path.resolve(strict=True))
+
+
 def record(runner, label):
     return json.loads((runner.receipts / (label + '.json')).read_text())
 
@@ -179,8 +202,8 @@ def main():
             control_anchor = admission
             result['controlAccepted'] = True
             # Resolve the selected tools; do not guess a process executable from a report.
-            swift_path = runner.run('selected-swift-path',['xcrun','--find','swift'],cwd=root,timeout=30).read_text().strip()
-            xctest_path = runner.run('selected-xctest-path',['xcrun','--find','xctest'],cwd=root,timeout=30).read_text().strip()
+            swift_path = selected_tool_path(runner.run('selected-swift-path',tool_lookup_argv('swift'),cwd=root,timeout=30), 'swift')
+            xctest_path = selected_tool_path(runner.run('selected-xctest-path',tool_lookup_argv('xctest'),cwd=root,timeout=30), 'xctest')
             images = sdk_capture.Images(swift_path,xctest_path)
             owned_process_identity.validate_layout()
             guard.save_json(receipts / 'TOOLCHAIN-IMAGE-IDENTITIES.json', images.snapshot())
