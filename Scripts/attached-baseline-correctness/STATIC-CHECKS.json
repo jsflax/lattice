@@ -1,32 +1,16 @@
 {
-  "pythonFilesParsed": [
-    "guarded_runner.py",
-    "test_analysis.py",
+  "runtimeFilesChanged": [
     "build_proof.py",
-    "qualify.py",
-    "analyze.py"
+    "qualify.py"
   ],
-  "fullSyntheticSuiteExecuted": true,
-  "executed": 29,
-  "failed": 0,
-  "prior22Included": true,
-  "actualCommandPairsInFixtures": 5,
-  "fixtureScope": "Exact original verbose command text only, not recovered remote object/list/map bytes",
-  "nativeCommands": 0,
-  "physicalPacketAccessed": false,
-  "unchangedFiles": [
-    "analyze.py",
-    "guarded_runner.py",
-    "config.json",
-    "product.patch",
-    "AttachedBaselineCorrectnessTests.swift",
-    "expected-tests.json"
-  ],
-  "testedExecutableHashes": {
+  "unchanged": {
     "analyze.py": "b42bb22a757669451c51bae17013eeab7877201278679b5757c945e898b8d640",
-    "build_proof.py": "b4d6543b2a831da6ac0a8a369be375eb2e26a6ee567941a2cb3f98ee9e16f586",
     "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
-    "qualify.py": "bf503f5d4a16826891945d6a0042f0e230a7c7448a4715fabb8a856dbb4b1bab",
+    "config.json": "e5d64b7d541320c28fd369b41e24e27a6654b8403469af3a41b31174535c9749",
+    "expected-tests.json": "ff1291247cb31d81bef733f99bd1def2441b55ff1f9a36c85991dae3636fb985",
+    "product.patch": "2b4827d6db82a3d935aad91749323fe7995423a8d0ee301a3405a4109ed89eb2",
+    "AttachedBaselineCorrectnessTests.swift": "952e4b750c23ae54643b405e0d2b6e80679c7dbcee175e4c3fa2d4ee0a095321",
     "test_analysis.py": "4b7195bf18564b86c79c6f657ca605ff69ea4390920a11bab6685834d739d9a2"
-  }
+  },
+  "checks": "All unchanged hashes equal005; both new Python files parse; postimages match; all native commands unchanged except extra map receipt keyword passed to local proof."
 }

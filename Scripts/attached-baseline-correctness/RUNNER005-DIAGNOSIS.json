@@ -1,0 +1,69 @@
+{
+  "runID": 35391067485,
+  "workflow": {
+    "GITHUB_REPOSITORY": "jsflax/lattice",
+    "GITHUB_SHA": "11b6ce94a60905c731a60b85eb703ed7e28c1098",
+    "GITHUB_RUN_ID": "35391067485",
+    "GITHUB_RUN_ATTEMPT": "1",
+    "PACKET_SEAL_SHA256": "0ef36e80e956903c658f2983b1666d81ae47f9dd8c29e9c976d8bdc48192f9a8"
+  },
+  "originalReleaseBuildSucceeded": true,
+  "buildElapsedSeconds": 1101.3194827080001,
+  "outerElapsedSeconds": 1280.708986958,
+  "cleanup": {
+    "errors": [],
+    "groupGone": true,
+    "leaderReaped": true,
+    "proof": "killpg ESRCH",
+    "signals": []
+  },
+  "failure": {
+    "arm": "original",
+    "buildCommandSucceeded": true,
+    "buildLogSHA256": "9acd5849c4f0a54f235a1009821b7e2b163a3178a6dba19f03cf984ac8601516",
+    "compilerProofAccepted": false,
+    "frames": [
+      {
+        "file": "qualify.py",
+        "function": "main",
+        "line": 180
+      },
+      {
+        "file": "build_proof.py",
+        "function": "make",
+        "line": 99
+      }
+    ],
+    "message": "",
+    "stage": "compiler-input-object-link-proof",
+    "type": "AssertionError"
+  },
+  "correctedBuildStarted": false,
+  "testsRan": false,
+  "mapBytesRetained": false,
+  "offendingMapKeyOrPath": null,
+  "observedFrontendCounts": {
+    "Lattice": {
+      "sources": 57,
+      "objects": 57,
+      "driverLine": 1502,
+      "frontendLine": 1505
+    },
+    "LatticeTests": {
+      "sources": 90,
+      "objects": 90,
+      "driverLine": 2523,
+      "frontendLine": 2526
+    }
+  },
+  "hypothesis": "An absent empty-key alternate object is consistent with threaded WMO and the observed complete per-source frontend outputs, but the original map bytes were not retained, so this is not an established historical cause.",
+  "correction": "Only allow that optional absence after exact logged threaded frontend source/object join. Missing named outputs, mode mismatch, map/source drift and unlinked outputs still fail. Retain exact owned maps before parsing and include key/path in failure messages.",
+  "inputs": {
+    "dependency-release/receipts/attached-correctness-35391067485/artifact/attached-baseline-correctness-attempt-1/workflow-source.json": "128517794c879881676f48bdcade0b055bbb9c2ee885effdacfed663941c348f",
+    "dependency-release/receipts/attached-correctness-35391067485/artifact/attached-baseline-correctness-attempt-1/qualification/receipts/original-release-build.json": "65f53cc7d5df3efd5fd032aae431e79feae43fa3186cdfc1db8cb82cf1817309",
+    "dependency-release/receipts/attached-correctness-35391067485/artifact/attached-baseline-correctness-attempt-1/qualification/receipts/original-release-build.log": "9acd5849c4f0a54f235a1009821b7e2b163a3178a6dba19f03cf984ac8601516",
+    "dependency-release/receipts/attached-correctness-35391067485/artifact/attached-baseline-correctness-attempt-1/qualification/receipts/qualification-result.json": "e97b3b0ddb307345609dcee5f0c80c9d64c4cdea702484781e52c378d0be617b",
+    "dependency-release/receipts/attached-correctness-35391067485/artifact/attached-baseline-correctness-attempt-1/qualification/receipts/original-compiler-proof-failure.json": "195eb1383a4df3fc6736dad91775c6b40821491ed811bf43945b030cc71a8de2",
+    "dependency-release/receipts/attached-correctness-35391067485/artifact/attached-baseline-correctness-attempt-1/qualification/receipts/local-swift-version.log": "5fa4b669e41b23b9ad0760253d062493487f93cf5d8ad8c44f0d4fd635137499"
+  }
+}

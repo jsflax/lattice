@@ -1,4 +1,10 @@
 {
+  "success": true,
+  "scope": "41 Python checks (including existing synthetic SQLite oracles); no native Swift/Core build/test or network",
+  "executedSyntheticPythonTests": 41,
+  "failed": 0,
+  "commandReceiptSHA256": "eb1e5ecb9b2e9e07ac462122078d872ba5bf3978f8762e950cea0a509a996b58",
+  "logSHA256": "0928e3a0463c22a1925a206a77b1eaacdfc17a239588d325d2a1b30f671e42b9",
   "cleanup": {
     "errors": [],
     "groupGone": true,
@@ -6,31 +12,18 @@
     "proof": "killpg ESRCH",
     "signals": []
   },
-  "commandReceiptSHA256": "20d071d9f920ccd998036519cbb1bcf7b18fc22bf8708e5c2d281f3bf7edbb6c",
-  "elapsedSeconds": 13.848074292007368,
-  "executedSyntheticPythonTests": 29,
-  "failed": 0,
-  "logSHA256": "794290ed3c270b7f2c888f4c22455b98df3628df32c3be9d9b1639d4515caf64",
-  "nativeSDKBuilds": 0,
-  "networkUsed": false,
-  "physicalPacketAccessed": false,
-  "sourceBefore": {
-    "AttachedBaselineCorrectnessTests.swift": "952e4b750c23ae54643b405e0d2b6e80679c7dbcee175e4c3fa2d4ee0a095321",
-    "PREPARATION.json": "97d96904523a04a0f203f726f67ad1c6457579cb4e1cd7c6e3102d467b2ca77f",
-    "PRIOR-RUN-DIAGNOSIS.json": "55f55363036d25cb6891af21d44bfe0f091ac775eee590b6e7707797a5cf54d0",
-    "README.md": "e2b6f63ed5dfddfa2a8c6b6b0c23680adb407974b96b8d7c47ea6e16e187c710",
-    "RUNNER004-FAILURE.md": "d55c47da683e85e36a4943abd28a5d8a12fe5a3e9340b9a3c3de86c3def12dea",
-    "STATIC-CHECKS.json": "2f4a8cc995ccc778f853f21d0b4d2fd066c3fef5d3850c88afaf69e9ec800a96",
-    "analyze.py": "b42bb22a757669451c51bae17013eeab7877201278679b5757c945e898b8d640",
-    "build_proof.py": "b4d6543b2a831da6ac0a8a369be375eb2e26a6ee567941a2cb3f98ee9e16f586",
-    "config.json": "e5d64b7d541320c28fd369b41e24e27a6654b8403469af3a41b31174535c9749",
-    "expected-tests.json": "ff1291247cb31d81bef733f99bd1def2441b55ff1f9a36c85991dae3636fb985",
-    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
-    "observed-link-commands.json": "caced29f4de2148bd62c8983e5083be2f2be993d75dd81fb94c15f60cf7cf9c6",
-    "product.patch": "2b4827d6db82a3d935aad91749323fe7995423a8d0ee301a3405a4109ed89eb2",
-    "qualify.py": "bf503f5d4a16826891945d6a0042f0e230a7c7448a4715fabb8a856dbb4b1bab",
-    "test_analysis.py": "4b7195bf18564b86c79c6f657ca605ff69ea4390920a11bab6685834d739d9a2"
+  "elapsedSeconds": 2.5316234579950105,
+  "offlineSummaryCorrection": {
+    "errorReceiptSHA256": "bc06e416d315e0d6eeda68596aecb1771a025f6d422b1af0f125fb50402720fa",
+    "nativeOrTestRerun": false
   },
-  "sourceInputsUnchanged": true,
-  "success": true
+  "testedImplementation": {
+    "build_proof.py": "d527ba9d57fcae5bf91eae35bbb993e9d185fe13cfbb2aae8db34ebf34857720",
+    "qualify.py": "c23f9ce4253198dcef75ac33cb6fb28edd9b50c9159e750409739ad28cd7950d",
+    "test_analysis.py": "4b7195bf18564b86c79c6f657ca605ff69ea4390920a11bab6685834d739d9a2",
+    "test_maps.py": "6da9612f85410ac5f725e342d84d767cb57779f5be900bc91a553980e672bb5b",
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "analyze.py": "b42bb22a757669451c51bae17013eeab7877201278679b5757c945e898b8d640"
+  },
+  "sourceManifestLimitation": "The first summary script did not persist its in-memory before/after manifest. Exact current implementation files remain equal to the prepared postimages and authored tests; this receipt does not invent a historical saved manifest."
 }

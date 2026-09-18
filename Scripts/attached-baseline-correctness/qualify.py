@@ -177,7 +177,8 @@ def main():
                 argv = [config['swift'], 'build', *common(context), '-c', 'release', '--force-resolved-versions', '--build-tests', '-Xswiftc', '-enable-testing', '-j', str(config['j']), '-v']
                 log = command(arm + '-release-build', argv, sdk, timeout=config['buildSeconds'])
                 try:
-                    proof = build_proof.make(log, sdk, context['core'], home / 'scratch', config['overlay'], temporary=home / 'tmp')
+                    proof = build_proof.make(log, sdk, context['core'], home / 'scratch', config['overlay'], temporary=home / 'tmp',
+                        map_receipts=receipts / (arm + '-swift-output-maps'))
                 except Exception as error:
                     frames = [{'file': Path(f.filename).name, 'line': f.lineno, 'function': f.name}
                         for f in traceback.extract_tb(error.__traceback__, limit=8)]

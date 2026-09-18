@@ -52,12 +52,86 @@ def native_arguments(argv, scratch):
         return output
     return expand(argv), files
 
-def make(log, sdk, core, scratch, overlay, *, temporary=None):
+def logged_swift_frontends(log):
+    records = []
+    for number, line in enumerate(log.read_text().splitlines(), 1):
+        if 'swift-frontend' not in line or ' -module-name ' not in line: continue
+        try: argv = shlex.split(line)
+        except ValueError: continue
+        if argv and Path(argv[0]).name == 'swift-frontend' and '-module-name' in argv:
+            records.append({'lineNumber': number, 'argv': argv})
+    return records
+
+def join_threaded_frontend(module, driver, driver_line, records, sources, objects):
+    prefix = f'{module} driver line {driver_line}: '
+    assert '-whole-module-optimization' in driver, prefix + 'absent global object without WMO'
+    assert driver.count('-num-threads') >= 1, prefix + 'thread count missing'
+    threads = [driver[i + 1] for i, x in enumerate(driver) if x == '-num-threads']
+    assert len(set(threads)) == 1 and threads[0].isdigit() and int(threads[0]) > 1, prefix + 'not threaded WMO'
+    matches = [r for r in records if r['argv'][r['argv'].index('-module-name') + 1] == module
+               and '-c' in r['argv']]
+    assert len(matches) == 1, prefix + 'no unique compile frontend'
+    record = matches[0]; argv = record['argv']
+    assert record['lineNumber'] > driver_line, prefix + 'frontend precedes driver'
+    assert Path(argv[0]).parent == Path(driver[0]).parent, prefix + 'frontend toolchain differs'
+    assert '-primary-file' not in argv and '-O' in argv and '-enable-testing' in argv, prefix + 'frontend mode differs'
+    for flag in ('-target', '-sdk'):
+        assert driver.count(flag) == argv.count(flag) == 1, prefix + flag + ' missing/duplicate'
+        assert driver[driver.index(flag) + 1] == argv[argv.index(flag) + 1], prefix + flag + ' differs'
+    assert argv.count('-num-threads') == 1 and argv[argv.index('-num-threads') + 1] == threads[0], prefix + 'frontend threads differ'
+    actual_sources = [str(Path(x).resolve()) for x in argv if x.endswith('.swift') and Path(x).is_absolute()]
+    actual_objects = [str(Path(argv[i + 1]).resolve()) for i, x in enumerate(argv) if x == '-o']
+    assert len(actual_sources) == len(set(actual_sources)) and set(actual_sources) == set(sources), prefix + 'frontend source set differs from named map inputs'
+    assert len(actual_objects) == len(set(actual_objects)) and set(actual_objects) == set(objects), prefix + 'frontend outputs differ from named map objects'
+    assert len(actual_sources) == len(actual_objects), prefix + 'not one logged object per source'
+    return record
+
+def swift_map_record(module, path, argv, line_number, frontends, sdk, scratch, map_receipts):
+    prefix = f'{module} driver line {line_number} map {path}: '
+    assert path.is_relative_to(scratch) and path.is_file(), prefix + 'map not owned/present'
+    assert path.stat().st_size <= 4 * 2**20, prefix + 'map byte cap'
+    raw = path.read_bytes(); retained = None
+    if map_receipts is not None:
+        retained = map_receipts / (module + '-output-file-map.json')
+        if retained.exists(): assert retained.read_bytes() == raw, prefix + 'map changed between driver records'
+        else:
+            with retained.open('xb') as out: out.write(raw)
+    mapping = json.loads(raw); inputs = {}; objects = {}; named_objects = {}; absent_global = []
+    for name, outputs in mapping.items():
+        if name:
+            file = Path(name).resolve()
+            assert file.is_relative_to(sdk) or file.is_relative_to(scratch), prefix + f'unowned source {name!r}'
+            inputs[str(file)] = guard.digest(file)
+        for kind, value in outputs.items():
+            if kind != 'object': continue
+            obj = Path(value).resolve()
+            context = prefix + f'key={name!r} object={value!r}: '
+            assert obj.is_relative_to(scratch), context + 'object outside scratch'
+            if not obj.is_file():
+                assert name == '' and not obj.exists() and not obj.is_symlink(), context + 'required named object missing or invalid'
+                absent_global.append(str(obj)); continue
+            objects[str(obj)] = guard.digest(obj)
+            if name: named_objects[str(obj)] = name
+    assert objects and '-O' in argv and '-enable-testing' in argv, prefix + 'no objects or Release/testability flags'
+    frontend = None
+    if absent_global:
+        assert len(absent_global) == 1, prefix + 'multiple absent global objects'
+        assert all('object' in outputs for name, outputs in mapping.items() if name), prefix + 'named input lacks object mapping'
+        assert len(named_objects) == len(inputs) and set(objects) == set(named_objects), prefix + 'not exclusively named object outputs'
+        frontend = join_threaded_frontend(module, argv, line_number, frontends, inputs, objects)
+    return {'argv': argv, 'outputMap': str(path), 'outputMapSHA256': hashlib.sha256(raw).hexdigest(),
+        'sources': inputs, 'objects': objects, 'loggedFrontend': frontend,
+        'absentGlobalObjectAlternatives': absent_global,
+        'retainedOutputMap': str(retained) if retained is not None else None}
+
+def make(log, sdk, core, scratch, overlay, *, temporary=None, map_receipts=None):
     proof = guard.compiler_input_proof(log, core)
     expected_cpp = set(proof['sourceFiles'])
     native = {}; swift_inputs = {}; link_graph = {}; responses = {}; derived_links = {}
     scratch = scratch.resolve(); sdk = sdk.resolve()
     temporary = temporary.resolve() if temporary is not None else None
+    if map_receipts is not None: map_receipts.mkdir(exist_ok=False)
+    frontends = logged_swift_frontends(log)
     for line_number, line in enumerate(log.read_text().splitlines(), 1):
         if not any(flag in line for flag in (' -c ', ' -output-file-map ', ' -o ')):
             continue
@@ -86,21 +160,7 @@ def make(log, sdk, core, scratch, overlay, *, temporary=None):
             module = argv[argv.index('-module-name') + 1]
             if module in ('Lattice', 'LatticeTests'):
                 path = Path(argv[argv.index('-output-file-map') + 1]).resolve()
-                assert path.is_relative_to(scratch)
-                mapping = json.loads(path.read_text()); inputs = {}; objects = {}
-                for name, outputs in mapping.items():
-                    if name:
-                        file = Path(name).resolve()
-                        assert file.is_relative_to(sdk) or file.is_relative_to(scratch)
-                        inputs[str(file)] = guard.digest(file)
-                    for kind, value in outputs.items():
-                        if kind == 'object':
-                            obj = Path(value).resolve()
-                            assert obj.is_relative_to(scratch) and obj.is_file()
-                            objects[str(obj)] = guard.digest(obj)
-                assert objects and '-O' in argv and '-enable-testing' in argv
-                item = {'argv': argv, 'outputMap': str(path), 'outputMapSHA256': guard.digest(path),
-                    'sources': inputs, 'objects': objects}
+                item = swift_map_record(module, path, argv, line_number, frontends, sdk, scratch, map_receipts)
                 assert module not in swift_inputs or swift_inputs[module] == item
                 swift_inputs[module] = item
         if tool in ('clang', 'clang++', 'swiftc') and '-o' in argv and '-c' not in argv:
@@ -175,6 +235,10 @@ def verify(proof):
     for item in proof['nativeObjects'].values(): assert guard.digest(Path(item['object'])) == item['objectSHA256']
     for module in proof['swiftModules'].values():
         assert guard.digest(Path(module['outputMap'])) == module['outputMapSHA256']
+        if module['retainedOutputMap'] is not None:
+            assert guard.digest(Path(module['retainedOutputMap'])) == module['outputMapSHA256']
+        for name in module['absentGlobalObjectAlternatives']:
+            assert not Path(name).exists() and not Path(name).is_symlink(), 'previously absent global object appeared'
         for field in ('sources', 'objects'):
             for name, digest in module[field].items(): assert guard.digest(Path(name)) == digest
     for output, link in proof['linkGraph'].items():

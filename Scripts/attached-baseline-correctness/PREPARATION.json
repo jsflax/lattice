@@ -69,22 +69,21 @@
     "jobs": 2
   },
   "workflow": "Separate proposal only; root owns installation, exact-seal review, push and dispatch. All runner paths are derived under the execution host localdev.",
-  "priorPacketSealSHA256": "15a953804ff8f485f8a0c193a774a65899178a45e7bc7208cf6336f94cd7dbd9",
-  "revisionReason": "Canonical Swift driver link proof with derived Clang invocation records; retain exact failure stage/position.",
+  "priorPacketSealSHA256": "0ef36e80e956903c658f2983b1666d81ae47f9dd8c29e9c976d8bdc48192f9a8",
+  "revisionReason": "Exact threaded frontend/map join for only optional absent empty-key object; raw map retention and precise error context",
   "syntheticChecks": {
-    "authored": 29,
-    "currentPacketExecuted": 29,
+    "authored": 41,
+    "currentPacketExecuted": 41,
     "failed": 0,
-    "receiptSHA256": "72c55b3019cf26ef4f1aee9c27d24f12b27c591cc0c00a204d3a7b97d07dbd68",
-    "scope": "Previous22 +7 parser/receipt regressions; no native Swift/Core qualification"
+    "receiptSHA256": "347055379213121253bac2fa2695fe05a97c2d877d7de5da1c78aeb480df02dc",
+    "scope": "Previous29+12 pure Python regressions; missing remote map bytes remain unavailable"
   },
   "priorRemoteRun": {
-    "runID": 35386062763,
+    "runID": 35391067485,
     "originalReleaseBuildSucceeded": true,
-    "compilerProofAccepted": false,
     "correctedBuildStarted": false,
     "testsRan": false,
-    "buildLogSHA256": "72132feda93436588ab7e2d6d3fe7110b2a9a072f6270790224272bf10ea235a"
+    "offendingMapKeyOrPath": null
   },
   "linkProofScope": "Canonical driver stable list members/hashes + object-map/source/object identities + output/link reachability; child temporary-list bytes unretained and not independently verified"
 }
