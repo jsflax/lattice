@@ -1,16 +1,16 @@
 {
   "files": {
     "FORMAT-CHECKS.json": "5e4fc647ba2de36dad5f555d0627c03de0fe2ef644abe2b684203f535a28f331",
-    "INPUTS.json": "10f3549af4f00393c17f04a14d4f7e55b1f2a8dc659fc5da010bf02ed4a78183",
+    "INPUTS.json": "ca2af069bacd710f6aa11b8df8f1a4587ac63a4a3e0138059554afbfa99524e9",
     "README.md": "86e980f3346b80f88715730b9cd5e347b22a5990511ba53fef4fa12ecaede351",
     "SOURCE-CHECKS.json": "f4e16dc2420663fa6dc94328760bc77f28cbb2c207c723b44de98e2b4fce5f77",
     "SOURCE-MANIFEST.json": "6ca0ca0ef2b51baa8bac4bd6d41a0ee794a41fe6d64be2763a2072639b96a3b7",
-    "SOURCE-READY.json": "340161943e06289cca546f8b20f00f1fb79327ae6f62981ffc9fe317278f0e7e",
+    "SOURCE-READY.json": "8ee6a2d057aaeb37ce4b2d0aaf273a854f085ed72e1ba4d39d7dd21acad5f20d",
     "cold-keeper-diagnostic.yml": "99779274ec884671c605a62dbcc778e1fa59e1ecea5383c5ef3100e2311faa78",
     "diagnostic.patch": "9293b7837272a2bcb3d199f1c05ac819726a848656be03d2f239b809c6dd1b6c",
     "fetch-core.py": "4f5e2c1610e66a007b850b628cfc7554025497017cf1f6f57617fc337e78b94e",
     "harness/CMakeLists.txt": "76a8b61c5c69cc87af2633368b40310e4e64824e0d60c90866a8e191873deb00",
-    "harness/build.py": "4280d422d13674f3a9282e101ff78ef34601aa0b5efc4f01aa4d037819bf43b5",
+    "harness/build.py": "d340a51772e1c453c786c873d011c8b6fba6df2191b5958c1434570b2ba3acce",
     "harness/guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
     "harness/prepare.py": "7b4cbdadb19ea5f58ef00347f6d0e5c4f4b39e7ba15950ffaad1e4d95498ea58",
     "harness/probe.cpp": "0d3e1641ecd47d4906c908c4a0b15df825fd252a556ed1f6292cb510e5debff9",
@@ -20,6 +20,6 @@
     "overlay/Sources/LatticeCore/include/lattice/detail/cold_keeper_timing.hpp": "55871d44102667b15e156b6bb4d2f21d993c3d6a06979f6030caa4f5ce7c5fa0",
     "overlay/Sources/LatticeCore/include/lattice/lattice.hpp": "0b69317be703171996314ee2fbe02b3429de6803401c36d45bdf1773243934ec"
   },
-  "state": "Root-admitted correction002; fresh hosted qualification pending",
-  "predecessorSealSHA256": "9151a406dcf24edf96fa059e3e06d230f22f3222ab553ba376391625cb8b18d5"
+  "state": "Root-admitted correction003; fresh diagnostic native qualification pending",
+  "predecessorSealSHA256": "ae1df62e7a2513bb20c7870723d41d41ef2022152b99b59956abb51f2557f889"
 }

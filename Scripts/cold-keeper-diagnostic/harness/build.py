@@ -110,22 +110,23 @@ def build(arm):
     # members proven above; archive members may be omitted by demand linking.
     map_path = root/'probe.map'; map_text = map_path.read_text()
     table = map_text.split('# Object files:', 1)[1].split('# Sections:', 1)[0]
-    map_objects = []; used_archives = set(); platform_imports = {}
+    map_objects = []; used_archives = set(); platform_imports = {}; synthetic_objects = []
     sdk = Path(json.loads((P/'TOOLCHAIN.json').read_text())['sdk']).resolve()
     for line in table.splitlines():
         match = re.match(r'\[\s*\d+\]\s+(.+)$', line.strip())
         if not match: continue
         value = match.group(1)
-        if value == 'linker synthesized': continue
+        if value in {'linker synthesized', 'tlv-file', 'inits-file'}:
+            synthetic_objects.append(value); continue
         member = re.fullmatch(r'(.+\.a)(?:\[\d+\])?\(([^)]+)\)', value)
         if member:
-            archive = Path(member.group(1)).resolve(); name = member.group(2)
+            archive = (root/member.group(1)).resolve(); name = member.group(2)
             assert archive in archives and name in members[archive.name], value; used_archives.add(archive)
         elif value.endswith('.tbd'):
-            imported = Path(value).resolve()
+            imported = (root/value).resolve()
             assert imported.is_relative_to(sdk) and imported.is_file(), value
-            platform_imports[value] = digest(imported)
-        else: assert Path(value).resolve() in direct, value
+            platform_imports[str(imported)] = digest(imported)
+        else: assert (root/value).resolve() in direct, value
         map_objects.append(value)
     assert used_archives == archives and map_objects
     binary = root/'ColdKeeperProbe'; assert binary.is_file()
@@ -142,7 +143,7 @@ def build(arm):
         'toolchainSHA256': digest(P/'TOOLCHAIN.json'), 'binary': str(binary.relative_to(P)), 'syntaxFirst': syntax,
         'configureArtifacts': configured, 'configureInventory': str(inventory_path.relative_to(P)),
         'objects': objects, 'archiveMembers': members, 'linkArgv': link, 'mapObjects': map_objects,
-        'platformSQLite': linkage, 'sdkImportStubs': platform_imports,
+        'platformSQLite': linkage, 'sdkImportStubs': platform_imports, 'linkerSyntheticObjects': synthetic_objects,
         'externalHeaderBoundary': 'Owned source and actual TU flags are authenticated. Xcode SDK/toolchain identity and SQLite header/import stubs are recorded; this does not hash every transitive SDK header.',
         'custody': [{'path': str(f.relative_to(P)), 'sha256': digest(f)} for f in custody_paths]}
     verify_inputs(); verify_source(); save(P/('BUILD-PROOF-'+arm+'.json'), proof)
