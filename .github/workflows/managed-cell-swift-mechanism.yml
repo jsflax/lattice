@@ -22,7 +22,7 @@ jobs:
         timeout-minutes: 5
         shell: bash
         env:
-          REVIEWED_SEAL: ${{ inputs.packetSealSHA256 || 'ab117277958c144c282158c2a081d64b8dc75e2b208e3d44a65c8671488f871c' }}
+          REVIEWED_SEAL: ${{ inputs.packetSealSHA256 || 'aca1d071d026872434aa40d8a33cc82fc6e5fe789fc05d78b842f7275d55957e' }}
         run: |
           set -euo pipefail
           TASK_ROOT="$HOME/localdev/managed-cell-swift-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -50,7 +50,7 @@ jobs:
         timeout-minutes: 155
         shell: bash
         env:
-          REVIEWED_SEAL: ${{ inputs.packetSealSHA256 || 'ab117277958c144c282158c2a081d64b8dc75e2b208e3d44a65c8671488f871c' }}
+          REVIEWED_SEAL: ${{ inputs.packetSealSHA256 || 'aca1d071d026872434aa40d8a33cc82fc6e5fe789fc05d78b842f7275d55957e' }}
         run: |
           set -euo pipefail
           export TMPDIR="$TASK_ROOT/qualification/tmp" TMP="$TASK_ROOT/qualification/tmp" TEMP="$TASK_ROOT/qualification/tmp"

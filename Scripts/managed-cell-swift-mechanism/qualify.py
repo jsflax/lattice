@@ -37,7 +37,7 @@ def packet_check(expected):
 
 def sources(repository, expected):
     found = {str(f.relative_to(repository)): sha(f) for f in repository.rglob('*')
-             if f.is_file() and '.git' not in f.relative_to(repository).parts and '.swiftpm' not in f.relative_to(repository).parts}
+             if f.is_file() and '.git' not in f.relative_to(repository).parts and f.relative_to(repository).parts[0] != '.swiftpm'}
     require(not any(f.is_symlink() for f in repository.rglob('*') if '.git' not in f.relative_to(repository).parts), 'source symlink')
     require(found == expected, 'complete source inventory/hash drift: ' + str(repository))
 

@@ -1,4 +1,4 @@
-# Actual Swift managed-cell mechanism — source-only successor003
+# Actual Swift managed-cell mechanism — source-only successor004
 
 This implements the parent-approved proposal001 without modifying that proposal, the active SDK/Core checkouts or any prior evidence. It is prepared for review, not admitted or run. Source bases are SDK af7775a269d87c37f2ad9a25a5aa60bbcac7b88f/tree ebce11cee9cac7d62e08c0ff830703d66c9c78d2 and Core234afb4ad4f74174bd875035e6bb47b1a878ac56/tree06cacd09ecaf80a460418dad52c352abade58654 plus the exact source001 statement-reuse prototype already qualified for15 narrow C++ cases.
 
@@ -37,3 +37,9 @@ One preparation-only transport defect was retained in COMPOSITION-ATTEMPT-001: t
 ## Narrow parser successor003
 
 The sealed002 packet remains unchanged. History found that it still copied the older runner005 parser, which rejects the known threaded WMO output-map shape when the empty-key global object is intentionally absent. This successor copies the exact runner006/current007 parser previously qualified by attached run35394332578. It does not exempt missing named objects: the absent global alternative requires exact logged threaded-WMO frontend source/object joins. `make()` receives the fresh owned `receipts/swift-output-maps` directory, and its retained map bytes are included in the existing receipts upload and final drift verification. All product/benchmark patches, full composed source manifests, counter validator, configuration, guard, workflow, flags, deadlines and workload are unchanged. No new supervision or compiler-proof framework is introduced.
+
+## Narrow source-inventory successor004
+
+Hosted003 run35402506292 stopped after exact SDK commit/tree authentication, before any Core fetch, resolve, build or workload. Its global `.swiftpm` path exclusion dropped the committed Examples/NotesApp/.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata, although the complete252-file expected SDK manifest correctly included it. The exact local Git-materialized source reproduces the old251-vs252 rejection.
+
+This successor excludes only the root `.swiftpm` bookkeeping directory, preserving the existing root metadata boundary and narrowing the excluded set. Every nested path, including the committed example workspace and any unexpected nested metadata, now participates in exact inventory/hash checks. Exact252-file SDK and900-file Core base images pass; exact252/905 composed images pass. Missing and unexpected nested paths reject, as do changed bytes and symlinks. All native/product/benchmark sources, manifests, graphs, counters, guard, build parser, flags, workloads and resource/time limits remain unchanged. The reviewed activation workflow is reused with only its two exact-seal fallback literals replaced by the new packet seal. No native or network activity ran during preparation.

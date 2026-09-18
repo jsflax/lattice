@@ -1,5 +1,6 @@
 import copy
 import ast
+import tempfile
 from pathlib import Path
 import unittest
 import qualify
@@ -34,6 +35,27 @@ class QualifierTests(unittest.TestCase):
         values={k.arg:ast.unparse(k.value) for k in calls[0].keywords}
         self.assertEqual(values['map_receipts'],"receipts / 'swift-output-maps'")
         self.assertEqual(values['temporary'],"root / 'tmp'")
+    def source_fixture(self):
+        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
+        root=Path(temp.name);nested=root/'Examples/NotesApp/.swiftpm/xcode/workspace'
+        nested.parent.mkdir(parents=True);nested.write_text('committed workspace')
+        (root/'Package.swift').write_text('package')
+        expected={str(x.relative_to(root)):qualify.sha(x) for x in (nested,root/'Package.swift')}
+        return root,nested,expected
+    def test_sources_include_committed_nested_swiftpm(self):
+        root,nested,expected=self.source_fixture()
+        (root/'.swiftpm').mkdir();(root/'.swiftpm/bookkeeping.json').write_text('{}')
+        qualify.sources(root,expected)
+    def test_sources_reject_missing_changed_unexpected_nested_and_symlink(self):
+        for mode in ('missing','changed','unexpected','symlink'):
+            with self.subTest(mode=mode):
+                root,nested,expected=self.source_fixture()
+                if mode=='missing':nested.unlink()
+                elif mode=='changed':nested.write_text('drift')
+                elif mode=='unexpected':(nested.parent/'extra').write_text('not committed')
+                else:
+                    nested.unlink();nested.symlink_to(root/'Package.swift')
+                with self.assertRaises(ValueError):qualify.sources(root,expected)
     def test_final_error_clears_all_acceptance(self):
         result={'success':True,'mechanismQualified':True,'experimentCompleted':True,'observedCount':420}
         qualify.clear_acceptance(result)

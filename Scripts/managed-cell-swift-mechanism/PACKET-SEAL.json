@@ -9,7 +9,7 @@
     "FROZEN-BENCHMARK.swift": "993d3a6f384958185c9ee5817e6ba1f125a037f722a074a3a719ef71226455e2",
     "PROTOTYPE-APPLICABLE.patch": "3eefbafe3395c972fb5237f69e5d2560cfe78a287f955f3b0e90e32aa14c442e",
     "PROTOTYPE.patch": "5698b98638577688112b64b8cfc91c62da8cb15cac27dc6ed0ec10b459bb4226",
-    "README.md": "56f16a506dddd3048c72ec1522707b12c4e604bd6d8703b60f982ac84c19ba4b",
+    "README.md": "e396229d685ea31bbda64042fe5bbe6a8b3612dd6bd48fae5573ff1eeed70148",
     "SOURCE-MANIFEST.json": "50cc9cad9f02625edff1bbe7327e4608a3748001c78d6298997ae27a43ec2bef",
     "benchmark-helper.fragment": "128ef7d482bc9f0857379fa4467d7c613e7a8d90cbe3c44d52397515a75a9efe",
     "build_proof.py": "d527ba9d57fcae5bf91eae35bbb993e9d185fe13cfbb2aae8db34ebf34857720",
@@ -21,10 +21,10 @@
     "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
     "mechanism.py": "01f64b12e1c09bf2fbd69589712f750fb8e1ca84010e3e11a635a02a0dfcfc94",
     "perf_refinement_report.py": "482c42c05b10bf50efa12c59608c20c30574f770e7fd01bcb4b517ae9a92bb1a",
-    "qualify.py": "c64d39df3cfda895fa577eb568e9020675cf20dec7ccf4cca65089f1b1b240b1",
+    "qualify.py": "62845c67b567ef8faa9f01763e4a065caab47d9ba63ae32665c901009fd8e402",
     "sdk-overlay/Tests/LatticeTests/PerfRefinementBenchmarks.swift": "5c9a0714319706e6be7e32f45569dd2af06923165d8a26bd35c36fba234e9b41",
     "test_mechanism.py": "919c713c2ea30c001c2780fb748b23df2be400b4dd44e901068480aacc357a3c",
-    "test_qualify.py": "cbac41580916e0049678a85bd8ac5880b432cdfcb6722b5ff29dda27913a07dd"
+    "test_qualify.py": "c1f0653a6eb5a0781dbb2056da1564f637f0361df6b863facba087ec225fb495"
   },
   "schemaVersion": 1
 }
