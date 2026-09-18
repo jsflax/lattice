@@ -1,0 +1,56 @@
+{
+  "source": "7b11c282800d2bd6478538edb4e87de81953d315",
+  "tree": "18b482a47df9413e151887ef77a9dc5abb6be041",
+  "status": "reviewed current-source hosted execution preparation; uncompiled/unexecuted",
+  "files": {
+    "CMakeLists.txt": {
+      "sha256": "32cd1d8653d70f88f003d5a5a69afc97b85b148f3a75830ef74f9c9ea7c8e678",
+      "bytes": 783
+    },
+    "README.md": {
+      "sha256": "cd9f3164ef5b1b7664fb766fdd23cab316212b25d9138671e12deaacff7748b8",
+      "bytes": 7375
+    },
+    "guarded_runner.py": {
+      "sha256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+      "bytes": 29477
+    },
+    "prepare.py": {
+      "sha256": "c726c80d5d82b90544f91e5b028fe14e150e6e59b4f7c35a3f0ce7439e8d7f32",
+      "bytes": 3743
+    },
+    "probe.cpp": {
+      "sha256": "29876a4cde34071c99895a24355043cda7cdb08f0a7976433d85cb2cdb7a96f7",
+      "bytes": 15689
+    },
+    "run.py": {
+      "sha256": "8a4250c0359eb1f4e9e4e4246891b8effd1b7b02ccbc9be4538d381249b8bf64",
+      "bytes": 7780
+    },
+    "supervise.py": {
+      "sha256": "43ad98a55410b08fd0fc6eb9f531107bf0f7943d85228a8307ca6b5b0c2a4fe4",
+      "bytes": 11587
+    },
+    "validate.py": {
+      "sha256": "c404b31ec1e0e3a189f2dfbfe90ab6d9b2f90044566a634b179b152337d839a9",
+      "bytes": 7753
+    }
+  },
+  "checks": {
+    "pythonAST": true,
+    "trailingWhitespace": false,
+    "sourceExport": false,
+    "nativeCompileOrRun": false
+  },
+  "totalAuthoredBytes": 84187,
+  "resources": {
+    "packetBytes": 536870912,
+    "freeFloorBytes": 13421772800,
+    "compilerParallelism": 1,
+    "compileTimeoutSeconds": 1200,
+    "runTimeoutSeconds": 120,
+    "outputBytesPerCommand": 33554432
+  },
+  "scope": "same-source paired retention foreground/WAL + held snapshot/claim/retry/floor/late remote controls; further NEXT-GATE scenarios remain explicit",
+  "testOrProductMutations": false
+}

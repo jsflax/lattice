@@ -1,0 +1,64 @@
+{
+  "status": "reviewed source-only; current qualified Core selected uniformly before first run",
+  "source": "7b11c282800d2bd6478538edb4e87de81953d315",
+  "tree": "18b482a47df9413e151887ef77a9dc5abb6be041",
+  "baseline": "A1/A2: exact same7b11 binary, recent maintenance claim, prune skipped",
+  "candidate": "B: exact same7b11 binary, expired maintenance claim, eligible range pruned",
+  "codeOptimizationComparison": false,
+  "files": {
+    "Sources/LatticeCore/include/lattice/lattice.hpp": {
+      "sha256": "9a92de61706df521863fd7f65b6faa4f075d8c69159ac7db93e892b3f0eac4fa",
+      "bytes": 419480
+    },
+    "Sources/LatticeCore/src/db.cpp": {
+      "sha256": "67bdd0c474f3c1669dc520f896e3a626cce89ea2fb3d991692e468e291388f18",
+      "bytes": 51280
+    },
+    "Sources/LatticeCore/src/lattice.cpp": {
+      "sha256": "62532da832a0a244347a5058cb3971e8a244c4de583f16b7dd9454f75bbd9587",
+      "bytes": 72129
+    },
+    "Sources/LatticeCore/src/sync.cpp": {
+      "sha256": "4aac1ff639c2cb3e9b1bc7601f216ee10ed5ca93c331fa89e807fb97aee44701",
+      "bytes": 187356
+    },
+    "Sources/LatticeCore/include/lattice/db.hpp": {
+      "sha256": "fe141981d25afad16deac3d28c6f3e60d847fb3ce1c93fd3cc4ec9d8f40d527c",
+      "bytes": 13851
+    },
+    "Tests/LatticeCoreTests/AuditRetentionTests.cpp": {
+      "sha256": "7bcf5116943f90e6c6f33d2d7e44cd0035bc1e199d92d4481c2bd5fbf26c03e4",
+      "bytes": 20913
+    },
+    "Tests/LatticeCoreTests/AuditHygieneTests.cpp": {
+      "sha256": "535f9f424688c7e8d227ea3559a84cfa9147566dd4459a9257ca5b428b9d3490",
+      "bytes": 27958
+    },
+    "Tests/LatticeCoreTests/HistoryAndReclaimTests.cpp": {
+      "sha256": "f8843b67f91637083b953a8f110167b2426af3e6f9fcadf773a8d20933508d02",
+      "bytes": 10827
+    },
+    "Tests/LatticeCoreTests/NoHistoryTests.cpp": {
+      "sha256": "24cdb97e14ea7ecf5c1724c7fb627de9cf3c6554ddf958e3f2865ff934b725f4",
+      "bytes": 9659
+    },
+    "CMakeLists.txt": {
+      "sha256": "ada6a05f7dc41575c001007d037d764de15bf04f5ea90fa006046de63a3ef4a6",
+      "bytes": 10480
+    }
+  },
+  "priorEvidence": {
+    "execution/validation/core-focused/virtual-union-e578f33/RESULT.json": {
+      "sha256": "9e8dcdd756286cb6fd0ec51d3576014e2970ea924ce15a8596fc688b881ee6d4",
+      "bytes": 18515
+    },
+    "dependency-release/receipts/core-broad-e578f33/RESULT.json": {
+      "sha256": "df521a5e118fab5ce6d929f9f8e01d15e6c48ce4169dadd7976c0ac9afd08bc2",
+      "bytes": 11561
+    },
+    "execution/preparation/retention-claim/SQL-REPRODUCTION.json": {
+      "sha256": "e3770228f17e2394f27bb6b11e9ea42bff5bc0d35c2d79046315ab37129c3b01",
+      "bytes": 720
+    }
+  }
+}
