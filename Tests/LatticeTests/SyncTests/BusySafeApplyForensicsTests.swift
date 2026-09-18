@@ -657,10 +657,23 @@ final class BusySafeApplyForensicsTests: BaseTest {
     /// nothing is silently applied later.
     @Test func contendedApplyNacksPromptlyInsteadOfParking() async throws {
         let holdSeconds = Double(ProcessInfo.processInfo.environment["FORENSIC_HOLD_S"] ?? "") ?? 12
-        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self])
+        let recorder = ProcessInfo.processInfo.environment["LATTICE_ACK_PATH_DIAGNOSTICS"] == "1"
+            ? ACKPathRecorder(testRunID: UUID(), retainLatestStages: true) : nil
+        var capturedFailure: ACKPathRecorder.Snapshot?
+        var reachedLatencyCheck = false
+        defer {
+            // Any earlier thrown setup/send failure gets its own bounded cutoff.
+            // A normal passing latency check closes silently; a frozen failure
+            // remains independent of later lock release, waits and teardown.
+            if let capturedFailure { ACKPathRecorder.emitSnapshot(capturedFailure) }
+            else if !reachedLatencyCheck { recorder?.emitSnapshot(partial: true) }
+            else { _ = recorder?.closeSnapshot(partial: false) }
+        }
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self], ackPathRecorder: recorder)
+        defer { harness.removeACKPathRecorder() }
 
         let peer = ForensicClient(label: "peer", autoAck: false)
-        try await harness.connect(peer)
+        try await harness.connect(peer, diagnosticRole: .peer)
         let uploader = ForensicClient(label: "uploader", autoAck: false)
         try await harness.connect(uploader)
 
@@ -702,6 +715,12 @@ final class BusySafeApplyForensicsTests: BaseTest {
             Double($0.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
         }
         let ackBeforeRelease = uploader.ackTime(for: uploadId)
+        reachedLatencyCheck = true
+        if !(nackMs ?? .infinity < 9_000) {
+            capturedFailure = recorder?.closeSnapshot(partial: true)
+        } else {
+            _ = recorder?.closeSnapshot(partial: false)
+        }
         lock.release()
         deadlineRelease.cancel()
         // If the deadline won release admission, it owns process reaping.
@@ -723,6 +742,9 @@ final class BusySafeApplyForensicsTests: BaseTest {
         let ackedEventually = uploader.ackTime(for: uploadId) != nil
         let fannedOut = await poll(timeout: 3) { peer.pages > peerPagesBefore }
 
+        if let recorder, capturedFailure != nil {
+            print("DIAGNOSTIC ContendedApplyFailure: test=\(recorder.testRunID) send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) nack_callback_ns=\(nackTime.map { String($0.uptimeNanoseconds) } ?? "NONE") answer_observed_ns=\(answerObservedNS) frozen_before_post_answer_waits=true")
+        }
         print("""
         FORENSIC lock-contention: hold_s=\(holdSeconds) nacked=\(nacked) \
         send_began_while_locked=\(sendBeganWhileLocked) send_returned_while_locked=\(sendReturnedWhileLocked) \

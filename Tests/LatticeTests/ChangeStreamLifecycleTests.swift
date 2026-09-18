@@ -1,6 +1,44 @@
 import Testing
 import Foundation
-import Lattice
+@testable import Lattice
+
+// Fixed scalar points only; one invocation in this suite. No payload/row IDs,
+// new task, await, sleep, SQL or scheduling hook. Missing phases stay unknown.
+private final class CancellationPhaseDiagnostic: @unchecked Sendable {
+    enum Stage: String, CaseIterable, Codable, Sendable {
+        case stream_create_begin, stream_create_returned
+        case query_open_started, query_open_completed, query_ready_returned, query_open_failed
+        case consumer_body_entered, consumer_body_exiting
+        case cancel_call_begin, cancel_call_returned, parent_wait_begin, parent_resumed
+        case stream_cancelled, stream_finished, stream_termination_unknown, stream_termination_returned
+    }
+    struct Point: Codable { let stage: Stage; let uptime: UInt64 }
+    private let lock = NSLock()
+    private var times: [Stage: UInt64] = [:]
+    private var closed = false
+
+    func record(_ stage: Stage, at uptime: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        lock.lock(); defer { lock.unlock() }
+        if !closed && times[stage] == nil { times[stage] = uptime }
+    }
+    var probe: PayloadObserverDiagnostic {
+        PayloadObserverDiagnostic(observer: "changeStreamCancellation") { [self] event in
+            if let stage = Stage(rawValue: event.stage) { record(stage, at: event.uptime) }
+        }
+    }
+    func finish(failed: Bool) {
+        lock.lock()
+        guard !closed else { lock.unlock(); return }
+        closed = true
+        let points = times.map { Point(stage: $0.key, uptime: $0.value) }
+        let cutoff = DispatchTime.now().uptimeNanoseconds
+        lock.unlock()
+        guard failed else { return }
+        let sorted = points.sorted { $0.uptime < $1.uptime }
+        guard let encoded = try? JSONEncoder().encode(sorted), encoded.count <= 8 * 1024 else { return }
+        print("DIAGNOSTIC ChangeStreamCancellation: cutoff_ns=\(cutoff) points=\(String(decoding: encoded, as: UTF8.self)) body_exiting_is_not_task_completion=true")
+    }
+}
 
 @Model final class ChangeStreamLifecycleObject {
     var value: Int = 0
@@ -23,21 +61,35 @@ final class ChangeStreamLifecycleTests: BaseTest {
     @Test(.timeLimit(.minutes(1)))
     func test_changeStream_cancellationTerminatesIteration() async throws {
         let lattice = try testLattice(ChangeStreamLifecycleObject.self)
-        let stream = lattice.changeStream
+        let diagnostic = ProcessInfo.processInfo.environment["LATTICE_OBSERVER_WORKER_DIAGNOSTICS"] == "1"
+            ? CancellationPhaseDiagnostic() : nil
+        defer { diagnostic?.finish(failed: false) }
+        diagnostic?.record(.stream_create_begin)
+        let stream = lattice._changeStream(diagnostic: diagnostic?.probe)
+        diagnostic?.record(.stream_create_returned)
 
         let consumer = Task {
+            diagnostic?.record(.consumer_body_entered)
+            defer { diagnostic?.record(.consumer_body_exiting) }
             for try await _ in stream { }
         }
         // Cancel while the consumer is (or is about to be) parked on next().
         await Task.yield()
+        diagnostic?.record(.cancel_call_begin)
         consumer.cancel()
+        diagnostic?.record(.cancel_call_returned)
 
         let clock = ContinuousClock()
         let start = clock.now
         // A leaked continuation would park this await until the time limit.
+        diagnostic?.record(.parent_wait_begin)
         _ = try? await consumer.value
+        diagnostic?.record(.parent_resumed)
         #expect(clock.now - start < .seconds(10),
                 "cancelled changeStream iteration did not terminate promptly")
+        // Freeze at this assertion, before the later teardown-smoke write.
+        // This diagnostic's second clock read is not the assertion verdict.
+        diagnostic?.finish(failed: clock.now - start >= .seconds(10))
 
         // Teardown smoke check: a write after cancellation must not deliver
         // to (or crash on) the torn-down stream's observer.
