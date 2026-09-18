@@ -188,23 +188,77 @@ struct PerfRefinementBenchmarks {
         try require(db.checkpoint().complete, "master checkpoint did not complete")
     }
 
-    /// Independent full-table verification via a read-only SQLite connection.
-    /// No Lattice model instances or query shapes are warmed by this validation.
-    private func validate(_ urls: [URL], updated: Bool) throws -> String {
+    private enum ValidationPhase: String {
+        case checkpointedMaster, unopenedCopy, liveAfterimage
+        var usesImmutable: Bool { self != .liveAfterimage }
+    }
+
+    private func validationFailure(_ operation: String, phase: ValidationPhase,
+                                   url: URL, database: OpaquePointer?, code: Int32) -> PerfRefinementFailure {
+        let extended: Int32
+        let message: String
+        if let database {
+            extended = sqlite3_extended_errcode(database)
+            message = String(cString: sqlite3_errmsg(database))
+        } else {
+            extended = code
+            message = "no database handle"
+        }
+        return .invalid("SQLite validation \(operation): phase=\(phase.rawValue) " +
+            "path=\(String(url.path.prefix(512))) sqlite=\(String(cString: sqlite3_libversion())) " +
+            "rc=\(code) extended=\(extended) error=\(String(message.prefix(384)))")
+    }
+
+    /// Independent full-table verification; all SQL remains read-only.
+    /// Immutable is restricted to this harness's owned, checkpointed/closed
+    /// masters and their exact unopened copies. A live postimage must use WAL.
+    /// No Lattice model instances or query shapes are warmed by validation.
+    private func validate(_ urls: [URL], updated: Bool, phase: ValidationPhase) throws -> String {
         var values: [PerfRefinementValues] = []
         var changedRanks = Set<Int>()
         for url in urls {
+            let filename: String
+            let flags: Int32
+            if phase.usesImmutable {
+                // seed() has returned and closed its handle; runSample has not
+                // opened a Lattice on an unopenedCopy. No live writer owns them.
+                let wal = url.path + "-wal"
+                if FileManager.default.fileExists(atPath: wal) {
+                    let bytes = try FileManager.default.attributesOfItem(atPath: wal)[.size] as? NSNumber
+                    try require(bytes?.uint64Value == 0,
+                                "validation \(phase.rawValue) has nonempty WAL: \(String(url.path.prefix(512)))")
+                }
+                var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+                components?.queryItems = [URLQueryItem(name: "mode", value: "ro"),
+                                         URLQueryItem(name: "immutable", value: "1")]
+                guard let uri = components?.string else {
+                    throw PerfRefinementFailure.invalid("validation \(phase.rawValue) file URI: \(String(url.path.prefix(512)))")
+                }
+                filename = uri
+                flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI
+            } else {
+                filename = url.path
+                flags = SQLITE_OPEN_READONLY
+            }
             var raw: OpaquePointer?
-            let opened = sqlite3_open_v2(url.path, &raw, SQLITE_OPEN_READONLY, nil)
-            guard let db = raw else { throw PerfRefinementFailure.invalid("SQLite validation open") }
+            let opened = sqlite3_open_v2(filename, &raw, flags, nil)
+            guard let db = raw else {
+                throw validationFailure("open", phase: phase, url: url, database: nil, code: opened)
+            }
             defer { sqlite3_close(db) }
-            try require(opened == SQLITE_OK, "SQLite validation open failed")
+            guard opened == SQLITE_OK else {
+                throw validationFailure("open", phase: phase, url: url, database: db, code: opened)
+            }
             var query: OpaquePointer?
             let sql = "SELECT rank,title,body,accessCount,lastAccessed,pinned,globalId FROM PerfRefinementMemory ORDER BY rank"
             let prepared = sqlite3_prepare_v2(db, sql, -1, &query, nil)
-            guard let query else { throw PerfRefinementFailure.invalid("SQLite validation prepare") }
+            guard prepared == SQLITE_OK, let query else {
+                // Capture before cleanup can replace the handle's error text.
+                let failure = validationFailure("prepare", phase: phase, url: url, database: db, code: prepared)
+                if let query { sqlite3_finalize(query) }
+                throw failure
+            }
             defer { sqlite3_finalize(query) }
-            try require(prepared == SQLITE_OK, "SQLite validation prepare failed")
             var step = sqlite3_step(query)
             while step == SQLITE_ROW {
                 let value = try PerfRefinementValues(statement: query)
@@ -223,7 +277,9 @@ struct PerfRefinementBenchmarks {
                 values.append(value)
                 step = sqlite3_step(query)
             }
-            try require(step == SQLITE_DONE, "SQLite validation step failed")
+            guard step == SQLITE_DONE else {
+                throw validationFailure("step", phase: phase, url: url, database: db, code: step)
+            }
         }
         values.sort { $0.rank < $1.rank }
         try require(values.map(\.rank) == Array(0..<10_000), "fixture membership changed")
@@ -241,7 +297,7 @@ struct PerfRefinementBenchmarks {
             try fm.copyItem(at: master, to: copy)
             return copy
         }
-        let before = try validate(copies, updated: false)
+        let before = try validate(copies, updated: false, phase: .unopenedCopy)
         let main = try Lattice(PerfRefinementMemory.self, configuration: configuration(copies[0]))
         defer { main.close() }
         var attached: Lattice?
@@ -341,7 +397,7 @@ struct PerfRefinementBenchmarks {
             }
         }
         try require(changedRows == 11, "write implementation did not report 11 changed rows")
-        let after = try validate(copies, updated: true)
+        let after = try validate(copies, updated: true, phase: .liveAfterimage)
         guard let discovery, let writes else {
             throw PerfRefinementFailure.invalid("missing update measurements")
         }
@@ -422,7 +478,7 @@ struct PerfRefinementBenchmarks {
                     try require(bytes?.uint64Value == 0, "master WAL is not empty; refuse incomplete copy")
                 }
             }
-            let masterChecksum = try validate(masters, updated: false)
+            let masterChecksum = try validate(masters, updated: false, phase: .checkpointedMaster)
             for iteration in 0..<(warmups + measured) {
                 let work = variantDir.appendingPathComponent(String(format: "iteration-%04d", iteration), isDirectory: true)
                 let sample = try runSample(directory: work, masters: masters, variant: variant,
