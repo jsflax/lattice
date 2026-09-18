@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(Combine)
 import Combine
+#endif
 import Testing
 @testable import Lattice
 @testable import LatticeServerKit
@@ -156,7 +158,39 @@ private func mainOnlyRows(_ url: URL) -> Int {
     let copy = FileManager.default.temporaryDirectory
         .appending(path: "mainonly-\(String.random(length: 10)).sqlite")
     defer { try? FileManager.default.removeItem(at: copy) }
-    do { try FileManager.default.copyItem(at: url, to: copy) } catch { return -1 }
+    // A raw open/read/close of the live main file in THIS process can drop
+    // SQLite's POSIX advisory locks on Linux, even though SQLite still owns
+    // its connection. A later external connection may then unlink the live
+    // WAL/SHM at close. Keep this deliberately main-only copy in a child;
+    // using SQLite backup/VACUUM INTO would include WAL and change the probe.
+    // https://www.sqlite.org/howtocorrupt.html#posix_advisory_locks_canceled_by_a_separate_thread_doing_close
+    let copier = Process()
+    copier.executableURL = URL(fileURLWithPath: "/bin/cp")
+    copier.arguments = [url.path, copy.path] // Absolute paths; no shell parsing.
+    copier.standardInput = FileHandle.nullDevice
+    copier.standardOutput = FileHandle.nullDevice
+    copier.standardError = FileHandle.standardError
+    do {
+        try copier.run()
+    } catch {
+        Issue.record("main-only copy could not launch /bin/cp: \(error)")
+        return -1
+    }
+    let deadline = ProcessInfo.processInfo.systemUptime + 30
+    while copier.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    if copier.isRunning {
+        kill(copier.processIdentifier, SIGKILL)
+        copier.waitUntilExit()
+        Issue.record("main-only copy timed out after 30 seconds; child status=\(copier.terminationStatus)")
+        return -1
+    }
+    copier.waitUntilExit()
+    guard copier.terminationReason == .exit, copier.terminationStatus == 0 else {
+        Issue.record("main-only copy failed: reason=\(copier.terminationReason), status=\(copier.terminationStatus); see /bin/cp stderr")
+        return -1
+    }
     let r = sqlite3Run(copy.path, "SELECT count(*) FROM SimpleSyncObject;")
     return Int(r.out) ?? -1
 }
@@ -206,10 +240,14 @@ private final class WriterChild: @unchecked Sendable {
     private let outAcc = LockedBox("")
 
     static var binaryURL: URL {
-        // swift test builds executable target deps next to the xctest bundle.
-        Bundle(for: WalEpochForensicsTests.self).bundleURL
-            .deletingLastPathComponent()
-            .appending(path: "WalEpochWriterChild")
+        // Executable target deps are in the products directory. On macOS the
+        // test bundle is an .xctest child; on Linux Bundle already names that
+        // directory, so removing its last component would drop debug/release.
+        let bundleURL = Bundle(for: WalEpochForensicsTests.self).bundleURL
+        let productsURL = bundleURL.pathExtension == "xctest"
+            ? bundleURL.deletingLastPathComponent()
+            : bundleURL
+        return productsURL.appending(path: "WalEpochWriterChild")
     }
 
     init(dbURL: URL, mode: String, extra: [String] = []) throws {
@@ -380,6 +418,8 @@ final class WalEpochForensicsTests: BaseTest {
     /// alive the whole time — the relay's observer-push shape. Measures
     /// whether any of those pins fresh-reader visibility or checkpointability.
     @Test func freshReadersUnderHeldObservationAndResults() async throws {
+        let diagnosticLog = PayloadObserverDiagnosticLog("held_observation")
+        defer { diagnosticLog.emit() }
         let dir = try forensicTempDir("a2")
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appending(path: "channel.sqlite")
@@ -387,10 +427,10 @@ final class WalEpochForensicsTests: BaseTest {
         let lattice = try Lattice(for: [SimpleSyncObject.self, WalEpochBlob.self],
                                   configuration: SyncRelayApplyPolicy.configuration(fileURL: url, storeConfiguration: nil))
         let observed = LockedBox(0)
-        let token = lattice.observe { batch in observed.withLock { $0 += batch.count } }
+        let token = lattice._observeAuditLog(diagnostic: diagnosticLog.diagnostic("audit")) { batch in observed.withLock { $0 += batch.count } }
         defer { token.cancel() }
         let streamed = LockedBox(0)
-        let stream = lattice.changeStream
+        let stream = lattice._changeStream(diagnostic: diagnosticLog.diagnostic("stream"))
         let streamTask = Task {
             for try await batch in stream {
                 streamed.withLock { $0 += batch.count }
@@ -415,7 +455,11 @@ final class WalEpochForensicsTests: BaseTest {
         #expect(held2 == 50)
         #expect(s1.rows == 50, "fresh reader under observation sees \(s1.rows)/50")
         #expect(s2.blobs == blobs, "fresh reader under observation sees \(s2.blobs)/\(blobs) blobs")
-        #expect(observed.withLock { $0 } >= 50, "the observation itself must be live")
+        let observedAtAssertion = observed.withLock { $0 }
+        #expect(observedAtAssertion >= 50, "the observation itself must be live")
+        if observedAtAssertion < 50 {
+            PayloadObserverDiagnosticLog.emitWorkerSnapshot(reason: "held_observation_delivery_count")
+        }
 
         // An external PASSIVE checkpoint tells us whether held observation
         // machinery pins the reader mark (checkpointed < log = pinned).

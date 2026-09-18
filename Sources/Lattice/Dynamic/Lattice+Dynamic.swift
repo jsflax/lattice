@@ -30,7 +30,8 @@ extension Lattice {
                        configuration: configuration,
                        modelTypes: [],
                        schema: nil,
-                       isolation: nil)
+                       isolation: nil,
+                       observerActorDelivery: nil)
     }
 
     /// Lazy results over a table identified by its runtime name (no compile-time

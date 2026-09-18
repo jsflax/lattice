@@ -49,10 +49,12 @@ class ObservationOrderingTests: BaseTest {
     }
 
     @Test func collectionChanges_deliverExactlyOnce() async throws {
+        let diagnosticLog = PayloadObserverDiagnosticLog("collection_exactly_once")
+        defer { diagnosticLog.emit() }
         let lattice = try Lattice(OrderedItem.self, configuration: .init(storage: .memory()))
 
         let collector = OrderCollector()
-        let token = lattice.observe(OrderedItem.self) { change in
+        let token = diagnosticLog.observeCollection(OrderedItem.self, on: lattice) { change in
             if case .insert(let rowId) = change {
                 collector.append(contentsOf: [rowId])
             }
@@ -66,6 +68,9 @@ class ObservationOrderingTests: BaseTest {
 
         try await waitUntil { collector.snapshot().count >= writes }
         let rowIds = collector.snapshot()
+        if rowIds.count != writes {
+            PayloadObserverDiagnosticLog.emitWorkerSnapshot(reason: "collection_exactly_once_delivery_count")
+        }
         #expect(rowIds.count == writes)
         #expect(Set(rowIds).count == rowIds.count, "no duplicate deliveries")
         #expect(rowIds.sorted() == Array(1...Int64(writes)), "every commit delivered exactly once")

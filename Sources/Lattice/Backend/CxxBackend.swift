@@ -139,6 +139,8 @@ final class CxxObjectBackend: ObjectBackend, @unchecked Sendable {
     private func _annotatedSingleColumnWrite(column: String, _ body: () -> Void) {
         guard ref.is_managed() else { return body() }
         LocalWriteFieldAnnotation.with(table: String(ref.getTableName()), column: column, body)
+        let message = String(ref.lastQueryErrorMessage())
+        if !message.isEmpty { TransactionFailureScope.record(message) }
     }
 
     // Materialized reads — forwarded to the dynamic_object row cache.
@@ -215,26 +217,30 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
 
     @inlinable init(_ ref: lattice.link_list_ref) { self.ref = ref }
 
-    var size: Int { ref.size() }
+    var size: Int { let count = ref.size(); recordFailure(); return count }
     var linkTableName: String { String(ref.linkTableName) }
     var lattice: (any LatticeBackend)? { _optLatticeRef(ref.lattice).map { CxxBackend($0) } }
 
     func object(at position: Int) -> (any ObjectBackend)? {
         let proxy = ref[position]
+        guard !recordFailure() else { return nil }
         guard let objRef = _optRef(proxy.objectRef) else { return nil }
         return CxxObjectBackend(objRef)
     }
     func setObject(at position: Int, _ element: any ObjectBackend) {
         guard let cxx = element as? CxxObjectBackend else { preconditionFailure() }
         var proxy = ref[position]
+        guard !recordFailure() else { return }
         proxy.assign(cxx.ref)
+        recordFailure()
     }
     func pushBack(_ element: any ObjectBackend) {
         guard let cxx = element as? CxxObjectBackend else { preconditionFailure() }
         ref.pushBack(cxx.ref)
+        recordFailure()
     }
-    func erase(at position: Int) { ref.erase(position) }
-    func clear() { ref.clear() }
+    func erase(at position: Int) { ref.erase(position); recordFailure() }
+    func clear() { ref.clear(); recordFailure() }
     func findIndex(of element: any ObjectBackend) -> Int? {
         guard let cxx = element as? CxxObjectBackend else { return nil }
         let opt = ref.findIndex(cxx.ref)
@@ -249,6 +255,13 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
                                       orderBy: std.string(column ?? ""),
                                       ascending: ascending)
         return (0..<results.count).map { Int(results[$0]) }
+    }
+    @discardableResult
+    private func recordFailure() -> Bool {
+        let message = String(ref.lastQueryErrorMessage())
+        guard !message.isEmpty else { return false }
+        TransactionFailureScope.record(message)
+        return true
     }
 }
 
@@ -309,14 +322,15 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         ref.add(cxx.ref, &err)
         if !err.msg.empty() { throw LatticeError.addFailed(String(err.msg)) }
     }
-    // No cxx_error out-param on this bridge overload — a C++ failure here is
-    // not detectable from Swift. `throws` satisfies the (throwing) protocol
-    // requirement; this conformance never actually throws today.
+    // Match ordinary add: identity-preserving inserts can fail on a duplicate,
+    // a trigger, or storage contention. Let checked transactions roll back.
     func addPreservingGlobalId(_ object: any ObjectBackend, globalId: UUID) throws {
         guard let cxx = object as? CxxObjectBackend else { preconditionFailure() }
-        ref.add_preserving_global_id(cxx.ref, std.string(globalId.uuidString))
+        var err = lattice.cxx_error()
+        ref.add_preserving_global_id(cxx.ref, std.string(globalId.uuidString), &err)
+        if !err.msg.empty() { throw LatticeError.addFailed(String(err.msg)) }
     }
-    // Same as addPreservingGlobalId: the bulk bridge overload exposes no
+    // The bulk bridge overload still exposes no
     // failure signal, so this conformance never actually throws today.
     func addBulk(_ objects: [any ObjectBackend]) throws {
         var vec = lattice.DynamicObjectRefPtrVector()
@@ -328,7 +342,9 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
     func remove(_ object: any ObjectBackend) -> Bool {
         guard let cxx = object as? CxxObjectBackend else { preconditionFailure() }
-        return ref.remove(cxx.ref)
+        let removed = ref.remove(cxx.ref)
+        reportQueryFailureIfAny()
+        return removed
     }
     func object(primaryKey: Int64, table: String) -> (any ObjectBackend)? {
         let o = ref.object(primaryKey, std.string(table))
@@ -370,12 +386,52 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func trainUntrainedVec0Tables() { ref.trainUntrainedVec0Tables() }
     func waitForVec0Training() { ref.waitForVec0Training() }
     func vacuumVec0(table: String, column: String) -> Int64 { Int64(ref.vacuum_vec0(std.string(table), std.string(column))) }
-    func vacuum() { ref.vacuum() }
+    func vacuum() -> Bool {
+        let ok = ref.vacuum()
+        reportQueryFailureIfAny()   // the sealed failure used to vanish here
+        return ok
+    }
+    func reclaimSpace(maxPasses: Int) -> ReclaimResult {
+        let r = ref.reclaimSpace(maxPasses: Int32(maxPasses))
+        reportQueryFailureIfAny()
+        return ReclaimResult(ok: r.ok, pagesBefore: Int64(r.pages_before), pagesAfter: Int64(r.pages_after),
+                             walBytesAfter: Int64(r.wal_bytes_after), passes: Int(r.passes),
+                             checkpointBusy: r.checkpoint_busy, error: String(r.error))
+    }
     func safeCompactAuditLog(staleThresholdSeconds: Int64) -> Int64 { Int64(ref.safe_compact_audit_log(staleThresholdSeconds)) }
     func forceCompactAuditLog() -> Int64 { Int64(ref.force_compact_audit_log()) }
+    func pruneAuditLog(retentionSeconds: Int64) -> Int64 {
+        let n = Int64(ref.pruneAuditLog(retentionSeconds: retentionSeconds))
+        reportQueryFailureIfAny()
+        return n
+    }
+    func recordAuditWatermark() { ref.recordAuditWatermark(); reportQueryFailureIfAny() }
+    func backdateAuditWatermarks(seconds: Int64) { ref.backdateAuditWatermarks(seconds: seconds); reportQueryFailureIfAny() }
+    func setReplicationSlotObserver(syncId: String, isObserver: Bool) {
+        ref.setReplicationSlotObserver(syncId: std.string(syncId), isObserver: isObserver)
+        reportQueryFailureIfAny()
+    }
+    func noHistoryLiveValuesJSON(tableName: String, globalRowId: String, columns: [String]) -> String {
+        let cols = columns.reduce(into: lattice.StringVector()) { $0.push_back(std.string($1)) }
+        let json = String(ref.noHistoryLiveValuesJSON(tableName: std.string(tableName),
+                                                      globalRowId: std.string(globalRowId), columns: cols))
+        reportQueryFailureIfAny()
+        return json
+    }
+    func auditHeader(id: Int64) -> ChangeHeader? {
+        let h = ref.auditHeader(id: id)
+        guard h.found else { return nil }
+        let op = AuditLog.Operation(rawValue: String(h.operation)) ?? .insert
+        return ChangeHeader(auditId: id, tableName: String(h.table_name), operation: op,
+                            rowId: Int64(h.row_id), globalRowId: UUID(uuidString: String(h.global_row_id)))
+    }
     func normalizeAuditTimestamps() -> Int64 { Int64(ref.normalizeAuditTimestamps()) }
     func backdateReplicationSlots(seconds: Int64) { ref.backdate_replication_slots(seconds) }
-    func checkpoint() { ref.checkpoint() }
+    func checkpoint() -> CheckpointResult {
+        let c = ref.checkpoint()
+        return CheckpointResult(busy: c.busy, complete: c.complete,
+                                logFrames: Int64(c.log_frames), checkpointed: Int64(c.checkpointed))
+    }
     func checkpointBounded(busyBudgetMs: Int64) -> Int64 {
         ref.checkpointBounded(busyBudgetMs: busyBudgetMs)
     }
@@ -391,6 +447,18 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func commit() {
         ref.commit()
         reportQueryFailureIfAny()
+    }
+    func beginTransactionChecked() throws {
+        ref.begin_transaction()
+        if let message = reportQueryFailureIfAny() {
+            throw LatticeError.transactionError(message)
+        }
+    }
+    func commitChecked() throws {
+        ref.commit()
+        if let message = reportQueryFailureIfAny() {
+            throw LatticeError.transactionError(message)
+        }
     }
     func rollback() {
         ref.rollback()
@@ -529,12 +597,15 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     /// Called by each query method right after its bridge call: fan a
     /// sealed-query failure out to the registered handler. Cheap on the
     /// success path (one thread-local read).
-    @inline(__always) private func reportQueryFailureIfAny() {
-        guard let msg = lastQueryError() else { return }
+    @discardableResult
+    @inline(__always) private func reportQueryFailureIfAny() -> String? {
+        guard let msg = lastQueryError() else { return nil }
+        TransactionFailureScope.record(msg)
         onQueryErrorLock.lock()
         let handler = onQueryErrorHandler
         onQueryErrorLock.unlock()
         handler?(msg)
+        return msg
     }
 
     // Sync filter — translate the neutral [SyncFilterParam] to the C++ vector.

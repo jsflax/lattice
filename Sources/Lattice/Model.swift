@@ -436,6 +436,9 @@ public protocol Model: AnyObject, ObservableObject, Hashable, Identifiable, Sche
     static var constraints: [Constraint] { get }
     static var fullTextProperties: Set<String> { get }
     static var indexedProperties: Set<String> { get }
+    /// Columns declared `@NoHistory`: their UPDATE audit rows record the column
+    /// name but not its value (sync late-binds the live value). Empty by default.
+    static var noHistoryProperties: Set<String> { get }
     #if canImport(Combine)
     var _objectWillChange: Combine.ObservableObjectPublisher { get }
     #else
@@ -479,6 +482,7 @@ extension Model {
     public static var anyPropertyKind: AnyProperty.Kind { .int }
     public static var fullTextProperties: Set<String> { [] }
     public static var indexedProperties: Set<String> { [] }
+    public static var noHistoryProperties: Set<String> { [] }
 
     public var lattice: Lattice? {
         _dynamicObject._ref.lattice?.asCxxLatticeRef.flatMap { Lattice.init(ref: $0) }
@@ -655,7 +659,7 @@ extension Model {
                                              is_full_text: false,
                                              is_indexed: false,
                                              is_unique: false, column_name: .init(),
-                                                     is_union: false, union_desc: .init())
+                                                     is_union: false, union_desc: .init(), no_history: false)
         }
 
         for (name, property) in primitiveProperties {
@@ -670,6 +674,7 @@ extension Model {
             let isVector = property is Vector<Float>.Type || property is Vector<Double>.Type
             let isFullText = fullTextProperties.contains(name)
             let isIndexed = indexedProperties.contains(name)
+            let isNoHistory = noHistoryProperties.contains(name)
             schema[std.string(name)] = .init(name: std.string(name), type: columnType, kind: .primitive,
                                              target_table: .init(), link_table: .init(),
                                              nullable: property is (any OptionalProtocol.Type),
@@ -678,7 +683,7 @@ extension Model {
                                              is_indexed: isIndexed,
                                              is_unique: false,
                                              column_name: .init(),
-                                             is_union: false, union_desc: .init())
+                                             is_union: false, union_desc: .init(), no_history: isNoHistory)
         }
 
         for (name, property) in linkProperties {
@@ -691,7 +696,7 @@ extension Model {
                                              is_full_text: false,
                                              is_indexed: false,
                                              is_unique: false, column_name: .init(),
-                                                     is_union: false, union_desc: .init())
+                                                     is_union: false, union_desc: .init(), no_history: false)
         }
 
         let virtualListProperties: [(String, any VirtualListProperty.Type)] = filteredProperties.compactMap {
@@ -710,7 +715,7 @@ extension Model {
                                              is_full_text: false,
                                              is_indexed: false,
                                              is_unique: false, column_name: .init(),
-                                                     is_union: false, union_desc: .init())
+                                                     is_union: false, union_desc: .init(), no_history: false)
         }
 
         let virtualLinkProperties: [(String, VirtualLinkMarker.Type)] = filteredProperties.compactMap {
@@ -729,7 +734,7 @@ extension Model {
                                              is_full_text: false,
                                              is_indexed: false,
                                              is_unique: false, column_name: .init(),
-                                                     is_union: false, union_desc: .init())
+                                                     is_union: false, union_desc: .init(), no_history: false)
         }
 
         // Union properties — detected by LatticeUnion conformance
@@ -782,7 +787,7 @@ extension Model {
                                              is_full_text: false,
                                              is_indexed: false,
                                              is_unique: false, column_name: .init(),
-                                             is_union: true, union_desc: udesc)
+                                             is_union: true, union_desc: udesc, no_history: false)
         }
 
         return schema
@@ -873,6 +878,24 @@ public macro Transient() = #externalMacro(module: "LatticeMacros",
 @attached(peer)
 public macro FullText() = #externalMacro(module: "LatticeMacros",
                                          type: "FullTextMacro")
+
+/// Record that this column changed, not what it became.
+///
+/// Every UPDATE audit row normally stores the full new value of each changed
+/// column, so a column that grows while it is rewritten (a streamed chat
+/// message appended token by token) copies its whole body into history on
+/// every write — quadratic growth; one 325 KB text left ~1.5 GB of history.
+/// With `@NoHistory` the UPDATE trigger writes `NULL` for the value while the
+/// column still gates the trigger and appears in `changedFieldsNames`, so live
+/// observers and `changeStream` fire exactly as before. INSERT and DELETE
+/// rows keep full values (once per row).
+///
+/// Sync fills the row's CURRENT value in at upload/push time, so a peer ends
+/// with the latest value — the invariant is "latest value at sync time", not
+/// "every intermediate value". Applies to stored primitive columns only.
+@attached(peer)
+public macro NoHistory() = #externalMacro(module: "LatticeMacros",
+                                          type: "NoHistoryMacro")
 
 
 @attached(accessor, names: arbitrary)

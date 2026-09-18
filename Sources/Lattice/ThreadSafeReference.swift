@@ -33,6 +33,12 @@ public struct ModelThreadSafeReference<NonSendable: Model>: SendableReference, E
     public init(_ model: NonSendable) {
         self.key = model.primaryKey
     }
+    /// A reference from a primary key alone — no row is loaded to make it.
+    /// `changeStream` builds its `AuditLog` references this way: hydrating the
+    /// row just to read its key back read the whole audit payload per change.
+    public init(primaryKey: Int64) {
+        self.key = primaryKey
+    }
     
     public func resolve(isolation: isolated (any Actor)? = #isolation,
                         on lattice: Lattice) -> NonSendable? {
@@ -207,11 +213,17 @@ public struct LatticeThreadSafeReference: Sendable {
         // trampoline that re-resolves must bail rather than reopen — reopening
         // would recreate an empty `.sqlite` on disk and fire a spurious empty
         // snapshot. For in-memory configs there is no file to check.
-        if case .file(let url) = configuration.storage,
-           !FileManager.default.fileExists(atPath: url.path) {
-            return nil
+        guard !_backingFileIsMissing else { return nil }
+        return try? Lattice(isolation: isolation, for: self.modelTypes, configuration: configuration)
+    }
+
+    /// The same best-effort deletion guard used by resolve(), without opening
+    /// a database. Memory stores have no backing file to check.
+    internal var _backingFileIsMissing: Bool {
+        if case .file(let url) = configuration.storage {
+            return !FileManager.default.fileExists(atPath: url.path)
         }
-        return try? Lattice(for: self.modelTypes, configuration: configuration)
+        return false
     }
 }
 

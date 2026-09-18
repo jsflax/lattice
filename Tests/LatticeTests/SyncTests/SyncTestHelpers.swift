@@ -103,6 +103,18 @@ final class SocketStore: @unchecked Sendable {
     let label: String
     private var _waiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
+    // State belongs to one request and is protected by this store's lock.
+    // A cancellation before installation stays on that request, not in a
+    // process-lifetime set of cancelled IDs.
+    private final class CancellableCountWaiter: @unchecked Sendable {
+        let target: Int
+        var cancelled = false
+        var finished = false
+        var continuation: CheckedContinuation<Void, any Error>?
+        init(target: Int) { self.target = target }
+    }
+    private var _cancellableWaiters: [ObjectIdentifier: CancellableCountWaiter] = [:]
+
     init(label: String = "unnamed") {
         self.label = label
     }
@@ -127,16 +139,83 @@ final class SocketStore: @unchecked Sendable {
         }
     }
 
+    /// Cancellation-aware readiness for the bidirectional fixture. Other
+    /// existing waitForCount callers retain their original contract.
+    /// The optional test seam runs after registration and outside the lock.
+    func waitForCountOrCancellation(
+        _ target: Int,
+        afterRegistrationForTesting: (@Sendable () -> Void)? = nil
+    ) async throws {
+        let waiter = CancellableCountWaiter(target: target)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                let result: Result<Void, any Error>?
+                lock.lock()
+                if waiter.cancelled {
+                    waiter.finished = true
+                    result = .failure(CancellationError())
+                } else if _sockets.count >= target {
+                    waiter.finished = true
+                    result = .success(())
+                } else {
+                    waiter.continuation = continuation
+                    _cancellableWaiters[ObjectIdentifier(waiter)] = waiter
+                    result = nil
+                }
+                lock.unlock()
+                afterRegistrationForTesting?()
+                if let result { continuation.resume(with: result) }
+            }
+        } onCancel: {
+            self.cancelCountWaiter(waiter)
+        }
+        // Cancellation can race a successful ready selection; it must not
+        // allow this fixture to proceed to its originating write.
+        try Task.checkCancellation()
+    }
+
+    private func cancelCountWaiter(_ waiter: CancellableCountWaiter) {
+        lock.lock()
+        guard !waiter.finished else { lock.unlock(); return }
+        waiter.cancelled = true
+        let continuation = waiter.continuation
+        if continuation != nil {
+            waiter.finished = true
+            waiter.continuation = nil
+            _cancellableWaiters.removeValue(forKey: ObjectIdentifier(waiter))
+        }
+        lock.unlock()
+        continuation?.resume(throwing: CancellationError())
+    }
+
+    var cancellableCountWaitersForTesting: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _cancellableWaiters.count
+    }
+
     func append(_ ws: WebSocket) {
         lock.lock()
         _sockets.append(ws)
         let total = _sockets.count
         let ready = _waiters.filter { $0.target <= total }
         _waiters.removeAll { $0.target <= total }
+        let cancellableReady = _cancellableWaiters.values.filter { $0.target <= total }
+        var cancellableContinuations: [CheckedContinuation<Void, any Error>] = []
+        for waiter in cancellableReady {
+            _cancellableWaiters.removeValue(forKey: ObjectIdentifier(waiter))
+            waiter.finished = true
+            if let continuation = waiter.continuation {
+                cancellableContinuations.append(continuation)
+                waiter.continuation = nil
+            }
+        }
         lock.unlock()
         print("[SocketStore:\(label)] append: total=\(total)")
         for waiter in ready {
             waiter.continuation.resume()
+        }
+        for continuation in cancellableContinuations {
+            continuation.resume()
         }
         ws.onClose.whenComplete { [weak self] _ in
             self?.remove(ws)

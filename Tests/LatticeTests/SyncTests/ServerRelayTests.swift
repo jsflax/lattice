@@ -16,14 +16,69 @@ import Lattice
 // exercised daily by engram-server's E2E suite through the wrapper.
 // ============================================================================
 
+/// Test-only, opt-in attribution for this legacy relay harness. The process
+/// admits at most 32 recorders (no replenishment), each with eight connections,
+/// 256 head records and sixteen latest scalar facts. A harness emits at most
+/// one <=64 KiB ACK snapshot. IDs identify this diagnostic run/connection;
+/// neither paths, wire payloads nor audit IDs are recorded.
+private final class RelayHarnessDiagnostics: Sendable {
+    private final class Admission: @unchecked Sendable {
+        private let lock = NSLock()
+        private var admitted = 0
+        private var omissionReported = false
+
+        func take() -> (accepted: Bool, reportOmission: Bool) {
+            lock.lock(); defer { lock.unlock() }
+            if admitted < 32 {
+                admitted += 1
+                return (true, false)
+            }
+            let report = !omissionReported
+            omissionReported = true
+            return (false, report)
+        }
+    }
+
+    private static let admission = Admission()
+    let recorder = ACKPathRecorder(testRunID: UUID(), connectionLimit: 8, retainLatestStages: true)
+
+    static func make() -> RelayHarnessDiagnostics? {
+        guard ProcessInfo.processInfo.environment["LATTICE_ACK_PATH_DIAGNOSTICS"] == "1" else { return nil }
+        let result = admission.take()
+        if result.reportOmission {
+            print("DIAGNOSTIC RelayHarnessAdmission: omitted=true limit=32 later_harness_stages=unknown")
+        }
+        return result.accepted ? RelayHarnessDiagnostics() : nil
+    }
+
+    func firstFailure(site: UInt, connection: UUID? = nil) {
+        // The recorder closes admission before formatting or teardown; only
+        // the first failed wait/connect for this harness can select a snapshot.
+        guard let snapshot = recorder.closeSnapshot(partial: true) else { return }
+        print("DIAGNOSTIC RelayHarnessFailure: test=\(recorder.testRunID) connection=\(connection?.uuidString ?? "none") site=\(site) cutoff_ns=\(snapshot.cutoffUptime) first_failure=true later_cascade=unclassified")
+        ACKPathRecorder.emitSnapshot(snapshot)
+    }
+
+    func finish() { _ = recorder.closeSnapshot(partial: false) }
+}
+
 /// Records everything a raw relay client receives, with awaitable arrival.
 private final class FrameCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var binaryKinds: [String] = []
     private var texts: [String] = []
     private var ackedIds: [UUID] = []
+    private var auditIds: [UUID] = []
     private var waiters: [(predicate: () -> Bool, cont: CheckedContinuation<Void, Never>)] = []
     private(set) var socket: WebSocket?
+    private let diagnostic: ACKPathConnection?
+    private let failureDiagnostic: (@Sendable (UInt) -> Void)?
+
+    init(diagnostic: ACKPathConnection? = nil,
+         failureDiagnostic: (@Sendable (UInt) -> Void)? = nil) {
+        self.diagnostic = diagnostic
+        self.failureDiagnostic = failureDiagnostic
+    }
 
     /// nil socket (upgrade never completed) counts as closed.
     var isClosed: Bool { socket?.isClosed ?? true }
@@ -31,8 +86,12 @@ private final class FrameCollector: @unchecked Sendable {
 
     func attach(_ ws: WebSocket) {
         socket = ws
+        diagnostic?.record(.clientHandlersAttached)
+        let diagnostic = self.diagnostic
+        ws.onClose.whenComplete { _ in diagnostic?.record(.connectionClosed) }
         ws.onBinary { [weak self] _, bb in
             guard let self else { return }
+            self.diagnostic?.record(.clientBinaryEntered, bytes: bb.readableBytes)
             let data = Data(buffer: bb)
             let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let kind = root?["kind"] as? String ?? "?"
@@ -41,9 +100,27 @@ private final class FrameCollector: @unchecked Sendable {
             if kind == "ack", let ids = root?["ack"] as? [String] {
                 self.ackedIds.append(contentsOf: ids.compactMap(UUID.init(uuidString:)))
             }
+            if kind == "auditLog", let entries = root?["auditLog"] as? [[String: Any]] {
+                self.auditIds.append(contentsOf: entries.compactMap {
+                    ($0["globalId"] as? String).flatMap(UUID.init(uuidString:))
+                })
+            }
             let ready = self.waiters.filter { $0.predicate() }
             self.waiters.removeAll { $0.predicate() }
             self.lock.unlock()
+            if root == nil {
+                self.diagnostic?.record(.clientDecodeError, bytes: data.count)
+            } else {
+                let stage: ACKPathStage
+                switch kind {
+                case "ack": stage = .clientDecodedAck
+                case "nack": stage = .clientDecodedNack
+                case "auditLog": stage = .clientDecodedAudit
+                case "rejected": stage = .clientDecodedRejected
+                default: stage = .clientDecodedOther
+                }
+                self.diagnostic?.record(stage, bytes: data.count)
+            }
             ready.forEach { $0.cont.resume() }
         }
         ws.onText { [weak self] _, text in
@@ -60,18 +137,21 @@ private final class FrameCollector: @unchecked Sendable {
     var kinds: [String] { lock.withLock { binaryKinds } }
     var receivedTexts: [String] { lock.withLock { texts } }
     var acks: [UUID] { lock.withLock { ackedIds } }
+    var receivedAuditIds: [UUID] { lock.withLock { auditIds } }
 
     func count(of kind: String) -> Int { kinds.filter { $0 == kind }.count }
 
     /// Awaits until `predicate` over this collector holds (checked on every
     /// arrival), or the timeout elapses.
-    func wait(timeout: TimeInterval = 10, until predicate: @escaping @Sendable (FrameCollector) -> Bool) async -> Bool {
+    func wait(timeout: TimeInterval = 10, site: UInt = #line, until predicate: @escaping @Sendable (FrameCollector) -> Bool) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if predicate(self) { return true }
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
-        return predicate(self)
+        let result = predicate(self)
+        if !result { failureDiagnostic?(site) }
+        return result
     }
 }
 
@@ -89,6 +169,7 @@ private final class RelayHarness: @unchecked Sendable {
     let handle: SyncRelayHandle
     let storageURL: URL
     let port: Int
+    private let diagnostics: RelayHarnessDiagnostics?
 
     init(
         path: [PathComponent],
@@ -96,14 +177,38 @@ private final class RelayHarness: @unchecked Sendable {
         writePolicy: SyncWritePolicy? = nil,
         handshake: SyncSchemaHandshake? = nil,
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
+        onSetupFinished: (@Sendable () -> Void)? = nil,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) async throws {
+        let diagnostics = RelayHarnessDiagnostics.make()
+        self.diagnostics = diagnostics
         storageURL = FileManager.default.temporaryDirectory
             .appending(path: "relay-harness-\(String.random(length: 12))")
         var env = try Environment.detect()
         env.arguments = ["vapor"]
         app = try await Application.make(env)
         app.http.server.configuration.port = 0
+        let diagnosticMount = storageURL
+        var initialized = false
+        if let diagnostics { ACKPathDiagnostics.install(diagnostics.recorder, for: diagnosticMount) }
+        defer {
+            if !initialized, let diagnostics {
+                diagnostics.firstFailure(site: #line)
+                ACKPathDiagnostics.remove(diagnostics.recorder, for: diagnosticMount)
+            }
+        }
+        // Captured by this mount during configure; remove the temporary lookup
+        // after initialization. Other harnesses use distinct storage URLs.
+        let hookStorageURL = storageURL
+        let ingressHooks: RelayIngressTestHooks?
+        if let onSetupFinished {
+            ingressHooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
+                                                 didFinishAsyncSetup: onSetupFinished)
+        } else {
+            ingressHooks = nil
+        }
+        if let ingressHooks { RelayIngressTesting.install(ingressHooks, for: hookStorageURL) }
+        defer { if let ingressHooks { RelayIngressTesting.remove(ingressHooks, for: hookStorageURL) } }
         handle = Lattice.configureSyncRelay(
             on: app.routes, path: path, for: schema, storageURL: storageURL,
             writePolicy: writePolicy, handshake: handshake,
@@ -114,16 +219,28 @@ private final class RelayHarness: @unchecked Sendable {
             throw Abort(.internalServerError, reason: "no port")
         }
         port = assigned
+        initialized = true
     }
 
     /// Wrapper-mounted harness (old personal API).
     init(wrapperWithSchema schema: [any Lattice.Model.Type]) async throws {
+        let diagnostics = RelayHarnessDiagnostics.make()
+        self.diagnostics = diagnostics
         storageURL = FileManager.default.temporaryDirectory
             .appending(path: "relay-harness-\(String.random(length: 12))")
         var env = try Environment.detect()
         env.arguments = ["vapor"]
         app = try await Application.make(env)
         app.http.server.configuration.port = 0
+        let diagnosticMount = storageURL
+        var initialized = false
+        if let diagnostics { ACKPathDiagnostics.install(diagnostics.recorder, for: diagnosticMount) }
+        defer {
+            if !initialized, let diagnostics {
+                diagnostics.firstFailure(site: #line)
+                ACKPathDiagnostics.remove(diagnostics.recorder, for: diagnosticMount)
+            }
+        }
         Lattice.configureSyncRelay(
             on: app.routes, for: schema, storageURL: storageURL,
             userIdExtractor: { req in
@@ -137,13 +254,26 @@ private final class RelayHarness: @unchecked Sendable {
             throw Abort(.internalServerError, reason: "no port")
         }
         port = assigned
+        initialized = true
     }
 
     func connect(pathSuffix: String, user: UUID, headers extra: [String: String] = [:]) async throws -> FrameCollector {
-        let collector = FrameCollector()
+        // All raw clients can upload; this role does not assert a frame was sent.
+        let diagnostic = diagnostics?.recorder.registerConnection(id: UUID(), role: .uploader)
+        let failureDiagnostic: (@Sendable (UInt) -> Void)?
+        if let diagnostics {
+            failureDiagnostic = { site in diagnostics.firstFailure(site: site, connection: diagnostic?.id) }
+        } else {
+            failureDiagnostic = nil
+        }
+        let collector = FrameCollector(diagnostic: diagnostic, failureDiagnostic: failureDiagnostic)
+        diagnostic?.record(.connectBegin)
         var headers = HTTPHeaders()
         headers.add(name: "X-Test-User", value: user.uuidString)
         for (k, v) in extra { headers.add(name: k, value: v) }
+        if let diagnostic {
+            headers.replaceOrAdd(name: "X-Lattice-Diagnostic-Connection", value: diagnostic.id.uuidString)
+        }
         // Resume on ATTACH, not on the connect future — the two aren't
         // strictly ordered, and reading collector.socket before onUpgrade
         // ran was a nil crash under parallel test load.
@@ -155,8 +285,11 @@ private final class RelayHarness: @unchecked Sendable {
                 on: app.eventLoopGroup
             ) { ws in
                 collector.attach(ws)
+                diagnostic?.record(.connectEnd)
                 if once.tryFire() { cont.resume() }
             }.whenFailure { error in
+                diagnostic?.record(.connectError)
+                failureDiagnostic?(#line)
                 if once.tryFire() { cont.resume(throwing: error) }
             }
         }
@@ -166,17 +299,22 @@ private final class RelayHarness: @unchecked Sendable {
     /// Server-side registration completes AFTER the client's upgrade
     /// resolves (the extractor awaits in between), so connection counts are
     /// eventually-consistent from the client's point of view — poll.
-    func awaitConnectionCount(_ target: Int, channelId: String, timeout: TimeInterval = 5) async -> Int {
+    func awaitConnectionCount(_ target: Int, channelId: String, timeout: TimeInterval = 5,
+                              site: UInt = #line) async -> Int {
         let deadline = Date().addingTimeInterval(timeout)
         var seen = await handle.connectionCount(channelId: channelId)
         while seen != target && Date() < deadline {
             try? await Task.sleep(nanoseconds: 50_000_000)
             seen = await handle.connectionCount(channelId: channelId)
         }
+        if seen != target { diagnostics?.firstFailure(site: site) }
         return seen
     }
 
     func shutdown() async {
+        // Passing harnesses close silently; failures froze before teardown.
+        diagnostics?.finish()
+        if let diagnostics { ACKPathDiagnostics.remove(diagnostics.recorder, for: storageURL) }
         try? await app.asyncShutdown()
         try? FileManager.default.removeItem(at: storageURL)
     }
@@ -523,6 +661,7 @@ final class ServerRelayTests: BaseTest {
     /// waved through: the original fail-open version was defeated by
     /// prefixing the entry array with a single `0`.
     @Test func policyFailsClosedOnParserDifferentials() async throws {
+        let setupCompletions = RelaySetupCompletions()
         let policy = SyncWritePolicy(
             allowedOperations: ["SimpleSyncObject": [.insert, .update]],
             unlistedTables: .deny)
@@ -530,11 +669,18 @@ final class ServerRelayTests: BaseTest {
             path: ["sync", "group", ":groupID"],
             schema: [SimpleSyncObject.self],
             writePolicy: policy,
+            onSetupFinished: { setupCompletions.noteFinished() },
             channelExtractor: groupExtractor)
         defer { Task { [harness] in await harness.shutdown() } }
 
         let a = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
         let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+
+        // Client upgrade is earlier than server setup/catch-up completion.
+        // Finish both empty-channel catch-ups before creating the seed, so a
+        // delayed legitimate replay cannot contaminate the no-fanout baseline.
+        let setupsReady = await a.wait { _ in setupCompletions.count == 2 }
+        try #require(setupsReady)
 
         // Build a REAL delete entry, then smuggle it behind junk.
         let donor = try testLattice(SimpleSyncObject.self)
@@ -553,6 +699,15 @@ final class ServerRelayTests: BaseTest {
         // Seed the channel with the row through the legitimate path.
         try await a.socket!.send(try makeFrame(entries: inserts))
         #expect(await a.wait { !$0.acks.isEmpty })
+        try #require(!insertedIds.isEmpty)
+        let seedWasAcked = insertedIds.isSubset(of: Set(a.acks))
+        try #require(seedWasAcked)
+        // The writer ACK is sent before legacy fan-out is awaited. Identify
+        // every exact seed audit event at the peer before freezing its count.
+        let seedReachedPeer = await peer.wait {
+            insertedIds.isSubset(of: Set($0.receivedAuditIds))
+        }
+        try #require(seedReachedPeer)
         let ackCountAfterInsert = a.acks.count
         let peerFramesAfterInsert = peer.count(of: "auditLog")
 
@@ -803,4 +958,12 @@ final class ServerRelayTests: BaseTest {
         try await ok.socket!.send(try makeFrame(entries: entries))
         #expect(await ok.wait { !$0.acks.isEmpty })
     }
+}
+
+/// Test-local setup completion count. It carries no socket, database or payload.
+private final class RelaySetupCompletions: @unchecked Sendable {
+    private let lock = NSLock()
+    private var finished = 0
+    func noteFinished() { lock.withLock { finished += 1 } }
+    var count: Int { lock.withLock { finished } }
 }

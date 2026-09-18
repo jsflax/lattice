@@ -423,7 +423,11 @@ public struct Lattice {
     ///
     /// Semantics:
     /// - `nil` (default on Configuration) → sync everything (backwards compatible)
-    /// - `SyncFilter()` (empty) → sync nothing
+    /// - `SyncFilter()` (empty) → for UPLOADS this behaves like `nil` (LatticeCore
+    ///   builds no WHERE clause for an empty entry list — it is NOT a "sync
+    ///   nothing" switch; it only empties the filtered sync SET). To upload
+    ///   nothing, open the handle read-only, or list tables with a predicate
+    ///   that matches no row.
     /// - `SyncFilter` with entries → whitelist: only listed tables, with optional per-row SQL predicates
     ///
     /// The filter is **upload-only** — it controls what leaves the device.
@@ -613,6 +617,14 @@ public struct Lattice {
             public var checkpointTruncateIntervalMs: Int?
             /// Incremental upload cursor (core default true).
             public var useUploadFloor: Bool?
+            /// This database's OWN sync connections register their replication
+            /// slot as an OBSERVER: a read-only dial whose upload floor never
+            /// advances. Observer slots are excluded from every compaction
+            /// floor, so a read-only replica can still prune its history.
+            /// `isReadOnly` implies it; set it explicitly for an observer-token
+            /// dial on a writable handle. Never inferred from the sync filter
+            /// (an empty filter means "upload everything").
+            public var registersAsObserver: Bool?
 
             public init(chunkSize: Int? = nil,
                         maxReconnectAttempts: Int? = nil,
@@ -622,7 +634,8 @@ public struct Lattice {
                         uploadCoalesceMs: Int? = nil,
                         checkpointPassiveIntervalMs: Int? = nil,
                         checkpointTruncateIntervalMs: Int? = nil,
-                        useUploadFloor: Bool? = nil) {
+                        useUploadFloor: Bool? = nil,
+                        registersAsObserver: Bool? = nil) {
                 self.chunkSize = chunkSize
                 self.maxReconnectAttempts = maxReconnectAttempts
                 self.baseDelaySeconds = baseDelaySeconds
@@ -632,11 +645,27 @@ public struct Lattice {
                 self.checkpointPassiveIntervalMs = checkpointPassiveIntervalMs
                 self.checkpointTruncateIntervalMs = checkpointTruncateIntervalMs
                 self.useUploadFloor = useUploadFloor
+                self.registersAsObserver = registersAsObserver
             }
         }
 
         /// nil = all core defaults.
         public var syncTuning: SyncTuning?
+
+        /// Audit-history retention. `nil` (default) keeps every audit entry
+        /// forever — the pre-1.8 behavior. A value arms one small maintenance
+        /// thread in LatticeCore that prunes entries every attached process has
+        /// already delivered (an entry is dead milliseconds after its commit:
+        /// every live change feed seeds its cursor from `MAX(id)` and reads
+        /// forward, and a fresh open never replays history). The prune is
+        /// insertion-time based (recorded watermarks, not the row's own
+        /// `timestamp`), capped by non-observer replication-slot floors, and
+        /// never renumbers ids — so it is safe with any number of processes on
+        /// the file. N handles on one file coordinate through the store and do
+        /// ONE prune per half-window. Ten minutes is plenty for a store whose
+        /// only audit readers are live feeds; a store that syncs keeps what its
+        /// synchronizers still need regardless of this value.
+        public var auditRetention: TimeInterval?
 
         /// Live-results tuning knobs (item A §1.7): shape/page cache bounds
         /// active from Commit 1; belt/TTL/keeper knobs consumed by later
@@ -720,6 +749,12 @@ public struct Lattice {
                 currentScheduler.scheduler)
             config.read_only = isReadOnly
             config.busy_timeout_ms = Int32(busyTimeoutMs)
+            if let auditRetention, auditRetention > 0 {
+                config.audit_retention_seconds = Int64(auditRetention.rounded(.up))
+            }
+            // A read-only handle can never advance an upload floor: its slot
+            // (if it dials anything) is an observer's by construction.
+            config.sync_is_observer = isReadOnly || (syncTuning?.registersAsObserver ?? false)
             if let t = syncTuning {
                 if let v = t.chunkSize { config.set_sync_chunk_size(Int64(v)) }
                 if let v = t.maxReconnectAttempts { config.set_sync_max_reconnect_attempts(Int32(v)) }
@@ -801,6 +836,7 @@ public struct Lattice {
         backend.asCxxLatticeRef!
     }
     internal var isolation: (any Actor)?
+    private let observerActorDelivery: ObserverActorDelivery?
     var _isolation: (any Actor)? { isolation }
     
     /// Resolve the Lattice wrapper for a C++ ref arriving through a trampoline
@@ -833,12 +869,14 @@ public struct Lattice {
                   configuration: Configuration,
                   modelTypes: [any Model.Type],
                   schema: _Schema?,
-                  isolation: (any Actor)?) {
+                  isolation: (any Actor)?,
+                  observerActorDelivery: ObserverActorDelivery?) {
         self.backend = backend
         self.configuration = configuration
         self.modelTypes = modelTypes
         self.schema = schema
         self.isolation = isolation
+        self.observerActorDelivery = observerActorDelivery
     }
     
     private static let cacheLock = UnfairLock(initialState: ())
@@ -875,6 +913,7 @@ public struct Lattice {
         let modelTypes: [any Model.Type]
         let schema: _Schema?
         let isolation: (any Actor)?
+        let observerActorDelivery: ObserverActorDelivery?
 
         init(_ lattice: Lattice) {
             self.backend = lattice.backend
@@ -882,12 +921,14 @@ public struct Lattice {
             self.modelTypes = lattice.modelTypes
             self.schema = lattice.schema
             self.isolation = lattice.isolation
+            self.observerActorDelivery = lattice.observerActorDelivery
         }
 
         func resurrect() -> Lattice? {
             guard let backend else { return nil }
             return Lattice(backend: backend, configuration: configuration,
-                           modelTypes: modelTypes, schema: schema, isolation: isolation)
+                           modelTypes: modelTypes, schema: schema, isolation: isolation,
+                           observerActorDelivery: observerActorDelivery)
         }
     }
 
@@ -908,6 +949,11 @@ public struct Lattice {
         Self.registerNetworkFactoryIfNeeded()
 
         self.isolation = isolation
+        if isolation != nil {
+            self.observerActorDelivery = ObserverActorDelivery(isolation: isolation)
+        } else {
+            self.observerActorDelivery = nil
+        }
         self.configuration = configuration
 
         // Discover all linked types from the provided schema
@@ -955,7 +1001,7 @@ public struct Lattice {
             let targetVersion = migration.keys.max() ?? 1
 
             // Create swift_configuration with row migration callback
-            var swiftConfig =  configuration.cxxConfiguration()//lattice.swift_configuration(configuration.cxxConfiguration())
+            var swiftConfig = configuration.cxxConfiguration(isolation: isolation)
             swiftConfig.target_schema_version = Int32(targetVersion)
 
             // Pre-populate migration schema pairs (no callback needed)
@@ -998,7 +1044,7 @@ public struct Lattice {
                                                           schemas: cxxSchemas,
                                                           error: &error)
         } else {
-            createdRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(), schemas: cxxSchemas, error: &error)
+            createdRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(isolation: isolation), schemas: cxxSchemas, error: &error)
         }
         guard error.msg.empty() else {
             throw error
@@ -1023,7 +1069,7 @@ public struct Lattice {
     public init(isolation: isolated (any Actor)? = #isolation,
                 for schema: [any Model.Type],
                 configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: schema, configuration: configuration, isSynchronizing: false)
+        try self.init(isolation: isolation, for: schema, configuration: configuration, isSynchronizing: false)
     }
 
     internal var schema: _Schema?
@@ -1076,7 +1122,7 @@ public struct Lattice {
         for type in repeat each modelTypes {
             types.append(type)
         }
-        try self.init(for: types, configuration: configuration)
+        try self.init(isolation: isolation, for: types, configuration: configuration)
         // schema is already set by the designated init (as a SchemaCompat).
     }
 
@@ -1084,22 +1130,22 @@ public struct Lattice {
     // deployment targets. They forward to `init(for:)`; for more types than
     // these cover, use `init(for: [any Model.Type])`.
     public init<A: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a], configuration: configuration)
+        try self.init(isolation: isolation, for: [a], configuration: configuration)
     }
     public init<A: Model, B: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a, b], configuration: configuration)
+        try self.init(isolation: isolation, for: [a, b], configuration: configuration)
     }
     public init<A: Model, B: Model, C: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a, b, c], configuration: configuration)
+        try self.init(isolation: isolation, for: [a, b, c], configuration: configuration)
     }
     public init<A: Model, B: Model, C: Model, D: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a, b, c, d], configuration: configuration)
+        try self.init(isolation: isolation, for: [a, b, c, d], configuration: configuration)
     }
     public init<A: Model, B: Model, C: Model, D: Model, E: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, _ e: E.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a, b, c, d, e], configuration: configuration)
+        try self.init(isolation: isolation, for: [a, b, c, d, e], configuration: configuration)
     }
     public init<A: Model, B: Model, C: Model, D: Model, E: Model, F: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, _ e: E.Type, _ f: F.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a, b, c, d, e, f], configuration: configuration)
+        try self.init(isolation: isolation, for: [a, b, c, d, e, f], configuration: configuration)
     }
 
     /// Open with no model types (e.g. a SwiftUI environment placeholder). This
@@ -1108,7 +1154,7 @@ public struct Lattice {
     /// `init<each M>` (empty pack), which is iOS 17+ (parameter packs).
     public init(isolation: isolated (any Actor)? = #isolation,
                 configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [], configuration: configuration)
+        try self.init(isolation: isolation, for: [], configuration: configuration)
     }
 
     enum Error: Swift.Error {
@@ -1116,6 +1162,14 @@ public struct Lattice {
     }
     
     public static func delete(for configuration: Configuration = defaultConfiguration) throws {
+        try _delete(for: configuration, closeBackend: { $0.close() })
+    }
+
+    /// Internal close seam keeps deletion ordering testable without a mock
+    /// backend or relying on a native callback to hit a thread-join race.
+    /// This does not serialize concurrent opening/deleting of the same path.
+    internal static func _delete(for configuration: Configuration,
+                                 closeBackend: (any LatticeBackend) -> Void) throws {
         let latticeSHMURL: URL
         let latticeWALURL: URL
 
@@ -1132,10 +1186,18 @@ public struct Lattice {
         // Item A §4.6: generations/coordinators ride the same close — tear
         // down every same-path coordinator before the backends close.
         GenerationCoordinatorRegistry.evictAll(path: filePath)
-        cacheLock.withLockUnchecked {
-            for (key, entry) in cache where entry.configuration.fileURL.path == filePath {
-                entry.backend?.close()
-                cache.removeValue(forKey: key)
+        let retired = cacheLock.withLockUnchecked {
+            let matching = cache.filter { $0.value.configuration.fileURL.path == filePath }
+            // Retain both metadata and live backends before removing entries.
+            // Neither native close nor a final metadata release may run under
+            // this process-global lock: callbacks can need the cache again.
+            let retained = matching.values.map { (entry: $0, backend: $0.backend) }
+            for key in matching.keys { cache.removeValue(forKey: key) }
+            return retained
+        }
+        withExtendedLifetime(retired) {
+            for item in retired {
+                if let backend = item.backend { closeBackend(backend) }
             }
         }
 
@@ -1237,8 +1299,9 @@ public struct Lattice {
 
     /// Inserts an unmanaged object, preserving the given globalId.
     /// - Throws: `LatticeError.alreadyManaged` if the object is already
-    ///   managed by a Lattice. The backend bridge exposes no failure signal
-    ///   for this path today; the `throws` is for contract stability.
+    ///   managed by a Lattice; `LatticeError.addFailed` if the backend rejects
+    ///   the insert (for example, a duplicate identity, constraint, or I/O failure).
+    ///   Inside `withTransaction`, a thrown insert failure rolls back the transaction.
     public func add<T: Model>(_ object: borrowing T, preservingGlobalId globalId: UUID) throws {
         guard !object.isManaged else {
             throw LatticeError.alreadyManaged
@@ -1342,12 +1405,59 @@ public struct Lattice {
 
     // MARK: Maintenance
 
-    /// Slot-aware compaction: deletes only entries all synchronizers have confirmed.
-    /// Safe during active sync. Returns entries deleted, or -1 if no slots exist.
+    /// Slot-aware compaction: deletes only entries all NON-observer synchronizers
+    /// have confirmed (their upload floor). Safe during active sync. Returns
+    /// entries deleted, or -1 when the store has no writer slots — which is
+    /// every store that never dialed a sync endpoint: this method then deletes
+    /// NOTHING. For those, use ``pruneHistory(olderThan:)`` or set
+    /// ``Configuration/auditRetention`` and let the store prune itself.
     /// - Parameter staleThresholdSeconds: If > 0, evict slots inactive for this long.
     @discardableResult
     public func compactHistory(staleThresholdSeconds: Int64 = 0) -> Int64 {
         backend.safeCompactAuditLog(staleThresholdSeconds: staleThresholdSeconds)
+    }
+
+    /// Cursor-safe, age-based history prune — the tear-out for a store WITHOUT
+    /// sync partners, and an additional bound for one with them.
+    ///
+    /// Deletes audit entries that existed at least `retention` ago, judged by
+    /// recorded insertion-time watermarks (not the row's own `timestamp`, which
+    /// an applied remote row carries from its origin), capped by the floor of
+    /// non-observer replication slots. Never renumbers ids, so every other
+    /// process's live change feed keeps working. The first prune lands one
+    /// window after sampling began (``recordAuditWatermark()`` or a previous
+    /// call records a sample; the automatic thread armed by
+    /// ``Configuration/auditRetention`` does this for you).
+    /// - Returns: entries removed (0 when nothing is provably dead yet).
+    @discardableResult
+    public func pruneHistory(olderThan retention: TimeInterval) -> Int64 {
+        let removed = backend.pruneAuditLog(retentionSeconds: Int64(retention.rounded(.up)))
+        // The delete happened in core, below this handle's write funnel: tell
+        // the live-results layer the table moved (what `delete(AuditLog.self)`
+        // does on its own path), or a memory-family store keeps serving the
+        // pre-prune count from its generation cache.
+        if removed > 0 { _noteWrite(tables: [AuditLog.entityName]) }
+        return removed
+    }
+
+    /// Record a (now, MAX(id)) watermark for ``pruneHistory(olderThan:)``.
+    public func recordAuditWatermark() {
+        backend.recordAuditWatermark()
+    }
+
+    /// Backdate every recorded audit watermark by `seconds`. Test-only (the
+    /// ``backdateReplicationSlots(seconds:)`` counterpart): makes "a retention
+    /// window elapsed" deterministic without wall-clock sleeps.
+    public func backdateAuditWatermarks(seconds: Int64) {
+        backend.backdateAuditWatermarks(seconds: seconds)
+    }
+
+    /// Flag one of this database's OWN replication slots as an observer (a
+    /// read-only dial whose floor never advances; excluded from compaction
+    /// bounds). ``Configuration/SyncTuning/registersAsObserver`` sets it at
+    /// registration; this is for a connection whose scope is learned later.
+    public func setReplicationSlotObserver(syncId: String, isObserver: Bool) {
+        backend.setReplicationSlotObserver(syncId: syncId, isObserver: isObserver)
     }
 
     /// Backdate all replication slots' last_active_at by the given number of seconds.
@@ -1356,8 +1466,12 @@ public struct Lattice {
         backend.backdateReplicationSlots(seconds: seconds)
     }
 
-    /// Nuclear compaction: deletes ALL history, regenerates snapshots, resets slots.
-    /// Active synchronizers will re-sync all data.
+    /// Nuclear compaction: deletes ALL history, regenerates snapshots (model
+    /// rows AND link/list rows, since 1.8), resets slots. Active synchronizers
+    /// will re-sync all data. The AuditLog id sequence is KEPT: regenerated
+    /// rows take ids above the old maximum, so other processes' change feeds
+    /// and the relay's push cursors keep delivering (ids used to restart at 1,
+    /// which left every sibling silent until it reopened).
     /// - Returns: Number of snapshot entries created.
     @discardableResult
     public func forceCompactHistory() -> Int64 {
@@ -1376,12 +1490,15 @@ public struct Lattice {
 
     /// Flushes WAL contents to the main database file and truncates the WAL.
     /// Called automatically on deinitialization but can be invoked explicitly
-    /// to ensure durability or reduce WAL file size.
+    /// to ensure durability or reduce WAL file size. Returns what actually
+    /// happened — a TRUNCATE checkpoint silently loses to a concurrent reader,
+    /// and an ignored outcome is how multi-GB WAL files accumulate.
     ///
     /// - Warning: TRUNCATE waits out readers up to the connection's FULL busy
     ///   timeout (30s) while holding the writer gate. Teardown-only; from
     ///   maintenance paths between write batches use ``checkpointBounded(busyBudgetMs:)``.
-    public func checkpoint() {
+    @discardableResult
+    public func checkpoint() -> CheckpointResult {
         backend.checkpoint()
     }
 
@@ -1416,14 +1533,29 @@ public struct Lattice {
         return backend.vacuumVec0(table: tableName, column: column ?? "")
     }
 
-    /// Rebuilds the database file, reclaiming disk space from deleted rows
-    /// and eliminating fragmentation. Temporarily closes the read connection
-    /// to obtain exclusive access.
+    /// Rebuilds the database file's live pages (`VACUUM`). Temporarily closes
+    /// this handle's read connections. Returns false when VACUUM failed (the
+    /// message is in ``lastQueryError()``) — it never throws, and it used to
+    /// report nothing either way.
     ///
-    /// - Important: Requires exclusive database access. Will throw if another
-    ///   process has the database open. Do not call during active queries.
-    public func vacuum() {
+    /// - Important: In WAL mode the rebuilt image lands in the WAL; the main
+    ///   file only shrinks at the NEXT checkpoint. To get disk space back use
+    ///   ``reclaimSpace(maxPasses:)``, which orders the two steps. Another
+    ///   connection's open WRITE transaction makes VACUUM fail (busy);
+    ///   readers do not block it.
+    @discardableResult
+    public func vacuum() -> Bool {
         backend.vacuum()
+    }
+
+    /// Give the disk space back: release this handle's readers, `VACUUM`,
+    /// TRUNCATE-checkpoint, reopen — the order WAL mode needs for the main
+    /// file to actually shrink (a checkpoint-then-vacuum sequence leaves it at
+    /// its peak). A second pass runs only when the checkpoint lost to a
+    /// concurrent reader. Returns page counts before/after so the caller can
+    /// see whether it worked instead of inferring from file sizes.
+    public func reclaimSpace(maxPasses: Int = 2) -> ReclaimResult {
+        backend.reclaimSpace(maxPasses: maxPasses)
     }
 
     /// Whether the sync WebSocket connection is currently active.
@@ -1596,8 +1728,16 @@ public struct Lattice {
                 // the serial xproc callback (no concurrent access), captured
                 // by the @Sendable callback closure.
                 nonisolated(unsafe) var previousPending = 0
+                // The pending count is an unindexed COUNT with a correlated
+                // EXISTS over the audit log, and idle hints arrive per commit
+                // burst — rate-limit the probe to once a second so a busy
+                // writer does not pay it on every hint.
+                nonisolated(unsafe) var lastProbe = Date.distantPast
 
                 backend.setOnXprocIdle {
+                    let now = Date()
+                    guard now.timeIntervalSince(lastProbe) >= 1 else { return }
+                    lastProbe = now
                     let pending = Int(backend.pendingSyncEntryCount())
                     let diff = previousPending - pending
                     let acked = max(0, diff)
@@ -1801,7 +1941,13 @@ public struct Lattice {
     /// carry no payload and may coalesce; the row itself always reads
     /// latest-committed. Pinned by ObservationOrderingTests.
     public func observe(_ block: @escaping ([AuditLog]) -> ()) -> AnyCancellable {
+        _observeAuditLog(diagnostic: nil, block)
+    }
+
+    func _observeAuditLog(diagnostic: PayloadObserverDiagnostic?,
+                          _ block: @escaping ([AuditLog]) -> ()) -> AnyCancellable {
         let backend = self.backend
+        let workerStoreIdentity = backend.identityHash
         // The C++ side delivers batches per WAL flush; this public Swift API has
         // historically fired the block ONCE PER ROW with a one-element array
         // (the `[AuditLog]` shape was a misnomer — always length 1). Preserve
@@ -1816,14 +1962,25 @@ public struct Lattice {
         let s = UncheckedSendable(self)
         let blk = UncheckedSendable(block)
         let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
+            let diagnosticBatch = diagnostic?.begin(changes)
+            diagnosticBatch?.record("enqueue_boundary")
             // C0a: the per-row hydration used to run directly on the sync
             // scheduler's thread (a default-stack std::thread — the same
             // 512KB class as the crashed cooperative pool). Deliver from the
             // big-stack worker instead.
-            ObserverDeliveryWorker.shared.enqueue {
+            ObserverDeliveryWorker.shared.enqueue(kind: .audit, table: AuditLog.entityName,
+                                                  storeIdentity: workerStoreIdentity, batchID: diagnosticBatch?.id) {
+                diagnosticBatch?.record("job_started")
                 for change in changes {
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.auditHydration)
+                    diagnosticBatch?.record("audit_hydration_started")
                     if let auditLog = s.value.object(AuditLog.self, primaryKey: change.rowId) {
+                        diagnosticBatch?.record("audit_hydrated")
+                        ObserverDeliveryWorker.shared.diagnosticPhase(.userCallback)
                         blk.value([auditLog])
+                        diagnosticBatch?.record("audit_callback_returned", count: 1)
+                    } else {
+                        diagnosticBatch?.record("audit_row_missing")
                     }
                 }
             }
@@ -1832,7 +1989,9 @@ public struct Lattice {
         let token = TableObservationToken(backend: backend, tableName: AuditLog.entityName, observerId: observerId)
 
         return AnyCancellable {
+            diagnostic?.record("cancel_requested")
             token.cancel()
+            diagnostic?.record("cancel_returned")
         }
     }
 
@@ -1872,29 +2031,37 @@ public struct Lattice {
     /// the buffered flush against live callback delivery, preserving order.
     private final class ChangeStreamState: @unchecked Sendable {
         private let lock = NSLock()
-        private var buffered: [[TableChangeEvent]] = []
+        private var buffered: [(changes: [TableChangeEvent], diagnostic: PayloadObserverDiagnosticBatch?)] = []
         private var queryLattice: UncheckedSendable<Lattice>?
         private var terminated = false
 
         /// Observer-callback path: buffer while the open is in flight,
         /// resolve + emit inline once ready.
-        func deliver(_ batch: [TableChangeEvent], _ emit: (Lattice, [TableChangeEvent]) -> Void) {
+        func deliver(_ batch: [TableChangeEvent], diagnostic: PayloadObserverDiagnosticBatch?,
+                     _ emit: (Lattice, [TableChangeEvent], PayloadObserverDiagnosticBatch?) -> Void) {
             lock.lock(); defer { lock.unlock() }
-            guard !terminated else { return }
+            guard !terminated else {
+                diagnostic?.record("batch_ignored_after_termination")
+                return
+            }
             if let queryLattice {
-                emit(queryLattice.value, batch)
+                diagnostic?.record("ready_batch_delivery")
+                emit(queryLattice.value, batch, diagnostic)
             } else {
-                buffered.append(batch)
+                diagnostic?.record("batch_buffered")
+                buffered.append((batch, diagnostic))
             }
         }
 
         /// Open-complete path: flush the buffer in order, then deliver inline.
-        func ready(_ lattice: UncheckedSendable<Lattice>, _ emit: (Lattice, [TableChangeEvent]) -> Void) {
+        func ready(_ lattice: UncheckedSendable<Lattice>,
+                   _ emit: (Lattice, [TableChangeEvent], PayloadObserverDiagnosticBatch?) -> Void) {
             lock.lock(); defer { lock.unlock() }
             guard !terminated else { return }
             queryLattice = lattice
             for batch in buffered {
-                emit(lattice.value, batch)
+                batch.diagnostic?.record("buffered_batch_flush")
+                emit(lattice.value, batch.changes, batch.diagnostic)
             }
             buffered.removeAll()
         }
@@ -1908,9 +2075,14 @@ public struct Lattice {
     }
 
     public var changeStream: AsyncThrowingStream<[AnySendableReference<AuditLog>], any Swift.Error> {
+        _changeStream(diagnostic: nil)
+    }
+
+    func _changeStream(diagnostic: PayloadObserverDiagnostic?) -> AsyncThrowingStream<[AnySendableReference<AuditLog>], any Swift.Error> {
         AsyncThrowingStream { [backend, modelTypes, configuration] stream in
             let log = Logger.sync
             let state = ChangeStreamState()
+            let workerStoreIdentity = backend.identityHash
             // `[any Model.Type]` isn't structurally Sendable (existential
             // metatype element); the immutable array is safe to send.
             let types = UncheckedSendable(modelTypes)
@@ -1922,18 +2094,28 @@ public struct Lattice {
             // from one transaction) reaches the peer as one frame and applies
             // atomically. See the notify_changes_batched comment in
             // LatticeCore for the full rationale.
-            let emit: @Sendable (Lattice, [TableChangeEvent]) -> Void = { queryLattice, changes in
-                let refs: [AnySendableReference<AuditLog>] = changes.compactMap { c in
-                    guard let auditLog = queryLattice.object(AuditLog.self, primaryKey: c.rowId) else {
-                        log.warning("changeStream: no AuditLog for pk=\(c.rowId)")
-                        return nil
-                    }
-                    log.debug("changeStream entry: table=\(auditLog.tableName) modelOp=\(auditLog.operation) modelRowId=\(auditLog.rowId)")
-                    return AnySendableReference(auditLog.sendableReference)
+            let emit: @Sendable (Lattice, [TableChangeEvent], PayloadObserverDiagnosticBatch?) -> Void = { _, changes, diagnosticBatch in
+                diagnosticBatch?.record("stream_emission_started")
+                // A reference is just the pk. This used to LOAD each AuditLog
+                // row (the whole changedFields payload) only to read its key
+                // back and log it, and the consumer's `resolve(on:)` loaded it
+                // again — two payload reads per change per process. Consumers
+                // that resolve still get the row; consumers that only need the
+                // header should use `changeHeaders`.
+                let refs: [AnySendableReference<AuditLog>] = changes.map { c in
+                    AnySendableReference(ModelThreadSafeReference<AuditLog>(primaryKey: c.rowId))
                 }
                 if !refs.isEmpty {
                     log.debug("changeStream yield: count=\(refs.count)")
-                    stream.yield(refs)
+                    let result = stream.yield(refs)
+                    switch result {
+                    case .enqueued(_): diagnosticBatch?.record("stream_yield_enqueued", count: refs.count)
+                    case .dropped(_): diagnosticBatch?.record("stream_yield_dropped", count: refs.count)
+                    case .terminated: diagnosticBatch?.record("stream_yield_terminated", count: refs.count)
+                    @unknown default: diagnosticBatch?.record("stream_yield_unknown", count: refs.count)
+                    }
+                } else {
+                    diagnosticBatch?.record("stream_empty_batch", count: 0)
                 }
             }
 
@@ -1942,10 +2124,15 @@ public struct Lattice {
             // subsequent commits are captured" — an async registration would
             // lose any commit that lands during the open below.
             let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
+                let diagnosticBatch = diagnostic?.begin(changes)
+                diagnosticBatch?.record("enqueue_boundary")
                 // C0a: emit resolves the batch with SQL — off the sync
                 // scheduler's default-stack thread, onto the 8MB worker.
-                ObserverDeliveryWorker.shared.enqueue {
-                    state.deliver(changes, emit)
+                ObserverDeliveryWorker.shared.enqueue(kind: .stream, table: AuditLog.entityName,
+                                                      storeIdentity: workerStoreIdentity, batchID: diagnosticBatch?.id) {
+                    diagnosticBatch?.record("job_started")
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.streamStateDelivery)
+                    state.deliver(changes, diagnostic: diagnosticBatch, emit)
                 }
             }
 
@@ -1955,6 +2142,7 @@ public struct Lattice {
             // work that would otherwise wedge the caller's context, starving
             // cooperative cancellation (`.timeLimit` traits could never fire).
             Task.detached {
+                diagnostic?.record("query_open_started")
                 // One Lattice for all queries instead of one per notification:
                 // a per-notification open blocks the synchronizer's scheduler
                 // thread and risks SQLITE_BUSY under load.
@@ -1966,10 +2154,14 @@ public struct Lattice {
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
                 queryConfig.authorizationToken = nil
+                queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
                     let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
+                    diagnostic?.record("query_open_completed")
                     state.ready(queryLattice, emit)
+                    diagnostic?.record("query_ready_returned")
                 } catch {
+                    diagnostic?.record("query_open_failed")
                     // A failed open (deleted file, exhausted descriptors)
                     // surfaces at the consumer's first `try await` instead of
                     // trapping the host process (was `try!`). finish fires
@@ -1978,9 +2170,101 @@ public struct Lattice {
                 }
             }
 
-            stream.onTermination = { _ in
+            stream.onTermination = { termination in
+                switch termination {
+                case .cancelled: diagnostic?.record("stream_cancelled")
+                case .finished(_): diagnostic?.record("stream_finished")
+                @unknown default: diagnostic?.record("stream_termination_unknown")
+                }
                 backend.removeTableObserver(table: AuditLog.entityName, observerId: observerId)
                 state.terminate()
+                diagnostic?.record("stream_termination_returned")
+            }
+        }
+    }
+
+    /// `changeStream` without the payload: one frame per WAL flush, each change
+    /// as a ``ChangeHeader`` (table, operation, row id, global row id, audit
+    /// id). Reads only the header columns of each audit row — never
+    /// `changedFields`, which for a streamed column is the whole growing body.
+    /// Same registration and exactly-once, commit-ordered delivery contract as
+    /// `changeStream`; use this when you branch on table/operation and re-read
+    /// live rows yourself (every in-repo consumer does).
+    public var changeHeaders: AsyncThrowingStream<[ChangeHeader], any Swift.Error> {
+        _changeHeaders(diagnostic: nil)
+    }
+
+    func _changeHeaders(diagnostic: PayloadObserverDiagnostic?) -> AsyncThrowingStream<[ChangeHeader], any Swift.Error> {
+        AsyncThrowingStream { [backend, modelTypes, configuration] stream in
+            let log = Logger.sync
+            let state = ChangeStreamState()
+            let workerStoreIdentity = backend.identityHash
+            let types = UncheckedSendable(modelTypes)
+
+            let emit: @Sendable (Lattice, [TableChangeEvent], PayloadObserverDiagnosticBatch?) -> Void = { queryLattice, changes, diagnosticBatch in
+                diagnosticBatch?.record("headers_resolution_started")
+                let headers: [ChangeHeader] = changes.compactMap { c in
+                    guard let h = queryLattice.backend.auditHeader(id: c.rowId) else {
+                        // Pruned/compacted between commit and delivery — the
+                        // header is gone with the row; nothing to say about it.
+                        log.debug("changeHeaders: no AuditLog for pk=\(c.rowId)")
+                        diagnosticBatch?.record("header_row_missing")
+                        return nil
+                    }
+                    diagnosticBatch?.record("header_resolved")
+                    return h
+                }
+                if !headers.isEmpty {
+                    let result = stream.yield(headers)
+                    switch result {
+                    case .enqueued(_): diagnosticBatch?.record("headers_yield_enqueued", count: headers.count)
+                    case .dropped(_): diagnosticBatch?.record("headers_yield_dropped", count: headers.count)
+                    case .terminated: diagnosticBatch?.record("headers_yield_terminated", count: headers.count)
+                    @unknown default: diagnosticBatch?.record("headers_yield_unknown", count: headers.count)
+                    }
+                } else {
+                    diagnosticBatch?.record("headers_empty_after_resolution", count: 0)
+                }
+            }
+
+            let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
+                let diagnosticBatch = diagnostic?.begin(changes)
+                diagnosticBatch?.record("enqueue_boundary")
+                ObserverDeliveryWorker.shared.enqueue(kind: .headers, table: AuditLog.entityName,
+                                                      storeIdentity: workerStoreIdentity, batchID: diagnosticBatch?.id) {
+                    diagnosticBatch?.record("job_started")
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.headersStateDelivery)
+                    state.deliver(changes, diagnostic: diagnosticBatch, emit)
+                }
+            }
+
+            Task.detached {
+                diagnostic?.record("query_open_started")
+                var queryConfig = configuration
+                queryConfig.ipcTargets = nil
+                queryConfig.wssEndpoint = nil
+                queryConfig.authorizationToken = nil
+                queryConfig.auditRetention = nil   // a query handle never prunes
+                do {
+                    let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
+                    diagnostic?.record("query_open_completed")
+                    state.ready(queryLattice, emit)
+                    diagnostic?.record("query_ready_returned")
+                } catch {
+                    diagnostic?.record("query_open_failed")
+                    stream.finish(throwing: error)
+                }
+            }
+
+            stream.onTermination = { termination in
+                switch termination {
+                case .cancelled: diagnostic?.record("stream_cancelled")
+                case .finished(_): diagnostic?.record("stream_finished")
+                @unknown default: diagnostic?.record("stream_termination_unknown")
+                }
+                backend.removeTableObserver(table: AuditLog.entityName, observerId: observerId)
+                state.terminate()
+                diagnostic?.record("stream_termination_returned")
             }
         }
     }
@@ -1997,16 +2281,28 @@ public struct Lattice {
     /// delivery-ordering contract on `observe(_:)` ([AuditLog] overload).
     func observe<T: Model>(_ modelType: T.Type, where: Query<Bool>? = nil,
                            block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
+        _observeCollection(modelType, where: `where`, diagnostic: nil, block: block)
+    }
+
+    func _observeCollection<T: Model>(_ modelType: T.Type, where: Query<Bool>? = nil,
+                                     diagnostic: PayloadObserverDiagnostic?,
+                                     block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
         let backend = self.backend
+        // Resolving on the worker gives SQL its own nonisolated handle. Keep
+        // the attaching actor separately so resolution cannot change where
+        // the observer's block is delivered.
+        let actorDelivery = self.observerActorDelivery
+        let workerStoreIdentity = backend.identityHash
 
         let block = UnsafeBlock(block: block)
 
-        // Capture a sendable reference once, rather than resolving on every
-        // notification. Avoids creating a new Lattice (and running
-        // ensure_tables()) per callback, which races with teardown under load.
+        // Filtered batches resolve SQL state on the worker. Unfiltered batches
+        // need only event metadata, while retaining the reference's deletion guard.
         let ref = self.sendableReference
 
         let observerId = backend.addTableObserver(table: T.entityName) { changes in
+            let diagnosticBatch = diagnostic?.begin(changes)
+            diagnosticBatch?.record("enqueue_boundary")
             // Walk the batch and dispatch one CollectionChange per row,
             // preserving input commit order. Same per-row semantics as
             // the legacy callback — just delivered in one fire instead
@@ -2022,86 +2318,125 @@ public struct Lattice {
             // gets an 8MB stack and batches apply serially. A block bound to
             // an isolation still runs on that actor — only the decision SQL
             // moves.
-            ObserverDeliveryWorker.shared.enqueue {
-                guard let self = ref.resolve() else {
-                    return
-                }
-
-                let isolation = self.isolation
-
-                // Filtered observers fire on RESULT-SET membership, not on
-                // "did the changed fields satisfy the predicate". The old
-                // changedFields-vs-predicate check had two failure modes:
-                // (1) a member row mutating an unrelated column (e.g. a
-                // running job's progress tick — predicate is on `status`)
-                // never fired, freezing observing UI; (2) with auditing
-                // disabled (_SyncControl.disabled=1) there are NO AuditLog
-                // rows, so filtered observers never fired at all.
-                //
-                // INSERT membership is knowable (evaluate the predicate
-                // against the live row). UPDATE/DELETE membership-before-the-
-                // change is NOT knowable post-hoc (audit rows carry new
-                // values only), so a row leaving the set can only be caught
-                // by firing conservatively. Conservative fires are cheap:
-                // LatticeQuery debounces and re-fetches at most once per
-                // frame.
-                func rowMatchesNow(_ rowId: Int64) -> Bool {
-                    guard let `where` else { return true }
-                    return TableResults<T>(self)
-                        .where({ _ in `where` && Query<Bool>.primaryKeyEquals(rowId) })
-                        .first != nil
-                }
-                // Decision SQL runs synchronously here on the worker's 8MB
-                // stack; delivery happens per decision below.
+            ObserverDeliveryWorker.shared.enqueue(kind: .collection, table: T.entityName,
+                                                  storeIdentity: workerStoreIdentity, batchID: diagnosticBatch?.id) {
+                diagnosticBatch?.record("job_started")
+                // Keep a filtered query handle alive through the common
+                // emission tail, not merely through membership decisions.
+                var queryLattice: Lattice?
+                defer { withExtendedLifetime(queryLattice) {} }
                 var decisions: [CollectionChange] = []
-                for entry in changes {
-                    let operation = entry.operation
-                    let rowId = entry.rowId
-                    switch operation {
-                    case "INSERT":
-                        if rowMatchesNow(rowId) {
-                            decisions.append(.insert(rowId))
+                if `where` == nil {
+                    // Preserve the dequeue-time deletion guard without opening
+                    // a query handle solely to forward already-copied events.
+                    guard !ref._backingFileIsMissing else {
+                        diagnosticBatch?.record("collection_resolution_nil")
+                        return
+                    }
+                    diagnosticBatch?.record("collection_resolution_skipped")
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.collectionDecisions)
+                    diagnosticBatch?.record("collection_decisions_started")
+                    for entry in changes {
+                        switch entry.operation {
+                        case "INSERT": decisions.append(.insert(entry.rowId))
+                        case "DELETE": decisions.append(.delete(entry.rowId))
+                        case "UPDATE": decisions.append(.update(entry.rowId))
+                        default: break
                         }
-                    case "DELETE":
-                        // Pre-delete membership IS knowable when auditing is
-                        // on: the audit DELETE row carries the OLD values.
-                        // Without an audit row (auditing disabled), fire
-                        // conservatively — prior state is unknowable.
-                        if let `where` {
-                            let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                            let wasMember = TableResults<AuditLog>(self).where({
-                                $0.rowId == rowId && convertedQuery && $0.operation == .delete
-                            }).first != nil
-                            let anyAuditForRow = TableResults<AuditLog>(self).where({
-                                $0.rowId == rowId && $0.operation == .delete
-                            }).first != nil
-                            if wasMember || !anyAuditForRow {
+                    }
+                } else {
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.collectionResolve)
+                    diagnosticBatch?.record("collection_resolution_started")
+                    guard let resolvedLattice = ref.resolve() else {
+                        diagnosticBatch?.record("collection_resolution_nil")
+                        return
+                    }
+                    queryLattice = resolvedLattice
+                    diagnosticBatch?.record("collection_resolution_completed")
+
+                    // Filtered observers fire on RESULT-SET membership, not on
+                    // "did the changed fields satisfy the predicate". The old
+                    // changedFields-vs-predicate check had two failure modes:
+                    // (1) a member row mutating an unrelated column (e.g. a
+                    // running job's progress tick — predicate is on `status`)
+                    // never fired, freezing observing UI; (2) with auditing
+                    // disabled (_SyncControl.disabled=1) there are NO AuditLog
+                    // rows, so filtered observers never fired at all.
+                    //
+                    // INSERT membership is knowable (evaluate the predicate
+                    // against the live row). UPDATE/DELETE membership-before-the-
+                    // change is NOT knowable post-hoc (audit rows carry new
+                    // values only), so a row leaving the set can only be caught
+                    // by firing conservatively. Conservative fires are cheap:
+                    // LatticeQuery debounces and re-fetches at most once per
+                    // frame.
+                    func rowMatchesNow(_ rowId: Int64) -> Bool {
+                        guard let `where` else { return true }
+                        return TableResults<T>(resolvedLattice)
+                            .where({ _ in `where` && Query<Bool>.primaryKeyEquals(rowId) })
+                            .first != nil
+                    }
+                    // Decision SQL runs synchronously here on the worker's 8MB
+                    // stack; delivery happens per decision below.
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.collectionDecisions)
+                    diagnosticBatch?.record("collection_decisions_started")
+                    for entry in changes {
+                        let operation = entry.operation
+                        let rowId = entry.rowId
+                        switch operation {
+                        case "INSERT":
+                            if rowMatchesNow(rowId) {
+                                decisions.append(.insert(rowId))
+                            }
+                        case "DELETE":
+                            // Pre-delete membership IS knowable when auditing is
+                            // on: the audit DELETE row carries the OLD values.
+                            // Without an audit row (auditing disabled), fire
+                            // conservatively — prior state is unknowable.
+                            if let `where` {
+                                let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
+                                let wasMember = TableResults<AuditLog>(resolvedLattice).where({
+                                    $0.rowId == rowId && convertedQuery && $0.operation == .delete
+                                }).first != nil
+                                let anyAuditForRow = TableResults<AuditLog>(resolvedLattice).where({
+                                    $0.rowId == rowId && $0.operation == .delete
+                                }).first != nil
+                                if wasMember || !anyAuditForRow {
+                                    decisions.append(.delete(rowId))
+                                }
+                            } else {
                                 decisions.append(.delete(rowId))
                             }
-                        } else {
-                            decisions.append(.delete(rowId))
+                        case "UPDATE":
+                            decisions.append(.update(rowId))
+                        default:
+                            break
                         }
-                    case "UPDATE":
-                        decisions.append(.update(rowId))
-                    default:
-                        break
                     }
                 }
+                diagnosticBatch?.record("collection_decisions_completed", count: decisions.count)
                 guard !decisions.isEmpty else { return }
-                if let isolation {
-                    // One hop per batch: the user's block runs on its actor,
-                    // in commit order, exactly as before.
+                if let actorDelivery {
+                    // The captured mailbox operation already carries the
+                    // handle's creation actor, including off-actor registration.
+                    // Batches remain whole and FIFO through that actor's drain.
                     let batch = decisions
-                    Task {
-                        await isolation.invoke { _ in
-                            for change in batch { block(change) }
-                        }
+                    diagnosticBatch?.record("collection_actor_hop")
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.actorHandoff)
+                    actorDelivery.enqueue {
+                        diagnosticBatch?.record("collection_actor_delivery_started")
+                        diagnosticBatch?.record("collection_emission_started", count: batch.count)
+                        for change in batch { block(change) }
+                        diagnosticBatch?.record("collection_emission_returned", count: batch.count)
                     }
                 } else {
                     // No isolation requested: deliver ON the worker — the
                     // block's own SQL (per-row hydration in UI observers)
                     // inherits the deep stack too.
+                    diagnosticBatch?.record("collection_emission_started", count: decisions.count)
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.userCallback)
                     for change in decisions { block(change) }
+                    diagnosticBatch?.record("collection_emission_returned", count: decisions.count)
                 }
             }
         }
@@ -2109,7 +2444,9 @@ public struct Lattice {
         let token = TableObservationToken(backend: backend, tableName: T.entityName, observerId: observerId)
 
         return AnyCancellable {
+            diagnostic?.record("cancel_requested")
             token.cancel()
+            diagnostic?.record("cancel_returned")
         }
     }
 
@@ -2202,9 +2539,14 @@ public struct Lattice {
         }
     }
 
-    private static func _recordExplicitTxnEnd(identityHash: Int64) {
+    private static func _recordExplicitTxnEnd(identityHash: Int64,
+                                              expectedOwner: ObjectIdentifier? = nil) {
         _explicitTxnOwners.withLockUnchecked { owners in
             guard let entry = owners[identityHash] else { return }
+            // Checked transactions are synchronous: their cleanup must not
+            // erase ownership acquired by a waiting thread after COMMIT.
+            // Legacy begin/commit may cross threads and omit this condition.
+            if let expectedOwner, entry.owner != expectedOwner { return }
             if entry.depth <= 1 {
                 owners.removeValue(forKey: identityHash)
             } else {
@@ -2251,6 +2593,43 @@ public struct Lattice {
             return value
         } catch {
             rollbackTransaction()
+            throw error
+        }
+    }
+    
+    /// Run a synchronous write transaction with catchable backend failures.
+    /// A failed BEGIN never executes `block`. A reported query or primitive
+    /// write failure rolls back the transaction even if a later operation
+    /// succeeds and clears the bridge's last-error slot. Commit failures also
+    /// roll back. The original failure is preserved if rollback reports an
+    /// additional error. Nested checked transactions, including transactions on
+    /// different handles, are rejected before the inner body executes. The
+    /// synchronous failure scope cannot attribute writes to a different owner.
+    public func withTransaction<T>(isolation: isolated (any Actor)? = #isolation,
+                                   _ block: () throws -> T) throws -> T {
+        guard !TransactionFailureScope.isActive,
+              !Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) else {
+            throw LatticeError.transactionError("Nested checked transactions are not supported")
+        }
+        let failures = TransactionFailureScope()
+        defer { failures.restore() }
+        try backend.beginTransactionChecked()
+        let transactionOwner = ObjectIdentifier(Thread.current)
+        Self._recordExplicitTxnBegin(identityHash: backend.identityHash)
+        defer {
+            Self._recordExplicitTxnEnd(identityHash: backend.identityHash,
+                                      expectedOwner: transactionOwner)
+        }
+        do {
+            let value = try block()
+            if let message = failures.firstError {
+                throw LatticeError.transactionError(message)
+            }
+            try backend.commitChecked()
+            _noteWrite(tables: nil)
+            return value
+        } catch {
+            backend.rollback()
             throw error
         }
     }
@@ -2331,7 +2710,8 @@ public struct Lattice {
                                  configuration: queryConfig,
                                  modelTypes: modelTypes,
                                  schema: schema,
-                                 isolation: isolation)
+                                 isolation: isolation,
+                                 observerActorDelivery: observerActorDelivery)
         // Item A §4.2: the clone unions rows from the attached store — writes
         // on either store must invalidate its shapes (see attach(lattice:)).
         // Mint the attached store's coordinator so its core hook relays

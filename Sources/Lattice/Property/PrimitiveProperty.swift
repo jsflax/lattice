@@ -215,6 +215,11 @@ public enum AnyProperty: PrimitiveProperty, Codable, Sendable {
         }
     }
 
+    package var stringValue: String? {
+        if case .string(let v) = self { return v }
+        return nil
+    }
+
     enum CodingKeys: String, CodingKey {
         case kind, value
     }

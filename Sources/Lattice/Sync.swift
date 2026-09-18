@@ -265,6 +265,68 @@ extension Lattice {
             .where { $0.primaryKey > id }
     }
 
+    /// `@NoHistory` late-binding for audit rows that leave this process
+    /// serialized in Swift (the relay's observer push and connect-time catch-up
+    /// encode `AuditLog` rows directly; LatticeCore's own upload path does this
+    /// inside `query_audit_log_for_sync`).
+    ///
+    /// For every UPDATE row whose model declares `noHistoryProperties` that are
+    /// listed in `changedFieldsNames` with a null/missing value, the row's
+    /// CURRENT value is read and filled in; if the live row is gone, the column
+    /// is dropped from both `changedFields` and `changedFieldsNames` (its
+    /// DELETE row follows) — a null must never be shipped for a column the
+    /// receiver may have declared NOT NULL. The stored audit rows are NEVER
+    /// written: a row that needs binding is replaced by a detached copy
+    /// (Codable round-trip, `primaryKey` preserved for pk cursors) in the
+    /// returned array; rows that need nothing are returned as-is. Invariant:
+    /// a peer receives the latest value at push time, not every intermediate
+    /// value.
+    public func lateBindNoHistory(_ rows: [AuditLog]) -> [AuditLog] {
+        var noHistoryByTable: [String: Set<String>] = [:]
+        for type in modelTypes where !type.noHistoryProperties.isEmpty {
+            noHistoryByTable[type.entityName] = type.noHistoryProperties
+        }
+        guard !noHistoryByTable.isEmpty else { return rows }
+        var out = rows
+        for (index, stored) in rows.enumerated() where stored.operation == .update {
+            guard let flagged = noHistoryByTable[stored.tableName],
+                  let names = stored.changedFieldsNames else { continue }
+            // A managed AuditLog writes every assignment back to the store; the
+            // relay must not rewrite history it only ships. Work on a copy.
+            guard let data = try? JSONEncoder().encode(stored),
+                  let row = try? JSONDecoder().decode(AuditLog.self, from: data) else { continue }
+            row.primaryKey = stored.primaryKey
+            let listed = names.compactMap { $0 }
+            let need = listed.filter { col in
+                guard flagged.contains(col) else { return false }
+                guard let value = row.changedFields[col] else { return true }
+                if case .null = value { return true }
+                return false
+            }
+            guard !need.isEmpty, let globalRowId = row.globalRowId else { continue }
+            let json = backend.noHistoryLiveValuesJSON(tableName: row.tableName,
+                                                       globalRowId: globalRowId.uuidString.lowercased(),
+                                                       columns: need)
+            let live = (try? JSONDecoder().decode([String: AnyProperty].self, from: Data(json.utf8))) ?? [:]
+            var fields = row.changedFields
+            var keptNames = names
+            for col in need {
+                let isNull: Bool
+                if let value = live[col], case .null = value { isNull = true } else { isNull = false }
+                if let value = live[col], !isNull {
+                    fields[col] = value
+                } else {
+                    fields.removeValue(forKey: col)
+                    keptNames.removeAll { $0 == col }
+                }
+            }
+            row.changedFields = fields
+            row.changedFieldsNames = keptNames
+            out[index] = row
+        }
+        return out
+    }
+
     /// Get audit log events after a checkpoint as a lazy query.
     /// Use `snapshot(limit:offset:)` to paginate without loading all entries into memory.
     public func eventsAfter(globalId: UUID?) -> TableResults<AuditLog> {

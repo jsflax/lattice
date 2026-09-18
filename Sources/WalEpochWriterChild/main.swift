@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(Combine)
 import Combine
+#endif
 import Lattice
 
 // ============================================================================
@@ -14,7 +16,7 @@ import Lattice
 //
 // Models live in Models.swift (same module).
 //
-// Protocol on stdout (line-buffered):
+// Protocol on stdout (each complete line written immediately):
 //   OPENED pid=<pid>
 //   COMMITTED <n>      after every committed write transaction
 //   UNCOMMITTED <n>    after every write inside the held-open transaction
@@ -31,7 +33,9 @@ import Lattice
 
 @MainActor
 func run() throws {
-    setvbuf(stdout, nil, _IOLBF, 0)  // line-buffered even when piped
+    func writeLine(_ line: String) throws {
+        try FileHandle.standardOutput.write(contentsOf: Data((line + "\n").utf8))
+    }
 
     let args = CommandLine.arguments
 
@@ -66,7 +70,7 @@ func run() throws {
         observationToken = lattice.observe { _ in }
     }
 
-    print("OPENED pid=\(ProcessInfo.processInfo.processIdentifier)")
+    try writeLine("OPENED pid=\(ProcessInfo.processInfo.processIdentifier)")
 
     let payload = payloadBytes > 0 ? String(repeating: "x", count: payloadBytes) : ""
     var written = 0
@@ -85,7 +89,7 @@ func run() throws {
         var i = 0
         while true {
             try writeOne(i)
-            print("COMMITTED \(written)")
+            try writeLine("COMMITTED \(written)")
             i += 1
             if periodUs > 0 { usleep(periodUs) }
         }
@@ -93,9 +97,9 @@ func run() throws {
     case "write-then-idle":
         for i in 0..<rows {
             try writeOne(i)
-            print("COMMITTED \(written)")
+            try writeLine("COMMITTED \(written)")
         }
-        print("IDLE \(written)")
+        try writeLine("IDLE \(written)")
         _ = observationToken  // keep the observation alive while idling
         while true { sleep(1) }
 
@@ -103,9 +107,9 @@ func run() throws {
         lattice.beginTransaction()
         for i in 0..<rows {
             try writeOne(i)
-            print("UNCOMMITTED \(written)")
+            try writeLine("UNCOMMITTED \(written)")
         }
-        print("EPOCH-OPEN \(written)")
+        try writeLine("EPOCH-OPEN \(written)")
         _ = observationToken
         while true { sleep(1) }  // never commits — killed by the harness
 

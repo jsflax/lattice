@@ -1,9 +1,90 @@
 import Foundation
+import Dispatch
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
 import Glibc
 #endif
+
+/// Amortized FIFO. Clearing a consumed slot cannot destroy the payload while
+/// the returned value is retained by its caller. Compaction moves only live
+/// suffix entries; consumed slots contain nil.
+private struct ObserverDeliveryFIFO<Element> {
+    private var elements: [Element?] = []
+    private var head = 0
+    var isEmpty: Bool { head == elements.count }
+    var first: Element? { isEmpty ? nil : elements[head] }
+
+    mutating func append(_ element: Element) { elements.append(element) }
+
+    mutating func popFirst() -> Element? {
+        guard !isEmpty else { return nil }
+        let value = elements[head]!
+        elements[head] = nil
+        head += 1
+        if head == elements.count {
+            elements.removeAll(keepingCapacity: true)
+            head = 0
+        } else if head >= 64 && head >= elements.count - head {
+            elements.removeFirst(head)
+            head = 0
+        }
+        return value
+    }
+}
+
+/// One ready token per nonempty backend identity, with FIFO inside each
+/// identity. All access is under the worker's condition; this type performs
+/// no callouts. Identity is the receiving backend, not a process-global
+/// physical-file key across separately opened configurations or aliases.
+struct ObserverDeliveryStoreQueue {
+    struct Job {
+        let enqueueOrdinal: UInt64
+        let operation: @Sendable () -> Void
+    }
+    private final class Store {
+        var jobs = ObserverDeliveryFIFO<Job>()
+    }
+    private var stores: [Int64: Store] = [:]
+    private var ready = ObserverDeliveryFIFO<Int64>()
+    private(set) var count = 0
+    var isEmpty: Bool { count == 0 }
+
+    mutating func append(storeIdentity: Int64, enqueueOrdinal: UInt64,
+                         operation: @escaping @Sendable () -> Void) {
+        let store: Store
+        if let existing = stores[storeIdentity] {
+            store = existing
+        } else {
+            store = Store()
+            stores[storeIdentity] = store
+            ready.append(storeIdentity)
+        }
+        store.jobs.append(Job(enqueueOrdinal: enqueueOrdinal, operation: operation))
+        count += 1
+    }
+
+    mutating func popFirst() -> Job? {
+        guard let identity = ready.popFirst() else { return nil }
+        let store = stores[identity]!
+        let job = store.jobs.popFirst()!
+        count -= 1
+        if store.jobs.isEmpty {
+            // The returned job owns the removed closure; this store now
+            // contains no payload whose final release can run under lock.
+            stores.removeValue(forKey: identity)
+        } else {
+            ready.append(identity)
+        }
+        return job
+    }
+
+    /// Oldest queued enqueue ordinal, NOT the next store selected. Read only
+    /// for opt-in diagnostics; scans one head per active store, not all jobs.
+    var oldestEnqueueOrdinal: UInt64? {
+        stores.values.compactMap { $0.jobs.first?.enqueueOrdinal }.min()
+    }
+}
 
 /// Dedicated delivery thread for observer change batches (crash fix C0a,
 /// Aug 2026 SIGBUS incident).
@@ -23,8 +104,10 @@ import Glibc
 ///    observer.
 ///
 /// One process-wide worker thread with an EXPLICIT 8MB stack replaces both:
-/// jobs run FIFO, so cross-batch order is at least as strong as before, and
-/// every statement the observe machinery prepares gets a deep stack. Darwin
+/// jobs run FIFO within each receiving backend and rotate between ready
+/// backends, so one queued burst cannot monopolize subsequent admission.
+/// Global callback execution remains serial; inter-backend FIFO is not a
+/// contract. Every statement the observe machinery prepares gets a deep stack. Darwin
 /// secondary threads default to the same 512KB as the cooperative pool — the
 /// explicit `stackSize` is the load-bearing line, and the run loop asserts it
 /// took effect so a regression turns tests red.
@@ -43,18 +126,163 @@ final class ObserverDeliveryWorker: @unchecked Sendable {
     static let requiredStackSize = 8 << 20
 
     private let condition = NSCondition()
-    private var queue: [@Sendable () -> Void] = []
+    private var queue = ObserverDeliveryStoreQueue()
     private var started = false
 
-    func enqueue(_ job: @escaping @Sendable () -> Void) {
+    enum DiagnosticKind: String, Sendable { case audit, stream, headers, collection }
+    enum DiagnosticPhase: String, Sendable {
+        case entered, auditHydration, userCallback, streamStateDelivery
+        case headersStateDelivery, collectionResolve, collectionDecisions, actorHandoff
+        case bodyReturnedBeforeNextLoop
+    }
+    private struct DiagnosticMetadata: Sendable {
+        let kind: DiagnosticKind
+        let table: String
+        let storeIdentity: Int64
+        let batchID: UUID?
+        let enqueuedAt: UInt64
+    }
+    private struct DiagnosticRecord: Sendable {
+        let id: UInt64
+        let metadata: DiagnosticMetadata?
+        let startedAt: UInt64
+        var phase: DiagnosticPhase = .entered
+        var phaseAt: UInt64
+        var nextLoopAt: UInt64 = 0
+    }
+    private let diagnosticsEnabled =
+        ProcessInfo.processInfo.environment["LATTICE_OBSERVER_WORKER_DIAGNOSTICS"] == "1"
+    private static let pendingMetadataLimit = 64
+    private static let recentLimit = 32
+    private static let snapshotLimit = 5
+    // Protected by condition. The dictionary is capped independently of the
+    // existing unbounded closure queue. No diagnostic retains a model/handle/
+    // closure. Each queue entry carries only its enqueue ordinal; startedJobs
+    // remains a count, not an identity after store rotation. Untracked
+    // metadata remains explicit; counters wrap at UInt64.max.
+    private var pendingMetadata: [UInt64: DiagnosticMetadata] = [:]
+    private var currentRecord: DiagnosticRecord?
+    private var recentRecords: [DiagnosticRecord] = []
+    private var enqueuedJobs: UInt64 = 0
+    private var startedJobs: UInt64 = 0
+    private var completedJobs: UInt64 = 0
+    private var droppedMetadata: UInt64 = 0
+    private var recentEvictions: UInt64 = 0
+    private var peakQueuedJobs = 0
+    private var emittedSnapshots = 0
+
+    func enqueue(kind: DiagnosticKind, table: String, storeIdentity: Int64,
+                 batchID: UUID?, _ job: @escaping @Sendable () -> Void) {
+        // At most 64 ASCII bytes; no paths, SQL, row values or unbounded labels.
+        let boundedTable = diagnosticsEnabled ? String(decoding: table.utf8.prefix(64).map {
+            (($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 90) ||
+             ($0 >= 97 && $0 <= 122) || $0 == 95) ? $0 : UInt8(95)
+        }, as: UTF8.self) : ""
         condition.lock()
-        queue.append(job)
+        if diagnosticsEnabled {
+            enqueuedJobs &+= 1
+            if pendingMetadata.count < Self.pendingMetadataLimit {
+                pendingMetadata[enqueuedJobs] = DiagnosticMetadata(
+                    kind: kind, table: boundedTable, storeIdentity: storeIdentity,
+                    batchID: batchID, enqueuedAt: DispatchTime.now().uptimeNanoseconds)
+            } else {
+                droppedMetadata &+= 1
+            }
+        }
+        queue.append(storeIdentity: storeIdentity, enqueueOrdinal: enqueuedJobs, operation: job)
+        if diagnosticsEnabled { peakQueuedJobs = max(peakQueuedJobs, queue.count) }
         if !started {
             started = true
             startThread()
         }
         condition.signal()
         condition.unlock()
+    }
+
+    /// Called only from the existing worker body, never actor tasks.
+    /// condition is released before native work or user callbacks.
+    func diagnosticPhase(_ phase: DiagnosticPhase) {
+        guard diagnosticsEnabled else { return }
+        condition.lock()
+        if currentRecord != nil {
+            currentRecord?.phase = phase
+            currentRecord?.phaseAt = DispatchTime.now().uptimeNanoseconds
+        }
+        condition.unlock()
+    }
+
+    // Called under condition at the NEXT loop entry. The previous record
+    // stays current across capture destruction or thread descheduling at
+    // the end of its scope; the phase does not prove which one occurred.
+    private func diagnosticEnteredNextLoop() {
+        guard diagnosticsEnabled, var record = currentRecord else { return }
+        record.nextLoopAt = DispatchTime.now().uptimeNanoseconds
+        if recentRecords.count == Self.recentLimit {
+            recentRecords.removeFirst()
+            recentEvictions &+= 1
+        }
+        recentRecords.append(record)
+        completedJobs &+= 1
+        currentRecord = nil
+    }
+
+    /// Failure callers format/print after releasing condition. At most five
+    /// snapshots per process, <= 35 lines each. Pending metadata <= 64,
+    /// current <= 1, recent <= 32, independently of the existing FIFO size.
+    /// queued_jobs excludes current. Ages use this process's Dispatch clock.
+    func diagnosticSnapshotLines(reason: StaticString) -> [String] {
+        guard diagnosticsEnabled else { return [] }
+        condition.lock()
+        guard emittedSnapshots < Self.snapshotLimit else { condition.unlock(); return [] }
+        emittedSnapshots += 1
+        let snapshotNumber = emittedSnapshots
+        let now = DispatchTime.now().uptimeNanoseconds
+        let current = currentRecord
+        let oldestID = queue.oldestEnqueueOrdinal
+        let oldest = oldestID.map {
+            DiagnosticRecord(id: $0, metadata: pendingMetadata[$0], startedAt: 0, phaseAt: 0)
+        }
+        let queued = queue.count
+        let trackedPending = pendingMetadata.count
+        let peak = peakQueuedJobs
+        let enqueued = enqueuedJobs
+        let started = startedJobs
+        let completed = completedJobs
+        let dropped = droppedMetadata
+        let evictions = recentEvictions
+        let recent = recentRecords
+        condition.unlock()
+
+        func age(_ timestamp: UInt64) -> UInt64 { now >= timestamp ? now - timestamp : 0 }
+        func line(_ record: DiagnosticRecord, state: String) -> String {
+            let metadata = record.metadata
+            let queuedAge = metadata.map { String(age($0.enqueuedAt)) } ?? "unknown"
+            let stop = record.nextLoopAt == 0 ? now : record.nextLoopAt
+            let run = record.startedAt == 0 || stop < record.startedAt ? 0 : stop - record.startedAt
+            return "DIAGNOSTIC ObserverWorkerJob: snapshot=\(snapshotNumber) state=\(state)"
+                + " id=\(record.id) metadata=\(metadata == nil ? "missing" : "present")"
+                + " kind=\(metadata?.kind.rawValue ?? "unknown") table=\(metadata?.table ?? "unknown")"
+                + " store_identity=\(metadata.map { String($0.storeIdentity) } ?? "unknown")"
+                + " batch=\(metadata?.batchID?.uuidString.lowercased() ?? "unknown")"
+                + " enqueued_ns=\(metadata.map { String($0.enqueuedAt) } ?? "unknown")"
+                + " started_ns=\(record.startedAt) phase=\(record.startedAt == 0 ? "queued" : record.phase.rawValue)"
+                + " phase_ns=\(record.phaseAt) next_loop_ns=\(record.nextLoopAt)"
+                + " enqueued_age_ns=\(queuedAge) run_ns=\(run)"
+                + " phase_age_ns=\(record.phaseAt == 0 ? 0 : age(record.phaseAt))"
+        }
+        var lines = ["DIAGNOSTIC ObserverWorkerSnapshot: reason=\(reason) snapshot=\(snapshotNumber)"
+            + " uptime_ns=\(now) queued_jobs=\(queued) tracked_pending=\(trackedPending) peak_queued_jobs=\(peak)"
+            + " enqueued=\(enqueued) started=\(started) completed=\(completed)"
+            + " dropped_metadata=\(dropped) recent_evictions=\(evictions)"
+            + " current_id=\(current.map { String($0.id) } ?? "none")"
+            + " pending_metadata_limit=\(Self.pendingMetadataLimit)"
+            + " recent_limit=\(Self.recentLimit) snapshot_limit=\(Self.snapshotLimit)"
+            + " scheduling=backend_round_robin oldest_queued=enqueue_ordinal_not_next_admission"
+            + " clock=dispatch_uptime same_process=true overhead_subtracted=false"]
+        if let current { lines.append(line(current, state: "current")) }
+        if let oldest { lines.append(line(oldest, state: "oldest_queued")) }
+        lines.append(contentsOf: recent.map { line($0, state: "recent") })
+        return lines
     }
 
     /// Test hook: true once the worker thread verified its enlarged stack.
@@ -78,10 +306,27 @@ final class ObserverDeliveryWorker: @unchecked Sendable {
             stackVerified.withLocked { $0 = true }
             while true {
                 condition.lock()
+                diagnosticEnteredNextLoop()
                 while queue.isEmpty { condition.wait() }
-                let job = queue.removeFirst()
+                let job = queue.popFirst()!
+                if diagnosticsEnabled {
+                    startedJobs &+= 1
+                    let now = DispatchTime.now().uptimeNanoseconds
+                    currentRecord = DiagnosticRecord(
+                        id: job.enqueueOrdinal, metadata: pendingMetadata.removeValue(forKey: job.enqueueOrdinal),
+                        startedAt: now, phaseAt: now)
+                }
                 condition.unlock()
-                job()
+                if diagnosticsEnabled {
+                    // Ensure this closure reference survives through the
+                    // marker even when optimized ARC ends other uses early.
+                    withExtendedLifetime(job) {
+                        job.operation()
+                        diagnosticPhase(.bodyReturnedBeforeNextLoop)
+                    }
+                } else {
+                    job.operation()
+                }
             }
         }
         thread.name = "lattice.observer-delivery"
@@ -103,5 +348,50 @@ final class NIOLockedValueBoxCompat<T>: @unchecked Sendable {
     func withLocked<R>(_ body: (inout T) -> R) -> R {
         lock.lock(); defer { lock.unlock() }
         return body(&value)
+    }
+}
+
+// Internal, per-observer diagnostics for selected tests. Public entry points
+// pass nil. No process-global hook, new task or worker scheduling is involved.
+struct PayloadObserverDiagnosticEvent: Sendable {
+    let observer: String
+    let batch: UUID?
+    let stage: String
+    let uptime: UInt64
+    let rowIDs: [Int64]
+    let operations: [String]
+    let omittedRows: Int
+    let count: Int?
+}
+
+struct PayloadObserverDiagnostic: Sendable {
+    let observer: String
+    let capture: @Sendable (PayloadObserverDiagnosticEvent) -> Void
+
+    func record(_ stage: String, batch: UUID? = nil, count: Int? = nil) {
+        capture(.init(observer: observer, batch: batch, stage: stage,
+                      uptime: DispatchTime.now().uptimeNanoseconds,
+                      rowIDs: [], operations: [], omittedRows: 0, count: count))
+    }
+
+    func begin(_ changes: [TableChangeEvent]) -> PayloadObserverDiagnosticBatch {
+        let uptime = DispatchTime.now().uptimeNanoseconds
+        let batch = UUID()
+        let retainIDs = changes.count <= 1024
+        capture(.init(observer: observer, batch: batch, stage: "callback_entry",
+                      uptime: uptime,
+                      rowIDs: retainIDs ? changes.map { $0.rowId } : [],
+                      operations: retainIDs ? changes.map { $0.operation } : [],
+                      omittedRows: retainIDs ? 0 : changes.count, count: changes.count))
+        return .init(diagnostic: self, id: batch)
+    }
+}
+
+struct PayloadObserverDiagnosticBatch: Sendable {
+    let diagnostic: PayloadObserverDiagnostic
+    let id: UUID
+
+    func record(_ stage: String, count: Int? = nil) {
+        diagnostic.record(stage, batch: id, count: count)
     }
 }

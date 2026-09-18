@@ -13,10 +13,12 @@ let package = Package(
             targets: ["Lattice"]),
         .library(name: "LatticeServerKit", targets: ["LatticeServerKit"]),
         .library(name: "LatticeMCP", targets: ["LatticeMCP"]),
+        .library(name: "LatticeMCPTransport", targets: ["LatticeMCPTransport"]),
         .executable(name: "LatticeMain", targets: ["LatticeMain"]),
         .executable(name: "lattice-mcp", targets: ["lattice-mcp"]),
     ],
     dependencies: [
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
         // Versioned so lattice tags are consumable via `from:` (SwiftPM forbids
         // unversioned deps inside version-required packages). For the two-repo
         // dev loop use an UNCOMMITTED override:
@@ -42,7 +44,12 @@ let package = Package(
         // busy-timeout fix, vec0 reconcile idempotence, and apply-chunk ack
         // survival — a 1.6.2 wrapper on a 1.4.1 core would still livelock
         // IPC sync under the vec0 storm it claims to have fixed.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "1.4.2"),
+        // 2.0.0 floor: required for audit APIs, checked-transaction failures,
+        // and coordinated vec0 maintenance used by this wrapper.
+        // 2.0.1 also prevents local observer replay through a stale shared reader.
+        // 2.0.2 releases observer captures outside registry locks.
+        // 2.0.3 allocates observer tokens atomically across observer kinds.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.0.3"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -50,13 +57,19 @@ let package = Package(
         ),
         .package(url: "https://github.com/vapor/vapor.git", from: "4.76.0"),
         .package(url: "https://github.com/vapor/websocket-kit.git", from: "2.15.0"),
-        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.0"),
+        // Owned SDK fork pins the cooperative transport lifetime correction.
+        .package(url: "https://github.com/jsflax/swift-sdk.git", exact: "0.13.0"),
         // Docs-time only: enables `swift package generate-documentation` over
         // the catalog at Sources/Lattice/Lattice.docc (and the docs.yml Pages
         // deploy). No target depends on it; it adds nothing to consumer builds.
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
     ],
     targets: [
+        // Test-only real SQLite fault injection; the suite must compile on Linux.
+        .systemLibrary(
+            name: "CLatticeTestSQLite",
+            path: "Tests/CLatticeTestSQLite",
+            providers: [.apt(["libsqlite3-dev"]), .brew(["sqlite3"])]),
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .macro(
@@ -82,6 +95,7 @@ let package = Package(
         .testTarget(
             name: "LatticeTests",
             dependencies: [
+                "CLatticeTestSQLite",
                 "Lattice",
                 "LatticeMCP",
                 "LatticeServerKit",
@@ -124,6 +138,15 @@ let package = Package(
         .target(name: "LatticeMCP",
                 dependencies: ["Lattice"],
                 swiftSettings: [.interoperabilityMode(.Cxx)]),
+        .target(name: "LatticeMCPTransport", dependencies: [.product(name: "MCP", package: "swift-sdk"), .product(name: "Logging", package: "swift-log")]),
+        .testTarget(
+            name: "LatticeMCPTransportTests",
+            dependencies: [
+                "LatticeMCPTransport",
+                .product(name: "MCP", package: "swift-sdk"),
+                .product(name: "Logging", package: "swift-log"),
+            ]
+        ),
         .executableTarget(name: "lattice-mcp",
                           dependencies: [
                             "LatticeMCP",
