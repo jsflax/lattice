@@ -65,6 +65,8 @@ struct ObserverSendBoundaryProbe: Sendable {
         enum Stage: String, Sendable {
             case groupInstallEntry, observerRegistered, subscribed, activated
             case commitCallback, nudgeEntry, nudgeSubscription, pumpScheduled, pumpEntry
+            case nudgeTaskStarted, pumpTaskStarted, sendAwaitReturned
+            case advanceRequested, advanceEntry, advanceReturned
             case beginPassRequested, beginPassEntry, beginPassReturned
             case pageReadBegin, pageReadEnd, encodeBegin, encodeEnd, encodeFailed, sendPage, finishPass
         }
@@ -104,7 +106,8 @@ struct ObserverSendBoundaryProbe: Sendable {
         }
     }
 
-    func capture(page: [AuditLog], route: Route, pipelinePage: UInt64? = nil) {
+    @discardableResult
+    func capture(page: [AuditLog], route: Route, pipelinePage: UInt64? = nil) -> UInt64? {
         // Preserve every entry in order, including coalesced IDs and nil IDs.
         let ids = page.map { $0.globalId }
         let uptime = DispatchTime.now().uptimeNanoseconds
@@ -112,9 +115,10 @@ struct ObserverSendBoundaryProbe: Sendable {
         if let pipelinePage {
             // Reuse the EXISTING IDs/time, without an extra AuditLog traversal.
             // Only the push pump supplies a page scope; catch-up stays separate.
-            pipeline?.capture(.sendPage, parent: pipelinePage, count: ids.count,
-                              auditIDs: ids, at: uptime)
+            return pipeline?.capture(.sendPage, parent: pipelinePage, count: ids.count,
+                                     auditIDs: ids, at: uptime)
         }
+        return nil
     }
 }
 
@@ -422,8 +426,8 @@ actor FileWatchManager {
     /// coalesced by `dirty`: N commits during one pump pass cost exactly one
     /// extra pass — O(new entries), not O(commits).
     func nudge(key: String, pipeline: ObserverSendBoundaryProbe.Pipeline? = nil,
-               pipelineCallback: UInt64? = nil) {
-        let nudgeTrace = pipeline?.capture(.nudgeEntry, parent: pipelineCallback)
+               pipelineCallback: UInt64? = nil, pipelineTask: UInt64? = nil) {
+        let nudgeTrace = pipeline?.capture(.nudgeEntry, parent: pipelineCallback, related: pipelineTask)
         guard let group = groups[key] else { return }
         for sub in group.subscribers {
             let wake = sub.sendBoundaryProbe?.pipeline?.capture(
@@ -464,7 +468,9 @@ actor FileWatchManager {
         // subscription; every other subscription pumps independently, so a
         // slow socket lags only itself.
         Task.detached { [weak self] in
-            await self?.pump(sub, watcher: watcher, pageSize: pageSize, pipelinePump: pumpTrace)
+            let started = sub.sendBoundaryProbe?.pipeline?.capture(.pumpTaskStarted, parent: pumpTrace)
+            await self?.pump(sub, watcher: watcher, pageSize: pageSize,
+                             pipelinePump: pumpTrace, pipelineTask: started)
         }
     }
 
@@ -474,9 +480,9 @@ actor FileWatchManager {
     /// writer's post-commit WAL hook, so "don't hold the apply/write
     /// transaction while fanning" is satisfied by construction.
     private nonisolated func pump(_ sub: PushSubscription, watcher: WatcherRef, pageSize: Int,
-                                 pipelinePump: UInt64?) async {
+                                 pipelinePump: UInt64?, pipelineTask: UInt64?) async {
         let pipeline = sub.sendBoundaryProbe?.pipeline
-        let pumpTrace = pipeline?.capture(.pumpEntry, parent: pipelinePump)
+        let pumpTrace = pipeline?.capture(.pumpEntry, parent: pipelinePump, related: pipelineTask)
         while true {
             let request = pipeline?.capture(.beginPassRequested, parent: pumpTrace)
             guard var cursor = await beginPass(sub, pipelineRequest: request) else { return }
@@ -509,13 +515,17 @@ actor FileWatchManager {
                     return
                 }
                 pipeline?.capture(.encodeEnd, parent: encoding, count: encoded.count)
+                let sendReturned: UInt64?
                 do {
                     // AWAIT the write promise — flow control. The pump
                     // self-throttles to THIS socket's drain rate instead of
                     // stuffing the unbounded outbound buffer; memory bound is
                     // one page in flight per socket.
-                    sub.sendBoundaryProbe?.capture(page: page, route: .push, pipelinePage: pageReadEnd)
+                    let send = sub.sendBoundaryProbe?.capture(page: page, route: .push, pipelinePage: pageReadEnd)
                     try await sub.socket.send(raw: encoded, opcode: .binary)
+                    // Includes both socket promise completion and task resumption;
+                    // it is not an event-loop-only write-completion timestamp.
+                    sendReturned = pipeline?.capture(.sendAwaitReturned, parent: send)
                 } catch {
                     await unsubscribe(sub)
                     await clearPumping(sub)
@@ -526,7 +536,9 @@ actor FileWatchManager {
                 // class, multiplied).
                 log.debug("observer-push: sent \(page.count) entries (\(cursor + 1)...\(last))")
                 cursor = last
-                await advance(sub, to: last)
+                let advanceRequest = pipeline?.capture(.advanceRequested, parent: sendReturned, cursor: last)
+                await advance(sub, to: last, pipelineRequest: advanceRequest)
+                pipeline?.capture(.advanceReturned, parent: advanceRequest, cursor: last)
             }
             if await finishPass(sub, pipelinePass: pass) == false { return }
         }
@@ -550,7 +562,8 @@ actor FileWatchManager {
     /// The cursor only advances after a successful awaited send — every
     /// frame is produced by `id > cursor ORDER BY id ASC`, so no dupes by
     /// construction.
-    private func advance(_ sub: PushSubscription, to cursor: Int64) {
+    private func advance(_ sub: PushSubscription, to cursor: Int64, pipelineRequest: UInt64?) {
+        sub.sendBoundaryProbe?.pipeline?.capture(.advanceEntry, parent: pipelineRequest, cursor: cursor)
         sub.cursor = cursor
     }
 
@@ -653,7 +666,11 @@ actor FileWatchManager {
             group.token = watcher.observeCommits { [weak self] in
                 let callback = pipeline?.capture(.commitCallback, parent: groupTrace)
                 guard let self else { return }
-                Task { await self.nudge(key: key, pipeline: pipeline, pipelineCallback: callback) }
+                Task {
+                    let started = pipeline?.capture(.nudgeTaskStarted, parent: callback)
+                    await self.nudge(key: key, pipeline: pipeline,
+                                     pipelineCallback: callback, pipelineTask: started)
+                }
             }
             pipeline?.capture(.observerRegistered, parent: groupTrace)
         }
