@@ -2749,8 +2749,13 @@ protocol _Schema {
 extension _Schema {
     fileprivate func _generateVirtualResults<T>(matching modelTypes: [any Model.Type], _ type: T.Type, on lattice: Lattice) -> any VirtualResults<T> {
         var matchingTypes: [any Model.Type] = []
+        var matchingEntityNames = Set<String>()
         for modelType in modelTypes {
-            if modelType.init(isolation: #isolation) is T {
+            // One logical entity is one query source: the backend already
+            // includes every attached physical row. Preserve the first
+            // conforming type for hydration when schemas repeat an entity.
+            if modelType.init(isolation: #isolation) is T,
+               matchingEntityNames.insert(modelType.entityName).inserted {
                 matchingTypes.append(modelType)
             }
         }
