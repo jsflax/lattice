@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "scope": "local-only same hosted VM allocation exploratory Release measurements; physical host contract unverified",
+  "baselineSDK": "d18f80408a0cb992cdc98ce616c9b28813e99bf7",
+  "baselineSDKTree": "995487abb0b9b0ef7446bc2780bb5a1b8a99c16e",
+  "baselineCore": "f8f72e97ae94d1e40b2a9663cb7d15df62c8ac2a",
+  "baselineCoreTree": "38ba9b586ff9944a49173c25de578b23f3b72263",
+  "candidateCore": "7b11c282800d2bd6478538edb4e87de81953d315",
+  "candidateCoreTree": "18b482a47df9413e151887ef77a9dc5abb6be041",
+  "measuredSamples": 100,
+  "warmups": 5,
+  "candidateSwiftDefine": "LATTICE_PERF_SELECTED_BATCH",
+  "frozenFiles": {
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "PerfRefinementBenchmarks.swift": "993d3a6f384958185c9ee5817e6ba1f125a037f722a074a3a719ef71226455e2",
+    "perf_refinement_report.py": "482c42c05b10bf50efa12c59608c20c30574f770e7fd01bcb4b517ae9a92bb1a",
+    "BENCHMARK-CONTRACT.md": "a6f130dac97a685716e5a9e9186959fa710bdb1e6b759707cfbb32274541ea37"
+  },
+  "baselineProductPatchesAllowed": false,
+  "baselineOverlayPath": "Tests/LatticeTests/PerfRefinementBenchmarks.swift",
+  "freeFloorBytes": 12884901888,
+  "packetCeilingBytes": 32212254720,
+  "overallSeconds": 18000,
+  "finalizationReserveSeconds": 600,
+  "buildTimeoutSeconds": 5400,
+  "measurementTimeoutSeconds": 1200,
+  "settlingSeconds": 60,
+  "validationHarnessRevision": {
+    "id": "closed-fixture-readonly-v2",
+    "previousHarnessSHA256": "c0e28bdb3388cc993959127771a3af88d0987c300024d17d9eb1d829fc834f0b",
+    "harnessSHA256": "a87b45867eae459f6d0015fc76838028efa96ac51d3bee9c58c0b2bcc77e3fed",
+    "originalFailedRunID": 35346193210,
+    "timedWorkloadUnchanged": true,
+    "baselineProductChanged": false,
+    "reason": "Read checkpointed closed masters and unopened copies with immutable SQLite URI; keep active afterimages WAL-aware. Add bounded diagnostics outside timing."
+  },
+  "variants": [
+    "local"
+  ],
+  "selectionHarnessRevision": {
+    "id": "explicit-local-variant-v1",
+    "previousHarnessSHA256": "a87b45867eae459f6d0015fc76838028efa96ac51d3bee9c58c0b2bcc77e3fed",
+    "harnessSHA256": "993d3a6f384958185c9ee5817e6ba1f125a037f722a074a3a719ef71226455e2",
+    "timedWorkloadUnchanged": true,
+    "baselineProductChanged": false,
+    "originalAttachedFailedRunID": 35352719982,
+    "fullContractQualified": false,
+    "attachedQualificationClaimed": false
+  },
+  "candidatePinRevision": {
+    "reason": "Explicit parent-reviewed native memory integration; upcoming exact SDK requires this Core. SDK input remains required with no default.",
+    "previous": {
+      "candidateCore": "e578f3336438855f5c3bbdbfb864feac8ca079e8",
+      "candidateCoreTree": "a70de9eaf75ea36aef9961b0a876775bf2126b3f"
+    },
+    "normalNativeCIReceipt": "dependency-release/receipts/core-memory-7b11/SEAL.json",
+    "normalNativeCIReceiptSHA256": "80af0bdccb90b31f18d6f6b338350fd4ffa1c55a0ef2e66952935d980d139b8c"
+  }
+}
