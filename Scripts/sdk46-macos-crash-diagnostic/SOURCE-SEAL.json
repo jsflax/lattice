@@ -43,7 +43,7 @@
   "predecessorSealSHA256": "29f2774aa992f28d3108f72d120a598056820565cd4ce9ae4e202817d56345b5",
   "remoteControlQualified": true,
   "requiresParentReview": true,
-  "scope": "SDK46 macOS crash diagnostic source008: bounded SDK image format correction",
+  "scope": "SDK46 macOS crash diagnostic source packet",
   "sdkRuntimeQualified": false,
   "sourcePrepared": true
 }
