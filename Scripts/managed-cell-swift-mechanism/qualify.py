@@ -35,11 +35,39 @@ def packet_check(expected):
                 'sealed input drift: ' + name)
     return seal
 
-def sources(repository, expected):
-    found = {str(f.relative_to(repository)): sha(f) for f in repository.rglob('*')
-             if f.is_file() and '.git' not in f.relative_to(repository).parts and f.relative_to(repository).parts[0] != '.swiftpm'}
-    require(not any(f.is_symlink() for f in repository.rglob('*') if '.git' not in f.relative_to(repository).parts), 'source symlink')
-    require(found == expected, 'complete source inventory/hash drift: ' + str(repository))
+def sources(repository, expected, *, edited_core=None):
+    require(repository.is_dir() and not repository.is_symlink() and repository.resolve(strict=True)==repository,
+            'source root is not an owned real directory: '+str(repository))
+    files=[];links={}
+    # Never descend through directory links, including the declared SwiftPM edit.
+    for directory, dirs, names in os.walk(repository, followlinks=False):
+        dirs[:]=[name for name in dirs if name!='.git']
+        for name in [*dirs,*names]:
+            path=Path(directory)/name
+            if name=='.git':continue
+            relative=str(path.relative_to(repository))
+            if path.is_symlink():
+                links[relative]=os.readlink(path)
+                if name in dirs:dirs.remove(name)
+            elif path.is_file() and path.relative_to(repository).parts[0]!='.swiftpm':
+                files.append(path)
+    allowed={}
+    if edited_core is not None:
+        require(repository.name=='SDK' and edited_core==repository.parent/'Core'
+                and edited_core.is_dir() and not edited_core.is_symlink()
+                and edited_core.resolve(strict=True)==edited_core,
+                'edit target is not the exact owned sibling Core directory')
+        name='Packages/LatticeCore';link=repository/name
+        require(name not in expected and not any(x.startswith(name+'/') for x in expected),
+                'edit link overlaps authenticated SDK source')
+        require(links.get(name)==str(edited_core) and link.resolve(strict=True)==edited_core,
+                'expected SwiftPM edit link mismatch: '+json.dumps({'path':name,'readlink':links.get(name),'expected':str(edited_core),'observedLinks':links},sort_keys=True))
+        allowed[name]=str(edited_core)
+    rejected={name:target for name,target in links.items() if allowed.get(name)!=target}
+    require(not rejected,'source symlinks rejected: '+json.dumps(rejected,sort_keys=True))
+    found={str(path.relative_to(repository)):sha(path) for path in files}
+    require(found==expected,'complete source inventory/hash drift: '+str(repository))
+    return links
 
 def uniform_flags(proof, log, scratch, expand):
     for item in proof['nativeObjects'].values():
@@ -93,7 +121,7 @@ def main():
     result={'schemaVersion':1,'success':False,'mechanismQualified':False,'experimentCompleted':False,'performanceTargetClaimed':False,
             'releaseQualified':False,'transparentEnablementAccepted':False,'primaryError':None,'evidenceErrors':[],
             'packetSealSHA256':args.seal_sha256,'config':config}
-    proof=None;proof_hash=None;original_pins=None;pending=None;graph_done=False
+    proof=None;proof_hash=None;original_pins=None;pending=None;graph_done=False;source_checks=0
     with guard.Interrupts() as interrupts:
         runner=guard.GuardedRunner(root,receipts,env,interrupts,free_floor=config['freeFloorBytes'],packet_ceiling=config['packetCeilingBytes'],
             log_ceiling=config['logCeilingBytes'],overall_seconds=config['overallSeconds'],reserve=config['reserveSeconds'])
@@ -120,7 +148,8 @@ def main():
                 node=nodes[identity];entry=deps[identity];path=Path(node['path']).resolve(strict=True)
                 require(guard.url_key(entry['packageRef']['location'])==guard.url_key(pin['location']),'workspace URL')
                 if identity=='latticecore':
-                    require(path==core and entry['state']['name']=='edited','Core edit is not exact owned source');revision=config['core']
+                    require(path==core and entry['state']['name']=='edited' and entry['state'].get('path')==str(core)
+                            and entry['subpath']=='LatticeCore','Core edit is not exact owned source');revision=config['core']
                 else:
                     require(entry['state']['name']=='sourceControlCheckout' and entry['state']['checkoutState']==pin['state'],'dependency checkout state')
                     require(path==(scratch/'checkouts'/entry['subpath']).resolve() and path.is_relative_to(scratch/'checkouts'),'dependency path')
@@ -132,10 +161,13 @@ def main():
             require({k:v for k,v in current.items() if k!='latticecore'}=={k:v for k,v in original_pins.items() if k!='latticecore'},'non-Core lock drift')
             return {'nodes':nodes,'workspaceSHA256':sha(scratch/'workspace-state.json'),'lockSHA256':sha(sdk/'Package.resolved')}
         def verify_sources():
+            nonlocal source_checks
             # Editing Core can remove its lock entry; preserve and compare actual
             # generated lock separately while authenticating every other SDK byte.
             sdk_expected=dict(expected['SDK']);sdk_expected['Package.resolved']=sha(sdk/'Package.resolved')
-            sources(sdk,sdk_expected);sources(core,expected['Core'])
+            sdk_links=sources(sdk,sdk_expected,edited_core=core if graph_done else None);sources(core,expected['Core'])
+            guard.save_json(receipts/('SOURCE-CHECK-%03d.json'%source_checks),{'SDKEditLinks':sdk_links,'graphAuthenticated':graph_done})
+            source_checks+=1
         try:
             for label,destination,sha_key,url_key,tree_key in [('SDK',sdk,'sdk','sdkURL','sdkTree'),('Core',core,'core','coreURL','coreTree')]:
                 command(label+'-init',['git','init',destination])

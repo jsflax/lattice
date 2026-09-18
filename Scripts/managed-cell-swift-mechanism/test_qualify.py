@@ -56,6 +56,48 @@ class QualifierTests(unittest.TestCase):
                 else:
                     nested.unlink();nested.symlink_to(root/'Package.swift')
                 with self.assertRaises(ValueError):qualify.sources(root,expected)
+    def edit_fixture(self):
+        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup)
+        parent=Path(temp.name).resolve();sdk=parent/'SDK';core=parent/'Core'
+        sdk.mkdir();core.mkdir();(sdk/'Package.swift').write_text('package')
+        (core/'private.cpp').write_text('separately authenticated Core')
+        (sdk/'Packages').mkdir();(sdk/'Packages/LatticeCore').symlink_to(core,target_is_directory=True)
+        return sdk,core,{'Package.swift':qualify.sha(sdk/'Package.swift')}
+    def test_exact_owned_edit_link_is_recorded_without_traversal(self):
+        sdk,core,expected=self.edit_fixture()
+        self.assertEqual(qualify.sources(sdk,expected,edited_core=core),{'Packages/LatticeCore':str(core)})
+    def test_edit_link_is_not_admitted_before_graph(self):
+        sdk,core,expected=self.edit_fixture()
+        with self.assertRaisesRegex(ValueError,'Packages/LatticeCore'):qualify.sources(sdk,expected)
+    def test_edit_link_rejections(self):
+        for mode in ('relative','wrong','dangling','missing','ordinary-directory','core-symlink','extra-link','metadata-link','nested-link','parent-link'):
+            with self.subTest(mode=mode):
+                sdk,core,expected=self.edit_fixture();link=sdk/'Packages/LatticeCore'
+                if mode in ('relative','wrong','dangling','missing','ordinary-directory'):
+                    link.unlink()
+                    if mode=='relative':link.symlink_to('../../Core',target_is_directory=True)
+                    elif mode=='wrong':link.symlink_to(sdk,target_is_directory=True)
+                    elif mode=='dangling':link.symlink_to(core/'missing',target_is_directory=True)
+                    elif mode=='ordinary-directory':link.mkdir()
+                elif mode=='core-symlink':
+                    core.rename(core.parent/'other');core.symlink_to(core.parent/'other',target_is_directory=True)
+                elif mode=='extra-link':(sdk/'extra').symlink_to(core,target_is_directory=True)
+                elif mode=='metadata-link':
+                    (sdk/'.swiftpm').mkdir();(sdk/'.swiftpm/escape').symlink_to(core,target_is_directory=True)
+                elif mode=='nested-link':
+                    (sdk/'Examples').mkdir();(sdk/'Examples/LatticeCore').symlink_to(core,target_is_directory=True)
+                else:
+                    (sdk/'Packages').rename(sdk/'other');(sdk/'Packages').symlink_to(sdk/'other',target_is_directory=True)
+                with self.assertRaises(ValueError):qualify.sources(sdk,expected,edited_core=core)
+    def test_core_inventory_still_rejects_all_links(self):
+        sdk,core,expected=self.edit_fixture();(core/'alias').symlink_to(core/'private.cpp')
+        with self.assertRaisesRegex(ValueError,'alias'):qualify.sources(core,{'private.cpp':qualify.sha(core/'private.cpp')})
+    def test_source_link_receipt_and_graph_state_binding(self):
+        text=Path(qualify.__file__).read_text()
+        self.assertIn("entry['state'].get('path')==str(core)",text)
+        self.assertIn("entry['subpath']=='LatticeCore'",text)
+        self.assertIn('edited_core=core if graph_done else None',text)
+        self.assertIn("'SOURCE-CHECK-%03d.json'",text)
     def test_final_error_clears_all_acceptance(self):
         result={'success':True,'mechanismQualified':True,'experimentCompleted':True,'observedCount':420}
         qualify.clear_acceptance(result)
