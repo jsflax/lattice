@@ -1,0 +1,63 @@
+{
+  "discoveryIDs": [
+    "FilterProbeTests.FilterProbeSuite/selected()",
+    "FilterProbeTests.FilterProbeSuite/selectedExtra()",
+    "FilterProbeTests.OtherFilterProbeSuite/selected()"
+  ],
+  "xmlCases": [
+    {
+      "classname": "FilterProbeTests.FilterProbeSuite",
+      "name": "selected()"
+    },
+    {
+      "classname": "FilterProbeTests.FilterProbeSuite",
+      "name": "selectedExtra()"
+    },
+    {
+      "classname": "FilterProbeTests.OtherFilterProbeSuite",
+      "name": "selected()"
+    }
+  ],
+  "bodyLabels": [
+    "chosen",
+    "same_suite_distractor",
+    "other_suite_distractor"
+  ],
+  "bodyPrefix": "FILTER_PROBE_BODY\t",
+  "runtimeIDFormat": "Observed Test.current.id.description; no presumed separator",
+  "filters": {
+    "module-dot": "^FilterProbeTests\\.FilterProbeSuite/selected\\(\\)$",
+    "suite-suffix": "(?:^|[./])FilterProbeSuite/selected\\(\\)$"
+  },
+  "arms": {
+    "baseline": {
+      "xmlIndexes": [
+        0,
+        1,
+        2
+      ],
+      "tests": 3,
+      "suites": 2
+    },
+    "module-dot": {
+      "allowedObservedXMLIndexes": [
+        [],
+        [
+          0
+        ]
+      ],
+      "zeroOutcomeIsNotSelectedTestQualification": true
+    },
+    "suite-suffix": {
+      "xmlIndexes": [
+        0
+      ],
+      "tests": 1,
+      "suites": 1
+    }
+  },
+  "actualDiscovered": null,
+  "actualExecuted": null,
+  "swift63Qualified": false,
+  "nativeExecuted": false
+}

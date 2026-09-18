@@ -1,0 +1,164 @@
+{
+  "scope": "Root executes via existing guard only; this is not an executable supervisor",
+  "requireFullTimeout": true,
+  "overallSeconds": 300,
+  "reserveSeconds": 30,
+  "freeFloorBytes": 13421772800,
+  "packetCeilingBytes": 536870912,
+  "logCeilingBytes": 4194304,
+  "unsetEnvironment": [
+    "SWIFT_BACKTRACE"
+  ],
+  "ownedEnvironment": {
+    "TMPDIR": "{RUN}/tmp",
+    "TMP": "{RUN}/tmp",
+    "TEMP": "{RUN}/tmp",
+    "CLANG_MODULE_CACHE_PATH": "{RUN}/module-cache",
+    "SWIFT_MODULECACHE_PATH": "{RUN}/module-cache",
+    "SWIFTPM_MODULECACHE_OVERRIDE": "{RUN}/module-cache"
+  },
+  "steps": [
+    {
+      "label": "swift-version",
+      "argv": [
+        "{SWIFT}",
+        "--version"
+      ],
+      "timeoutSeconds": 10
+    },
+    {
+      "label": "xcode-version",
+      "argv": [
+        "/usr/bin/xcodebuild",
+        "-version"
+      ],
+      "timeoutSeconds": 10
+    },
+    {
+      "label": "build-tests",
+      "argv": [
+        "{SWIFT}",
+        "build",
+        "--package-path",
+        "{PACKAGE}",
+        "--scratch-path",
+        "{RUN}/scratch",
+        "--cache-path",
+        "{RUN}/cache",
+        "--config-path",
+        "{RUN}/config",
+        "--security-path",
+        "{RUN}/security",
+        "--disable-sandbox",
+        "--disable-experimental-prebuilts",
+        "--build-tests",
+        "-j",
+        "2"
+      ],
+      "timeoutSeconds": 60
+    },
+    {
+      "label": "discovery",
+      "argv": [
+        "{SWIFT}",
+        "test",
+        "--package-path",
+        "{PACKAGE}",
+        "--scratch-path",
+        "{RUN}/scratch",
+        "--cache-path",
+        "{RUN}/cache",
+        "--config-path",
+        "{RUN}/config",
+        "--security-path",
+        "{RUN}/security",
+        "--disable-sandbox",
+        "--disable-experimental-prebuilts",
+        "--skip-build",
+        "--disable-xctest",
+        "--enable-swift-testing",
+        "--list-tests"
+      ],
+      "timeoutSeconds": 15
+    },
+    {
+      "label": "baseline",
+      "argv": [
+        "{SWIFT}",
+        "test",
+        "--package-path",
+        "{PACKAGE}",
+        "--scratch-path",
+        "{RUN}/scratch",
+        "--cache-path",
+        "{RUN}/cache",
+        "--config-path",
+        "{RUN}/config",
+        "--security-path",
+        "{RUN}/security",
+        "--disable-sandbox",
+        "--disable-experimental-prebuilts",
+        "--skip-build",
+        "--disable-xctest",
+        "--enable-swift-testing",
+        "--xunit-output",
+        "{RUN}/receipts/baseline.xml"
+      ],
+      "timeoutSeconds": 15
+    },
+    {
+      "label": "module-dot",
+      "argv": [
+        "{SWIFT}",
+        "test",
+        "--package-path",
+        "{PACKAGE}",
+        "--scratch-path",
+        "{RUN}/scratch",
+        "--cache-path",
+        "{RUN}/cache",
+        "--config-path",
+        "{RUN}/config",
+        "--security-path",
+        "{RUN}/security",
+        "--disable-sandbox",
+        "--disable-experimental-prebuilts",
+        "--skip-build",
+        "--disable-xctest",
+        "--enable-swift-testing",
+        "--filter",
+        "^FilterProbeTests\\.FilterProbeSuite/selected\\(\\)$",
+        "--xunit-output",
+        "{RUN}/receipts/module-dot.xml"
+      ],
+      "timeoutSeconds": 15
+    },
+    {
+      "label": "suite-suffix",
+      "argv": [
+        "{SWIFT}",
+        "test",
+        "--package-path",
+        "{PACKAGE}",
+        "--scratch-path",
+        "{RUN}/scratch",
+        "--cache-path",
+        "{RUN}/cache",
+        "--config-path",
+        "{RUN}/config",
+        "--security-path",
+        "{RUN}/security",
+        "--disable-sandbox",
+        "--disable-experimental-prebuilts",
+        "--skip-build",
+        "--disable-xctest",
+        "--enable-swift-testing",
+        "--filter",
+        "(?:^|[./])FilterProbeSuite/selected\\(\\)$",
+        "--xunit-output",
+        "{RUN}/receipts/suite-suffix.xml"
+      ],
+      "timeoutSeconds": 15
+    }
+  ]
+}

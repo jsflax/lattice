@@ -1,0 +1,43 @@
+{
+  "schema": "lattice.swift-testing-filter-probe.source/1",
+  "sourceReadyForRootReview": true,
+  "nativeExecuted": false,
+  "networkUsed": false,
+  "swift63Qualified": false,
+  "supervisorAdded": false,
+  "guardSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+  "sourceChecks": [
+    "Three declared @Test cases; no external dependencies.",
+    "Each source-discovery-style and alternative slash-style candidate regex truth table excludes both distractors. This is synthetic regex behavior only.",
+    "Local Testing interface declares Test.current, id, moduleName and description.",
+    "Actual retained diagnostic focused XML has zero testcases; module-dot filter argv retained."
+  ],
+  "files": {
+    "README.md": {
+      "sha256": "9e9426ea3c44a30e14c9de59fd70200857f122b31cfd9d75eb64e8399a0f4b62",
+      "bytes": 6250
+    },
+    "commands.json": {
+      "sha256": "6d3c126057d7e470ff4709b3d70b747dcca52c38e2a6e4688fea29d0676f61e2",
+      "bytes": 3908
+    },
+    "expected.json": {
+      "sha256": "4a875298ee450f9da75150ca5ba62fc6c0104b1c776a3c2af847248fa8ce57ef",
+      "bytes": 1417
+    },
+    "package/Package.swift": {
+      "sha256": "db7b9dd4fc3c1631db34ff20b656c6ac1b49b05de3ac15ade251a58e8c17d6fa",
+      "bytes": 211
+    },
+    "package/Tests/FilterProbeTests/FilterProbeTests.swift": {
+      "sha256": "91da3f7380da441d0c71986a0e843c7d0799f0bb8e98ee9c1d33a73fa6b5ed69",
+      "bytes": 607
+    }
+  },
+  "retainedFailureInputs": {
+    "dependency-release/receipts/sdk46-diagnostic-35400793471/artifacts/diagnostic/receipts/test-discovery.log": "26edc934be964e78bfcfa5f5cfc218ed2cc71fac038b3156acb8e86ac473b753",
+    "dependency-release/receipts/sdk46-diagnostic-35400793471/artifacts/diagnostic/receipts/test-discovery.json": "4b8ac16d9aa6b58ed126ce0ea21a07927a200dc6d05464af55bb499c19ba70dc",
+    "dependency-release/receipts/sdk46-diagnostic-35400793471/artifacts/diagnostic/receipts/focused-test.json": "6d58b13a8ce82a350985f0d989b881072d4842de652ff8f49eecdfd5bd38fa53",
+    "dependency-release/receipts/sdk46-diagnostic-35400793471/artifacts/diagnostic/receipts/focused.xml": "7cb826fa05db4cdaa368bedfd16665201d7e5d85d40d2434052c1a2f7f2f36e8"
+  }
+}

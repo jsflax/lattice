@@ -12,7 +12,7 @@
     "deepScroll_jumpPaysOneOffsetStatement_thenKeyset",
     "attach_updateInSynced_throughQueryLattice"
   ],
-  "filter": "^LatticeTests\\.(?:LiveResultsIdentityTests/t7_forEachDiff_noDeleteInsertForSurvivors_fileDB|LiveResultsIdentityTests/t7_reuse_liveWeakRefIsSameObject_deadRefHydratesFresh|LiveResultsKeysetTests/deepScroll_jumpPaysOneOffsetStatement_thenKeyset|AttachTests/attach_updateInSynced_throughQueryLattice)\\(\\)$",
+  "filter": "^LatticeTests\\.(?:LiveResultsIdentityTests/t7_forEachDiff_noDeleteInsertForSurvivors_fileDB|LiveResultsIdentityTests/t7_reuse_liveWeakRefIsSameObject_deadRefHydratesFresh|LiveResultsKeysetTests/deepScroll_jumpPaysOneOffsetStatement_thenKeyset|AttachTests/attach_updateInSynced_throughQueryLattice)\\(\\)(?:/|$)",
   "tests": 4,
   "suites": 3,
   "skipsAccepted": false

@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 360
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      PACKET_SEAL_SHA256: 8a1ba5bdd2282786caa14d00898c98e8e8507b794f093ec35000d32d63b07779
+      PACKET_SEAL_SHA256: e058530a595af3f314834283182dc13baba42b47368dc842205af5ee1df4419a
     steps:
       - name: Fetch exact qualification tools under localdev
         timeout-minutes: 10
@@ -37,7 +37,7 @@ jobs:
           record = {k: os.environ[k] for k in ('GITHUB_REPOSITORY', 'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'PACKET_SEAL_SHA256')}
           (root / 'workflow-source.json').write_text(json.dumps(record, indent=2) + '\n')
           PY
-      - name: Fresh corrected Release build then four unchanged legacy prerequisites
+      - name: Prove tiny selector, then fresh corrected Release build and four unchanged legacy prerequisites
         timeout-minutes: 310
         shell: bash
         run: |

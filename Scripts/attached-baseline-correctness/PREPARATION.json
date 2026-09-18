@@ -1,14 +1,29 @@
 {
   "benchmarkAdmissionAccepted": false,
   "buildProofSHA256": "d527ba9d57fcae5bf91eae35bbb993e9d185fe13cfbb2aae8db34ebf34857720",
+  "executionAdmitted": false,
+  "fixtureSourceSHA256": {
+    "Package.swift": "db7b9dd4fc3c1631db34ff20b656c6ac1b49b05de3ac15ade251a58e8c17d6fa",
+    "Tests/FilterProbeTests/FilterProbeTests.swift": "91da3f7380da441d0c71986a0e843c7d0799f0bb8e98ee9c1d33a73fa6b5ed69"
+  },
   "guardSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
   "legacyRuntimeQualified": false,
   "noNativeOrNetwork": true,
+  "observedHostedVersion": {
+    "meaning": "Actual version text from predecessor007 only; no selector body or fixture qualification inferred.",
+    "origin": "/Users/jason/localdev/lattice-perf-refinement-20260917/dependency-release/receipts/attached-legacy-35402139697/artifacts/qualification/receipts/local-swift-version.log",
+    "packetCopy": "selector-observed-swift-version.log",
+    "run": 35402139697,
+    "sha256": "5fa4b669e41b23b9ad0760253d062493487f93cf5d8ad8c44f0d4fd635137499"
+  },
   "oneFreshCorrectedBuild": true,
   "originalArmReexecuted": false,
+  "predecessor007PacketSealSHA256": "8a1ba5bdd2282786caa14d00898c98e8e8507b794f093ec35000d32d63b07779",
+  "predecessor008PacketSealSHA256": "3053d8635f14ebff8acb4cefd4a448b43a772f4819a662f2d03242add4764b63",
   "predecessorAssessmentSHA256": "baca4a6fd9fac4bc461873307b99edf93ed1f668283eedf13f3c4e2bde63660e",
   "predecessorRun": 35394332578,
-  "scope": "Source-only corrected historical baseline four-case follow-on",
+  "scope": "Source-only selector preflight009: observed numeric swift-driver prefix correction; corrected historical baseline four-case follow-on",
+  "selectorNativeQualified": false,
   "sourceBase": {
     "buildSeconds": 5400,
     "coreCommit": "f8f72e97ae94d1e40b2a9663cb7d15df62c8ac2a",
@@ -46,8 +61,12 @@
     }
   },
   "sourceChecks": {
+    "inherited007PatchAndLegacySourceProofPreserved": true,
     "legacyTestBodiesChanged": false,
-    "patchApplyToExactD18": true,
-    "python": 51
+    "newPureSelectorTests": 14,
+    "pureRealProbeOrchestrationAndEnvRestorePassed": true,
+    "retainedHosted633VersionGateRegressionPassed": true,
+    "retainedSwift64ThreeZeroOneClassifierPassed": true,
+    "unchangedLegacyClassifierTestsRerun": 10
   }
 }

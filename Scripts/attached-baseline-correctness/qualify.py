@@ -13,6 +13,7 @@ import guarded_runner as guard
 import analyze
 import legacy_analysis
 import build_proof
+import selector_probe
 
 P = Path(__file__).resolve().parent
 load = lambda p: json.loads(p.read_text())
@@ -22,7 +23,7 @@ def finalize_acceptance(result):
         and not result['evidenceErrors'] and not result.get('receivedSignals'))
     if not result['success']:
         result.update(experimentCompleted=False, correctedFocusedAccepted=False,
-            legacyChecksQualified=False, correctedBaselinePrerequisitesAccepted=False)
+            legacyChecksQualified=False, correctedBaselinePrerequisitesAccepted=False, selectorProbeAccepted=False)
 
 def validate_packet(seal_sha):
     seal_path = P / 'PACKET-SEAL.json'
@@ -31,12 +32,15 @@ def validate_packet(seal_sha):
     required = {'qualify.py', 'legacy_analysis.py', 'analyze.py', 'guarded_runner.py', 'build_proof.py',
         'config.json', 'legacy-expected-tests.json', 'AttachedBaselineCorrectnessTests.swift',
         'product.patch', 'owned-log.patch', 'prior-packet-seal.json', 'prior-config.json',
-        'predecessor-assessment.json', 'predecessor-assessment-seal.json', 'predecessor-qualification-result.json'}
+        'predecessor-assessment.json', 'predecessor-assessment-seal.json', 'predecessor-qualification-result.json',
+        'selector_probe.py', 'selector-fixture/Package.swift',
+        'selector-fixture/Tests/FilterProbeTests/FilterProbeTests.swift', 'selector-origin-SOURCE-READY.json'}
     assert required <= seal['files'].keys()
     for name, digest in seal['files'].items():
         path = P / name
         assert path.resolve().is_relative_to(P) and not path.is_symlink()
         assert guard.digest(path) == digest, 'prepared input changed: ' + name
+    selector_probe.validate_source(P)
     config = load(P / 'config.json')
     prior_config = load(P / 'prior-config.json')
     prior_seal = load(P / 'prior-packet-seal.json')
@@ -91,10 +95,10 @@ def main():
         'correctedFocusedAccepted': False, 'reproductionConfirmed': False,
         'performanceQualified': False, 'fullContractQualified': False,
         'legacyChecksQualified': False, 'correctedBaselinePrerequisitesAccepted': False,
-        'benchmarkAdmissionAccepted': False, 'predecessor': predecessor,
+        'benchmarkAdmissionAccepted': False, 'selectorProbeAccepted': False, 'predecessor': predecessor,
         'scope': config['scope'], 'arms': {},
         'packetSealSHA256': args.packet_seal_sha256, 'primaryError': None, 'evidenceErrors': []}
-    contexts = {}; expected_nonzero = set(); baseline_sources = {}
+    contexts = {}; expected_nonzero = set(); baseline_sources = {}; selector_state = None
     with guard.Interrupts() as interrupts:
         runner = guard.GuardedRunner(root, receipts, env, interrupts,
             free_floor=config['freeFloorBytes'], packet_ceiling=config['packetCeilingBytes'],
@@ -197,8 +201,13 @@ def main():
             assert platform.system() == 'Darwin' and platform.machine() == 'arm64'
             guard.save_json(receipts / 'invocation.json', {'environment': env, 'config': config,
                 'packetSealSHA256': args.packet_seal_sha256, 'nativeExecutionBeforeInvocation': False})
-            command('local-swift-version', [config['swift'], '--version'])
+            swift_version = command('local-swift-version', [config['swift'], '--version'])
             command('local-macos-sdk', ['xcrun', '--sdk', 'macosx', '--show-sdk-version'])
+            # The cheap selector mechanism must pass on this actual toolchain
+            # before fetching or building the historical SDK/Core graph.
+            selector_state = selector_probe.run(P, root, receipts, runner, command, config, swift_version)
+            result['selectorProbeAccepted'] = True
+            result['selectorProbeReceiptSHA256'] = guard.digest(receipts / 'SELECTOR-PROBE.json')
             baseline_sdk = root / 'pristine-sdk'; baseline_core = root / 'pristine-core'
             baseline_sources['sdk'] = pristine('pristine-sdk', args.sdk_seed, config['sdkRepository'], baseline_sdk, config['sdkCommit'], config['sdkTree'])
             baseline_sources['core'] = pristine('pristine-core', args.core_seed, config['coreRepository'], baseline_core, config['coreCommit'], config['coreTree'])
@@ -292,6 +301,9 @@ def main():
             with interrupts.hold():
                 try:
                     inputs()
+                    if selector_state is not None:
+                        selector_probe.verify(selector_state)
+                        assert guard.digest(receipts / 'SELECTOR-PROBE.json') == result['selectorProbeReceiptSHA256']
                     for entry in runner.records:
                         analyze.command(load(receipts / (entry['label'] + '.json')), 1 if entry['label'] in expected_nonzero else 0)
                     for context in contexts.values():
