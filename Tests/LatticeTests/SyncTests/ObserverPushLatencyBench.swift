@@ -55,13 +55,26 @@ final class ObserverPushLatencyBench: BaseTest {
         let push = SyncObserverPush(
             copying: SyncObserverPush(reconcileInterval: nil), sendBoundaryProbe: probe)
         try await withPushHarness(push: push) { harness in
+            var actorSnapshotCaptured = false
+            var actorSnapshotLines: [String] = []
+            var measurementFinished = false
+            func captureActorFailure(_ reason: ObserverActorDiagnostics.Reason) {
+                guard !actorSnapshotCaptured else { return }
+                actorSnapshotCaptured = true
+                // The snapshot never awaits FileWatchManager. A blocked actor's
+                // current phase remains readable; formatting follows unlock.
+                // Keep <= 66 bounded lines until the pipeline capture closes.
+                actorSnapshotLines = ObserverActorDiagnostics.shared.snapshotLines(reason: reason)
+            }
             var sendSamples: [PushLatencySendSample] = []
             sendSamples.reserveCapacity(n)
             // Runs after measurement ends, including an incomplete/throwing run.
             defer {
-                // Close the pipeline capture before either recorder formats.
+                if !measurementFinished { captureActorFailure(.thrownFailure) }
+                // Close the pipeline capture before diagnostic emission.
                 // No waiting for callbacks/pumps that outlive this snapshot.
                 let pipelineSnapshot = pipelineLog.close()
+                for line in actorSnapshotLines { print(line) }
                 sendLog.emit(samples: sendSamples)
                 pipelineLog.emit(pipelineSnapshot)
             }
@@ -73,6 +86,7 @@ final class ObserverPushLatencyBench: BaseTest {
             // separately records the actual activate(cursor:) call.
             try co.add(SimpleSyncObject(value: -1, floatValue: 0))
             let warmed = await watcher.wait(timeout: 30) { $0.receivedGlobalIds.count >= 1 }
+            if !warmed { captureActorFailure(.warmupTimeout) }
             try #require(warmed, "warmup commit never reached the watch socket")
 
             var samples: [Double] = []
@@ -102,6 +116,7 @@ final class ObserverPushLatencyBench: BaseTest {
                     // not a callback latency sample or a completed p95 run.
                     // The wait duration includes polling and scheduling.
                     let waitReturned = DispatchTime.now()
+                    captureActorFailure(.incompleteIteration)
                     let writeMs = Double(writeReturned.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
                     let lookupMs = Double(lookupReturned.uptimeNanoseconds &- writeReturned.uptimeNanoseconds) / 1e6
                     let waitMs = Double(waitReturned.uptimeNanoseconds &- lookupReturned.uptimeNanoseconds) / 1e6
@@ -171,8 +186,10 @@ final class ObserverPushLatencyBench: BaseTest {
                 let breach = "push p95 " + ms(p95) + "ms breaches the "
                     + "\(Int(softGateMs))ms soft gate — push is no longer beating "
                     + "the redial path it replaces"
+                if p95 >= softGateMs { captureActorFailure(.p95Gate) }
                 #expect(p95 < softGateMs, "\(breach)")
             }
+            measurementFinished = true
         }
     }
 }
@@ -332,6 +349,7 @@ private final class PushLatencyPipelineLog: @unchecked Sendable {
             print("BENCH ObserverPushLatencyPipelineRow: event=\(index) stage=\(event.stage.rawValue)"
                   + " uptime_ns=\(row.uptime) parent=\(number(event.parent)) related=\(number(event.related))"
                   + " cursor=\(number(event.cursor)) count=\(number(event.count)) last_pk=\(number(event.lastPK))"
+                  + " actor_group=\(number(event.actorGroupID))"
                   + " active=\(flag(event.active)) dirty=\(flag(event.dirty)) pumping=\(flag(event.pumping))"
                   + " callback_covered=\(flag(event.callbackCovered)) page_audit_ids=[\(ids)]")
         }

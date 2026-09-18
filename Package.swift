@@ -46,7 +46,8 @@ let package = Package(
         // IPC sync under the vec0 storm it claims to have fixed.
         // 2.0.0 floor: required for audit APIs, checked-transaction failures,
         // and coordinated vec0 maintenance used by this wrapper.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.0.0"),
+        // 2.0.1 also prevents local observer replay through a stale shared reader.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.0.1"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
