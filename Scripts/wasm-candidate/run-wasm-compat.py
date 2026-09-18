@@ -227,6 +227,8 @@ def main():
                     if violation: raise RuntimeError(violation)
                 except BaseException as error:
                     result['evidenceErrors'].append(support.error_record(error))
+                if time.monotonic() > runner.overall_deadline:
+                    result['evidenceErrors'].append({'type':'RuntimeError','message':'Overall deadline exceeded during finalization'})
                 result['success'] = result['success'] and primary is None and not interrupts.received and not result['evidenceErrors'] and all(c['success'] for c in runner.records) and time.monotonic() <= runner.overall_deadline
                 support.save_json(receipts / 'PARTIAL-RESULT.json', result)
                 print('PARTIAL_SCOPE_RESULT', json.dumps({'success':result['success'],'browserCompatibility':False,'releaseGraphAccepted':False}), flush=True)
