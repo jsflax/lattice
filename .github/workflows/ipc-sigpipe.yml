@@ -1,0 +1,48 @@
+name: Linux IPC SIGPIPE baseline and candidate qualification
+# Supplementary focused source proof; normal Core/SDK gates remain required.
+on:
+  push:
+    branches: [codex/perf-qualification-20260918]
+    paths:
+      - 'Scripts/ipc-sigpipe/**'
+      - '.github/workflows/ipc-sigpipe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux-framing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Fetch exact workflow scripts into owned localdev root
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          TASK_ROOT="$HOME/localdev/lattice-ipc-sigpipe-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$TASK_ROOT"
+          mkdir -p "$TASK_ROOT/scripts" "$TASK_ROOT/tmp"
+          echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          for name in run-ipc-probe.py case-check.py guarded_runner.py source-manifest.json; do
+            curl --fail --silent --show-error --location --max-time 30 --max-filesize 1048576 \
+              "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/Scripts/ipc-sigpipe/$name" \
+              -o "$TASK_ROOT/scripts/$name"
+          done
+      - name: Compile real IPC source and verify eight fresh-process outcomes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$TASK_ROOT/scripts/run-ipc-probe.py" --root "$TASK_ROOT"
+      - name: Retain focused receipts even on failure
+        if: always() && env.TASK_ROOT != ''
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-ipc-sigpipe-${{ github.run_attempt }}
+          path: ${{ env.TASK_ROOT }}/receipts
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

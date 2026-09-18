@@ -1,0 +1,28 @@
+{
+  "baseline": "e578f3336438855f5c3bbdbfb864feac8ca079e8",
+  "baselineTree": "a70de9eaf75ea36aef9961b0a876775bf2126b3f",
+  "candidate": "b17f8c1b5b21d6eff94b0e02a963729f2927cbd7",
+  "candidateParent": "e578f3336438855f5c3bbdbfb864feac8ca079e8",
+  "candidateTree": "4d55c09c4c4c3ec5c7c2cb586f15d8534bfc2c7a",
+  "fixtureFrom": "candidate for both arms",
+  "guardedRunnerSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+  "patchSHA256": "2ae719094c9af2ad145d525940bd3f05cc31512b81beed94c231b04268c0b194",
+  "postimages": {
+    "CHANGELOG.md": "8e8bbea56e5b4005a3925ac3013e46b976a52c8b29463f1736cb99c26ac3e46d",
+    "CMakeLists.txt": "8db3740631e330b5f6611f47813ab1c7d23e91a861fcc2baafdd52d147312c36",
+    "Sources/LatticeCore/include/lattice/ipc.hpp": "009f54c55a49da3bbcbf1c05bf7a8ebd12c4ee54b1d3dcc837dc26fe0aa27efc",
+    "Sources/LatticeCore/include/lattice/log.hpp": "abf5a6e2e9502342782856032f9bc2cd9b7ab1b0f8b9f2201140ca02ae5c5b35",
+    "Sources/LatticeCore/include/lattice/network.hpp": "facc26238d4699c0ea9e4ebe1990cc7c5f774a0b2d2ac5e5e2235fd10be8ae99",
+    "Sources/LatticeCore/src/ipc.cpp": "1d117e6e41d5a1ef0dc4f20dde744c0a69d78cd99eeab8f5cc135033c46a0fea",
+    "Tests/LatticeCoreTests/IPCFramingRegressionTests.cpp": "e89ddde924bc11ff987f763d5baa09358e13f4340c5d0f65512dcc0230bcc587"
+  },
+  "preimages": {
+    "CHANGELOG.md": "0c1751847f4de3a756a8ca01301dee666949fec5bb627bf082fa47922364eee1",
+    "CMakeLists.txt": "17d7fe133b8ad8a6cb826ed2051c2b2df4f0145de6baf0b3c88eff45392218b6",
+    "Sources/LatticeCore/include/lattice/ipc.hpp": "009f54c55a49da3bbcbf1c05bf7a8ebd12c4ee54b1d3dcc837dc26fe0aa27efc",
+    "Sources/LatticeCore/include/lattice/log.hpp": "abf5a6e2e9502342782856032f9bc2cd9b7ab1b0f8b9f2201140ca02ae5c5b35",
+    "Sources/LatticeCore/include/lattice/network.hpp": "facc26238d4699c0ea9e4ebe1990cc7c5f774a0b2d2ac5e5e2235fd10be8ae99",
+    "Sources/LatticeCore/src/ipc.cpp": "f846fe223e5c68ed5f13cb482ddd910a227d39977e2ccf3f8359b386a671d966"
+  },
+  "repository": "https://github.com/jsflax/LatticeCore.git"
+}
