@@ -237,7 +237,7 @@ private final class RelayCatchUpReadState {
             }
             state.buffered.removeAll()
             state.bufferedBytes = 0
-            state.lattice = lattice
+            state.lattice = native.value.lattice
             ws.pingInterval = .seconds(30)
             ackPath?.record(.goLiveComplete)
             Task { @RelayControlActor in self.goLiveReturned(true) }
