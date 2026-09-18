@@ -1,0 +1,25 @@
+{
+  "scope": "Corrected candidate WASM compile + TypeScript + unchanged strict Node test gate; not browser or release qualification",
+  "browserCompatibility": false,
+  "releaseGraphAccepted": false,
+  "jsRepository": "https://github.com/jsflax/LatticeJS.git",
+  "jsCommit": "cfe12e6a928270418b133f2a080c02a9c4531966",
+  "candidateCore": "e8dcb3152e48f82f6e66dbb3961e64f664bf1484",
+  "candidateCoreTree": "a2f82d407318529e879ff29a37c7abb254153ddf",
+  "emsdkCommit": "948c31acd3f369a5da276e33ab2ed57108c165e5",
+  "emsdkVersion": "5.0.6",
+  "emscriptenReleaseRevision": "1724b50443d92e23ef2a56abf0dc501206839cef",
+  "nodeVersion": "20.18.0",
+  "supervisorSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+  "freeFloorBytes": 12884901888,
+  "packetCeilingBytes": 12884901888,
+  "perCommandLogCeilingBytes": 134217728,
+  "overallSeconds": 4200,
+  "finalizationReserveSeconds": 300,
+  "parallelism": 2,
+  "jsTree": "b04a622635afed6980bcbbd48b7824695f4bc4b3",
+  "executedArms": [
+    "B"
+  ],
+  "baselinePolicy": "Historical original A remains failed; no unchanged baseline rebuild or rerun; fullABCompatibility=false."
+}
