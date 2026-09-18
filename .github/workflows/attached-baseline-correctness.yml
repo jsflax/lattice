@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 360
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      PACKET_SEAL_SHA256: 15a953804ff8f485f8a0c193a774a65899178a45e7bc7208cf6336f94cd7dbd9
+      PACKET_SEAL_SHA256: 0ef36e80e956903c658f2983b1666d81ae47f9dd8c29e9c976d8bdc48192f9a8
     steps:
       - name: Fetch exact qualification tools under localdev
         timeout-minutes: 10

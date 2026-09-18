@@ -3,6 +3,7 @@ from pathlib import Path
 from copy import deepcopy
 import ast
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -101,7 +102,7 @@ class Oracle(unittest.TestCase):
             self.assertTrue(changed['reproductionConfirmed']); self.assertEqual(changed['arms'], original['arms'])
 
     def temporary(self):
-        parent = P / 'python-checks'; parent.mkdir(exist_ok=True)
+        parent = Path(os.environ.get('LATTICE_PARSER_CHECK_ROOT', str(P / 'python-checks'))); parent.mkdir(exist_ok=True)
         item = tempfile.TemporaryDirectory(dir=parent)
         self.addCleanup(item.cleanup)
         return Path(item.name)
@@ -279,5 +280,111 @@ class Oracle(unittest.TestCase):
         context['buildIdentity']['commandReceiptSHA256'] = a.digest(path)
         (receipts / 'original-build-result.json').write_text(json.dumps(context['buildIdentity']))
         with self.assertRaises(AssertionError): verify(context)
+
+    def actual_link_fixture(self):
+        data = json.loads((P / 'observed-link-commands.json').read_text())
+        self.assertEqual(data['sourceLogSHA256'], '72132feda93436588ab7e2d6d3fe7110b2a9a072f6270790224272bf10ea235a')
+        self.assertFalse(data['stableOrTemporaryListContentsRetainedInDownloadedArtifact'])
+        drivers = {}; pairs = []
+        for row in data['records']:
+            if Path(row['argv'][0]).name == 'swiftc':
+                # Command-shape fixture only: no fabricated file bytes/hashes.
+                drivers[row['output']] = dict(argv=row['argv'], lists=row['lists'],
+                    lineNumber=row['lineNumber'], inputs={})
+            else:
+                scratch = Path(row['output'].split('/scratch/')[0] + '/scratch')
+                pairs.append((row, drivers[row['output']], scratch, scratch.parent / 'tmp'))
+        return pairs
+
+    def test_actual_five_driver_children_join_without_claiming_missing_bytes(self):
+        pairs = self.actual_link_fixture(); self.assertEqual(len(pairs), 5)
+        for row, driver, scratch, temporary in pairs:
+            lists = [(Path(x['path']), x['format']) for x in row['lists']]
+            self.assertFalse(lists[0][0].is_relative_to(scratch))
+            child = b.derived_driver_link(row['argv'], lists, driver, scratch, temporary, row['lineNumber'])
+            self.assertEqual(child['canonicalDriverLine'], driver['lineNumber'])
+            for item in child['temporaryLists']:
+                self.assertFalse(item['contentsCaptured']); self.assertFalse(item['contentsIndependentlyVerified'])
+                self.assertIsNone(item['contentsSHA256'])
+
+    def test_actual_child_mismatches_and_unexplained_inputs_rejected(self):
+        row, driver, scratch, temporary = self.actual_link_fixture()[0]
+        lists = [(Path(x['path']), x['format']) for x in row['lists']]
+        cases = [('unmatched', row['argv'], lists, None)]
+        argv = list(row['argv']); argv[0] = '/other/bin/clang'; cases.append(('toolchain', argv, lists, driver))
+        argv = list(row['argv']); argv[argv.index('-o') + 1] += '.other'; cases.append(('output', argv, lists, driver))
+        argv = [x.replace('--target=arm64', '--target=x86_64') for x in row['argv']]; cases.append(('target', argv, lists, driver))
+        argv = list(row['argv']); argv[argv.index('--sysroot') + 1] += '.other'; cases.append(('sdk', argv, lists, driver))
+        cases.append(('new object', row['argv'] + ['/unexplained/a.o'], lists, driver))
+        cases.append(('escaped list', row['argv'], [(Path('/unowned/a.LinkFileList'), 'newline-paths')], driver))
+        cases.append(('unknown format', row['argv'], [(lists[0][0], 'response-arguments')], driver))
+        altered = deepcopy(driver); altered['lists'][0]['path'] = '/unowned/a.LinkFileList'
+        cases.append(('unowned canonical list', row['argv'], lists, altered))
+        for name, argv, paths, parent in cases:
+            with self.subTest(name=name), self.assertRaises(AssertionError):
+                b.derived_driver_link(argv, paths, parent, scratch, temporary, row['lineNumber'])
+
+    def paired_synthetic_link(self):
+        # Separate synthetic parser integration; never native-run evidence.
+        args = self.compile_fixture(); log, _, _, scratch, _ = args
+        temporary = scratch.parent / 'tmp'; temporary.mkdir()
+        lines = log.read_text().splitlines()
+        lines[-1] += ' -target arm64-apple-macosx14.0 -sdk /synthetic/MacOSX.sdk'
+        binary = scratch / 'LatticeTests.xctest/Contents/MacOS/LatticeTests'
+        missing = temporary / 'TemporaryDirectory.owned/inputs.LinkFileList'
+        lines.append(f'/usr/bin/clang -filelist {missing} --target=arm64-apple-macosx14.0 --sysroot /synthetic/MacOSX.sdk -o {binary}')
+        log.write_text('\n'.join(lines))
+        return args, temporary, missing
+
+    def test_canonical_graph_accepts_derived_child_without_temp_file(self):
+        args, temporary, missing = self.paired_synthetic_link()
+        self.assertFalse(missing.exists())
+        proof = b.make(*args, temporary=temporary); b.verify(proof)
+        self.assertEqual(len(proof['linkGraph']), 2)
+        self.assertEqual(len(proof['derivedLinkInvocations']), 1)
+        self.assertNotIn(str(missing), proof['nativeResponseFiles'])
+        self.assertFalse(missing.exists())
+
+    def test_unmatched_and_duplicate_children_rejected(self):
+        for mutation in ('remove driver', 'duplicate child'):
+            args, temporary, _ = self.paired_synthetic_link(); lines = args[0].read_text().splitlines()
+            if mutation == 'remove driver': del lines[-2]
+            else: lines.append(lines[-1])
+            args[0].write_text('\n'.join(lines))
+            with self.subTest(mutation=mutation), self.assertRaises(AssertionError): b.make(*args, temporary=temporary)
+
+    def test_derived_child_does_not_repair_unlinked_core_object(self):
+        args, temporary, _ = self.paired_synthetic_link()
+        listing = args[3] / 'partial.LinkFileList'; listing.write_text('\n'.join(listing.read_text().splitlines()[1:]))
+        with self.assertRaisesRegex(AssertionError, 'transitively join'): b.make(*args, temporary=temporary)
+
+    def test_canonical_list_drift_is_still_rejected_after_child_join(self):
+        args, temporary, _ = self.paired_synthetic_link(); proof = b.make(*args, temporary=temporary)
+        (args[3] / 'LatticeTests.LinkFileList').write_text('changed canonical input list')
+        with self.assertRaises(AssertionError): b.verify(proof)
+
+    def test_proof_failure_receipt_retains_position_without_acceptance(self):
+        tree = ast.parse((P / 'qualify.py').read_text())
+        matching = [node for node in ast.walk(tree) if isinstance(node, ast.Try) and node.body
+            and isinstance(node.body[0], ast.Assign) and isinstance(node.body[0].value, ast.Call)
+            and isinstance(node.body[0].value.func, ast.Attribute)
+            and node.body[0].value.func.attr == 'make'
+            and isinstance(node.body[0].value.func.value, ast.Name)
+            and node.body[0].value.func.value.id == 'build_proof']
+        self.assertEqual(len(matching), 1)
+        root = self.temporary(); receipts = root / 'receipts'; receipts.mkdir(); log = root / 'build.log'; log.write_text('retained build log')
+        class FailingProof:
+            @staticmethod
+            def make(*args, **kwargs): raise AssertionError('known failing stable-list predicate')
+        import traceback
+        namespace = dict(build_proof=FailingProof, log=log, sdk=root, context={'core': root},
+            home=root, config={'overlay': 'owned.swift'}, arm='original', receipts=receipts,
+            traceback=traceback, guard=guard, Path=Path, json=json)
+        with self.assertRaisesRegex(RuntimeError, 'original compiler proof failed at .*known failing stable-list predicate'):
+            exec(compile(ast.Module(body=matching, type_ignores=[]), 'exact compiler-proof exception scope', 'exec'), namespace)
+        result = json.loads((receipts / 'original-compiler-proof-failure.json').read_text())
+        self.assertFalse(result['compilerProofAccepted']); self.assertTrue(result['buildCommandSucceeded'])
+        self.assertEqual(result['type'], 'AssertionError'); self.assertTrue(result['frames'])
+        self.assertLessEqual(len(result['frames']), 8); self.assertEqual(result['buildLogSHA256'], a.digest(log))
 
 if __name__ == '__main__': unittest.main(verbosity=2)

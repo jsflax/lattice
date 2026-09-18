@@ -1,20 +1,26 @@
 {
-  "schemaVersion": 1,
-  "scope": "Prepared complete successor;29 Python checks passed; root controls native admission",
-  "sourceOnly": true,
-  "actualNativeTests": null,
-  "attachedOverlayCompiledInThisSuccessor": false,
-  "priorPacketSealSHA256": "15a953804ff8f485f8a0c193a774a65899178a45e7bc7208cf6336f94cd7dbd9",
-  "authoredSyntheticPythonChecks": 29,
-  "currentFullSyntheticExecuted": true,
-  "files": {
+  "cleanup": {
+    "errors": [],
+    "groupGone": true,
+    "leaderReaped": true,
+    "proof": "killpg ESRCH",
+    "signals": []
+  },
+  "commandReceiptSHA256": "20d071d9f920ccd998036519cbb1bcf7b18fc22bf8708e5c2d281f3bf7edbb6c",
+  "elapsedSeconds": 13.848074292007368,
+  "executedSyntheticPythonTests": 29,
+  "failed": 0,
+  "logSHA256": "794290ed3c270b7f2c888f4c22455b98df3628df32c3be9d9b1639d4515caf64",
+  "nativeSDKBuilds": 0,
+  "networkUsed": false,
+  "physicalPacketAccessed": false,
+  "sourceBefore": {
     "AttachedBaselineCorrectnessTests.swift": "952e4b750c23ae54643b405e0d2b6e80679c7dbcee175e4c3fa2d4ee0a095321",
-    "PREPARATION.json": "a786cff95ba0ad0916fcb850884d4e00678be1781406b662252a644e68e47a81",
+    "PREPARATION.json": "97d96904523a04a0f203f726f67ad1c6457579cb4e1cd7c6e3102d467b2ca77f",
     "PRIOR-RUN-DIAGNOSIS.json": "55f55363036d25cb6891af21d44bfe0f091ac775eee590b6e7707797a5cf54d0",
-    "README.md": "1d7011508753ad6f61d0553ea5c5611d304a047fc0fc7124ca970de4e4510d01",
+    "README.md": "e2b6f63ed5dfddfa2a8c6b6b0c23680adb407974b96b8d7c47ea6e16e187c710",
     "RUNNER004-FAILURE.md": "d55c47da683e85e36a4943abd28a5d8a12fe5a3e9340b9a3c3de86c3def12dea",
-    "STATIC-CHECKS.json": "35068ac2b2c793244b1a01e6b64b17c1892e1683490065315b9a857574ca4562",
-    "SYNTHETIC-VALIDATION.json": "72c55b3019cf26ef4f1aee9c27d24f12b27c591cc0c00a204d3a7b97d07dbd68",
+    "STATIC-CHECKS.json": "2f4a8cc995ccc778f853f21d0b4d2fd066c3fef5d3850c88afaf69e9ec800a96",
     "analyze.py": "b42bb22a757669451c51bae17013eeab7877201278679b5757c945e898b8d640",
     "build_proof.py": "b4d6543b2a831da6ac0a8a369be375eb2e26a6ee567941a2cb3f98ee9e16f586",
     "config.json": "e5d64b7d541320c28fd369b41e24e27a6654b8403469af3a41b31174535c9749",
@@ -24,5 +30,7 @@
     "product.patch": "2b4827d6db82a3d935aad91749323fe7995423a8d0ee301a3405a4109ed89eb2",
     "qualify.py": "bf503f5d4a16826891945d6a0042f0e230a7c7448a4715fabb8a856dbb4b1bab",
     "test_analysis.py": "4b7195bf18564b86c79c6f657ca605ff69ea4390920a11bab6685834d739d9a2"
-  }
+  },
+  "sourceInputsUnchanged": true,
+  "success": true
 }

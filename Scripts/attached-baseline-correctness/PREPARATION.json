@@ -69,17 +69,22 @@
     "jobs": 2
   },
   "workflow": "Separate proposal only; root owns installation, exact-seal review, push and dispatch. All runner paths are derived under the execution host localdev.",
-  "priorPacketSealSHA256": "cc0e5fa6f85159e7c0b39399939a2d733ac727f8846fc9a12603175f73c69495",
-  "revisionReason": "Explicit Release testability for actual remote module-not-testable compile failure; preserve reviewed response/filelist parser support.",
+  "priorPacketSealSHA256": "15a953804ff8f485f8a0c193a774a65899178a45e7bc7208cf6336f94cd7dbd9",
+  "revisionReason": "Canonical Swift driver link proof with derived Clang invocation records; retain exact failure stage/position.",
   "syntheticChecks": {
-    "authored": 22,
-    "currentPacketExecuted": null,
-    "priorRunner003Executed": 21,
-    "deferredReason": "physical A/A2/B measurement active; no synthetic SQLite fixture work during measurement"
+    "authored": 29,
+    "currentPacketExecuted": 29,
+    "failed": 0,
+    "receiptSHA256": "72c55b3019cf26ef4f1aee9c27d24f12b27c591cc0c00a204d3a7b97d07dbd68",
+    "scope": "Previous22 +7 parser/receipt regressions; no native Swift/Core qualification"
   },
   "priorRemoteRun": {
-    "runID": 35382590089,
-    "stage": "original build failed",
-    "testsRan": false
-  }
+    "runID": 35386062763,
+    "originalReleaseBuildSucceeded": true,
+    "compilerProofAccepted": false,
+    "correctedBuildStarted": false,
+    "testsRan": false,
+    "buildLogSHA256": "72132feda93436588ab7e2d6d3fe7110b2a9a072f6270790224272bf10ea235a"
+  },
+  "linkProofScope": "Canonical driver stable list members/hashes + object-map/source/object identities + output/link reachability; child temporary-list bytes unretained and not independently verified"
 }

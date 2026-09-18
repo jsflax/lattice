@@ -5,6 +5,31 @@ import json
 import shlex
 import guarded_runner as guard
 
+def derived_driver_link(argv, lists, driver, scratch, temporary, line_number):
+    """Join command text only; never invent or read ephemeral child-list bytes."""
+    prefix = f'link line {line_number}: '
+    assert driver is not None, prefix + 'temporary child link has no preceding canonical driver'
+    parent = driver['argv']
+    assert Path(parent[0]).name == 'swiftc', prefix + 'canonical link is not Swift driver'
+    assert Path(argv[0]).parent == Path(parent[0]).parent, prefix + 'child toolchain differs'
+    assert argv[argv.index('-o') + 1] == parent[parent.index('-o') + 1], prefix + 'child output differs'
+    assert driver['lists'] and all(Path(x['path']).is_relative_to(scratch) for x in driver['lists']), prefix + 'canonical lists not owned stable inputs'
+    assert len(lists) == 1 and lists[0][1] == 'newline-paths', prefix + 'unknown child-list shape'
+    assert lists[0][0].is_relative_to(temporary), prefix + 'child list outside owned temporary root'
+    assert '-target' in parent and '-sdk' in parent, prefix + 'driver target/SDK missing'
+    assert [x for x in argv if x.startswith('--target=')] == ['--target=' + parent[parent.index('-target') + 1]], prefix + 'child target differs'
+    assert argv.count('--sysroot') == 1 and argv[argv.index('--sysroot') + 1] == parent[parent.index('-sdk') + 1], prefix + 'child SDK differs'
+    # Additional explicit object/archive paths cannot silently become new edges.
+    direct = [str(Path(x).resolve()) for x in argv if Path(x).is_absolute() and x.endswith(('.o', '.a'))]
+    assert set(direct) <= set(driver['inputs']), prefix + 'unexplained child object/archive'
+    return {'lineNumber': line_number, 'argv': argv, 'canonicalDriverLine': driver['lineNumber'],
+        'output': parent[parent.index('-o') + 1], 'kind': 'derived Swift driver invocation',
+        'temporaryLists': [{'path': str(path), 'format': kind,
+            'contentsCaptured': False, 'contentsSHA256': None,
+            'contentsIndependentlyVerified': False,
+            'reason': 'Ephemeral child input is not used as a provenance edge; canonical driver stable lists are authenticated.'}
+            for path, kind in lists]}
+
 def native_arguments(argv, scratch):
     """Expand only owned compiler response files; preserve their exact custody."""
     scratch = scratch.resolve(); files = {}; tokens = [0]
@@ -27,12 +52,13 @@ def native_arguments(argv, scratch):
         return output
     return expand(argv), files
 
-def make(log, sdk, core, scratch, overlay):
+def make(log, sdk, core, scratch, overlay, *, temporary=None):
     proof = guard.compiler_input_proof(log, core)
     expected_cpp = set(proof['sourceFiles'])
-    native = {}; swift_inputs = {}; link_graph = {}; responses = {}
+    native = {}; swift_inputs = {}; link_graph = {}; responses = {}; derived_links = {}
     scratch = scratch.resolve(); sdk = sdk.resolve()
-    for line in log.read_text().splitlines():
+    temporary = temporary.resolve() if temporary is not None else None
+    for line_number, line in enumerate(log.read_text().splitlines(), 1):
         if not any(flag in line for flag in (' -c ', ' -output-file-map ', ' -o ')):
             continue
         try: argv = shlex.split(line)
@@ -85,9 +111,16 @@ def make(log, sdk, core, scratch, overlay):
                 if arg == '-filelist': lists.append((Path(argv[index + 1]).resolve(), 'newline-paths'))
                 elif arg.startswith('@') and 'LinkFileList' in arg: lists.append((Path(arg[1:]).resolve(), 'response-arguments'))
             if not lists: continue
+            if any(not path.is_relative_to(scratch) for path, _ in lists):
+                assert temporary is not None and tool in ('clang', 'clang++'), f'link line {line_number}: unsupported link-list location/tool'
+                child = derived_driver_link(argv, lists, link_graph.get(str(output)), scratch, temporary, line_number)
+                assert str(output) not in derived_links, f'link line {line_number}: multiple derived children for one output'
+                assert guard.digest(output) == link_graph[str(output)]['outputSHA256'], f'link line {line_number}: output drift'
+                derived_links[str(output)] = child
+                continue
             members = set(); list_proof = []
             for path, format in lists:
-                assert path.is_relative_to(scratch) and path.stat().st_size < 4 * 2**20
+                assert path.is_relative_to(scratch) and path.stat().st_size < 4 * 2**20, f'link line {line_number}: stable input list bounds: {path}'
                 # Darwin ld -filelist uses one literal path per line, including
                 # unquoted spaces (e.g. Swift Collections' Integer rank.o).
                 # Swift @response files retain shell-like argument tokenization.
@@ -103,8 +136,9 @@ def make(log, sdk, core, scratch, overlay):
                     members.add(str(archive))
             record = {'outputSHA256': guard.digest(output), 'argv': argv, 'lists': list_proof,
                 'inputs': {name: guard.digest(Path(name)) for name in sorted(members)}}
-            assert str(output) not in link_graph or link_graph[str(output)] == record
-            link_graph[str(output)] = record
+            previous = link_graph.get(str(output))
+            assert previous is None or {k: v for k, v in previous.items() if k != 'lineNumber'} == record, f'link line {line_number}: unexplained duplicate output: {output}'
+            if previous is None: link_graph[str(output)] = dict(record, lineNumber=line_number)
     assert set(native) == expected_cpp
     assert set(swift_inputs) == {'Lattice', 'LatticeTests'}
     expected_swift = {str(f.resolve()) for f in (sdk / 'Sources/Lattice').rglob('*.swift')}
@@ -130,6 +164,8 @@ def make(log, sdk, core, scratch, overlay):
     assert sum(binary.is_relative_to(p) for p in bundles) == 1
     bundle = {str(f): guard.digest(f) for p in bundles for f in p.rglob('*') if f.is_file() and not f.is_symlink()}
     proof.update(nativeObjects=native, nativeResponseFiles=responses, swiftModules=swift_inputs, linkGraph=selected_links,
+        derivedLinkInvocations=derived_links,
+        linkProofScope='Canonical driver stable lists and transitive objects/binary; derived child temporary-list bytes are not independently verified.',
         linkedArchives=archives, binary=str(binary), binarySHA256=guard.digest(binary), bundle=bundle)
     return proof
 

@@ -8,6 +8,7 @@ import platform
 import shutil
 import sys
 import time
+import traceback
 import guarded_runner as guard
 import analyze
 import build_proof
@@ -175,7 +176,20 @@ def main():
                 guard.save_json(receipts / (arm + '-source-proof.json'), source)
                 argv = [config['swift'], 'build', *common(context), '-c', 'release', '--force-resolved-versions', '--build-tests', '-Xswiftc', '-enable-testing', '-j', str(config['j']), '-v']
                 log = command(arm + '-release-build', argv, sdk, timeout=config['buildSeconds'])
-                proof = build_proof.make(log, sdk, context['core'], home / 'scratch', config['overlay'])
+                try:
+                    proof = build_proof.make(log, sdk, context['core'], home / 'scratch', config['overlay'], temporary=home / 'tmp')
+                except Exception as error:
+                    frames = [{'file': Path(f.filename).name, 'line': f.lineno, 'function': f.name}
+                        for f in traceback.extract_tb(error.__traceback__, limit=8)]
+                    failure = dict(guard.error_record(error), arm=arm, stage='compiler-input-object-link-proof',
+                        frames=frames, buildCommandSucceeded=True, buildLogSHA256=guard.digest(log),
+                        compilerProofAccepted=False)
+                    try: guard.save_json(receipts / (arm + '-compiler-proof-failure.json'), failure)
+                    except Exception as receipt_error:
+                        failure['receiptWriteError'] = guard.error_record(receipt_error)
+                        print('COMPILER_PROOF_FAILURE_RECEIPT_FAILED', json.dumps(failure), flush=True)
+                    position = frames[-1] if frames else {'file': 'unknown', 'line': 0, 'function': 'unknown'}
+                    raise RuntimeError(f"{arm} compiler proof failed at {position['file']}:{position['line']} ({position['function']}): {type(error).__name__}: {str(error)[:2048]}") from error
                 guard.save_json(receipts / (arm + '-compiler-proof.json'), proof)
                 assert sources(context, 'after-build') == source
                 graph(context, 'after-build')

@@ -1,13 +1,32 @@
 {
   "pythonFilesParsed": [
-    "analyze.py",
-    "build_proof.py",
     "guarded_runner.py",
+    "test_analysis.py",
+    "build_proof.py",
     "qualify.py",
-    "test_analysis.py"
+    "analyze.py"
   ],
-  "exactNewCommandContractCheckPassed": true,
-  "fullSyntheticSuiteExecuted": false,
+  "fullSyntheticSuiteExecuted": true,
+  "executed": 29,
+  "failed": 0,
+  "prior22Included": true,
+  "actualCommandPairsInFixtures": 5,
+  "fixtureScope": "Exact original verbose command text only, not recovered remote object/list/map bytes",
   "nativeCommands": 0,
-  "physicalPacketAccessed": false
+  "physicalPacketAccessed": false,
+  "unchangedFiles": [
+    "analyze.py",
+    "guarded_runner.py",
+    "config.json",
+    "product.patch",
+    "AttachedBaselineCorrectnessTests.swift",
+    "expected-tests.json"
+  ],
+  "testedExecutableHashes": {
+    "analyze.py": "b42bb22a757669451c51bae17013eeab7877201278679b5757c945e898b8d640",
+    "build_proof.py": "b4d6543b2a831da6ac0a8a369be375eb2e26a6ee567941a2cb3f98ee9e16f586",
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "qualify.py": "bf503f5d4a16826891945d6a0042f0e230a7c7448a4715fabb8a856dbb4b1bab",
+    "test_analysis.py": "4b7195bf18564b86c79c6f657ca605ff69ea4390920a11bab6685834d739d9a2"
+  }
 }
