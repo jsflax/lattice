@@ -1,0 +1,12 @@
+{
+  "predecessorSealSHA256": "d8bd19cf43ad74ce97a39732e052f734d6dfbd1e30949d8afceaca0cb54ae0a0",
+  "changedPaths": [
+    "README.md",
+    "sdk_capture.py",
+    "test_sdk_capture.py"
+  ],
+  "scope": "Report procLaunch comparison to actual serialized precision plus1us kernel resolution; no argv/deadline/observer/collector changes",
+  "sourceCoreReviewOfPredecessor": "One fractional birth precision blocker; all16 input hashes/ABI/resource+cleanup/identity/custody inspected with no additional concrete finding. Source-only review delivered via team message.",
+  "native": false,
+  "network": false
+}

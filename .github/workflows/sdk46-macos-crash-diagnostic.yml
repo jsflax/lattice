@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 235
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      SOURCE_SEAL_SHA256: 7117816dc2a015be21e797d960ead47a8f2e52252c8948a6c8fb9c3fc38a5a0c
+      SOURCE_SEAL_SHA256: da55ef78f0a65842bf7227ebed9be9dbf65c9ce24184636806a02c7b2b0a8203
     steps:
       - name: Fetch exact diagnostic tools under localdev
         timeout-minutes: 10

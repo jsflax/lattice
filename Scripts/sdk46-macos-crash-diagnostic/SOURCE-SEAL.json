@@ -1,20 +1,31 @@
 {
   "scope": "SDK46 macOS crash diagnostic source packet",
-  "files": {
-    "CrashControl.swift": "f577fccf09e9c2e4192f3e76ae04e4559efbc6c9e9bbcb91b5b16e96f1feded4",
-    "README.md": "a679d9f8c69edf37058651dab50d6b57c7109aa88e5f5c37b55a51664fb2a886",
-    "analyze.py": "79cb68f783bac9fc92b0a24b09dfea1a1f00f797c1d7e04b3b4f8a17be84aa2c",
-    "config.json": "fdf4d5a1f44a26e6bada35f4a4e52ef4228fed6a295dfc251201fa82bba37ea8",
-    "crash_reports.py": "91d3edd32ea4ceee0517dfc73eb028d8c6fc0b6cc6cf86abafbaa4f91b1ffc92",
-    "development_crashes_original.py": "f8c5901c59ecaab4c049bcbbf979be45bc423f872698201953297d93592c0dba",
-    "development_supervisor.py": "368ba9664acfa8453f5fa6752de94297c6402b1e33502bc12fc2aed1c2a4fb28",
-    "qualify.py": "b29e945d4f0b4f1d03f1e2bf97ee8fc0ef0b5e881df0beff957b27fef10735a2",
-    "test_packet.py": "ede04396e98525cfe7ac6f01ce1bf4a843bc6a9beb219dbac5b919fd978f3e4b"
-  },
   "nativeExecution": false,
-  "remoteControlQualified": false,
+  "remoteControlQualified": true,
+  "sdkRuntimeQualified": false,
   "sourcePrepared": true,
   "requiresParentReview": true,
-  "predecessorSealSHA256": "18df7ab9d22bbca4454762c8551f4dc772410142791c1d708b757ed235c9f4cb",
-  "delta": "Bound final copied-report verification reads; stop output copies on all exceptions; add final copy drift regression."
+  "predecessorSealSHA256": "1be0bc4f7acd89b5d0b863514d0ec73440b0a010044549c4d8c3b0ab4b64b89e",
+  "files": {
+    "CONTROL005-PARENT-ASSESSMENT.json": "ed11dfef09c066af5df88eb66c7f660425e907c6076579289986460f49797a1c",
+    "CrashControl.swift": "f577fccf09e9c2e4192f3e76ae04e4559efbc6c9e9bbcb91b5b16e96f1feded4",
+    "README.md": "497035ff88c797d84a0fbbe629755db081f357f767326bddcebec60218d3154a",
+    "SOURCE-AUDIT.json": "e334ac6ca08a39cb915136e1c6ea5e3b69184c2054cd6fbb6fe4e7cb243c5232",
+    "SOURCE004-CORRECTION.json": "55d69a629ed2a2bfdd73e44022ba889f609cc35849747ace73a08ba40e744022",
+    "SOURCE005-CORRECTION.json": "1c2081f9a26c7f0403621985388f40bf4c7b15f8e06c993d1c257b37f4dfeeda",
+    "analyze.py": "79cb68f783bac9fc92b0a24b09dfea1a1f00f797c1d7e04b3b4f8a17be84aa2c",
+    "config.json": "fdf4d5a1f44a26e6bada35f4a4e52ef4228fed6a295dfc251201fa82bba37ea8",
+    "crash_reports.py": "0823fa6775ec1690ff6fd0a14d5583994ab3cde5931480ee751618c081792736",
+    "development_crashes_original.py": "f8c5901c59ecaab4c049bcbbf979be45bc423f872698201953297d93592c0dba",
+    "development_supervisor.py": "2afeaa3d64438ca21429b28558fc9473691072586fba097ad33caf17229eee51",
+    "macho_identity.py": "d7fd3fcc7ea0d4257d3a19217ff50b0045635c3989f67df495890eef6996e4b1",
+    "owned_process_identity.py": "349f829083efbc40a82145176a0c3f4262e85967c05d2ae940b291818479c236",
+    "parse_report.py": "d414773fdbc9461f0fed112c61bdb6baf132b87bd37e5aaaac6e494f6cac294f",
+    "qualify.py": "d4d90100bee5ef0166a32b857d9b1949d357132ab0e1fb85a7e576f00b64ad23",
+    "sdk_capture.py": "41853dc7548eac4068ab237d6743a3ad91886714aa869e96a602caa01eb6addb",
+    "test_control_identity.py": "46545e8eb2bf587e24fc2cb8f144bcee42282d6ada64a28fa764e01cfe7bfd67",
+    "test_packet.py": "5b7e5bd919a222da87ca662123feebc34c66fda7f79cb140eb7586d1a0c8f321",
+    "test_required_inputs.py": "46b6fe964f553f97a2395431b9d6dd7dd6638dde9cbcbf516cf4522517c25fa8",
+    "test_sdk_capture.py": "625fd95c82e2abf7ef2055a471f24829d9ca301965f1616cbe0a1b218ace8eb9"
+  }
 }

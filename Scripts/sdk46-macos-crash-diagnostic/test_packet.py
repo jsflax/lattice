@@ -68,7 +68,7 @@ class Acceptance(unittest.TestCase):
     def test_control_before_checkout_ast(self):
         tree = ast.parse((P / 'qualify.py').read_text())
         source = (P / 'qualify.py').read_text()
-        self.assertLess(source.index('admission = analyze.control'), source.index("runner.run(name + '-fetch'"))
+        self.assertLess(source.index("assert admission is not None"), source.index("runner.run(name + '-fetch'"))
         self.assertNotIn('--no-parallel', source)
         self.assertNotIn('--parallel', source)
         self.assertNotIn('sanitize', source)
@@ -83,7 +83,12 @@ class Collector(unittest.TestCase):
         bundle = self.root / 'scratch/arm64-apple-macosx/debug/LatticePackageTests.xctest/Contents/MacOS/LatticePackageTests'
         bundle.parent.mkdir(parents=True); bundle.write_bytes(b'not a binary')
         self.marker = str(bundle).encode(); self.reports = self.root / 'reports'; self.reports.mkdir()
-        self.collector = crash_reports.Collector(self.root, self.root / 'captured', time.time() - 1, [self.reports])
+        marker=self.marker
+        class FakeIdentity:
+            def candidate(self,data,scan_end):
+                if marker not in data:raise ValueError('unowned synthetic report')
+                return {'role':'sdk','descriptorId':'synthetic'}
+        self.collector = crash_reports.Collector(self.root,self.root/'captured',time.time()-1,FakeIdentity(),[self.reports])
 
     def tearDown(self): self.temp.cleanup()
 

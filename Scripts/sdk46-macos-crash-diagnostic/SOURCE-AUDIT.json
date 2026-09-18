@@ -1,0 +1,54 @@
+{
+  "createdUTC": "2026-09-18T20:42:51.327724+00:00",
+  "baselineSealSHA256": "7117816dc2a015be21e797d960ead47a8f2e52252c8948a6c8fb9c3fc38a5a0c",
+  "source002ExactRunCalls": {
+    "control-compile": true,
+    "control-signal": true,
+    "build-tests": true,
+    "test-discovery": true,
+    "resolve-versioned": true,
+    "edit-core": true
+  },
+  "testArmArgvUnchanged": true,
+  "testTimeout1800": true,
+  "buildTimeout5400": true,
+  "cleanupAndResourceFunctionsUnchanged": true,
+  "overall210minutesReserve10minutesUnchanged": true,
+  "configSHA256": "fdf4d5a1f44a26e6bada35f4a4e52ef4228fed6a295dfc251201fa82bba37ea8",
+  "frameworkAnalyzerUnchanged": true,
+  "libprocABI": {
+    "size": 136,
+    "pidOffset": 12,
+    "ppidOffset": 16,
+    "pgidOffset": 100,
+    "startSecondsOffset": 120,
+    "startMicrosecondsOffset": 128,
+    "PROC_PGRP_ONLY": 2,
+    "PROC_PIDTBSDINFO": 3,
+    "SZOMB": 5
+  },
+  "headerSources": [
+    {
+      "path": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/libproc.h",
+      "sha256": "246d87709fc6b9157ce5cf3c475656ac48e0e1ae8bbdc46cf45acd34294448cd"
+    },
+    {
+      "path": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/sys/proc_info.h",
+      "sha256": "e427fa96b348537b21552b9de71e01039410bcad2cedee5584c5e5fddafd70fc"
+    },
+    {
+      "path": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach-o/loader.h",
+      "sha256": "5862aeb7fbf183453080bc887c0d502fe25a86ff5bd81291bbcc408bd7fe6e74"
+    },
+    {
+      "path": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/sys/proc.h",
+      "sha256": "593af71b2740ba6248995691280bcb15f8900d46b1d9868f7345084aa0692949"
+    },
+    {
+      "path": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/sys/param.h",
+      "sha256": "10d7a9553d341c5bc0b473444802920a7ec2e6222281eeaeb61b32dfff29c4b4"
+    }
+  ],
+  "liveLibprocExecuted": false,
+  "nativeOrNetworkExecuted": false
+}

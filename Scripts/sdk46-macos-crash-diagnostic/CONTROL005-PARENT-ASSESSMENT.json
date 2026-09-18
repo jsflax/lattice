@@ -1,0 +1,18 @@
+{
+  "reviewedAt": "2026-09-18T20:29:37.312688+00:00",
+  "runID": 35391275686,
+  "head": "09dafbd4b43916393a425e6f4a748aad268658b2",
+  "controlCaptureAccepted": true,
+  "sourceSealSHA256": "82dbb116e32adc4026fa3d0b0c6ee2d5eff8c25b1b04af65f3e06269e57fa0d6",
+  "resultSHA256": "a4300b24b13d6e402e09c0d7f3fa6f0bb4109cd22d4debc2c096a12129b9c3c1",
+  "admissionSHA256": "6c3b651aa3a908e4679a1ca78e45e6c0648276819f3ced0c15f4a1276c63b88f",
+  "binaryIdentitySHA256": "5b19c30009d9d9fe3b53533fd2af6c3291fecd1a756aa2d869212cd930aa9eec",
+  "reportSHA256": "30659068ce076f2cd9c28957e59828aa9d8b8abbe86bd5fda6b2a6a89ba2b4a9",
+  "ownedPID": 2722,
+  "compiledBinaryUUID": "7f6dc06f-7a76-4e33-a3a6-9b38bda19b38",
+  "namedFrame": "latticeSDK46DiagnosticCrashControl()",
+  "checks": "Actual clean SIGSEGV command receipt; report bytes/hash; PID/name/launch/capture; same compiled image UUID; triggered thread and expected named frame; final clean source/command/resource receipts.",
+  "sdkBuildStarted": false,
+  "sdkCrashCauseEstablished": false,
+  "releaseQualified": false
+}

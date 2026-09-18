@@ -1,37 +1,36 @@
-"""One aggregate, bounded report session across immediate and final late scans."""
+"""One bounded report budget shared by the control and both original SDK arms."""
 import copy
 import hashlib
 import os
 from pathlib import Path
 import stat
 import time
+import sdk_capture
 
 MAX_FILE, MAX_TOTAL, MAX_FILES = 8 * 2**20, 16 * 2**20, 8
 MAX_CANDIDATES, MAX_ENTRIES, MAX_METADATA, MAX_TEXT = 64, 4096, 64, 1024
-PREFIXES = ('LatticePackageTests', 'swiftpm-testing-helper')
+
 
 
 class Collector:
-    def __init__(self, root, destination, started_at, directories=None):
+    def __init__(self, root, destination, started_at, identities, directories=None):
         self.root, self.destination = Path(root), Path(destination)
         self.started_at = started_at
         self.directories = directories if directories is not None else [
             Path.home() / 'Library/Logs/DiagnosticReports', Path('/Library/Logs/DiagnosticReports')]
         assert len(self.directories) <= 2
-        expected = list((self.root / 'scratch').glob('*/debug/LatticePackageTests.xctest/Contents/MacOS/LatticePackageTests'))
-        if len(expected) != 1:
-            raise ValueError('expected exactly one owned development test bundle')
-        self.marker = str(expected[0]).encode()
+        self.identities = identities
+        self.prefixes = sdk_capture.NAMES
         self.destination.mkdir(exist_ok=False)
         self.seen, self.hashes = set(), set()
         self.stopped = False
-        self.result = {'scope': 'aggregate exact-owned-bundle reports; no crash-owner inference',
-            'testBundleExecutable': str(expected[0]), 'startedAtEpoch': started_at,
+        self.result = {'scope': 'bounded owned PID/name/time report custody; strict path/stack admission remains separate',
+            'startedAtEpoch': started_at, 'sharedAcross':'control/focused/full',
             'files': [], 'bytes': 0, 'errors': [], 'rejected': [], 'scans': [],
             'inventoryTruncated': False, 'metadataOmitted': {'errors': 0, 'rejected': 0},
             'limits': {'file': MAX_FILE, 'total': MAX_TOTAL, 'files': MAX_FILES,
                 'candidates': MAX_CANDIDATES, 'entriesPerDirectoryPass': MAX_ENTRIES,
-                'metadataPerKind': MAX_METADATA, 'errorText': MAX_TEXT, 'scans': 3},
+                'metadataPerKind': MAX_METADATA, 'errorText': MAX_TEXT, 'scans': 3, 'arrivalWindowSeconds': 60},
             'counters': {'eligibleReadAttempts': 0, 'incompleteRetries': 0, 'duplicateContents': 0}}
 
     def record(self, kind, value):
@@ -40,7 +39,7 @@ class Collector:
         else:
             self.result['metadataOmitted'][kind] += 1
 
-    def scan(self, label, *, wait_seconds=3):
+    def scan(self, label, *, wait_seconds=60):
         if self.stopped:
             raise RuntimeError('collector stopped after output custody failure')
         if len(self.result['scans']) >= 3:
@@ -50,7 +49,7 @@ class Collector:
                 'attempts': 0, 'directories': {str(p): {'presentPasses': 0, 'missingPasses': 0,
                     'entries': 0, 'matchingNames': 0, 'oldOrNonregular': 0} for p in self.directories}}
         self.result['scans'].append(scan)
-        deadline = started + min(3, max(0, wait_seconds))
+        deadline = started + min(60, max(0, wait_seconds))
         while True:
             scan['attempts'] += 1
             for directory in self.directories:
@@ -64,7 +63,7 @@ class Collector:
                                 self.result['inventoryTruncated'] = True
                                 break
                             facts['entries'] += 1
-                            if entry.name.startswith(PREFIXES) and Path(entry.name).suffix in ('.ips', '.crash'):
+                            if entry.name.startswith(self.prefixes) and Path(entry.name).suffix in ('.ips', '.crash'):
                                 facts['matchingNames'] += 1
                                 candidates.append(Path(entry.path))
                     candidates.sort()
@@ -105,8 +104,10 @@ class Collector:
                         if len(data) > min(MAX_FILE, MAX_TOTAL - self.result['bytes']):
                             self.record('rejected', {'name': path.name, 'reason': 'aggregate byte limit after read'})
                             continue
-                        if self.marker not in data:
-                            self.record('rejected', {'name': path.name, 'reason': 'exact owned bundle absent'})
+                        try:
+                            candidate = self.identities.candidate(data, time.time())
+                        except (ValueError, UnicodeError, RecursionError) as error:
+                            self.record('rejected', {'name': path.name, 'reason': str(error)[:MAX_TEXT]})
                             continue
                         digest = hashlib.sha256(data).hexdigest()
                         if digest in self.hashes:
@@ -116,7 +117,7 @@ class Collector:
                         # Reserve the entire charge and slot before output starts. A
                         # short/failed write stays accounted and stops all later scans.
                         entry = {'name': name, 'reservedBytes': len(data), 'scan': label,
-                                 'status': 'copy-not-completed'}
+                                 'status': 'copy-not-completed', 'candidateIdentity': candidate}
                         self.result['files'].append(entry)
                         self.result['bytes'] += len(data)
                         try:

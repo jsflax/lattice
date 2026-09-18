@@ -1,0 +1,31 @@
+{
+  "predecessorSealSHA256": "1be0bc4f7acd89b5d0b863514d0ec73440b0a010044549c4d8c3b0ab4b64b89e",
+  "scope": "Packaging-only successor: exact qualified control source and fixed runtime-input completeness gate. No source/config/argv/resource/deadline/identity policy changes.",
+  "controlOrigin": "execution/preparation/sdk46-macos-signal11/os-report-control-005",
+  "controlOriginSealSHA256": "82dbb116e32adc4026fa3d0b0c6ee2d5eff8c25b1b04af65f3e06269e57fa0d6",
+  "controlSourceSHA256": "f577fccf09e9c2e4192f3e76ae04e4559efbc6c9e9bbcb91b5b16e96f1feded4",
+  "parentLocalABIProbe": {
+    "path": "execution/validation/sdk46-owned-process-identity-probe-001/RESULT.json",
+    "sha256": "5538c4b532b3d823358a4065c1cdb8df7e8af94d68ea979b0ae0a5b04d6025b9",
+    "scope": "Local Darwin owned Python child only; not hosted SDK helper capture"
+  },
+  "unchangedRuntimeFiles": [
+    "CONTROL005-PARENT-ASSESSMENT.json",
+    "SOURCE-AUDIT.json",
+    "analyze.py",
+    "config.json",
+    "crash_reports.py",
+    "development_crashes_original.py",
+    "development_supervisor.py",
+    "macho_identity.py",
+    "owned_process_identity.py",
+    "parse_report.py",
+    "sdk_capture.py",
+    "test_control_identity.py",
+    "test_packet.py",
+    "test_sdk_capture.py",
+    "SOURCE004-CORRECTION.json"
+  ],
+  "nativeExecution": false,
+  "network": false
+}

@@ -183,7 +183,7 @@ class GuardedRunner:
         proof['proof'] = method if exists is False else 'missing group-absence proof'
         return proof
 
-    def run(self, label, argv, *, cwd, timeout=3600, require_full_timeout=False):
+    def run(self, label, argv, *, cwd, timeout=3600, require_full_timeout=False, process_observer=None):
         if self.interrupts.received:
             raise RunnerInterrupted('runner has already received interruption')
         log = self.receipts / (label + '.log')
@@ -215,6 +215,8 @@ class GuardedRunner:
             if self.interrupts.received:
                 raise RunnerInterrupted('interrupted during owned process launch')
             while process.poll() is None:
+                if process_observer is not None:
+                    process_observer.observe(process)
                 sample = self.measure(log)
                 record['minFreeBytes'] = min(record['minFreeBytes'], sample['freeBytes'])
                 record['peakPacketBytes'] = max(record['peakPacketBytes'], sample['packetBytes'])
@@ -259,6 +261,11 @@ class GuardedRunner:
                         record.update(logSHA256=digest(log), logBytes=log.stat().st_size)
                 except BaseException as error:
                     record['evidenceErrors'].append(error_record(error))
+                if process_observer is not None:
+                    try:
+                        record['ownedProcessObservations'] = process_observer.snapshot()
+                    except BaseException as error:
+                        record['evidenceErrors'].append(error_record(error))
                 record.update(elapsedSeconds=time.monotonic() - started,
                               receivedSignals=list(self.interrupts.received))
                 record['success'] = (record['started'] and record['exitCode'] == 0 and primary is None
