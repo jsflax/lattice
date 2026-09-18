@@ -38,6 +38,12 @@ struct ProjectionMemoryTests {
     }
 
     @Test func pausedBatchConsumerKeepsSnapshotWhileLiveWriterChanges() async throws {
+        try await withProjectionMemoryConsumerExecutor {
+            try await Self().pausedBatchConsumerBody()
+        }
+    }
+
+    private func pausedBatchConsumerBody() async throws {
         let db = try Lattice(isolation: nil, ProjectedMemoryItem.self,
                              configuration: .init(storage: .memory()))
         defer { db.close() }
@@ -127,6 +133,7 @@ private final class ProjectionMemoryPhaseLog: @unchecked Sendable {
         case writeBegin, writeReturned, readBegin, readReturned
         case secondNextBegin, secondNextReturned, finalNextBegin, finalNextReturned
         case snapshotBegin, snapshotReturned, factoryBegin, factoryReturned, factoryThrew
+        case nativeBatchBegin, nativeBatchReturned, nativeBatchThrew
     }
     private struct Point { let stage: Stage; let operation: Int; let uptime: UInt64 }
     private let lock = NSLock()
@@ -182,10 +189,42 @@ private func diagnosedMemoryProjection<Value: Sendable>(
             do {
                 let result = try definition.factory(request)
                 diagnostic.record(.factoryReturned, operation: operation)
-                return result
+                return DiagnosedMemoryProjectionOperation(base: result, operation: operation,
+                    diagnostic: diagnostic)
             } catch {
                 diagnostic.record(.factoryThrew, operation: operation)
                 throw error
             }
         }, decode: definition.decode)
+}
+
+/// Separates synchronous native batch time from the caller's async resumption.
+/// Lifecycle calls keep their original forwarding and cancellation behavior.
+private final class DiagnosedMemoryProjectionOperation: ProjectionReadOperation {
+    private let base: any ProjectionReadOperation
+    private let operation: Int
+    private let diagnostic: ProjectionMemoryPhaseLog
+
+    init(base: any ProjectionReadOperation, operation: Int,
+         diagnostic: ProjectionMemoryPhaseLog) {
+        self.base = base
+        self.operation = operation
+        self.diagnostic = diagnostic
+    }
+
+    func nextBatch(maxRows: Int) throws -> ProjectionReadBatch {
+        diagnostic.record(.nativeBatchBegin, operation: operation)
+        do {
+            let result = try base.nextBatch(maxRows: maxRows)
+            diagnostic.record(.nativeBatchReturned, operation: operation)
+            return result
+        } catch {
+            diagnostic.record(.nativeBatchThrew, operation: operation)
+            throw error
+        }
+    }
+
+    func cancel() { base.cancel() }
+    func close() { base.close() }
+    func waitUntilClosed() async { await base.waitUntilClosed() }
 }
