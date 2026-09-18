@@ -453,8 +453,36 @@ final class BusySafeApplyForensicsTests: BaseTest {
     /// `begin_transaction`.
     @Test func liveUploadStaysFastDuringPeerCatchUpAckBurst() async throws {
         let n = Int(ProcessInfo.processInfo.environment["FORENSIC_N"] ?? "") ?? 4_000
-        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self])
-        defer { Task { [harness] in await harness.shutdown() } }
+        let recorder = ProcessInfo.processInfo.environment["LATTICE_ACK_PATH_DIAGNOSTICS"] == "1"
+            ? ACKPathRecorder(testRunID: UUID(), retainLatestStages: true) : nil
+        var capturedFailure: ACKPathRecorder.Snapshot?
+        var reachedLatencyCheck = false
+        var diagnosticFinished = false
+        var diagnosticSendNS: UInt64?
+        var diagnosticAckNS: UInt64?
+        func finishDiagnostic() {
+            guard !diagnosticFinished else { return }
+            diagnosticFinished = true
+            if let capturedFailure {
+                if let recorder {
+                    print("DIAGNOSTIC PeerBurstUploadFailure: test=\(recorder.testRunID) send_begin_ns=\(diagnosticSendNS.map(String.init) ?? "NONE") ack_callback_ns=\(diagnosticAckNS.map(String.init) ?? "NONE") selected_id_is_measured_upload=true frozen_before_burst_drain=true")
+                }
+                ACKPathRecorder.emitSnapshot(capturedFailure)
+            } else if !reachedLatencyCheck {
+                recorder?.emitSnapshot(partial: true)
+            } else {
+                _ = recorder?.closeSnapshot(partial: false)
+            }
+        }
+        // Includes a thrown harness setup failure; finish is one-shot.
+        defer { finishDiagnostic() }
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self], ackPathRecorder: recorder)
+        defer {
+            // Freeze/emit before scheduling existing asynchronous teardown.
+            finishDiagnostic()
+            harness.removeACKPathRecorder()
+            Task { [harness] in await harness.shutdown() }
+        }
 
         // Seed the channel file BEFORE any socket opens, then release the
         // seeding handle so the relay opens the file itself.
@@ -466,7 +494,7 @@ final class BusySafeApplyForensicsTests: BaseTest {
         // Client A: joins already up to date (no catch-up of its own), so the
         // ONLY contention it faces is peer B's burst.
         let a = ForensicClient(label: "A", autoAck: true)
-        try await harness.connect(a, lastEventId: seededTail)
+        let uploadProbe = try await harness.connect(a, lastEventId: seededTail)
 
         // Warm A's connection: prove its per-connection lattice is live and
         // its apply pipeline acks, before the burst starts.
@@ -478,7 +506,7 @@ final class BusySafeApplyForensicsTests: BaseTest {
 
         // Client B: fresh store, full catch-up, acks every page.
         let b = ForensicClient(label: "B", autoAck: true)
-        try await harness.connect(b)
+        try await harness.connect(b, diagnosticRole: .peer)
 
         // Let the burst get going, then upload from A mid-burst.
         _ = await poll(timeout: 60) { b.pages >= 2 }
@@ -486,13 +514,34 @@ final class BusySafeApplyForensicsTests: BaseTest {
         let upload = try makeUploadEntries(donorPath: "donor-a-\(String.random(length: 8)).sqlite", value: 42)
         let uploadId = try #require(upload.first?.globalId)
         let payload = Array(buffer: try frame(upload))
+        // The recorder's existing "warm" field selects this measured upload,
+        // never the preceding warmup. No payload or title is recorded.
+        uploadProbe?.selectWarmID(uploadId, entryCount: upload.count)
 
         let t0 = DispatchTime.now()
-        try await a.socket!.send(payload)
+        diagnosticSendNS = t0.uptimeNanoseconds
+        uploadProbe?.record(.warmSendBegin, bytes: payload.count, count: upload.count)
+        do {
+            try await a.socket!.send(payload)
+            uploadProbe?.record(.warmSendReturn)
+        } catch {
+            uploadProbe?.record(.warmSendError)
+            throw error
+        }
 
+        uploadProbe?.record(.pollBegin)
         let acked = await poll(timeout: 60) { a.ackTime(for: uploadId) != nil }
-        let latencyMs = a.ackTime(for: uploadId).map {
+        uploadProbe?.record(.pollEnd, result: acked)
+        let ackTimestamp = a.ackTime(for: uploadId)
+        let latencyMs = ackTimestamp.map {
             Double($0.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
+        }
+        diagnosticAckNS = ackTimestamp?.uptimeNanoseconds
+        reachedLatencyCheck = true
+        if !acked || !(latencyMs ?? .infinity < 1_000) {
+            capturedFailure = recorder?.closeSnapshot(partial: true)
+        } else {
+            _ = recorder?.closeSnapshot(partial: false)
         }
 
         // Drain the rest of the burst so the numbers below describe a
