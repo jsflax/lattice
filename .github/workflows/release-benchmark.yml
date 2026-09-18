@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 360
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      CANDIDATE_SDK_SHA: ${{ inputs.candidate_sdk_sha || 'c3d08dab9d120cf19078299ce9a31ee501995284' }}
+      CANDIDATE_SDK_SHA: ${{ inputs.candidate_sdk_sha || 'da396f7715584bbf6ddec2b1d78bc0c69b07e294' }}
     steps:
       - name: Fetch benchmark tools into owned localdev directory
         timeout-minutes: 10
