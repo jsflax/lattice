@@ -1,0 +1,21 @@
+{
+  "scope": "WASM compile + TypeScript build + Node Vitest only",
+  "browserCompatibility": false,
+  "releaseGraphAccepted": false,
+  "jsRepository": "https://github.com/jsflax/LatticeJS.git",
+  "jsCommit": "ea5379bdffbf60a76f939d74ff1a2d7aa38f7b36",
+  "baselineCore": "36b828864cbb1543e945898be31589f9c04d6384",
+  "candidateCore": "cbf360d14d696c84b40f5a58a966eed0271035ae",
+  "candidateCoreTree": "cfa80cca9a05fbb2ee92f6db7ed5b9e2cbf41e03",
+  "emsdkCommit": "948c31acd3f369a5da276e33ab2ed57108c165e5",
+  "emsdkVersion": "5.0.6",
+  "emscriptenReleaseRevision": "1724b50443d92e23ef2a56abf0dc501206839cef",
+  "nodeVersion": "20.18.0",
+  "supervisorSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+  "freeFloorBytes": 12884901888,
+  "packetCeilingBytes": 12884901888,
+  "perCommandLogCeilingBytes": 134217728,
+  "overallSeconds": 4200,
+  "finalizationReserveSeconds": 300,
+  "parallelism": 2
+}
