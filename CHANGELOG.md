@@ -2,8 +2,8 @@
 
 ## [2.0.0] - Unreleased
 
-LatticeCore dependency floor raised to `2.0.1` (audit-history hygiene and
-observer cursor correctness: see its changelog). An Orbital room store reached 17 GB with under 1 MB of live
+LatticeCore dependency floor raised to `2.0.2` (audit-history hygiene,
+observer cursor correctness and capture lifetime: see its changelog). An Orbital room store reached 17 GB with under 1 MB of live
 data — every streamed rewrite of one message row was kept in full in the
 audit log, nothing pruned it on a store without sync partners, and the one
 nuclear tool renumbered ids and silenced every other process.
@@ -17,7 +17,7 @@ nuclear tool renumbered ids and silenced every other process.
   `pruneAuditLog`, `recordAuditWatermark`, `backdateAuditWatermarks`,
   `setReplicationSlotObserver`, `noHistoryLiveValuesJSON` and `auditHeader`.
   These inherited audit requirements do not have default implementations.
-- Bind this wrapper to the qualified LatticeCore 2.0.1 release, with matching
+- Bind this wrapper to the qualified LatticeCore 2.0.2 release, with matching
   manifest minimum and resolved tag revision.
 
 ### Added
@@ -63,6 +63,13 @@ nuclear tool renumbered ids and silenced every other process.
   `vacuum()`/`checkpoint()` now return values.
 
 ### Changed
+- Rotate the existing 8 MiB observer worker between ready backend identities,
+  preserving FIFO within each backend and serial callback execution. A queued
+  burst no longer has to drain before another backend receives a turn; a running
+  callback can still block the shared worker.
+- Deliver unfiltered collection events from their copied operation and row
+  metadata without opening an unused query handle for each batch. Preserve the
+  missing-file guard, attaching actor and order within each batch.
 - **`forceCompactHistory()` keeps the audit id sequence** and regenerates
   link/list rows (core 2.0.0). Fixes the relay's observer-push cursor going
   silent after a server-side compaction.
@@ -73,8 +80,10 @@ nuclear tool renumbered ids and silenced every other process.
   uploads core treats it like `nil`.
 
 ### Fixed
-- Require Core 2.0.1 so a stale shared reader cannot rewind the local observer
-  cursor and replay a committed change.
+- Require Core 2.0.2 so stale shared readers cannot replay committed changes,
+  and removing an observer releases its captures outside registry locks.
+  A captured object can cancel a sibling observer during destruction without
+  deadlocking the registry.
 - Install relay WebSocket receive handlers during synchronous upgrade so an
   upload sent immediately after connecting is buffered before asynchronous
   authorization and store setup begin.

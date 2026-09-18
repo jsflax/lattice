@@ -31,6 +31,8 @@ class LiveResultsGenerationTests: BaseTest {
     // MARK: T2a — same-handle read-your-writes, MainActor-created lattice
 
     @Test @MainActor func t2a_readYourWrites_mainActorCreatedLattice() throws {
+        let phase = PayloadObserverDiagnosticLog.beginMainActorPhase("generation.t2aMainActor")
+        defer { PayloadObserverDiagnosticLog.endMainActorPhase("generation.t2aMainActor", started: phase) }
         let lattice = try testLattice(GenItem.self)
         let all = lattice.objects(GenItem.self)
         let old = lattice.objects(GenItem.self).where { $0.rank > 30 }

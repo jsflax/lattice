@@ -2285,9 +2285,8 @@ public struct Lattice {
 
         let block = UnsafeBlock(block: block)
 
-        // Capture a sendable reference once, rather than resolving on every
-        // notification. Avoids creating a new Lattice (and running
-        // ensure_tables()) per callback, which races with teardown under load.
+        // Filtered batches resolve SQL state on the worker. Unfiltered batches
+        // need only event metadata, while retaining the reference's deletion guard.
         let ref = self.sendableReference
 
         let observerId = backend.addTableObserver(table: T.entityName) { changes in
@@ -2311,72 +2310,97 @@ public struct Lattice {
             ObserverDeliveryWorker.shared.enqueue(kind: .collection, table: T.entityName,
                                                   storeIdentity: workerStoreIdentity, batchID: diagnosticBatch?.id) {
                 diagnosticBatch?.record("job_started")
-                ObserverDeliveryWorker.shared.diagnosticPhase(.collectionResolve)
-                diagnosticBatch?.record("collection_resolution_started")
-                guard let self = ref.resolve() else {
-                    diagnosticBatch?.record("collection_resolution_nil")
-                    return
-                }
-                diagnosticBatch?.record("collection_resolution_completed")
-
-                // Filtered observers fire on RESULT-SET membership, not on
-                // "did the changed fields satisfy the predicate". The old
-                // changedFields-vs-predicate check had two failure modes:
-                // (1) a member row mutating an unrelated column (e.g. a
-                // running job's progress tick — predicate is on `status`)
-                // never fired, freezing observing UI; (2) with auditing
-                // disabled (_SyncControl.disabled=1) there are NO AuditLog
-                // rows, so filtered observers never fired at all.
-                //
-                // INSERT membership is knowable (evaluate the predicate
-                // against the live row). UPDATE/DELETE membership-before-the-
-                // change is NOT knowable post-hoc (audit rows carry new
-                // values only), so a row leaving the set can only be caught
-                // by firing conservatively. Conservative fires are cheap:
-                // LatticeQuery debounces and re-fetches at most once per
-                // frame.
-                func rowMatchesNow(_ rowId: Int64) -> Bool {
-                    guard let `where` else { return true }
-                    return TableResults<T>(self)
-                        .where({ _ in `where` && Query<Bool>.primaryKeyEquals(rowId) })
-                        .first != nil
-                }
-                // Decision SQL runs synchronously here on the worker's 8MB
-                // stack; delivery happens per decision below.
-                ObserverDeliveryWorker.shared.diagnosticPhase(.collectionDecisions)
-                diagnosticBatch?.record("collection_decisions_started")
+                // Keep a filtered query handle alive through the common
+                // emission tail, not merely through membership decisions.
+                var queryLattice: Lattice?
+                defer { withExtendedLifetime(queryLattice) {} }
                 var decisions: [CollectionChange] = []
-                for entry in changes {
-                    let operation = entry.operation
-                    let rowId = entry.rowId
-                    switch operation {
-                    case "INSERT":
-                        if rowMatchesNow(rowId) {
-                            decisions.append(.insert(rowId))
+                if `where` == nil {
+                    // Preserve the dequeue-time deletion guard without opening
+                    // a query handle solely to forward already-copied events.
+                    guard !ref._backingFileIsMissing else {
+                        diagnosticBatch?.record("collection_resolution_nil")
+                        return
+                    }
+                    diagnosticBatch?.record("collection_resolution_skipped")
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.collectionDecisions)
+                    diagnosticBatch?.record("collection_decisions_started")
+                    for entry in changes {
+                        switch entry.operation {
+                        case "INSERT": decisions.append(.insert(entry.rowId))
+                        case "DELETE": decisions.append(.delete(entry.rowId))
+                        case "UPDATE": decisions.append(.update(entry.rowId))
+                        default: break
                         }
-                    case "DELETE":
-                        // Pre-delete membership IS knowable when auditing is
-                        // on: the audit DELETE row carries the OLD values.
-                        // Without an audit row (auditing disabled), fire
-                        // conservatively — prior state is unknowable.
-                        if let `where` {
-                            let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
-                            let wasMember = TableResults<AuditLog>(self).where({
-                                $0.rowId == rowId && convertedQuery && $0.operation == .delete
-                            }).first != nil
-                            let anyAuditForRow = TableResults<AuditLog>(self).where({
-                                $0.rowId == rowId && $0.operation == .delete
-                            }).first != nil
-                            if wasMember || !anyAuditForRow {
+                    }
+                } else {
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.collectionResolve)
+                    diagnosticBatch?.record("collection_resolution_started")
+                    guard let resolvedLattice = ref.resolve() else {
+                        diagnosticBatch?.record("collection_resolution_nil")
+                        return
+                    }
+                    queryLattice = resolvedLattice
+                    diagnosticBatch?.record("collection_resolution_completed")
+
+                    // Filtered observers fire on RESULT-SET membership, not on
+                    // "did the changed fields satisfy the predicate". The old
+                    // changedFields-vs-predicate check had two failure modes:
+                    // (1) a member row mutating an unrelated column (e.g. a
+                    // running job's progress tick — predicate is on `status`)
+                    // never fired, freezing observing UI; (2) with auditing
+                    // disabled (_SyncControl.disabled=1) there are NO AuditLog
+                    // rows, so filtered observers never fired at all.
+                    //
+                    // INSERT membership is knowable (evaluate the predicate
+                    // against the live row). UPDATE/DELETE membership-before-the-
+                    // change is NOT knowable post-hoc (audit rows carry new
+                    // values only), so a row leaving the set can only be caught
+                    // by firing conservatively. Conservative fires are cheap:
+                    // LatticeQuery debounces and re-fetches at most once per
+                    // frame.
+                    func rowMatchesNow(_ rowId: Int64) -> Bool {
+                        guard let `where` else { return true }
+                        return TableResults<T>(resolvedLattice)
+                            .where({ _ in `where` && Query<Bool>.primaryKeyEquals(rowId) })
+                            .first != nil
+                    }
+                    // Decision SQL runs synchronously here on the worker's 8MB
+                    // stack; delivery happens per decision below.
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.collectionDecisions)
+                    diagnosticBatch?.record("collection_decisions_started")
+                    for entry in changes {
+                        let operation = entry.operation
+                        let rowId = entry.rowId
+                        switch operation {
+                        case "INSERT":
+                            if rowMatchesNow(rowId) {
+                                decisions.append(.insert(rowId))
+                            }
+                        case "DELETE":
+                            // Pre-delete membership IS knowable when auditing is
+                            // on: the audit DELETE row carries the OLD values.
+                            // Without an audit row (auditing disabled), fire
+                            // conservatively — prior state is unknowable.
+                            if let `where` {
+                                let convertedQuery = `where`.convertKeyPathsToEmbedded(rootPath: "changedFields", isAnyProperty: false)
+                                let wasMember = TableResults<AuditLog>(resolvedLattice).where({
+                                    $0.rowId == rowId && convertedQuery && $0.operation == .delete
+                                }).first != nil
+                                let anyAuditForRow = TableResults<AuditLog>(resolvedLattice).where({
+                                    $0.rowId == rowId && $0.operation == .delete
+                                }).first != nil
+                                if wasMember || !anyAuditForRow {
+                                    decisions.append(.delete(rowId))
+                                }
+                            } else {
                                 decisions.append(.delete(rowId))
                             }
-                        } else {
-                            decisions.append(.delete(rowId))
+                        case "UPDATE":
+                            decisions.append(.update(rowId))
+                        default:
+                            break
                         }
-                    case "UPDATE":
-                        decisions.append(.update(rowId))
-                    default:
-                        break
                     }
                 }
                 diagnosticBatch?.record("collection_decisions_completed", count: decisions.count)
@@ -2388,6 +2412,7 @@ public struct Lattice {
                     diagnosticBatch?.record("collection_actor_hop")
                     ObserverDeliveryWorker.shared.diagnosticPhase(.actorHandoff)
                     Task {
+                        diagnosticBatch?.record("collection_actor_task_started")
                         await isolation.invoke { _ in
                             diagnosticBatch?.record("collection_emission_started", count: batch.count)
                             for change in batch { block(change) }

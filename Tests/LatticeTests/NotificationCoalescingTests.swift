@@ -30,14 +30,19 @@ struct NotificationCoalescingTests {
         // MainActor-created lattice: its models carry MainActor isolation, so
         // deliveries take the coalesced-drainer path (the field shape —
         // @LatticeQuery models live on the main actor).
-        let lattice = try Lattice(CoalescePerson.self, configuration: .init(fileURL: fileURL))
+        let lattice: Lattice
         var writers: [CoalescePerson] = []
-        for i in 0..<200 {
-            let p = CoalescePerson()
-            p.name = "p\(i)"
-            p.age = i
-            try lattice.add(p)
-            writers.append(p)
+        do {
+            let phase = PayloadObserverDiagnosticLog.beginMainActorPhase("coalescing.openAndSeed")
+            defer { PayloadObserverDiagnosticLog.endMainActorPhase("coalescing.openAndSeed", started: phase) }
+            lattice = try Lattice(CoalescePerson.self, configuration: .init(fileURL: fileURL))
+            for i in 0..<200 {
+                let p = CoalescePerson()
+                p.name = "p\(i)"
+                p.age = i
+                try lattice.add(p)
+                writers.append(p)
+            }
         }
 
         // Distinct Swift instances for the same rows are the observation
@@ -45,19 +50,27 @@ struct NotificationCoalescingTests {
         let fired = FiredBox()
         var observed: [CoalescePerson] = []
         var cancellables: [Any] = []
-        for writer in writers {
-            let pk = writer.primaryKey!
-            let twin = lattice.object(CoalescePerson.self, primaryKey: pk)!
-            #expect(twin !== writer)
-            cancellables.append(twin.observe { _ in fired.insert(Int(pk)) })
-            observed.append(twin)
+        do {
+            let phase = PayloadObserverDiagnosticLog.beginMainActorPhase("coalescing.registerTwins")
+            defer { PayloadObserverDiagnosticLog.endMainActorPhase("coalescing.registerTwins", started: phase) }
+            for writer in writers {
+                let pk = writer.primaryKey!
+                let twin = lattice.object(CoalescePerson.self, primaryKey: pk)!
+                #expect(twin !== writer)
+                cancellables.append(twin.observe { _ in fired.insert(Int(pk)) })
+                observed.append(twin)
+            }
         }
 
         let baseline = ModelInstanceRegistry.shared._drainTasksScheduledForTesting
 
-        try lattice.transaction {
-            for writer in writers {
-                writer.age += 1000
+        do {
+            let phase = PayloadObserverDiagnosticLog.beginMainActorPhase("coalescing.transaction")
+            defer { PayloadObserverDiagnosticLog.endMainActorPhase("coalescing.transaction", started: phase) }
+            try lattice.transaction {
+                for writer in writers {
+                    writer.age += 1000
+                }
             }
         }
 

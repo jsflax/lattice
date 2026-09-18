@@ -4,8 +4,8 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "313ab4866cd422c7d24860388cec3e73edbefac0",
-      "version": "2.0.1"
+      "revision": "e1c97d9480b2518d151d563acfa3939a2720e58e",
+      "version": "2.0.2"
     },
     {
       "identity": "swift-sdk",
@@ -19,13 +19,13 @@
   "qualificationScope": "upstream-release-source-joins-only",
   "qualified": true,
   "releaseEvidence": {
-    "receiptSHA256": "e0203ba9ae61bee3a0c7422dbb004d3d2fb6c4a614190384163d096be8c4b845",
+    "receiptSHA256": "b29027b09f57efa39c31244560e54fa9539d3b8acc640ee2f85dd9debf792550",
     "releases": [
       {
-        "commit": "313ab4866cd422c7d24860388cec3e73edbefac0",
-        "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.0.1",
+        "commit": "e1c97d9480b2518d151d563acfa3939a2720e58e",
+        "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.0.2",
         "repository": "https://github.com/jsflax/LatticeCore",
-        "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.0.1"
+        "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.0.2"
       },
       {
         "commit": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
