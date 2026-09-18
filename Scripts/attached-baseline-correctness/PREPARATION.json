@@ -87,5 +87,11 @@
     "runtimeCorrection": "Preserve full inventory; count only is_file entries before unchanged selected-image checks.",
     "selectorOrSDKRan": false,
     "tinyBuildReportedSeconds": 6.21
+  },
+  "successor012": {
+    "actualFailedRun": 35406244045,
+    "nativeExecuted": false,
+    "networkUsed": false,
+    "runtimeChange": "Exclude exact framework run-start header only from zero-observation negative case-start scan"
   }
 }

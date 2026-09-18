@@ -15,7 +15,7 @@ P = Path(__file__).resolve().parent
 def evidence(mode='baseline', plural=False):
     rows = list(p.IDENTITIES) if mode == 'baseline' else ([] if mode == 'old-anchor-zero' else [p.IDENTITIES[0]])
     xml = '<testsuites><testsuite name="TestResults" tests="%d" errors="0" failures="0" skipped="0">' % len(rows)
-    log = []
+    log = ["◇ Test run started."]
     for label, identity, line in rows:
         suite, name = identity.split('/')
         xml += '<testcase classname="%s" name="%s"/>' % (suite, name)
@@ -39,6 +39,19 @@ class Selector(unittest.TestCase):
                 self.assertEqual(result['reportedTests'], n)
                 self.assertEqual(result['selectedTestQualified'], mode == 'selected')
                 self.assertEqual(result['zeroObservationOnly'], mode == 'old-anchor-zero')
+
+    def test_actual_hosted_zero_header_is_not_a_case_start(self):
+        xml = (P/'selector-observed-zero.xml').read_text()
+        log = (P/'selector-observed-zero.log').read_text()
+        result = p.framework(xml, log, 'old-anchor-zero')
+        self.assertEqual(result['reportedTests'], 0)
+        self.assertTrue(result['zeroObservationOnly'])
+        self.assertFalse(result['selectedTestQualified'])
+        with self.assertRaises(AssertionError):p.framework(xml, log, 'selected')
+        for extra in ('◇ Test surprise() started.', '◇ Test "surprise display" started.',
+                      '◇ Suite "surprise" started.', '✔ Suite "surprise" passed after 0.001 seconds.'):
+            with self.subTest(extra=extra), self.assertRaises(AssertionError):
+                p.framework(xml, log + '\n' + extra, 'old-anchor-zero')
 
     def test_zero_is_never_selected_qualification(self):
         with self.assertRaises(AssertionError):p.framework(*evidence('old-anchor-zero'), 'selected')

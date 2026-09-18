@@ -72,7 +72,7 @@ def framework(xml, log, mode):
     if mode == 'old-anchor-zero':
         assert summaries in ([], [('0', '')], [('0', '0')])
         assert log.count('warning: No matching test cases were run') == 1 or len(summaries) == 1
-        assert not re.search(r'^◇ (?:Test|Suite) .* started\.$|^✔ Suite ', log, re.M)
+        assert not re.search(r'^◇ (?:Test|Suite) .* started\.$|^✔ Suite ', '\n'.join(line for line in log.splitlines() if line != '◇ Test run started.'), re.M)
     else:
         assert summaries == [(str(len(wanted)), '2' if mode == 'baseline' else '1')]
         assert 'No matching test cases were run' not in log
