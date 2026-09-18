@@ -151,7 +151,7 @@ private final class RelayCatchUpReadState {
                 fileURL: input.fileURL, storeConfiguration: input.storeConfiguration)
             input.diagnostic?.record(.storeOpenBegin)
             let opened: UnsafeSendableBox<RelayCatchUpReadState>?
-            if let lattice = try? Lattice(for: input.schema, configuration: configuration, isolation: nil) {
+            if let lattice = try? Lattice(isolation: nil, for: input.schema, configuration: configuration) {
                 opened = UnsafeSendableBox(RelayCatchUpReadState(lattice: lattice, input: input, probe: probe))
                 input.diagnostic?.record(.storeOpenEnd)
             } else {

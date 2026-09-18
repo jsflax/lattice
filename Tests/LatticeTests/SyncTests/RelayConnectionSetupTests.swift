@@ -128,7 +128,7 @@ private func withSetupCase(
     let storeURL = directory.appending(path: "fixture.sqlite")
     var seedIDs: [String] = []
     if seedCount > 0 {
-        let seed = try Lattice(SimpleSyncObject.self, configuration: .init(fileURL: storeURL), isolation: nil)
+        let seed = try Lattice(isolation: nil, SimpleSyncObject.self, configuration: .init(fileURL: storeURL))
         defer { seed.close() }
         try seed.transaction {
             for index in 0..<seedCount { try seed.add(SimpleSyncObject(value: index, floatValue: 1)) }
