@@ -1,0 +1,74 @@
+name: Development Core integration
+
+# This edited development graph is supplementary evidence. Ordinary versioned
+# CI and release preflight remain unchanged and separately required.
+on:
+  push:
+    branches: [codex/perf-refinement-20260918]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  development:
+    name: Development SDK (${{ matrix.leg }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: linux
+            runner: ubuntu-latest
+            container: swift:6.3-noble
+            testTimeout: 5400
+          - leg: macos
+            runner: macos-26
+            container: null
+            testTimeout: 1800
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 240
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DEVELOPMENT_LEG: ${{ matrix.leg }}
+      TEST_TIMEOUT: ${{ matrix.testTimeout }}
+    steps:
+      - name: Install Linux prerequisites
+        if: matrix.leg == 'linux'
+        run: apt-get update && apt-get install -y git python3 libsqlite3-dev sqlite3
+
+      - name: Fetch exact SDK source into owned localdev directory
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          TASK_ROOT="$HOME/localdev/lattice-development-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DEVELOPMENT_LEG}"
+          test ! -e "$TASK_ROOT"
+          mkdir -p "$TASK_ROOT/tmp"
+          echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          git init "$TASK_ROOT/lattice"
+          git -C "$TASK_ROOT/lattice" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C "$TASK_ROOT/lattice" checkout --detach "$GITHUB_SHA"
+          test "$(git -C "$TASK_ROOT/lattice" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Build and test the explicit Core development graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          CORE_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["coreCommit"])' "$TASK_ROOT/lattice/Scripts/development-core.json")"
+          python3 "$TASK_ROOT/lattice/Scripts/run-development.py" \
+            --root "$TASK_ROOT" --core-sha "$CORE_SHA" --test-timeout "$TEST_TIMEOUT"
+
+      - name: Retain development graph evidence, including failures
+        timeout-minutes: 10
+        if: always() && env.TASK_ROOT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: development-core-${{ matrix.leg }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ env.TASK_ROOT }}/receipts
+            ${{ env.TASK_ROOT }}/test-logs
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
