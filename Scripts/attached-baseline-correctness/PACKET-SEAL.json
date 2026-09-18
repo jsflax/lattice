@@ -2,9 +2,9 @@
   "benchmarkAdmissionAccepted": false,
   "files": {
     "AttachedBaselineCorrectnessTests.swift": "952e4b750c23ae54643b405e0d2b6e80679c7dbcee175e4c3fa2d4ee0a095321",
-    "PREPARATION.json": "853548f40b1f1f679969288116a92651009f615d93da5b0a1e393fe64dcffde0",
+    "PREPARATION.json": "30bf6bf53561e701ed7aa67b8a3a43a1825ca3852eca095085c14a1a2e2df58a",
     "PRIOR-RUN-DIAGNOSIS.json": "55f55363036d25cb6891af21d44bfe0f091ac775eee590b6e7707797a5cf54d0",
-    "README.md": "51bb713e4d0e998d15cf8298a88a615072951806723e7e6bf31e74da3b2b4b39",
+    "README.md": "f7219a4b231911f584869c3ce77d5d0c18d77202470439873d9f2c0d43cc190f",
     "RUNNER004-FAILURE.md": "d55c47da683e85e36a4943abd28a5d8a12fe5a3e9340b9a3c3de86c3def12dea",
     "RUNNER005-DIAGNOSIS.json": "f7ee8f548a0801e5e40d31e6d10ed08e0a2767adb888c81ae0ad1387d3f53434",
     "STATIC-CHECKS.json": "65b4146744a49eeddbcb9b3ab3dab194c089ff8968273f02b4bef9040615c0cb",
@@ -37,19 +37,20 @@
     "selector-origin-SOURCE-READY.json": "11affa33a06efcc7c7a919bf36e6e42d11c7b7dc8e2be4ef95a463a38ffaac07",
     "selector-origin-commands.json": "6d3c126057d7e470ff4709b3d70b747dcca52c38e2a6e4688fea29d0676f61e2",
     "selector-origin-expected.json": "4a875298ee450f9da75150ca5ba62fc6c0104b1c776a3c2af847248fa8ce57ef",
-    "selector_probe.py": "2b7ba13fec3661971ce73fcb8676ef78ea7752733ee797645f3bed0ee1321995",
+    "selector_probe.py": "04cd29157bbdfbe2d17117217431dcd0b9d8194bebdce4839241d272dfe1aa4e",
     "test_analysis.py": "5d18af215a0e81fe6efcef9c5f16b342bbe8dadf7f8df65082d1b1e1c2518641",
     "test_legacy.py": "b2e8aa245b17cbe49c7d45de67e453b4666a5ab83907b834bba711d7982779c3",
     "test_maps.py": "6da9612f85410ac5f725e342d84d767cb57779f5be900bc91a553980e672bb5b",
-    "test_selector.py": "b4065c59f1abd178e963ae8eec8ada9adbd5e168007247ccfb92fa383b9aa02e"
+    "test_selector.py": "463a31123f2f594de2188de8009ddb9859f4ecbedf4087a127c5a3a590747a07"
   },
   "legacyRuntimeQualified": false,
   "predecessor007PacketSealSHA256": "8a1ba5bdd2282786caa14d00898c98e8e8507b794f093ec35000d32d63b07779",
   "predecessor008PacketSealSHA256": "3053d8635f14ebff8acb4cefd4a448b43a772f4819a662f2d03242add4764b63",
+  "predecessor009PacketSealSHA256": "e058530a595af3f314834283182dc13baba42b47368dc842205af5ee1df4419a",
   "predecessorRun": 35394332578,
   "priorPacketSealSHA256": "6fe84df38a561dd9dd7c10075a78ed8c2e90d92adff3f3d58bcf1e22d4c85ec0",
   "schemaVersion": 1,
-  "scope": "Corrected attached historical baseline selector preflight009 version-line correction and four unchanged legacy prerequisites; source-only",
+  "scope": "Corrected attached historical baseline selector preflight010 and four unchanged legacy prerequisites; source-only",
   "selectorRuntimeQualified": false,
   "sourcePrepared": true
 }

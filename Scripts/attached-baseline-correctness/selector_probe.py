@@ -115,8 +115,9 @@ def run(packet, root, receipts, runner, command, config, version_log):
     try:
         build = command('selector-build-tests', [config['swift'], 'build', *common, '--build-tests', '-j', str(config['j'])], package, timeout=60)
         state['files'][str(build)] = guard.digest(build)
-        candidates = sorted((home / 'scratch').glob('**/*.xctest/Contents/MacOS/*'))
-        guard.save_json(receipts / 'SELECTOR-BINARY-CANDIDATES.json', {'paths': [str(x) for x in candidates]})
+        inventory = sorted((home / 'scratch').glob('**/*.xctest/Contents/MacOS/*'))
+        guard.save_json(receipts / 'SELECTOR-BINARY-CANDIDATES.json', {'paths': [str(x) for x in inventory]})
+        candidates = [path for path in inventory if path.is_file()]
         assert len(candidates) == 1, 'expected one tiny fixture test image'
         binary = candidates[0]
         assert binary.name in ('FilterProbeTests', 'FilterProbePackageTests') and binary.is_file() and not binary.is_symlink()

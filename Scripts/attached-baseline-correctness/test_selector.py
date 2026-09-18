@@ -129,6 +129,7 @@ class Selector(unittest.TestCase):
                     if label=='selector-build-tests':
                         binary=root/'selector-probe/scratch/arm64-apple-macosx/debug/FilterProbePackageTests.xctest/Contents/MacOS/FilterProbePackageTests'
                         binary.parent.mkdir(parents=True);binary.write_bytes(b'fake image for pure orchestration check')
+                        binary.with_name(binary.name+'.dSYM').mkdir()
                         log.write_text('pure fake build\n')
                     elif label=='selector-discovery':log.write_text('\n'.join(x[1] for x in p.IDENTITIES))
                     else:
@@ -142,10 +143,38 @@ class Selector(unittest.TestCase):
                 else:
                     state=p.run(P,root,receipts,runner,command,{'swift':'/owned/swift','j':2},version)
                     p.verify(state);self.assertTrue((receipts/'SELECTOR-PROBE.json').is_file())
+                    inventory=json.loads((receipts/'SELECTOR-BINARY-CANDIDATES.json').read_text())['paths']
+                    self.assertEqual(len(inventory),2);self.assertTrue(any(x.endswith('.dSYM') for x in inventory))
+                    self.assertFalse(any(x.endswith('.dSYM') for x in state['files']))
                 self.assertIs(runner.env, original)
                 self.assertEqual([(x[0],x[2]) for x in calls],[('selector-build-tests',60),('selector-discovery',15),('selector-baseline',15),('selector-old-anchor-zero',15),('selector-selected',15)])
                 self.assertEqual(calls[-2][1][calls[-2][1].index('--filter')+1],p.OLD_FILTER)
                 self.assertEqual(calls[-1][1][calls[-1][1].index('--filter')+1],p.FILTER)
+
+    def test_binary_inventory_retains_dsym_and_rejects_ambiguous_symlink_noimage(self):
+        from types import SimpleNamespace
+        for mode in ('two-files','symlink','no-image'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp).resolve();receipts=root/'receipts';receipts.mkdir()
+                version=receipts/'version.log';version.write_text((P/'selector-observed-swift-version.log').read_text())
+                runner=SimpleNamespace(env={'KEEP':'exact'});original=runner.env;calls=[]
+                def command(label, argv, cwd, timeout):
+                    calls.append(label);self.assertEqual(label,'selector-build-tests')
+                    base=root/'selector-probe/scratch/arm64-apple-macosx/debug/FilterProbePackageTests.xctest/Contents/MacOS'
+                    base.mkdir(parents=True);(base/'FilterProbePackageTests.dSYM').mkdir()
+                    image=base/'FilterProbePackageTests'
+                    if mode=='two-files':
+                        image.write_bytes(b'one');(base/'FilterProbeTests').write_bytes(b'two')
+                    elif mode=='symlink':
+                        target=root/'selector-probe/scratch/real-image';target.write_bytes(b'target')
+                        image.symlink_to(target)
+                    log=receipts/(label+'.log');log.write_text('pure fake build\n');return log
+                with self.assertRaises(AssertionError):p.run(P,root,receipts,runner,command,{'swift':'/owned/swift','j':2},version)
+                self.assertEqual(calls,['selector-build-tests']);self.assertIs(runner.env,original)
+                inventory=json.loads((receipts/'SELECTOR-BINARY-CANDIDATES.json').read_text())['paths']
+                self.assertTrue(any(x.endswith('.dSYM') for x in inventory))
+                self.assertEqual(len(inventory), {'two-files':3,'symlink':2,'no-image':1}[mode])
+                self.assertFalse((receipts/'SELECTOR-PROBE.json').exists())
 
     def test_version_gate_rejects_wrong_version_or_malformed_prefix_before_commands(self):
         from types import SimpleNamespace
