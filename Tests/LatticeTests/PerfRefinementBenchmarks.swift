@@ -113,7 +113,7 @@ private struct PerfRefinementManifest: Codable {
     let activeProcessorCount: Int
     let sqlCounterScope = "calling-thread, synchronous API intervals only"
     let fixtureMode = "closed checkpointed master copied to new path per iteration"
-    let variants = ["local", "attached"]
+    let variants: [String]
 }
 
 private struct PerfRefinementResult: Codable {
@@ -444,6 +444,14 @@ struct PerfRefinementBenchmarks {
             }
             return value
         }
+        // Scope selection is outside every timed workload. The default retains
+        // both frozen variants; local-only is an explicit, separately reported run.
+        let variants: [String]
+        switch environment["LATTICE_PERF_VARIANTS"] ?? "local,attached" {
+        case "local,attached": variants = ["local", "attached"]
+        case "local": variants = ["local"]
+        default: throw PerfRefinementFailure.invalid("invalid LATTICE_PERF_VARIANTS")
+        }
         let manifest = try PerfRefinementManifest(
             updateRanks: Self.updateRanks, measuredSamples: measured, warmupSamples: warmups,
             startedAt: ISO8601DateFormatter().string(from: Date()), runDirectory: root.path,
@@ -453,10 +461,10 @@ struct PerfRefinementBenchmarks {
             hostIdentity: provenance("LATTICE_PERF_HOST_ID"),
             operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
             processorCount: ProcessInfo.processInfo.processorCount,
-            activeProcessorCount: ProcessInfo.processInfo.activeProcessorCount)
+            activeProcessorCount: ProcessInfo.processInfo.activeProcessorCount, variants: variants)
         try encode(manifest, to: root.appendingPathComponent("manifest.json"))
         var samples: [PerfRefinementSample] = []
-        for variant in ["local", "attached"] {
+        for variant in variants {
             let variantDir = root.appendingPathComponent(variant, isDirectory: true)
             try fm.createDirectory(at: variantDir, withIntermediateDirectories: false)
             let masterDir = variantDir.appendingPathComponent("master", isDirectory: true)
