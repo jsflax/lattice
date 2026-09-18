@@ -2,8 +2,9 @@
 
 ## [2.0.0] - Unreleased
 
-LatticeCore dependency floor raised to `2.0.3` (audit-history hygiene,
-observer cursor correctness, capture lifetime and token allocation: see its changelog). An Orbital room store reached 17 GB with under 1 MB of live
+LatticeCore dependency floor raised to `2.0.4` (audit-history hygiene,
+reader lifetime and attachment topology, observer cursor correctness, and
+native sync scheduling and watchdog lifetime fixes: see its changelog). An Orbital room store reached 17 GB with under 1 MB of live
 data — every streamed rewrite of one message row was kept in full in the
 audit log, nothing pruned it on a store without sync partners, and the one
 nuclear tool renumbered ids and silenced every other process.
@@ -17,7 +18,7 @@ nuclear tool renumbered ids and silenced every other process.
   `pruneAuditLog`, `recordAuditWatermark`, `backdateAuditWatermarks`,
   `setReplicationSlotObserver`, `noHistoryLiveValuesJSON` and `auditHeader`.
   These inherited audit requirements do not have default implementations.
-- Bind this wrapper to the qualified LatticeCore 2.0.3 release, with matching
+- Bind this wrapper to the qualified LatticeCore 2.0.4 release, with matching
   manifest minimum and resolved tag revision.
 
 ### Added
@@ -90,6 +91,11 @@ nuclear tool renumbered ids and silenced every other process.
   uploads core treats it like `nil`.
 
 ### Fixed
+- Require Core 2.0.4 for reader lifetime and attachment publication fixes,
+  transaction-owned audit pruning and history generation, and native sync
+  scheduling/watchdog corrections. Rebuild native and Swift bridge consumers
+  together; see Core release notes for direct C++ scheduler and mock-helper
+  adoption.
 - Drain autoreleased Foundation objects after each relay native-worker job on
   Darwin, so idle long-lived workers do not retain them until shutdown.
   Captured owners still release outside the worker lock.
