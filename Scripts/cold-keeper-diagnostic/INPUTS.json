@@ -21,8 +21,8 @@
       "sha256": "76a8b61c5c69cc87af2633368b40310e4e64824e0d60c90866a8e191873deb00"
     },
     "harness/build.py": {
-      "bytes": 8317,
-      "sha256": "fb3668f25e635d2f905be5f5fc849dccc5cf9abe1672531c866b457a7de7301b"
+      "bytes": 10891,
+      "sha256": "4280d422d13674f3a9282e101ff78ef34601aa0b5efc4f01aa4d037819bf43b5"
     },
     "harness/guarded_runner.py": {
       "bytes": 29477,

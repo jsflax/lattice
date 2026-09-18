@@ -7,6 +7,35 @@ def words(item): return item.get('arguments') or shlex.split(item['command'])
 def run(argv, **kwargs):
     print(json.dumps({'argv': list(map(str, argv))}), flush=True)
     return subprocess.run(argv, check=True, **kwargs)
+def object_output(entry):
+    argv = words(entry)
+    assert argv.count('-o') == 1, 'compile command has no unique object output'
+    return (Path(entry['directory']) / argv[argv.index('-o') + 1]).resolve()
+
+def capture_configure_artifacts(root, entries, receipt):
+    # Configure ran only after the caller proved this build root absent.
+    # Record its exact outputs before the freshness assertion, including any
+    # offending target output. Do not silently ignore all CMake directories.
+    target_outputs = {object_output(entry) for entry in entries}
+    target_outputs.update({root/'ColdKeeperProbe', root/'core/libLatticeCore.a', root/'core/libSqliteVec.a'})
+    paths = sorted(set(root.rglob('*.o')) | set(root.rglob('*.a')) |
+                   ({root/'ColdKeeperProbe'} if (root/'ColdKeeperProbe').exists() else set()))
+    files = [{'path': str(path.relative_to(root)), 'bytes': path.stat().st_size,
+              'sha256': digest(path), 'symlink': path.is_symlink()} for path in paths]
+    offending = sorted(str(path.relative_to(root)) for path in target_outputs if path.exists())
+    save(receipt, {'stage': 'before-target-build', 'files': files, 'existingTargetOutputs': offending,
+                  'scope': 'observed after successful configure, not evidence of historical unretained paths'})
+    assert not offending, 'pre-existing target outputs: ' + repr(offending)
+    assert all(not item['symlink'] and (root/item['path']).resolve().is_relative_to(root) for item in files), 'unowned configured artifact'
+    return files
+
+def verify_configure_artifacts(root, files):
+    for item in files:
+        path = root/item['path']
+        assert not path.is_symlink() and path.is_file() and path.resolve().is_relative_to(root), item['path']
+        assert path.stat().st_size == item['bytes'] and digest(path) == item['sha256'], 'configured artifact changed: ' + item['path']
+    return {root/item['path'] for item in files}
+
 def expected_sources():
     cmake = (P/'source/CMakeLists.txt').read_text(); result = {}
     for target in ['LatticeCore', 'SqliteVec']:
@@ -33,8 +62,10 @@ def verify_build(arm, expected_proof_hash=None):
     return proof
 def build(arm):
     verify_inputs(); verify_source(); root = P/('build-'+arm)
-    assert not (root/'ColdKeeperProbe').exists() and not list(root.rglob('*.o')) and not list(root.rglob('*.a'))
-    entries = json.loads((root/'compile_commands.json').read_text()); expected = expected_sources()
+    entries = json.loads((root/'compile_commands.json').read_text())
+    inventory_path = P/('CONFIGURE-ARTIFACTS-'+arm+'.json')
+    configured = capture_configure_artifacts(root, entries, inventory_path)
+    expected = expected_sources()
     all_expected = set().union(*expected.values())
     selected = [e for e in entries if str(Path(e['file']).resolve()) in all_expected]
     assert len(selected) == len(all_expected)
@@ -55,11 +86,14 @@ def build(arm):
         assert obj.name not in by_target[target]; by_target[target][obj.name] = obj
         objects.append({'source': str(Path(source).relative_to(P)), 'sourceSHA256': digest(Path(source)),
                         'object': str(obj.relative_to(P)), 'objectSHA256': digest(obj), 'argv': argv})
-    assert {f.resolve() for f in root.rglob('*.o')} == {P/x['object'] for x in objects}, 'unexpected compiled object'
+    configured_paths = verify_configure_artifacts(root, configured)
+    configured_objects = {path for path in configured_paths if path.suffix == '.o'}
+    configured_archives = {path for path in configured_paths if path.suffix == '.a'}
+    assert {f.resolve() for f in root.rglob('*.o')} == {P/x['object'] for x in objects} | configured_objects, 'unexpected compiled object'
     link_path = root/'CMakeFiles/ColdKeeperProbe.dir/link.txt'; link = shlex.split(link_path.read_text())
     archives = {(root/a).resolve() for a in link if a.endswith('.a')}
     assert archives == {root/'core/libLatticeCore.a', root/'core/libSqliteVec.a'}
-    assert set(root.rglob('*.a')) == archives
+    assert set(root.rglob('*.a')) == archives | configured_archives
     direct = {(root/a).resolve() for a in link if a.endswith('.o')}; assert direct == set(by_target['ColdKeeperProbe'].values())
     ar = json.loads((P/'TOOLCHAIN.json').read_text())['ar']; members = {}
     for archive in sorted(archives):
@@ -99,10 +133,14 @@ def build(arm):
     linkage = subprocess.check_output([otool, '-L', str(binary)], text=True, timeout=10)
     assert '/usr/lib/libsqlite3.dylib' in linkage, 'platform SQLite not linked'
     (root/'otool.txt').write_text(linkage)
-    custody_paths = [binary, map_path, link_path, root/'compile_commands.json', root/'CMakeCache.txt', root/'otool.txt', *archives, *(P/x['object'] for x in objects)]
+    # Exact direct/archive/map gates above permit only selected target inputs;
+    # configured objects/archives cannot be used as link inputs.
+    verify_configure_artifacts(root, configured)
+    custody_paths = [inventory_path, *configured_paths, binary, map_path, link_path, root/'compile_commands.json', root/'CMakeCache.txt', root/'otool.txt', *archives, *(P/x['object'] for x in objects)]
     proof = {'source': SHA, 'tree': TREE, 'arm': arm, 'uniformO3': True, 'freshBuild': True,
         'sourceManifestSHA256': digest(P/'SOURCE-MANIFEST.json'), 'inputsSHA256': digest(P/'INPUTS.json'),
         'toolchainSHA256': digest(P/'TOOLCHAIN.json'), 'binary': str(binary.relative_to(P)), 'syntaxFirst': syntax,
+        'configureArtifacts': configured, 'configureInventory': str(inventory_path.relative_to(P)),
         'objects': objects, 'archiveMembers': members, 'linkArgv': link, 'mapObjects': map_objects,
         'platformSQLite': linkage, 'sdkImportStubs': platform_imports,
         'externalHeaderBoundary': 'Owned source and actual TU flags are authenticated. Xcode SDK/toolchain identity and SQLite header/import stubs are recorded; this does not hash every transitive SDK header.',

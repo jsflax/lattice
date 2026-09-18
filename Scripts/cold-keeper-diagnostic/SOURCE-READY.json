@@ -1,7 +1,7 @@
 {
   "state": "hosted macOS diagnostic source ready; native qualification pending",
   "executionAdmitted": true,
-  "inputsSHA256": "8dd0691aa264d5677f631aae2e7de7de34448864cbc87f36305a4f44e9bece56",
+  "inputsSHA256": "10f3549af4f00393c17f04a14d4f7e55b1f2a8dc659fc5da010bf02ed4a78183",
   "source": "73ac6c2ab102216a68a33ee09b0ba5b73ba76e75",
   "tree": "c32f882de14b158c15ed71dee6ca8fe6d8a20cc9",
   "priorSourceSealSHA256": "48005802d3a6dd04372c1c36ce239861bcc89a6ca10993197d73845e8a710fa6",
@@ -41,5 +41,6 @@
     "No cross-graph/macOS-version latency comparison",
     "No cache-policy/reader-transfer/product change"
   ],
-  "rootReview": "Parent reported no blocker for build/run/summary/workflow; final exact seal awaits parent admission."
+  "rootReview": "Root reviewed correction002 configure inventory, target freshness, final artifact and link custody. Commands and limits unchanged.",
+  "correctionSealSHA256": "45c46c64177756cc991fb02324a30f7bd0d6052a8c632c58a4bffec09df70496"
 }
