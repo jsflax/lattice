@@ -251,14 +251,16 @@ struct TestUncheckedSendable<T>: @unchecked Sendable { let value: T }
 /// connection churn per frame) and another per connection for catch-up.
 ///
 /// Shape (mirrors NIOSyncRelay): ONE server-lifetime `Lattice`, created
-/// before the route is registered; ACK + broadcast run synchronously on the
-/// event loop (no DB work); persistence runs OFF the event loop but IN
-/// COMMIT-ARRIVAL ORDER through a single-consumer AsyncStream pipeline.
+/// before the route is registered. ACK remains immediate on the event loop.
+/// One consumer serializes connect/catch-up and fanout/persistence commands.
+/// Registration and fanout may wait behind earlier SQL, but no SQL runs on
+/// the event loop. This is test-fixture scheduling, not the production relay.
 final class TestSyncServer: @unchecked Sendable {
     let app: Application
     let lattice: Lattice
     let sockets: SocketStore
     private let path: String
+    let diagnostic: SyncTestStageLog
     private(set) var port: Int = 0
 
     final class FrameCounter: @unchecked Sendable {
@@ -270,7 +272,22 @@ final class TestSyncServer: @unchecked Sendable {
     private let frameCounter = FrameCounter()
     /// Number of auditLog frames the server has received (I2's frame-count probe).
     var auditFrameCount: Int { frameCounter.value }
-    private let frameContinuation: AsyncStream<Data>.Continuation
+    private enum Command: Sendable {
+        case barrier(@Sendable () -> Void)
+        case connect(socket: TestUncheckedSendable<WebSocket>, cursor: UUID?)
+        case frame(socket: TestUncheckedSendable<WebSocket>, data: Data,
+                   audit: Bool, frame: UUID, auditIDs: [UUID], rowIDs: [UUID])
+    }
+    private let frameContinuation: AsyncStream<Command>.Continuation
+
+    // Optional async test seams. They suspend this fixture's consumer only;
+    // they never park an event-loop or observation worker thread.
+    struct Hooks: Sendable {
+        var beforePersistence: (@Sendable () async -> Void)?
+        var beforeCatchUp: (@Sendable (Int) async -> Void)?
+        var connectEnqueued: (@Sendable () -> Void)?
+        var frameEnqueued: (@Sendable () -> Void)?
+    }
     private var consumer: Task<Void, Never>?
 
     /// - Parameters:
@@ -280,59 +297,107 @@ final class TestSyncServer: @unchecked Sendable {
     init(models: [any Model.Type],
          configuration: Lattice.Configuration,
          path: String = "test",
-         label: String = "TestSyncServer") async throws {
+         label: String = "TestSyncServer",
+         hooks: Hooks = .init()) async throws {
         // Server-lifetime lattice — constructed BEFORE any handler can fire.
         self.lattice = try Lattice(for: models, configuration: configuration)
         self.sockets = SocketStore(label: label)
         self.path = path
+        self.diagnostic = SyncTestStageLog(label: label, store: configuration.fileURL.path)
 
         var env = try Environment.detect()
         env.arguments = ["vapor"]
         self.app = try await Application.make(env)
         app.http.server.configuration.port = 0
 
-        let (stream, continuation) = AsyncStream<Data>.makeStream()
+        let (stream, continuation) = AsyncStream<Command>.makeStream()
         self.frameContinuation = continuation
         let serverLattice = TestUncheckedSendable(value: lattice)
-        // Single consumer: frames apply in arrival order, off the event loop.
-        self.consumer = Task.detached {
-            for await data in stream {
-                _ = try? serverLattice.value.receive(data)
-            }
-        }
-
         let sockets = self.sockets
         let frames = self.frameCounter
+        let diagnostic = self.diagnostic
+        // AsyncStream linearizes concurrent yields. A frame's fanout and
+        // persistence cannot straddle a connect command's initial catch-up.
+        self.consumer = Task.detached {
+            for await command in stream {
+                guard !Task.isCancelled else { break }
+                switch command {
+                case .barrier(let finish): finish()
+                case .connect(let socket, let cursor):
+                    let ws = socket.value
+                    guard !ws.isClosed else { continue }
+                    sockets.append(ws)
+                    diagnostic.record("server_registered", count: sockets.count)
+                    await hooks.beforeCatchUp?(sockets.count)
+                    guard !Task.isCancelled else { break }
+                    diagnostic.record("server_catchup_begin", auditIDs: cursor.map { [$0] } ?? [])
+                    let events = serverLattice.value.eventsAfter(globalId: cursor)
+                    let count = events.count
+                    diagnostic.record("server_catchup_count", count: count)
+                    for i in stride(from: 0, to: count, by: 1000) {
+                        let page = Array(events[i..<min(count, i + 1000)])
+                        diagnostic.record("server_catchup_page", count: page.count,
+                                          auditIDs: page.prefix(8).compactMap(\.globalId),
+                                          rowIDs: page.prefix(8).compactMap(\.globalRowId))
+                        let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(page))
+                        ws.send(ByteBuffer(data: encoded))
+                    }
+                    diagnostic.record("server_catchup_enqueued", count: count)
+                case .frame(let socket, let data, let audit, let frame, let auditIDs, let rowIDs):
+                    if audit {
+                        let peers = sockets.others(excluding: socket.value)
+                        diagnostic.record("server_fanout", frame: frame, count: peers.count,
+                                          auditIDs: auditIDs, rowIDs: rowIDs)
+                        for peer in peers { peer.send(ByteBuffer(data: data)) }
+                    }
+                    if audit { await hooks.beforePersistence?() }
+                    guard !Task.isCancelled else { break }
+                    diagnostic.record("server_apply_begin", frame: frame,
+                                      auditIDs: auditIDs, rowIDs: rowIDs)
+                    do {
+                        let ids = try serverLattice.value.receive(data)
+                        diagnostic.record("server_apply_returned", frame: frame,
+                                          count: ids.count, auditIDs: Array(ids.prefix(8)))
+                    } catch {
+                        // Preserve the previous try? policy, expose its failure.
+                        diagnostic.record("server_apply_failed", frame: frame,
+                                          detail: String(reflecting: type(of: error)))
+                    }
+                }
+            }
+            diagnostic.record("server_consumer_finished")
+        }
+
         app.webSocket(.constant(path), maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 500 * 1024 * 1024)) { req, ws in
-            sockets.append(ws)
             ws.onBinary { ws, bb in
                 let data = Data(buffer: bb)
                 guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let kind = json["kind"] as? String else { return }
+                let frame = UUID()
+                let logs = json["auditLog"] as? [[String: Any]] ?? []
+                let auditIDs = logs.prefix(8).compactMap { $0["globalId"] as? String }.compactMap(UUID.init(uuidString:))
+                let rowIDs = logs.prefix(8).compactMap { $0["globalRowId"] as? String }.compactMap(UUID.init(uuidString:))
+                diagnostic.record("server_frame_received", frame: frame, count: logs.count,
+                                  auditIDs: auditIDs, rowIDs: rowIDs)
                 if kind == "auditLog" {
                     frames.increment()
-                    // ACK immediately (before persistence) and forward to the
-                    // other clients — synchronous, no DB work on the event loop.
+                    // ACK still means accepted for queued processing, not durable.
                     if let auditLogs = json["auditLog"] as? [[String: Any]] {
                         let globalIds = auditLogs.compactMap { $0["globalId"] as? String }
                             .compactMap(UUID.init(uuidString:))
                         ws.send(try! JSONEncoder().encode(ServerSentEvent.ack(globalIds)))
-                    }
-                    for socket in sockets.others(excluding: ws) {
-                        socket.send(bb)
+                        diagnostic.record("server_ack_enqueued", frame: frame, count: globalIds.count)
                     }
                 }
-                continuation.yield(data)
+                continuation.yield(.frame(socket: TestUncheckedSendable(value: ws), data: data,
+                                          audit: kind == "auditLog", frame: frame,
+                                          auditIDs: auditIDs, rowIDs: rowIDs))
+                hooks.frameEnqueued?()
             }
-
-            // Catch-up from the SHARED lattice (old code opened a fresh one).
-            let events = serverLattice.value.eventsAfter(globalId: try? req.query.get(UUID?.self, at: "last-event-id"))
-            let count = events.count
-            for i in stride(from: 0, to: count, by: 1000) {
-                let page = events[i..<min(count, i + 1000)]
-                let encoded = try! JSONEncoder().encode(ServerSentEvent.auditLog(Array(page)))
-                ws.send(ByteBuffer(data: encoded))
-            }
+            let cursor = try? req.query.get(UUID?.self, at: "last-event-id")
+            diagnostic.record("server_connect_enqueue")
+            continuation.yield(.connect(socket: TestUncheckedSendable(value: ws), cursor: cursor))
+            hooks.connectEnqueued?()
         }
 
         try await app.startup()
@@ -343,7 +408,30 @@ final class TestSyncServer: @unchecked Sendable {
         self.port = assignedPort
     }
 
+    // A test-only queue fence. AsyncStream cancellation releases the waiter
+    // without requiring this queued notice to run; no synchronous wait occurs.
+    func waitForCommandsForTesting() async throws {
+        let notice = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        frameContinuation.yield(.barrier {
+            notice.continuation.yield(())
+            notice.continuation.finish()
+        })
+        for await _ in notice.stream { break }
+        try Task.checkCancellation()
+    }
+
     var endpoint: URL { URL(string: "http://localhost:\(port)/\(path)")! }
+
+    /// New controlled fixtures release their async hooks first, then join the
+    /// consumer before shutting down transport and closing its native owner.
+    /// Existing tests retain the synchronous shutdown contract below.
+    func shutdownAndWaitForTesting() async throws {
+        frameContinuation.finish()
+        consumer?.cancel()
+        await consumer?.value
+        try await app.asyncShutdown()
+        lattice.close()
+    }
 
     func shutdown() {
         frameContinuation.finish()

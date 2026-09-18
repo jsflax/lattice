@@ -8,7 +8,7 @@ import MapKit
 import NIOConcurrencyHelpers
 import NIOCore
 import Testing
-import Lattice
+@testable import Lattice
 import Observation
 import Vapor
 
@@ -879,61 +879,130 @@ actor SyncTests {
     @Test(.timeLimit(.minutes(5))) func test_ClientCompactionThenSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
+        let receiverConfiguration = localLattice2Configuration
+        let stages = server.diagnostic
+        let payload = PayloadObserverDiagnosticLog("ClientCompactionThenSync-\(stages.id)")
+        let emitOnce = AtomicOnce()
+        let emit: @Sendable () -> Void = {
+            if emitOnce.tryFire() {
+                stages.emit(reason: "finished_or_cancelled")
+                payload.emit()
+            }
+        }
+        defer { emit() }
+        try await withTaskCancellationHandler {
+            stages.record("test_begin")
 
-        // Step 1: Write data and wait for sync to lattice2
-        var receiveTask: Task<Void, any Error>?
-        await withCheckedContinuation { continuation in
-            receiveTask = Task.detached {
-                let l2 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice2Configuration)
-                let changeStream = l2.changeStream
-                continuation.resume()
-                for try await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: l2) })
-                    if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
-                        break
+            // The same detached receiver opens remain. A buffered one-shot ready
+            // stream handles open failure and cancellation without an orphaned
+            // CheckedContinuation. Cancellation is forwarded to the actual waiter.
+            func receiver(phase: Int, ready: AsyncThrowingStream<Void, any Error>.Continuation) -> Task<Void, any Error> {
+                Task.detached {
+                    do {
+                        try Task.checkCancellation()
+                        stages.record("receiver_open_begin", phase: phase)
+                        let l2 = try await Lattice(SimpleSyncObject.self, configuration: receiverConfiguration)
+                        stages.record("receiver_open_returned", phase: phase)
+                        let changeStream = l2._changeStream(diagnostic: payload.diagnostic("compaction_phase_\(phase)"))
+                        stages.record("receiver_stream_installed", phase: phase)
+                        ready.yield(())
+                        ready.finish()
+                        for try await changes in changeStream {
+                            stages.record("receiver_batch", phase: phase, count: changes.count)
+                            let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: l2) })
+                            stages.record("receiver_resolved", phase: phase, count: resolved.count,
+                                          auditIDs: resolved.prefix(8).compactMap(\.globalId),
+                                          rowIDs: resolved.prefix(8).compactMap(\.globalRowId))
+                            if phase == 1 {
+                                if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
+                                    stages.record("receiver_matched", phase: phase)
+                                    break
+                                }
+                            } else if resolved.contains(where: { $0.tableName == "SimpleSyncObject" }) {
+                                stages.record("receiver_value_query_begin", phase: phase)
+                                let matches = l2.objects(SimpleSyncObject.self).contains(where: { $0.value == 200 })
+                                stages.record("receiver_value_query_returned", phase: phase, count: matches ? 1 : 0)
+                                if matches {
+                                    stages.record("receiver_matched", phase: phase)
+                                    break
+                                }
+                            }
+                        }
+                        try Task.checkCancellation()
+                        stages.record("receiver_finished", phase: phase)
+                    } catch {
+                        stages.record("receiver_failed", phase: phase, detail: String(reflecting: type(of: error)))
+                        ready.finish(throwing: error)
+                        throw error
                     }
                 }
             }
-        }
 
-        let obj1 = SimpleSyncObject(value: 100, floatValue: 1.0)
-        try lattice.add(obj1)
-        try await receiveTask?.value
-        #expect(lattice2.objects(SimpleSyncObject.self).count >= 1, "Initial sync should work")
-
-        // Step 2: Force compact lattice1's audit log (nuclear — no replication slots in WSS-only)
-        let compactedEntries = lattice.forceCompactHistory()
-        #expect(compactedEntries >= 1, "Should create snapshot entries")
-
-        // Step 3: Write NEW data after compaction and wait for it on lattice2.
-        // After compaction, lattice1 has fresh INSERT snapshot entries (isSynchronized=0).
-        // Adding obj2 triggers upload_pending_changes which sends BOTH the compacted
-        // snapshot AND obj2. The C++ fix in apply_remote_changes resolves local rowId
-        // and operation so flush_changes can correlate them with the update_hook.
-        var receiveTask2: Task<Void, any Error>?
-        await withCheckedContinuation { continuation in
-            receiveTask2 = Task.detached {
-                let l2 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice2Configuration)
-                let changeStream = l2.changeStream
-                continuation.resume()
-                for try await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: l2) })
-                    if resolved.contains(where: { $0.tableName == "SimpleSyncObject" }),
-                       l2.objects(SimpleSyncObject.self).contains(where: { $0.value == 200 }) {
-                        break
-                    }
+            // Step 1: Write data and wait for sync to lattice2.
+            do {
+                let ready = AsyncThrowingStream<Void, any Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+                let receiveTask = receiver(phase: 1, ready: ready.continuation)
+                defer { receiveTask.cancel(); ready.continuation.finish() }
+                try await withTaskCancellationHandler {
+                    for try await _ in ready.stream { break }
+                    try Task.checkCancellation()
+                    let obj1 = SimpleSyncObject(value: 100, floatValue: 1.0)
+                    stages.record("write_begin", phase: 1)
+                    try lattice.add(obj1)
+                    stages.record("write_returned", phase: 1, rowIDs: obj1.globalId.map { [$0] } ?? [])
+                    stages.record("receiver_await_begin", phase: 1)
+                    try await receiveTask.value
+                    try Task.checkCancellation()
+                    stages.record("receiver_await_returned", phase: 1)
+                } onCancel: {
+                    stages.record("test_cancelled", phase: 1)
+                    receiveTask.cancel()
+                    ready.continuation.finish(throwing: CancellationError())
+                    emit()
                 }
             }
+            #expect(lattice2.objects(SimpleSyncObject.self).count >= 1, "Initial sync should work")
+
+            // Step 2: Force compact lattice1's audit log (nuclear — no replication slots in WSS-only).
+            stages.record("compaction_begin")
+            let compactedEntries = lattice.forceCompactHistory()
+            stages.record("compaction_returned", count: compactedEntries)
+            #expect(compactedEntries >= 1, "Should create snapshot entries")
+
+            // Step 3: Upload the compacted snapshot plus the new row. Retain the
+            // original consumer predicate and assertions; diagnostics identify
+            // source/model UUIDs without reading changedFields payloads.
+            do {
+                let ready = AsyncThrowingStream<Void, any Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+                let receiveTask2 = receiver(phase: 2, ready: ready.continuation)
+                defer { receiveTask2.cancel(); ready.continuation.finish() }
+                try await withTaskCancellationHandler {
+                    for try await _ in ready.stream { break }
+                    try Task.checkCancellation()
+                    let obj2 = SimpleSyncObject(value: 200, floatValue: 2.0)
+                    stages.record("write_begin", phase: 2)
+                    try lattice.add(obj2)
+                    stages.record("write_returned", phase: 2, rowIDs: obj2.globalId.map { [$0] } ?? [])
+                    stages.record("receiver_await_begin", phase: 2)
+                    try await receiveTask2.value
+                    try Task.checkCancellation()
+                    stages.record("receiver_await_returned", phase: 2)
+                } onCancel: {
+                    stages.record("test_cancelled", phase: 2)
+                    receiveTask2.cancel()
+                    ready.continuation.finish(throwing: CancellationError())
+                    emit()
+                }
+            }
+
+            #expect(lattice2.objects(SimpleSyncObject.self).count >= 2,
+                    "Lattice2 should have both objects after compaction sync")
+            #expect(lattice2.objects(SimpleSyncObject.self).contains(where: { $0.value == 200 }),
+                    "New data written after client compaction should sync")
+        } onCancel: {
+            stages.record("test_cancelled_outer")
+            emit()
         }
-
-        let obj2 = SimpleSyncObject(value: 200, floatValue: 2.0)
-        try lattice.add(obj2)
-        try await receiveTask2?.value
-
-        #expect(lattice2.objects(SimpleSyncObject.self).count >= 2,
-                "Lattice2 should have both objects after compaction sync")
-        #expect(lattice2.objects(SimpleSyncObject.self).contains(where: { $0.value == 200 }),
-                "New data written after client compaction should sync")
     }
 
     /// Test that closing the lattice instance that owns the synchronizer
