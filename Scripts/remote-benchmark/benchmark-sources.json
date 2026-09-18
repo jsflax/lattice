@@ -5,14 +5,14 @@
   "baselineSDKTree": "995487abb0b9b0ef7446bc2780bb5a1b8a99c16e",
   "baselineCore": "f8f72e97ae94d1e40b2a9663cb7d15df62c8ac2a",
   "baselineCoreTree": "38ba9b586ff9944a49173c25de578b23f3b72263",
-  "candidateCore": "e8dcb3152e48f82f6e66dbb3961e64f664bf1484",
-  "candidateCoreTree": "a2f82d407318529e879ff29a37c7abb254153ddf",
+  "candidateCore": "e578f3336438855f5c3bbdbfb864feac8ca079e8",
+  "candidateCoreTree": "a70de9eaf75ea36aef9961b0a876775bf2126b3f",
   "measuredSamples": 100,
   "warmups": 5,
   "candidateSwiftDefine": "LATTICE_PERF_SELECTED_BATCH",
   "frozenFiles": {
     "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
-    "PerfRefinementBenchmarks.swift": "c0e28bdb3388cc993959127771a3af88d0987c300024d17d9eb1d829fc834f0b",
+    "PerfRefinementBenchmarks.swift": "a87b45867eae459f6d0015fc76838028efa96ac51d3bee9c58c0b2bcc77e3fed",
     "perf_refinement_report.py": "aeb1d5994149d28badc6ddfa01d51c60ebed4ffb941f85d885d2d06c8669714f",
     "BENCHMARK-CONTRACT.md": "2f36711b52b150d203764c0869024af86214a4cd35288ba4ce6e7a6b42fbd910"
   },
@@ -24,5 +24,14 @@
   "finalizationReserveSeconds": 600,
   "buildTimeoutSeconds": 5400,
   "measurementTimeoutSeconds": 1200,
-  "settlingSeconds": 60
+  "settlingSeconds": 60,
+  "validationHarnessRevision": {
+    "id": "closed-fixture-readonly-v2",
+    "previousHarnessSHA256": "c0e28bdb3388cc993959127771a3af88d0987c300024d17d9eb1d829fc834f0b",
+    "harnessSHA256": "a87b45867eae459f6d0015fc76838028efa96ac51d3bee9c58c0b2bcc77e3fed",
+    "originalFailedRunID": 35346193210,
+    "timedWorkloadUnchanged": true,
+    "baselineProductChanged": false,
+    "reason": "Read checkpointed closed masters and unopened copies with immutable SQLite URI; keep active afterimages WAL-aware. Add bounded diagnostics outside timing."
+  }
 }
