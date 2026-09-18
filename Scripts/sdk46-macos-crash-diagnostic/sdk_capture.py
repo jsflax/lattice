@@ -62,18 +62,24 @@ def image_identity(path,allowed_types=(2,8)):
 
 
 class Images:
-    def __init__(self,swift_path,xctest_path):
+    def __init__(self,swift_path,xctest_path,inventory_sink=None):
         swift=Path(swift_path).resolve(strict=True);xctest=Path(xctest_path).resolve(strict=True)
         require(swift.parent.name=='bin' and swift.parent.parent.name=='usr','unexpected selected Swift toolchain layout')
         self.selectedSwift=str(swift);self.selectedXCTest=str(xctest);self.images={};self.errors=[];self.bundle=None
         candidates=[swift.parent.parent/'libexec/swift/pm/swiftpm-testing-helper',swift.parent/'swiftpm-testing-helper',xctest]
         for path in candidates:
+            real=None
             try:
                 real=path.resolve(strict=True)
                 require(real.name in ('swiftpm-testing-helper','xctest'),'unexpected exact helper basename')
                 proof=image_identity(real,(2,))
                 self.images[str(real)]=proof
-            except (OSError,ValueError) as error:self.errors.append({'path':str(path),'error':str(error)[:512]})
+            except (OSError,ValueError) as error:self.errors.append({
+                'path':str(path),'resolvedPath':str(real) if real is not None else None,
+                'errorType':type(error).__name__,'error':str(error)[:512]})
+        # Preserve candidate evidence before mandatory admission can throw.
+        # The optional sink must finish successfully before any SDK checkout.
+        if inventory_sink is not None:inventory_sink(self.snapshot())
         require(any(Path(k).name=='swiftpm-testing-helper' for k in self.images),'no exact supported SwiftPM helper image; SDK checkout blocked')
 
     def add_bundle(self,path,sha):

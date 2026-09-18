@@ -204,7 +204,8 @@ def main():
             # Resolve the selected tools; do not guess a process executable from a report.
             swift_path = selected_tool_path(runner.run('selected-swift-path',tool_lookup_argv('swift'),cwd=root,timeout=30), 'swift')
             xctest_path = selected_tool_path(runner.run('selected-xctest-path',tool_lookup_argv('xctest'),cwd=root,timeout=30), 'xctest')
-            images = sdk_capture.Images(swift_path,xctest_path)
+            images = sdk_capture.Images(swift_path,xctest_path,
+                inventory_sink=lambda snapshot: guard.save_json(receipts / 'TOOLCHAIN-IMAGE-ATTEMPT.json', snapshot))
             owned_process_identity.validate_layout()
             guard.save_json(receipts / 'TOOLCHAIN-IMAGE-IDENTITIES.json', images.snapshot())
             for name, url, revision in [('sdk', config['sdkURL'], config['sdkCommit']), ('core', config['coreURL'], config['coreCommit'])]:

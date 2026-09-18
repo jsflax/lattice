@@ -1,0 +1,15 @@
+{
+  "predecessorSealSHA256": "74fadb174eacdaec6689d3dc9f0006a5dfa539582d51f35d4cc6d6c9cf37fc9a",
+  "failedRun": 35395855458,
+  "analysisSHA256": "6cfcc4e0fe8e61f8443bbdc6a9c0c4e0e36dec612c0b42b6f390fc9fc7133fdd",
+  "patchSHA256": "5e3de6f17890d1fb191aff49c002351416a85e02c581cf906df9bda8c999947d",
+  "scope": "Bounded candidate inventory persistence before unchanged mandatory helper-image admission",
+  "helperCompatibilityEstablished": false,
+  "sdkRuntimeQualified": false,
+  "candidatePathsAndAcceptedFormatsUnchanged": true,
+  "originalControlSDKEnvironmentUnchanged": true,
+  "timeoutsResourceBoundsUnchanged": true,
+  "sourceGraphUnchanged": true,
+  "nativeExecution": false,
+  "network": false
+}
