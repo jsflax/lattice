@@ -1,0 +1,20 @@
+{
+  "scope": "SDK46 macOS crash diagnostic source packet",
+  "files": {
+    "CrashControl.swift": "f577fccf09e9c2e4192f3e76ae04e4559efbc6c9e9bbcb91b5b16e96f1feded4",
+    "README.md": "a679d9f8c69edf37058651dab50d6b57c7109aa88e5f5c37b55a51664fb2a886",
+    "analyze.py": "79cb68f783bac9fc92b0a24b09dfea1a1f00f797c1d7e04b3b4f8a17be84aa2c",
+    "config.json": "fdf4d5a1f44a26e6bada35f4a4e52ef4228fed6a295dfc251201fa82bba37ea8",
+    "crash_reports.py": "91d3edd32ea4ceee0517dfc73eb028d8c6fc0b6cc6cf86abafbaa4f91b1ffc92",
+    "development_crashes_original.py": "f8c5901c59ecaab4c049bcbbf979be45bc423f872698201953297d93592c0dba",
+    "development_supervisor.py": "368ba9664acfa8453f5fa6752de94297c6402b1e33502bc12fc2aed1c2a4fb28",
+    "qualify.py": "b29e945d4f0b4f1d03f1e2bf97ee8fc0ef0b5e881df0beff957b27fef10735a2",
+    "test_packet.py": "ede04396e98525cfe7ac6f01ce1bf4a843bc6a9beb219dbac5b919fd978f3e4b"
+  },
+  "nativeExecution": false,
+  "remoteControlQualified": false,
+  "sourcePrepared": true,
+  "requiresParentReview": true,
+  "predecessorSealSHA256": "18df7ab9d22bbca4454762c8551f4dc772410142791c1d708b757ed235c9f4cb",
+  "delta": "Bound final copied-report verification reads; stop output copies on all exceptions; add final copy drift regression."
+}

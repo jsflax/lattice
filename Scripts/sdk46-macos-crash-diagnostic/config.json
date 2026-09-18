@@ -1,0 +1,16 @@
+{
+  "sdkCommit": "46b5ac4760f329b25640419a07fca212770d14f5",
+  "sdkTree": "716f592a56f874040754f23621f210546164d523",
+  "coreCommit": "83675c2d881e918376aecef703867c439c34e288",
+  "coreTree": "359067b0f64655e8c791c6290f235c047170543a",
+  "sdkURL": "https://github.com/jsflax/lattice.git",
+  "coreURL": "https://github.com/jsflax/LatticeCore.git",
+  "swiftVersion": "6.3.3",
+  "swiftBacktrace": "enable=yes,interactive=no,output-to=stderr",
+  "focusedIdentifiers": [
+    "LatticeTests.ProjectionMemoryConsumerExecutorTests/preferenceSurvivesNonisolatedSuspensionAndDrainsWorker()",
+    "LatticeTests.ProjectionMemoryConsumerExecutorTests/cancellationRetainsQueuedContinuationAndAllowsShutdown()",
+    "LatticeTests.ProjectionMemoryConsumerExecutorTests/explicitFallbackRunsOriginalBodyAndPreservesErrors()",
+    "LatticeTests.ProjectionMemoryTests/pausedBatchConsumerKeepsSnapshotWhileLiveWriterChanges()"
+  ]
+}
