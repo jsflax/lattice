@@ -766,9 +766,11 @@ final class ServerRelayTests: BaseTest {
     /// keeps `isClosed == false`. Revocation must therefore be enforced
     /// server-side, not by transport cooperation.
     @Test func revokedConnectionCannotWriteEvenIfItIgnoresTheClose() async throws {
+        let setupCompletions = RelaySetupCompletions()
         let harness = try await RelayHarness(
             path: ["sync", "group", ":groupID"],
             schema: [SimpleSyncObject.self],
+            onSetupFinished: { setupCompletions.noteFinished() },
             channelExtractor: groupExtractor)
         defer { Task { [harness] in await harness.shutdown() } }
 
@@ -776,10 +778,25 @@ final class ServerRelayTests: BaseTest {
         let a = try await harness.connect(pathSuffix: "sync/group/g1", user: kicked)
         let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
 
+        // Finish both empty-channel catch-ups before creating the warmup.
+        // Client upgrade alone does not establish server setup completion.
+        let setupsReady = await a.wait { _ in setupCompletions.count == 2 }
+        try #require(setupsReady)
+
         // Establish the connection works pre-kick.
         let warmup = try donorEntries { try $0.add(SimpleSyncObject(value: 11, floatValue: 1)) }
         try await a.socket!.send(try makeFrame(entries: warmup))
         #expect(await a.wait { !$0.acks.isEmpty })
+        let warmupIds = Set(warmup.compactMap(\.globalId))
+        try #require(!warmupIds.isEmpty)
+        let warmupWasAcked = warmupIds.isSubset(of: Set(a.acks))
+        try #require(warmupWasAcked)
+        // ACK precedes awaited legacy fan-out. Freeze the no-fanout baseline
+        // only after this peer has received every exact warmup audit event.
+        let warmupReachedPeer = await peer.wait {
+            warmupIds.isSubset(of: Set($0.receivedAuditIds))
+        }
+        try #require(warmupReachedPeer)
         let acksBeforeKick = a.acks.count
         let peerFramesBeforeKick = peer.count(of: "auditLog")
 

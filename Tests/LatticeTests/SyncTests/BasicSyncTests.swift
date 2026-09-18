@@ -966,7 +966,7 @@ actor SyncTests {
             // Step 2: Force compact lattice1's audit log (nuclear — no replication slots in WSS-only).
             stages.record("compaction_begin")
             let compactedEntries = lattice.forceCompactHistory()
-            stages.record("compaction_returned", count: compactedEntries)
+            stages.record("compaction_returned", count: Int(exactly: compactedEntries))
             #expect(compactedEntries >= 1, "Should create snapshot entries")
 
             // Step 3: Upload the compacted snapshot plus the new row. Retain the
