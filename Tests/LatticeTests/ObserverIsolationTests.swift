@@ -75,6 +75,10 @@ private func checkCollectionObserverRouting(
     let snapshot = capture.snapshot()
     #expect(capture.completedDeliveryCount == writes, "every callback batch returned")
     let rowIDs = snapshot.deliveries.map(\.rowID)
+    if rowIDs.count != writes || Set(rowIDs).count != rowIDs.count {
+        PayloadObserverDiagnosticLog.emitWorkerSnapshot(reason: "collection_isolation_delivery_count")
+        PayloadObserverDiagnosticLog.emitCaptured(snapshot.events, label: "collection_isolation")
+    }
     #expect(rowIDs.count == writes)
     #expect(Set(rowIDs).count == rowIDs.count, "no duplicate deliveries")
     #expect(rowIDs.sorted() == Array(1...Int64(writes)))

@@ -73,6 +73,10 @@ nuclear tool renumbered ids and silenced every other process.
   uploads core treats it like `nil`.
 
 ### Fixed
+- Preserve a collection observer's attaching actor when its query handle is
+  resolved on the delivery worker.
+- Release the wrapper cache lock before closing a deleted store's backends,
+  so native shutdown can finish callbacks that need the cache.
 - Surface preserving-global-ID insertion failures through the existing
   throwing `add` API instead of allowing a bridge failure to escape.
 - Capture covered primitive, list, removal and query failures before later

@@ -146,6 +146,7 @@ jobs:
         id: test
         env:
           LATTICE_ACK_PATH_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
+          LATTICE_OBSERVER_WORKER_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
         run: swift test --force-resolved-versions
 
       - &after_test
@@ -239,6 +240,7 @@ jobs:
         id: test
         env:
           LATTICE_ACK_PATH_DIAGNOSTICS: '1'
+          LATTICE_OBSERVER_WORKER_DIAGNOSTICS: '1'
         run: swift test --force-resolved-versions
 
       - *after_test

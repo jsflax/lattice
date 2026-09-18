@@ -34,17 +34,33 @@ final class PayloadObserverDiagnosticLog: @unchecked Sendable {
         events.append(event)
     }
 
+    static func emitWorkerSnapshot(reason: StaticString) {
+        for line in ObserverDeliveryWorker.shared.diagnosticSnapshotLines(reason: reason) {
+            print(line)
+        }
+    }
+
     func emit() {
         lock.lock()
         closed = true
         let snapshot = events
         let droppedEvents = dropped
         lock.unlock()
+        Self.emitCaptured(snapshot, label: label, dropped: droppedEvents, captureClosed: true)
+    }
+
+    // Also formats an already-captured routing snapshot on failure. Keep
+    // output bounded even if a regression produced far more than 25 events.
+    static func emitCaptured(_ events: [PayloadObserverDiagnosticEvent], label: String,
+                             dropped: Int = 0, captureClosed: Bool = false) {
+        let maximumEvents = 2048
+        let snapshot = events.prefix(maximumEvents)
+        let droppedEvents = dropped + max(0, events.count - maximumEvents)
         // Formatting/output are deferred until the existing test unwinds.
         // Closure does not wait for cancellation/termination or late callbacks.
         print("DIAGNOSTIC PayloadObserverCapture: test=\(label) events=\(snapshot.count)"
               + " dropped_events=\(droppedEvents) max_events=\(maximumEvents) max_batch_ids=1024"
-              + " clock=dispatch_uptime capture_closed=true late_events_unobserved=true")
+              + " clock=dispatch_uptime capture_closed=\(captureClosed) snapshot_frozen=true late_events_unobserved=true")
         for (index, event) in snapshot.enumerated() {
             let batch = event.batch?.uuidString.lowercased() ?? "none"
             let ids = event.rowIDs.map { String($0) }.joined(separator: ",")

@@ -1151,6 +1151,14 @@ public struct Lattice {
     }
     
     public static func delete(for configuration: Configuration = defaultConfiguration) throws {
+        try _delete(for: configuration, closeBackend: { $0.close() })
+    }
+
+    /// Internal close seam keeps deletion ordering testable without a mock
+    /// backend or relying on a native callback to hit a thread-join race.
+    /// This does not serialize concurrent opening/deleting of the same path.
+    internal static func _delete(for configuration: Configuration,
+                                 closeBackend: (any LatticeBackend) -> Void) throws {
         let latticeSHMURL: URL
         let latticeWALURL: URL
 
@@ -1167,10 +1175,18 @@ public struct Lattice {
         // Item A §4.6: generations/coordinators ride the same close — tear
         // down every same-path coordinator before the backends close.
         GenerationCoordinatorRegistry.evictAll(path: filePath)
-        cacheLock.withLockUnchecked {
-            for (key, entry) in cache where entry.configuration.fileURL.path == filePath {
-                entry.backend?.close()
-                cache.removeValue(forKey: key)
+        let retired = cacheLock.withLockUnchecked {
+            let matching = cache.filter { $0.value.configuration.fileURL.path == filePath }
+            // Retain both metadata and live backends before removing entries.
+            // Neither native close nor a final metadata release may run under
+            // this process-global lock: callbacks can need the cache again.
+            let retained = matching.values.map { (entry: $0, backend: $0.backend) }
+            for key in matching.keys { cache.removeValue(forKey: key) }
+            return retained
+        }
+        withExtendedLifetime(retired) {
+            for item in retired {
+                if let backend = item.backend { closeBackend(backend) }
             }
         }
 
@@ -1920,6 +1936,7 @@ public struct Lattice {
     func _observeAuditLog(diagnostic: PayloadObserverDiagnostic?,
                           _ block: @escaping ([AuditLog]) -> ()) -> AnyCancellable {
         let backend = self.backend
+        let workerStoreIdentity = backend.identityHash
         // The C++ side delivers batches per WAL flush; this public Swift API has
         // historically fired the block ONCE PER ROW with a one-element array
         // (the `[AuditLog]` shape was a misnomer — always length 1). Preserve
@@ -1940,12 +1957,15 @@ public struct Lattice {
             // scheduler's thread (a default-stack std::thread — the same
             // 512KB class as the crashed cooperative pool). Deliver from the
             // big-stack worker instead.
-            ObserverDeliveryWorker.shared.enqueue {
+            ObserverDeliveryWorker.shared.enqueue(kind: .audit, table: AuditLog.entityName,
+                                                  storeIdentity: workerStoreIdentity, batchID: diagnosticBatch?.id) {
                 diagnosticBatch?.record("job_started")
                 for change in changes {
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.auditHydration)
                     diagnosticBatch?.record("audit_hydration_started")
                     if let auditLog = s.value.object(AuditLog.self, primaryKey: change.rowId) {
                         diagnosticBatch?.record("audit_hydrated")
+                        ObserverDeliveryWorker.shared.diagnosticPhase(.userCallback)
                         blk.value([auditLog])
                         diagnosticBatch?.record("audit_callback_returned", count: 1)
                     } else {
@@ -2051,6 +2071,7 @@ public struct Lattice {
         AsyncThrowingStream { [backend, modelTypes, configuration] stream in
             let log = Logger.sync
             let state = ChangeStreamState()
+            let workerStoreIdentity = backend.identityHash
             // `[any Model.Type]` isn't structurally Sendable (existential
             // metatype element); the immutable array is safe to send.
             let types = UncheckedSendable(modelTypes)
@@ -2096,8 +2117,10 @@ public struct Lattice {
                 diagnosticBatch?.record("enqueue_boundary")
                 // C0a: emit resolves the batch with SQL — off the sync
                 // scheduler's default-stack thread, onto the 8MB worker.
-                ObserverDeliveryWorker.shared.enqueue {
+                ObserverDeliveryWorker.shared.enqueue(kind: .stream, table: AuditLog.entityName,
+                                                      storeIdentity: workerStoreIdentity, batchID: diagnosticBatch?.id) {
                     diagnosticBatch?.record("job_started")
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.streamStateDelivery)
                     state.deliver(changes, diagnostic: diagnosticBatch, emit)
                 }
             }
@@ -2164,6 +2187,7 @@ public struct Lattice {
         AsyncThrowingStream { [backend, modelTypes, configuration] stream in
             let log = Logger.sync
             let state = ChangeStreamState()
+            let workerStoreIdentity = backend.identityHash
             let types = UncheckedSendable(modelTypes)
 
             let emit: @Sendable (Lattice, [TableChangeEvent], PayloadObserverDiagnosticBatch?) -> Void = { queryLattice, changes, diagnosticBatch in
@@ -2195,8 +2219,10 @@ public struct Lattice {
             let observerId = backend.addTableObserver(table: AuditLog.entityName) { changes in
                 let diagnosticBatch = diagnostic?.begin(changes)
                 diagnosticBatch?.record("enqueue_boundary")
-                ObserverDeliveryWorker.shared.enqueue {
+                ObserverDeliveryWorker.shared.enqueue(kind: .headers, table: AuditLog.entityName,
+                                                      storeIdentity: workerStoreIdentity, batchID: diagnosticBatch?.id) {
                     diagnosticBatch?.record("job_started")
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.headersStateDelivery)
                     state.deliver(changes, diagnostic: diagnosticBatch, emit)
                 }
             }
@@ -2255,6 +2281,7 @@ public struct Lattice {
         // the attaching actor separately so resolution cannot change where
         // the observer's block is delivered.
         let isolation = self.isolation
+        let workerStoreIdentity = backend.identityHash
 
         let block = UnsafeBlock(block: block)
 
@@ -2281,8 +2308,10 @@ public struct Lattice {
             // gets an 8MB stack and batches apply serially. A block bound to
             // an isolation still runs on that actor — only the decision SQL
             // moves.
-            ObserverDeliveryWorker.shared.enqueue {
+            ObserverDeliveryWorker.shared.enqueue(kind: .collection, table: T.entityName,
+                                                  storeIdentity: workerStoreIdentity, batchID: diagnosticBatch?.id) {
                 diagnosticBatch?.record("job_started")
+                ObserverDeliveryWorker.shared.diagnosticPhase(.collectionResolve)
                 diagnosticBatch?.record("collection_resolution_started")
                 guard let self = ref.resolve() else {
                     diagnosticBatch?.record("collection_resolution_nil")
@@ -2314,6 +2343,7 @@ public struct Lattice {
                 }
                 // Decision SQL runs synchronously here on the worker's 8MB
                 // stack; delivery happens per decision below.
+                ObserverDeliveryWorker.shared.diagnosticPhase(.collectionDecisions)
                 diagnosticBatch?.record("collection_decisions_started")
                 var decisions: [CollectionChange] = []
                 for entry in changes {
@@ -2356,6 +2386,7 @@ public struct Lattice {
                     // in commit order, exactly as before.
                     let batch = decisions
                     diagnosticBatch?.record("collection_actor_hop")
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.actorHandoff)
                     Task {
                         await isolation.invoke { _ in
                             diagnosticBatch?.record("collection_emission_started", count: batch.count)
@@ -2368,6 +2399,7 @@ public struct Lattice {
                     // block's own SQL (per-row hydration in UI observers)
                     // inherits the deep stack too.
                     diagnosticBatch?.record("collection_emission_started", count: decisions.count)
+                    ObserverDeliveryWorker.shared.diagnosticPhase(.userCallback)
                     for change in decisions { block(change) }
                     diagnosticBatch?.record("collection_emission_returned", count: decisions.count)
                 }
