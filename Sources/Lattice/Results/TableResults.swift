@@ -683,7 +683,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// and the invalidated placeholder exist to satisfy the non-optional
     /// `subscript`; an optional return expresses "no such element" directly).
     public func element(at index: Int) -> Element? {
-        guard index >= 0 else { return nil }
+        guard index >= 0, !_lattice.backend._isClosed else { return nil }
         // §4.1 in-txn carve-out: one writer-connection read at the
         // effective total order's index — no page-cache read (entries
         // predate the transaction) and no generation resolution.
@@ -740,6 +740,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// row return column defaults, never a crash). Rung (d) renders a blank
     /// row for one frame instead of aborting the process.
     public subscript(index: Int) -> Element {
+        guard !_lattice.backend._isClosed else { return Element.defaultValue }
         if let element = element(at: index) {
             return element
         }
@@ -780,6 +781,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     // the `id ASC` tiebreaker — so `snapshot()` order ≡ the keyset walk's
     // total order (pinned by the Commit-2 property matrix).
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
+        guard !_lattice.backend._isClosed else { return [] }
         LatticePerf.bump(.snapshots)
 
         // §4.1 in-txn carve-out: read-your-writes inside this thread's own
@@ -882,6 +884,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// (§4.1) — the id vector captured at the current epoch — hydrating per
     /// batch; rows deleted after capture are skipped.
     public func makeIterator() -> KeysetCursor<Element> {
+        guard !_lattice.backend._isClosed else { return KeysetCursor(nextBatch: { nil }) }
         // §4.1 in-txn carve-out: OFFSET-batched walk on the writer
         // connection. The keyset walk pins a generation hold (keeper) —
         // forbidden while this thread's transaction is open — and the
@@ -1143,6 +1146,9 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
 
     public var endIndex: Int {
+        // A read racing close can repopulate a coordinator after registry
+        // eviction. Native lifetime, rather than cached epoch, is authoritative.
+        guard !_lattice.backend._isClosed else { return 0 }
         // §4.1 in-txn carve-out: writer-connection count, bypassing both
         // the epoch-cached count (whose entries predate the transaction's
         // writes — property-setter writes inside the block do not bump the

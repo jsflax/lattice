@@ -35,6 +35,33 @@ final class CloseGuardTests: BaseTest {
         #expect(iterated == 0)
     }
 
+    @Test(arguments: [false, true])
+    func nativeCloseOverridesRetainedShapeCaches(memory: Bool) throws {
+        let lattice: Lattice
+        if memory {
+            lattice = try Lattice(Person.self, configuration: .init(storage: .memory()))
+        } else {
+            lattice = try testLattice(path: "\(String.random(length: 32)).sqlite", Person.self)
+        }
+        defer { lattice.close() }
+        try seed(lattice, ["John", "Jane", "Tim"])
+        let results = lattice.objects(Person.self)
+        #expect(results.count == 3)
+        #expect(results.element(at: 0) != nil)
+
+        // Reproduce the state left by a reader recreating/populating the
+        // coordinator between registry eviction and the native close. Keep
+        // the coordinator and its caches alive deliberately, without timing.
+        lattice.backend.close()
+
+        #expect(results.count == 0)
+        #expect(results.element(at: 0) == nil)
+        #expect(results[0].primaryKey == nil)
+        #expect(results.snapshot().isEmpty)
+        #expect(Array(results).isEmpty)
+        #expect(lattice.objects(Person.self).count == 0)
+    }
+
     /// The real-world shape of the staff bug: materialize objects + hold a live
     /// results handle, delete the lattice out from under them (as logout does),
     /// then keep using all of it. Must not crash.

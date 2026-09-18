@@ -117,7 +117,7 @@ struct ProjectionQueryShapeTests {
         #expect(descriptor.whereSQL == results.whereStatement?.predicate)
         #expect(descriptor.bindings.isEmpty)
         #expect(descriptor.bounds == BoundsConstraintParam(column: "location", minLat: -1, maxLat: 2, minLon: -3, maxLon: 4))
-        #expect(descriptor.orderBySQL == "stored_rank ASC, ProjectionShapeItem.id ASC")
+        #expect(descriptor.orderBySQL == "\"ProjectionShapeItem\".\"stored_rank\" ASC, \"ProjectionShapeItem\".\"id\" ASC")
         #expect(descriptor.groupBy == "category_name" && descriptor.distinctBy == "label")
     }
 

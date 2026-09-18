@@ -445,6 +445,7 @@ def main():
               'overallSeconds': OVERALL_SECONDS, 'finalizationReserveSeconds': FINALIZATION_RESERVE}
     original = sdk_inputs = core_inputs = None
     primary = None
+    test_started_at = None
     with Interrupts() as interrupts:
         runner = GuardedRunner(root, receipts, env, interrupts)
         try:
@@ -483,6 +484,7 @@ def main():
             build = runner.run('build-tests', ['swift', 'build', *common, '--force-resolved-versions', '--build-tests', '-j', '2', '-v'], cwd=sdk, timeout=5400)
             save_json(receipts / 'compiler-input-proof.json', compiler_input_proof(build, core))
             # Do not shorten or silently consume the original platform test allowance.
+            test_started_at = time.time()
             runner.run('full-test', ['swift', 'test', *common, '--force-resolved-versions', '--skip-build'], cwd=sdk,
                        timeout=args.test_timeout, require_full_timeout=True)
             graph = runner.run('effective-graph-after', ['swift', 'package', *common, 'show-dependencies', '--format', 'json'], cwd=sdk)
@@ -515,6 +517,12 @@ def main():
                     if before != after:
                         raise ValueError('unapproved non-Core dependency drift')
                     shutil.copyfile(sdk / 'Package.resolved', receipts / 'Package.resolved.final')
+                if platform.system() == 'Darwin' and test_started_at is not None and primary is not None:
+                    def crash_evidence():
+                        import development_crashes
+                        captured = development_crashes.collect(root, receipts / 'crash-reports', test_started_at)
+                        save_json(receipts / 'crash-reports.json', captured)
+                    evidence('macOS test crash reports', crash_evidence)
                 evidence('final lock', final_lock)
                 evidence('final workspace state', lambda: shutil.copyfile(root / 'scratch/workspace-state.json', receipts / 'workspace-state.final.json'))
                 for label, repository, initial in [('sdk', sdk, sdk_inputs), ('core', core, core_inputs)]:

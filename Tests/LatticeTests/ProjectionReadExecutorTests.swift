@@ -11,8 +11,8 @@ private enum ProjectionExecutorTestError: Error, Equatable { case gateTimedOut, 
 private final class ProjectionExecutorTestGate: @unchecked Sendable {
     private let semaphore = DispatchSemaphore(value: 0)
     func open() { semaphore.signal() }
-    func wait() throws {
-        guard semaphore.wait(timeout: .now() + 5) == .success else {
+    func wait(timeout: TimeInterval = 5) throws {
+        guard semaphore.wait(timeout: .now() + timeout) == .success else {
             throw ProjectionExecutorTestError.gateTimedOut
         }
     }
@@ -46,35 +46,37 @@ struct ProjectionReadExecutorTests {
     @Test func secondNativeWorkerProgressesWhileFirstIsBlocked() async throws {
         let executor = ProjectionReadExecutor(workerCount: 2, maxPendingJobs: 2)
         let gate = ProjectionExecutorTestGate()
-        defer { gate.open() }
-        let firstStarted = LockedBox(false)
-        let first = Task {
-            try await executor.submit {
-                firstStarted.withLock { $0 = true }
-                try gate.wait()
-                return 11
-            }
+        let firstStarted = ProjectionExecutorTestGate()
+        defer { gate.open(); firstStarted.open() }
+        async let first = executor.submit {
+            firstStarted.open()
+            try gate.wait()
+            return 11
         }
-        try await waitUntil { firstStarted.withLock { $0 } }
-
-        let stack = try await executor.submit {
-            #expect(!Thread.isMainThread)
+        async let second = executor.submit {
+            // Establish the overlap and release the first worker here. An
+            // unrelated delay resuming this test on the cooperative executor
+            // must not consume the native worker's unchanged five-second gate.
+            defer { gate.open() }
+            try firstStarted.wait(timeout: 3)
+            let state = executor.snapshot
             #if canImport(Darwin)
-            return Int(pthread_get_stacksize_np(pthread_self()))
+            let stack = Int(pthread_get_stacksize_np(pthread_self()))
             #else
-            return Thread.current.stackSize
+            let stack = Thread.current.stackSize
             #endif
+            return (stack: stack, main: Thread.isMainThread,
+                    otherJobsRunning: state.running - 1, verifiedWorkers: state.verifiedWorkers)
         }
+        let probe = try await second
+        #expect(!probe.main)
         #if canImport(Darwin)
-        #expect(stack >= ProjectionReadExecutor.requiredStackSize,
+        #expect(probe.stack >= ProjectionReadExecutor.requiredStackSize,
                 "Native reads must not use the cooperative pool's small stack")
-        #else
-        _ = stack // Foundation's configured stack property is not an OS measurement.
         #endif
-        #expect(executor.snapshot.running == 1)
-        #expect(executor.snapshot.verifiedWorkers == 2)
-        gate.open()
-        #expect(try await first.value == 11)
+        #expect(probe.otherJobsRunning == 1)
+        #expect(probe.verifiedWorkers == 2)
+        #expect(try await first == 11)
         await executor.shutdown()
         #expect(executor.snapshot.liveWorkers == 0)
     }

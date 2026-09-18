@@ -39,23 +39,24 @@ struct ObservationTurnSchedulerTests {
         let scheduler = ObservationTurnScheduler(workerCount: 1, maxSubscriptions: 2)
         let gate = ObservationTurnTestGate()
         defer { gate.open() }
-        let entered = LockedBox(false)
         let timedOut = LockedBox(false)
         let revisions = LockedBox<[UInt64]>([])
         let blocker = try scheduler.register(storeID: 99) { _, _ in
-            entered.withLock { $0 = true }
             if !gate.wait() { timedOut.withLock { $0 = true } }
         }
         blocker.notify(revision: 0)
-        try await waitUntil { entered.withLock { $0 } }
         let observed = try scheduler.register(storeID: 1) { revision, _ in
             revisions.withLock { $0.append(revision) }
         }
         for revision in 0..<10_000 { observed.notify(revision: UInt64(revision)) }
         observed.notify(revision: 7) // Latest arrival is not the numeric maximum.
-        #expect(scheduler.snapshot.readySubscriptions == 1)
-        #expect(scheduler.snapshot.readyStores == 1)
-        #expect(scheduler.snapshot.admittedTurns == 1)
+        let queued = scheduler.snapshot
+        // Blocker is first in the sole worker's FIFO. Account for both legal
+        // admission states without awaiting cooperative task resumption.
+        #expect((0...1).contains(queued.admittedTurns))
+        #expect(queued.readySubscriptions + queued.admittedTurns == 2)
+        #expect(queued.readyStores + queued.admittedTurns == 2)
+        #expect(revisions.withLock { $0.isEmpty })
         gate.open()
         try await waitUntil { revisions.withLock { $0.count == 1 } }
         await observed.cancelAndWait()
@@ -69,15 +70,15 @@ struct ObservationTurnSchedulerTests {
         let scheduler = ObservationTurnScheduler(workerCount: 1, maxSubscriptions: 6)
         let gate = ObservationTurnTestGate()
         defer { gate.open() }
-        let entered = LockedBox(false)
         let timedOut = LockedBox(false)
         let order = LockedBox<[String]>([])
         let blocker = try scheduler.register(storeID: 99) { _, _ in
-            entered.withLock { $0 = true }
             if !gate.wait() { timedOut.withLock { $0 = true } }
         }
         blocker.notify(revision: 0)
-        try await waitUntil { entered.withLock { $0 } }
+        // Queue the blocker first on the sole worker. There is no need to
+        // suspend on the cooperative executor before preparing the ready set:
+        // it either waits below or consumes the signal after all five are queued.
         var subscriptions: [Subscription] = []
         for (store, name) in [(UInt64(1), "A1"), (1, "A2"), (1, "A3"), (2, "B1"), (2, "B2")] {
             let subscription = try scheduler.register(storeID: store) { _, _ in
@@ -86,8 +87,13 @@ struct ObservationTurnSchedulerTests {
             subscriptions.append(subscription)
             subscription.notify(revision: 1)
         }
-        #expect(scheduler.snapshot.readyStores == 2)
-        #expect(scheduler.snapshot.readySubscriptions == 5)
+        let queued = scheduler.snapshot
+        // The first worker may or may not have admitted the blocker yet.
+        // Both states must contain exactly the same six turns and three stores.
+        #expect((0...1).contains(queued.admittedTurns))
+        #expect(queued.readyStores + queued.admittedTurns == 3)
+        #expect(queued.readySubscriptions + queued.admittedTurns == 6)
+        #expect(order.withLock { $0.isEmpty })
         gate.open()
         try await waitUntil { order.withLock { $0.count == 5 } }
         #expect(order.withLock { $0 } == ["A1", "B1", "A2", "B2", "A3"])

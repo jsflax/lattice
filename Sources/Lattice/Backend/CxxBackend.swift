@@ -63,6 +63,10 @@ private typealias CxxByteVector = lattice.ByteVector
 }
 
 extension LatticeBackend {
+    /// The native instance owns close state; distinct Swift wrappers can share
+    /// it. Cached collection paths must check that state before returning data.
+    var _isClosed: Bool { (self as? CxxBackend)?.ref.isClosed() ?? false }
+
     /// The underlying C++ `swift_lattice_ref`. Used by the paths that drive the
     /// C++ surface directly (object-observer registration, `attach`, nearest
     /// queries). Available on every OS: below the FRT floor the ref is a

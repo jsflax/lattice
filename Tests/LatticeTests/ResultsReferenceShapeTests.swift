@@ -35,7 +35,10 @@ private struct ReferenceShapeRead: Sendable, Equatable {
 private actor ReferenceShapeReader {
     func read(_ reference: ResultsThreadSafeReference<TableResults<ReferenceShapeItem>>,
               on database: LatticeThreadSafeReference) throws -> ReferenceShapeRead {
-        let lattice = try #require(database.resolve())
+        // Evaluate in this actor before #require rewrites a call into a
+        // nonisolated diagnostic closure. Keep the identity assertion below.
+        let resolved = database.resolve(isolation: self)
+        let lattice = try #require(resolved)
         defer { lattice.close() }
         #expect(lattice.isolation.map(ObjectIdentifier.init) == ObjectIdentifier(self))
         let results = try #require(reference.resolve(on: lattice))

@@ -80,6 +80,9 @@ nuclear tool renumbered ids and silenced every other process.
   uploads core treats it like `nil`.
 
 ### Fixed
+- Reject new cached Results reads after the shared native database closes,
+  including handles whose collection caches are retained by another wrapper.
+  Reads already in flight keep their existing lifetime contract.
 - Require Core 2.0.3 so stale shared readers cannot replay committed changes,
   and removing an observer releases its captures outside registry locks.
   A captured object can cancel a sibling observer during destruction without
