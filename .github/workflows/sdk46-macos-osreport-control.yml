@@ -1,0 +1,51 @@
+name: SDK46 macOS OS-report control
+on:
+  push:
+    branches: [codex/perf-qualification-20260918]
+    paths: ['.github/workflows/sdk46-macos-osreport-control.yml', 'Scripts/sdk46-macos-osreport-control/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  capture-control:
+    runs-on: macos-26
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      SOURCE_SEAL_SHA256: f45bad29be96c6a9ab8a2530458339daa54e0d25d881324a52b037712a87953d
+    steps:
+      - name: Fetch exact control tools under localdev
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          TASK_ROOT="$HOME/localdev/sdk46-osreport-control-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$TASK_ROOT"
+          mkdir -p "$TASK_ROOT/tmp"
+          echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          git init "$TASK_ROOT/tools"
+          git -C "$TASK_ROOT/tools" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C "$TASK_ROOT/tools" checkout --detach "$GITHUB_SHA"
+          test "$(git -C "$TASK_ROOT/tools" rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Run tiny known crash and bounded OS-report capture only
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          python3 -B "$TASK_ROOT/tools/Scripts/sdk46-macos-osreport-control/control_probe.py" \
+            --root "$TASK_ROOT/control-run" \
+            --source-seal-sha256 "$SOURCE_SEAL_SHA256"
+      - name: Preserve exact control and capture evidence
+        if: always() && env.TASK_ROOT != ''
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk46-osreport-control-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ env.TASK_ROOT }}/control-run/receipts
+            ${{ env.TASK_ROOT }}/control-run/control/CrashControl.swift
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

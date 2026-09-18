@@ -1,0 +1,12 @@
+{
+  "files": {
+    "CrashControl.swift": "f577fccf09e9c2e4192f3e76ae04e4559efbc6c9e9bbcb91b5b16e96f1feded4",
+    "README.md": "cd69c88cae513928cfbaadf29c823f2778d6a80034f566ffac350550cb1edcec",
+    "control_probe.py": "6a9c54092892dd2b85e88828301a6ddff2644d9407859b089c27ee3c112b4e7c",
+    "control_reports.py": "d5833c82c3ac7f4ea77647359123543bc5a95b67bf03182235f9530227c22f81",
+    "development_supervisor.py": "368ba9664acfa8453f5fa6752de94297c6402b1e33502bc12fc2aed1c2a4fb28",
+    "parse_report.py": "423fd75564e66e12feaca2f7fabad0338c9b86140505a8ea7a2a8fb89f8590ca",
+    "test_control.py": "d732c61458eaf81351a2624f0472241823a1507b87041d86f452fbc6be807d99"
+  },
+  "scope": "SDK46 OS-report control only"
+}
