@@ -1,0 +1,45 @@
+{
+  "state": "hosted macOS diagnostic source ready; native qualification pending",
+  "executionAdmitted": true,
+  "inputsSHA256": "8dd0691aa264d5677f631aae2e7de7de34448864cbc87f36305a4f44e9bece56",
+  "source": "73ac6c2ab102216a68a33ee09b0ba5b73ba76e75",
+  "tree": "c32f882de14b158c15ed71dee6ca8fe6d8a20cc9",
+  "priorSourceSealSHA256": "48005802d3a6dd04372c1c36ce239861bcc89a6ca10993197d73845e8a710fa6",
+  "priorParentSourceReviewSHA256": "144dd09f10cef4b59046cb8c8dbc001fffb2c99fc212eab6357aadbfec2751c2",
+  "diagnosticPatchSHA256": "9293b7837272a2bcb3d199f1c05ac819726a848656be03d2f239b809c6dd1b6c",
+  "readmeSHA256": "86e980f3346b80f88715730b9cd5e347b22a5990511ba53fef4fa12ecaede351",
+  "sourceChecksSHA256": "f4e16dc2420663fa6dc94328760bc77f28cbb2c207c723b44de98e2b4fce5f77",
+  "workflowSHA256": "99779274ec884671c605a62dbcc778e1fa59e1ecea5383c5ef3100e2311faa78",
+  "actualNativeOrNetworkExecution": false,
+  "freshO3BuildArms": [
+    "off",
+    "on"
+  ],
+  "expectedActualTUsPerArm": 14,
+  "sampleSchedule": [
+    "off",
+    "on",
+    "off",
+    "on",
+    "off",
+    "on"
+  ],
+  "resourceBounds": {
+    "freeFloorBytes": 13421772800,
+    "entireTaskRootCapBytes": 536870912,
+    "compileLogCapBytes": 67108864,
+    "sampleLogCapBytes": 65536,
+    "eachCompileChildSeconds": 1200,
+    "eachCompileOuterSeconds": 1355,
+    "sampleCommandSeconds": 30,
+    "sharedSampleWindowSeconds": 180,
+    "runOuterSeconds": 335
+  },
+  "claimsExcluded": [
+    "No frozen Swift benchmark",
+    "No p95/2x qualification",
+    "No cross-graph/macOS-version latency comparison",
+    "No cache-policy/reader-transfer/product change"
+  ],
+  "rootReview": "Parent reported no blocker for build/run/summary/workflow; final exact seal awaits parent admission."
+}

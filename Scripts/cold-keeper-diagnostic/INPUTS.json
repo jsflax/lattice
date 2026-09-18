@@ -1,0 +1,60 @@
+{
+  "files": {
+    "SOURCE-MANIFEST.json": {
+      "bytes": 157183,
+      "sha256": "6ca0ca0ef2b51baa8bac4bd6d41a0ee794a41fe6d64be2763a2072639b96a3b7"
+    },
+    "cold-keeper-diagnostic.yml": {
+      "bytes": 3854,
+      "sha256": "99779274ec884671c605a62dbcc778e1fa59e1ecea5383c5ef3100e2311faa78"
+    },
+    "diagnostic.patch": {
+      "bytes": 10792,
+      "sha256": "9293b7837272a2bcb3d199f1c05ac819726a848656be03d2f239b809c6dd1b6c"
+    },
+    "fetch-core.py": {
+      "bytes": 2023,
+      "sha256": "4f5e2c1610e66a007b850b628cfc7554025497017cf1f6f57617fc337e78b94e"
+    },
+    "harness/CMakeLists.txt": {
+      "bytes": 960,
+      "sha256": "76a8b61c5c69cc87af2633368b40310e4e64824e0d60c90866a8e191873deb00"
+    },
+    "harness/build.py": {
+      "bytes": 8317,
+      "sha256": "fb3668f25e635d2f905be5f5fc849dccc5cf9abe1672531c866b457a7de7301b"
+    },
+    "harness/guarded_runner.py": {
+      "bytes": 29477,
+      "sha256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71"
+    },
+    "harness/prepare.py": {
+      "bytes": 3997,
+      "sha256": "7b4cbdadb19ea5f58ef00347f6d0e5c4f4b39e7ba15950ffaad1e4d95498ea58"
+    },
+    "harness/probe.cpp": {
+      "bytes": 6195,
+      "sha256": "0d3e1641ecd47d4906c908c4a0b15df825fd252a556ed1f6292cb510e5debff9"
+    },
+    "harness/run.py": {
+      "bytes": 8373,
+      "sha256": "d51c40d83412573ac1c9336d15a4a808301a4b4c4a6b8c556494f519a566676f"
+    },
+    "harness/summary.py": {
+      "bytes": 4408,
+      "sha256": "973a01f1b05d6f18d9a2cdef2b2390201a9c577ac5a26b4205ba69f71cb6eed1"
+    },
+    "harness/test_summary.py": {
+      "bytes": 2870,
+      "sha256": "44d2a9a92ea042cac4999d6baea1dec3b890fdf0a8c6b0f662a24f4c6d58c159"
+    },
+    "overlay/Sources/LatticeCore/include/lattice/detail/cold_keeper_timing.hpp": {
+      "bytes": 3153,
+      "sha256": "55871d44102667b15e156b6bb4d2f21d993c3d6a06979f6030caa4f5ce7c5fa0"
+    },
+    "overlay/Sources/LatticeCore/include/lattice/lattice.hpp": {
+      "bytes": 425791,
+      "sha256": "0b69317be703171996314ee2fbe02b3429de6803401c36d45bdf1773243934ec"
+    }
+  }
+}

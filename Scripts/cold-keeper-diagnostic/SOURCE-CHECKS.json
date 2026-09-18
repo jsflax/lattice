@@ -1,0 +1,16 @@
+{
+  "pythonASTFiles": 7,
+  "syntheticTests": 3,
+  "parseRejectionSubcases": 16,
+  "summaryRejectionSubcases": 4,
+  "unittestOutput": "test_parse_rejections (test_summary.SummaryTests.test_parse_rejections) ... ok\ntest_summary_rejections (test_summary.SummaryTests.test_summary_rejections) ... ok\ntest_valid (test_summary.SummaryTests.test_valid) ... ok\n\n----------------------------------------------------------------------\nRan 3 tests in 0.004s\n\nOK\n",
+  "success": true,
+  "originalProbeByteEqual": true,
+  "originalGuardedRunnerByteEqual": true,
+  "guardedRunnerSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+  "noNativeSQLiteCompilerOrNetwork": true,
+  "sourcePatchSHA256": "9293b7837272a2bcb3d199f1c05ac819726a848656be03d2f239b809c6dd1b6c",
+  "sourceManifestSHA256": "6ca0ca0ef2b51baa8bac4bd6d41a0ee794a41fe6d64be2763a2072639b96a3b7",
+  "inputsSHA256": "8dd0691aa264d5677f631aae2e7de7de34448864cbc87f36305a4f44e9bece56",
+  "formatChecksSHA256": "5e4fc647ba2de36dad5f555d0627c03de0fe2ef644abe2b684203f535a28f331"
+}

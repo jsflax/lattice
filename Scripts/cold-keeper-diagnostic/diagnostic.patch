@@ -1,0 +1,233 @@
+--- a/Sources/LatticeCore/include/lattice/lattice.hpp
++++ b/Sources/LatticeCore/include/lattice/lattice.hpp
+@@ -10,6 +10,9 @@
+ #include "observation.hpp"
+ #include "cross_process_notifier.hpp"
+ #include "sync.hpp"  // for sync_filter_entry (used by configuration)
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++#include "detail/cold_keeper_timing.hpp"
++#endif
+ #include "ipc.hpp"   // for ipc_endpoint (used by setup_ipc)
+ #include <vector>
+ #include <memory>
+@@ -2431,12 +2434,18 @@
+     size_t projection_resources_outstanding() const;
+ 
+     uint64_t acquire_read_generation() {
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++        detail::cold_keeper_timing::acquire_scope diagnostic(this);
++#endif
+ #ifdef __EMSCRIPTEN__
+         return 0;
+ #else
+         if (closed_.load(std::memory_order_seq_cst)) return 0;
+         if (config_.is_in_memory()) return 0;  // §4.1: NO keepers (covers named shared-cache memory)
+         run_pending_wal_eviction_if_any();
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++        diagnostic.mark(detail::cold_keeper_timing::phase::eviction_done);
++#endif
+ 
+         std::shared_ptr<database> conn;
+         std::shared_ptr<read_generation> victim;
+@@ -2449,8 +2458,17 @@
+                 victim = live_generations_.front();  // oldest
+             }
+         }
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++        diagnostic.mark(detail::cold_keeper_timing::phase::pool_selected, conn ? 1 : 0);
++#endif
+         if (victim) {
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++            diagnostic.mark(detail::cold_keeper_timing::phase::victim_begin);
++#endif
+             force_retire_generation(victim);
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++            diagnostic.mark(detail::cold_keeper_timing::phase::victim_end);
++#endif
+             std::lock_guard<std::mutex> lock(read_pool_mutex_);
+             if (!idle_read_pool_.empty()) {
+                 conn = idle_read_pool_.back();
+@@ -2459,19 +2477,46 @@
+         }
+         try {
+             if (!conn) {
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++                diagnostic.mark(detail::cold_keeper_timing::phase::constructor_begin);
++#endif
+                 conn = std::make_shared<database>(config_.path,
+                                                   database::open_mode::read_only,
+                                                   config_.busy_timeout_ms);
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++                diagnostic.mark(detail::cold_keeper_timing::phase::constructor_end);
++#endif
+                 // Keeper cache clamp (spec §2.5): the writer-sized default
+                 // (50,000 pages, db.cpp) would reserve ~600 MB of page-cache
+                 // headroom across a full pool.
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++                diagnostic.mark(detail::cold_keeper_timing::phase::cache_begin);
++#endif
+                 conn->execute("PRAGMA cache_size = 2000");
+-            }
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++                diagnostic.mark(detail::cold_keeper_timing::phase::cache_end);
++#endif
++            }
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++            diagnostic.mark(detail::cold_keeper_timing::phase::begin_begin);
++#endif
+             conn->execute("BEGIN");
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++            diagnostic.mark(detail::cold_keeper_timing::phase::begin_end);
++#endif
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++            diagnostic.mark(detail::cold_keeper_timing::phase::pin_begin);
++#endif
+             conn->query("SELECT 1 FROM sqlite_schema LIMIT 1");  // the pin/fence
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++            diagnostic.mark(detail::cold_keeper_timing::phase::pin_end);
++#endif
+         } catch (const db_error&) {
+             return 0;  // unopenable/racing-close store — caller falls back
+         }
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++        diagnostic.mark(detail::cold_keeper_timing::phase::publication_begin);
++#endif
+         auto gen = std::make_shared<read_generation>();
+         gen->conn = std::move(conn);
+         gen->pinned_at = std::chrono::steady_clock::now();
+@@ -2481,6 +2526,9 @@
+             gen->id = next_read_generation_id_++;
+             live_generations_.push_back(gen);
+         }
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++        diagnostic.mark(detail::cold_keeper_timing::phase::publication_end);
++#endif
+         if (closed_.load(std::memory_order_seq_cst)) {
+             // Lost the race with close(): its retire-all pass may have missed
+             // this generation. Undo — post-close acquisitions must not leak
+@@ -2488,6 +2536,9 @@
+             force_retire_generation(gen);
+             return 0;
+         }
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++        diagnostic.success(gen->id);
++#endif
+         return gen->id;
+ #endif
+     }
+@@ -2542,6 +2593,9 @@
+     std::optional<std::vector<database::row_t>> query_at_generation(
+         uint64_t generation_id, const std::string& sql,
+         const std::vector<column_value_t>& params = {}) {
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++        detail::cold_keeper_timing::page_scope diagnostic(this,generation_id);
++#endif
+         std::shared_ptr<read_generation> gen;
+         {
+             std::lock_guard<std::mutex> lock(read_pool_mutex_);
+@@ -2555,6 +2609,9 @@
+             }
+         }
+         if (!gen) return std::nullopt;
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++        diagnostic.mark(detail::cold_keeper_timing::phase::page_admitted);
++#endif
+         // RAII: the in-flight counter is the §2.2/§3.2 "active reads"
+         // definition — it must drop on every exit path or TTL retirement
+         // would treat the generation as permanently active.
+@@ -2567,7 +2624,13 @@
+         } release{gen.get()};
+         if (test_hook_generation_query_gap_) test_hook_generation_query_gap_();
+         try {
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++            diagnostic.mark(detail::cold_keeper_timing::phase::sql_begin);
++#endif
+             auto rows = gen->conn->query(sql, params);
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++            diagnostic.mark(detail::cold_keeper_timing::phase::sql_end);
++#endif
+             // TOCTOU re-check (item-A adversarial finding 1): a force-retire
+             // that began AFTER the liveness check above sets `retiring`
+             // (release, under the pool lock) BEFORE its COMMIT. If this
+@@ -2580,6 +2643,9 @@
+             // raced the flag mid-statement — is the §1.2 rung-1 carve-out:
+             // the caller re-resolves through the tolerant ladder.
+             if (gen->retiring.load(std::memory_order_acquire)) return std::nullopt;
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++            diagnostic.success();
++#endif
+             return rows;
+         } catch (const db_error&) {
+             // Interrupted by a force-retire, or the store went away.
+--- /dev/null
++++ b/Sources/LatticeCore/include/lattice/detail/cold_keeper_timing.hpp
+@@ -0,0 +1,69 @@
++#pragma once
++// Diagnostic build only. No installed public API or storage when OFF.
++#if defined(LATTICE_COLD_KEEPER_TIMING) && LATTICE_COLD_KEEPER_TIMING
++#include <array>
++#include <chrono>
++#include <cstddef>
++#include <cstdint>
++namespace lattice::detail::cold_keeper_timing {
++enum class phase : uint8_t {
++    acquire_enter=1, eviction_done, pool_selected, victim_begin, victim_end,
++    constructor_begin, constructor_end, cache_begin, cache_end,
++    begin_begin, begin_end, pin_begin, pin_end, publication_begin,
++    publication_end, acquire_exit, page_enter, page_admitted,
++    sql_begin, sql_end, page_exit
++};
++struct record { int64_t ns=0; uint64_t fact=0; phase tag{}; };
++struct snapshot {
++    std::array<record,24> records{};
++    std::size_t size=0;
++    uint64_t generation=0;
++    bool invalid=false, acquired=false, queried=false;
++    bool acquire_success=false, page_success=false;
++};
++struct state { snapshot data{}; const void* owner=nullptr; bool armed=false; };
++inline thread_local state local;
++static_assert(sizeof(state)<4096, "bounded per-thread diagnostic storage");
++inline void append(phase tag, uint64_t fact=0) noexcept {
++    auto& data=local.data;
++    if(data.size==data.records.size()) { data.invalid=true; return; }
++    const auto now=std::chrono::steady_clock::now().time_since_epoch();
++    data.records[data.size++]={std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(),fact,tag};
++}
++// Caller brackets ONE acquisition and its first actual page on this thread.
++// No allocation, log, SQL, callback or lock is used by the recorder.
++inline bool arm(const void* owner) noexcept {
++    if(local.armed || !owner) { local.data.invalid=true; return false; }
++    local={};local.owner=owner;local.armed=true;return true;
++}
++inline snapshot finish() noexcept {
++    local.armed=false;local.owner=nullptr;return local.data;
++}
++struct acquire_scope {
++    bool enabled=false;
++    explicit acquire_scope(const void* owner) noexcept {
++        if(!local.armed || local.owner!=owner)return;
++        if(local.data.acquired) { local.data.invalid=true;return; }
++        enabled=true;local.data.acquired=true;append(phase::acquire_enter);
++    }
++    void mark(phase tag,uint64_t fact=0) const noexcept { if(enabled)append(tag,fact); }
++    void success(uint64_t id) const noexcept {
++        if(enabled) {local.data.generation=id;local.data.acquire_success=true;}
++    }
++    ~acquire_scope() noexcept { mark(phase::acquire_exit,local.data.acquire_success?1:0); }
++};
++struct page_scope {
++    bool enabled=false;
++    page_scope(const void* owner,uint64_t id) noexcept {
++        if(!local.armed || local.owner!=owner)return;
++        if(!local.data.acquire_success || id!=local.data.generation || local.data.queried) {
++            local.data.invalid=true;return;
++        }
++        enabled=true;local.data.queried=true;append(phase::page_enter);
++    }
++    void mark(phase tag) const noexcept { if(enabled)append(tag); }
++    void success() const noexcept { if(enabled)local.data.page_success=true; }
++    ~page_scope() noexcept { if(enabled)append(phase::page_exit,local.data.page_success?1:0); }
++};
++} // namespace lattice::detail::cold_keeper_timing
++#endif

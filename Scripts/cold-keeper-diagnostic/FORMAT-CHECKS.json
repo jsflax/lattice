@@ -1,0 +1,13 @@
+{
+  "workflow": "PyYAML BaseLoader parsed; seven ordered steps",
+  "retainedDarwinMap": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/scalar-phase-diagnostic/build/control.map",
+  "retainedMapSHA256": "331b9728b24e4fd8b0373105984bbe6da1053efe6961eb18519440af26cf22df",
+  "classifiedObjectTable": {
+    "synthesized": 1,
+    "archiveMember": 7,
+    "directObject": 3,
+    "sdkImport": 16
+  },
+  "newIndexedArchiveSyntaxAlsoMatches": true,
+  "noNativeOrNetwork": true
+}
