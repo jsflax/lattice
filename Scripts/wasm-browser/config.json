@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "jsCommit": "ea5379bdffbf60a76f939d74ff1a2d7aa38f7b36",
+  "jsSourceHashes": {
+    ".github/workflows/ci.yml": "b54ac370bfd8c8f458882ccb5d4a5c9c4c8f3860ff19742aced3e497570a61be",
+    "package.json": "21aa4172a3a71534ff39316d08ac7518615037fd9e4d46cc835771d926b1a4a1",
+    "package-lock.json": "672216d1513fc0db2ab9ffdaafc72897b97a3f2574c4f8dee7955cbee3595129",
+    "wasm/CMakeLists.txt": "62e07b765b5a923698d5efa7ae2d4109bc5a2e0d70e39783a3f1a94be1e652d9",
+    "wasm/build.sh": "2ce9b2cb5734e367954c3a00d636281b66553a620f0351d91c3067d3a8785661",
+    "wasm/bindings.cpp": "45cdb2ec87ce5e66f22be732a6ba03881441f46ffc08899cdccc3d75481b10fc",
+    "vite.config.ts": "1dfd0502fdb406421c8a488dd1a490c770948e6600728054ba56bb4ce94d2fd4",
+    "vitest.config.ts": "3d8344d53409c0803aea0e97cd425391d079a7aca98e843915a24a1c5bbde87e",
+    "test/browser/tests.ts": "15bc899a8cff25a93181a163fb277dce44f19c5f372b71374ef636bd12725e0e",
+    "test/browser/test-sync-server.ts": "2bf53f224fa57bc5a5533c37ae596ce23a089cfa831f9e816df801dd841709fd",
+    "test/browser/index.html": "dacb51d1c023b46fb07e1606419f8d2d4450bed617a505c9caf5c2f5afa6efa1",
+    "test/no-shared-worker.test.ts": "9da5fc569c7c8854c5b9ae679c215727f5dc70c967ab926c97d9001e04bfdd4b",
+    "test/sync-socket.test.ts": "3ce33954033acf50b108016c8a6833bf5b5f676b81782c27b00932eeb1287669",
+    "test/pending-drain.test.ts": "7f6e8564c33930e548f573c30def552c07dcca157553c26dfb267f7e7186a710"
+  },
+  "originalCaseNames": [
+    "buildSchemas creates correct schema",
+    "link() and list() create correct markers",
+    "test_SimpleExample",
+    "test_ResultsQuery",
+    "test_Count",
+    "test_Remove",
+    "test_RemoveQueriedObject",
+    "test_BulkInsert",
+    "test_LinkResolution",
+    "test_LinkAssignment",
+    "test_ListAppendAndIterate",
+    "test_DateRoundTrip",
+    "test_Observation",
+    "test_PersistentDB_WorkerSync",
+    "test_SyncLoop_Debug",
+    "test_SyncLoop_WithBroadcastChannel",
+    "test_GroupBy",
+    "test_TypeSafeQueryBuilder",
+    "test_AddAll_BulkInsert",
+    "test_FineGrainedTableObservation",
+    "test_EmbeddedModel",
+    "test_EnumValue",
+    "test_RealServerSync"
+  ],
+  "coreA": "36b828864cbb1543e945898be31589f9c04d6384",
+  "coreB": "cbf360d14d696c84b40f5a58a966eed0271035ae",
+  "coreBTree": "cfa80cca9a05fbb2ee92f6db7ed5b9e2cbf41e03",
+  "wasmCI": 35340302120,
+  "artifactID": 10544642780,
+  "artifactSHA256": "8c88e372b2a962ffaf06d60a62077e39fa2dd254598c45004f6d652a7bd6d145",
+  "assets": {
+    "A": {
+      "js": {
+        "zipMember": "A-lattice.js",
+        "sha256": "944c62508a53166a4a6948eaf7246a854abb89b1001f1e6e460c541e11798f5c",
+        "bytes": 142630
+      },
+      "wasm": {
+        "zipMember": "A-lattice.wasm",
+        "sha256": "f7ba4249e452c93cd060c8363d28b9e588e5c510e6fad26800d8966803a7c56d",
+        "bytes": 2967288
+      }
+    },
+    "B": {
+      "js": {
+        "zipMember": "B-lattice.js",
+        "sha256": "ec4beb6991050935c215b5c92e3a8b55bab8b989876214d18c8b8efc4d6e0d6d",
+        "bytes": 142630
+      },
+      "wasm": {
+        "zipMember": "B-lattice.wasm",
+        "sha256": "d686024a248e3e1ed2e6479c22f73ffb9616a4cad1a288b78b18906d841cdc34",
+        "bytes": 3019123
+      }
+    }
+  },
+  "playwrightVersion": "1.58.2",
+  "nodeVersion": "20.18.0",
+  "browserEngine": "chromium",
+  "remoteSyncQualified": false,
+  "fullBrowserMatrixQualified": false,
+  "originalSuiteTimeoutMs": 120000,
+  "fixtureActionTimeoutMs": 30000,
+  "browserLaunchTimeoutMs": 30000,
+  "overallSeconds": 1200,
+  "freeFloorBytes": 12884901888,
+  "packetCeilingBytes": 2147483648,
+  "supervisorSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+  "platform": "linux",
+  "playwrightLockSHA256": "588b777799547077d3ba093ab6d18a61740321deefb80c7cdfdaea338ebafad8"
+}

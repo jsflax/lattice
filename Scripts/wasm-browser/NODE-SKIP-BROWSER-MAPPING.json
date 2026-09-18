@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "executed": false,
+  "nodeEvidenceRun": 35340302120,
+  "nodeActualPerArm": {
+    "passed": 82,
+    "skipped": 6
+  },
+  "note": "The five Integration Tests Node bodies are empty skipped placeholders. This mapping requires their substantive existing browser counterparts to pass unchanged with successful real WASM instantiation and matching served/received artifact bytes; it does not claim the empty bodies were executed. All 23 original browser cases must pass, with zero skips, in each arm.",
+  "cases": [
+    {
+      "nodeCase": "Decorators list() creates list properties (requires WASM)",
+      "nodeSource": "test/lattice.test.ts:124",
+      "browserCases": [
+        "link() and list() create correct markers",
+        "test_ListAppendAndIterate"
+      ],
+      "oracle": "Real model list starts empty, receives two persisted linked puppies, reports count two and exact iterated names, and persists when the parent is queried again; marker-only schema validation is insufficient."
+    },
+    {
+      "nodeCase": "Integration Tests (Browser Required) test_SimpleExample",
+      "nodeSource": "test/lattice.test.ts:475",
+      "browserCases": [
+        "test_SimpleExample"
+      ],
+      "oracle": "Adds a Person using real WASM, checks assigned identity and exact queried scalar values."
+    },
+    {
+      "nodeCase": "Integration Tests (Browser Required) test_ResultsQuery",
+      "nodeSource": "test/lattice.test.ts:476",
+      "browserCases": [
+        "test_ResultsQuery"
+      ],
+      "oracle": "Adds three rows and checks real total and filtered counts, async iteration length, and filtered snapshot length."
+    },
+    {
+      "nodeCase": "Integration Tests (Browser Required) test_Link",
+      "nodeSource": "test/lattice.test.ts:477",
+      "browserCases": [
+        "test_LinkResolution",
+        "test_LinkAssignment"
+      ],
+      "oracle": "Persists Dog links assigned before adding each Person, then queries the Person and checks exact linked Dog names Buddy and Max."
+    },
+    {
+      "nodeCase": "Integration Tests (Browser Required) test_LinkList",
+      "nodeSource": "test/lattice.test.ts:478",
+      "browserCases": [
+        "test_ListAppendAndIterate"
+      ],
+      "oracle": "Pushes two persisted members, asserts exact iterated names, and queries the parent again to assert count and exact element names."
+    },
+    {
+      "nodeCase": "Integration Tests (Browser Required) test_BulkInsert",
+      "nodeSource": "test/lattice.test.ts:479",
+      "browserCases": [
+        "test_BulkInsert"
+      ],
+      "oracle": "Performs 100 real WASM-backed inserts in a transaction and asserts count equals 100."
+    }
+  ]
+}

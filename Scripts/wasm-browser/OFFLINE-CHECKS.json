@@ -1,0 +1,82 @@
+{
+  "createdUTC": "2026-09-18T11:58:12.304846+00:00",
+  "success": true,
+  "browserLaunched": false,
+  "wasmExecuted": false,
+  "typescriptCompiled": false,
+  "checks": [
+    "run-browser.py Python AST",
+    "check-preparation.py Python AST",
+    "guarded_runner.py Python AST",
+    "driver.mjs Node syntax only",
+    "Exact clean readonly JS source",
+    "JS hash .github/workflows/ci.yml",
+    "JS hash package.json",
+    "JS hash package-lock.json",
+    "JS hash wasm/CMakeLists.txt",
+    "JS hash wasm/build.sh",
+    "JS hash wasm/bindings.cpp",
+    "JS hash vite.config.ts",
+    "JS hash vitest.config.ts",
+    "JS hash test/browser/tests.ts",
+    "JS hash test/browser/test-sync-server.ts",
+    "JS hash test/browser/index.html",
+    "JS hash test/no-shared-worker.test.ts",
+    "JS hash test/sync-socket.test.ts",
+    "JS hash test/pending-drain.test.ts",
+    "Exact 23 original ordered case names",
+    "Frozen supervisor hash",
+    "Frozen dedicated npm lock hash",
+    "Exact Playwright package pin",
+    "playwright version/url/integrity join",
+    "playwright-core version/url/integrity join",
+    "Untouched archived WASM artifact hash",
+    "A js archived exact bytes",
+    "A wasm archived exact bytes",
+    "B js archived exact bytes",
+    "B wasm archived exact bytes",
+    "Six skipped Node names mapped to real original browser cases",
+    "No local node_modules or installed browser cache in preparation"
+  ],
+  "lockProvenance": {
+    "engramCommit": "cf9810ae9e3eeb8f1c2adb14121ea91beaafd289",
+    "path": "app/package-lock.json",
+    "sourceLockSHA256": "0d7f25165aba9c1408ad21cf781fa8cee05d9d3245ef128e5bce090b4674cadf",
+    "generatedLockSHA256": "588b777799547077d3ba093ab6d18a61740321deefb80c7cdfdaea338ebafad8",
+    "generation": "npm install --package-lock-only --ignore-scripts --no-audit --no-fund; dedicated owned prefix/cache; no node_modules/browser installed"
+  },
+  "assets": [
+    {
+      "arm": "A",
+      "kind": "js",
+      "zipMember": "A-lattice.js",
+      "sha256": "944c62508a53166a4a6948eaf7246a854abb89b1001f1e6e460c541e11798f5c",
+      "bytes": 142630
+    },
+    {
+      "arm": "A",
+      "kind": "wasm",
+      "zipMember": "A-lattice.wasm",
+      "sha256": "f7ba4249e452c93cd060c8363d28b9e588e5c510e6fad26800d8966803a7c56d",
+      "bytes": 2967288
+    },
+    {
+      "arm": "B",
+      "kind": "js",
+      "zipMember": "B-lattice.js",
+      "sha256": "ec4beb6991050935c215b5c92e3a8b55bab8b989876214d18c8b8efc4d6e0d6d",
+      "bytes": 142630
+    },
+    {
+      "arm": "B",
+      "kind": "wasm",
+      "zipMember": "B-lattice.wasm",
+      "sha256": "d686024a248e3e1ed2e6479c22f73ffb9616a4cad1a288b78b18906d841cdc34",
+      "bytes": 3019123
+    }
+  ],
+  "preparationOnly": true,
+  "localChromiumCasesQualified": false,
+  "remoteSyncQualified": false,
+  "fullBrowserMatrixQualified": false
+}

@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "createdUTC": "2026-09-18T11:58:13.963637+00:00",
+  "preparationReadyForReview": true,
+  "executedBrowser": false,
+  "executedWASM": false,
+  "localChromiumCasesQualified": false,
+  "remoteSyncQualified": false,
+  "fullBrowserMatrixQualified": false,
+  "checks": 32,
+  "sourceReview": "SOURCE-REVIEW.md",
+  "originalBrowserCasesPerArm": 23,
+  "additionalFixturesPerArm": 2,
+  "fixtureActionsPerFixture": 3,
+  "nodeSkipsMapped": 6,
+  "files": {
+    "NODE-SKIP-BROWSER-MAPPING.json": {
+      "sha256": "ffd0dcb058f3fa9c09dc526ce91515cf9b6d3e5c37be994762a131bf0d2006f5",
+      "bytes": 2677
+    },
+    "OFFLINE-CHECKS.json": {
+      "sha256": "b0757eb84e1bf53e04e948ebcf2734a1cf89808e61f39e7206bd263fce47aed5",
+      "bytes": 2835
+    },
+    "README.md": {
+      "sha256": "a3523e28604062a96ae58ee7ae04f45851afb399872391312296fb9fbe14d540",
+      "bytes": 8900
+    },
+    "SOURCE-REVIEW.md": {
+      "sha256": "a3c879086b81aea41538a7790b423fbed8408e5123dfe355f8967641cf162f3b",
+      "bytes": 2391
+    },
+    "check-preparation.py": {
+      "sha256": "0667d20d9d6100a3ab50578b2adbd06c59848f1093fa2bb03a9e3a69d53d0038",
+      "bytes": 4736
+    },
+    "config.json": {
+      "sha256": "4302d62957da488e7a5759a82ecb1a6cb51a6a7c7c5430998c38caff848c925e",
+      "bytes": 3787
+    },
+    "driver.mjs": {
+      "sha256": "48ee85f40574f64570dc9cee1edc22d240819772e4d2cd89f520da41826664fa",
+      "bytes": 20973
+    },
+    "fixture.html": {
+      "sha256": "a2b7e9b60a5dfc931ed97d32c302028b3026d2122a72306ed30a5f0c5557be03",
+      "bytes": 151
+    },
+    "fixture.ts": {
+      "sha256": "ea823098c146de7e729b855b5582647b65b1d66df3c78fb5cf8cb2caef68b6f9",
+      "bytes": 4297
+    },
+    "guarded_runner.py": {
+      "sha256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+      "bytes": 29477
+    },
+    "package-lock.json": {
+      "sha256": "588b777799547077d3ba093ab6d18a61740321deefb80c7cdfdaea338ebafad8",
+      "bytes": 1849
+    },
+    "package.json": {
+      "sha256": "66baadc31e00a14d04e48908feec693aa35da425b179add0cb210c37ad0353da",
+      "bytes": 206
+    },
+    "run-browser.py": {
+      "sha256": "2ea134b8a760c9eb7c305cf24169d7bfdb1465498fa5805067b9f636cd5f04da",
+      "bytes": 12726
+    }
+  },
+  "npmCache": "Generated package metadata only; excluded from installable inputs; no node_modules or browser binary installed."
+}
