@@ -980,6 +980,21 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                     }()
                 }
             }
+            public static func _storedColumn(for keyPath: AnyKeyPath) -> String? {
+                switch keyPath {
+                    \(raw: allowedMembers.filter {
+                        $0.name != "id" && $0.name != "primaryKey" && $0.name != "globalId"
+                    }.map {
+                        """
+                        case \\\(name).\($0.name):
+                            return (\($0.type)).self is any Lattice.ProjectionScalar.Type ? "\($0.mappedName ?? $0.name)" : nil
+                        """
+                    }.joined(separator: "\n\t\t"))
+                    case \\\(name).primaryKey: return "id"
+                    case \\\(name).globalId: return "globalId"
+                    default: return nil
+                }
+            }
             
             deinit {
                 _deregisterFromInstanceRegistry()

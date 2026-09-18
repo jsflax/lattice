@@ -68,6 +68,9 @@ class ObservationOrderingTests: BaseTest {
 
         try await waitUntil { collector.snapshot().count >= writes }
         let rowIds = collector.snapshot()
+        if rowIds.count != writes {
+            PayloadObserverDiagnosticLog.emitWorkerSnapshot(reason: "collection_exactly_once_delivery_count")
+        }
         #expect(rowIds.count == writes)
         #expect(Set(rowIds).count == rowIds.count, "no duplicate deliveries")
         #expect(rowIds.sorted() == Array(1...Int64(writes)), "every commit delivered exactly once")

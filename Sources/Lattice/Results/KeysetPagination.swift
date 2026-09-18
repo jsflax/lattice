@@ -135,63 +135,36 @@ enum KeysetSQL {
             : "((\(column) < \(literal)) OR (\(column) = \(literal) AND id > \(anchor.id)) OR \(column) IS NULL)"
     }
 
-    /// Extract the `(sortValue, id)` anchor from a query-hydrated element,
-    /// or nil when no consistent row image exists (never fabricate).
-    ///
-    /// Constant cost: reads go through the row cache — `id` is served from
-    /// the managed handle itself and the sort value from the row snapshot
-    /// (`enableRowCache` re-fetches the row in ONE statement when the
-    /// snapshot is cold — at most one constant statement per page fill,
-    /// never per-row, never O(offset); a NULL column is a KNOWN-NULL
-    /// snapshot entry). The cache flag is restored so the element keeps live
-    /// read semantics for its consumer.
-    static func extractAnchor(from element: some Model, spec: KeysetSortSpec) -> KeysetAnchor? {
-        let backend = element._dynamicObject._ref
-        let wasCached = backend.isRowCacheEnabled
-        if !wasCached { backend.enableRowCache() }
-        defer { if !wasCached { backend.disableRowCache() } }
-
-        // ROW-LIVENESS GATE. If the row was deleted between the fill and
-        // this read, the snapshot refresh found nothing: `id` still answers
-        // from the handle's in-memory key, but the sort-column read would
-        // fall through to a live SELECT of a missing row and return
-        // "no value" — FABRICATING a NULL anchor for a non-NULL row. An
-        // ascending NULL-anchor resume (`… OR col IS NOT NULL`) then rewinds
-        // the walk and re-delivers rows (duplicate delivery — the exact bug
-        // class the keyset matrix pins). Probe `globalId` BY VALUE: it is a
-        // non-empty TEXT in every live row image (schema `DEFAULT (uuid)`),
-        // it is served from the row snapshot when one exists (zero
-        // statements), and a missing row's live fallback returns "" — so
-        // empty means "no row image": refuse to anchor. (`hasValue` cannot
-        // gate this: the dynamic-object overload short-circuits `true` for
-        // id/globalId without consulting the database.)
-        guard !backend.getString(named: "globalId").isEmpty else { return nil }
-
-        guard backend.hasValue(named: "id") else { return nil }
-        let id = backend.getInt(named: "id")
-        guard id != 0 else { return nil }
-
+    /// Extract position from the actual collection SELECT before model reuse.
+    /// This is independent of live getters and explicit materialized images:
+    /// later edits/deletes must not move an already-selected batch boundary.
+    /// Missing metadata is different from a stored NULL; never fabricate it.
+    static func extractAnchor(from backend: any ObjectBackend, spec: KeysetSortSpec) -> KeysetAnchor? {
+        guard case .int64(let id)? = backend._queryRowValue(named: "id"), id != 0,
+              case .text(let globalID)? = backend._queryRowValue(named: "globalId"),
+              !globalID.isEmpty else { return nil }
         guard let column = spec.column else {
             return KeysetAnchor(value: .unsorted, id: id)
         }
         if column == "id" {
             return KeysetAnchor(value: .int(id), id: id)
         }
-        guard backend.hasValue(named: column) else {
-            return KeysetAnchor(value: .null, id: id)
-        }
+        guard let stored = backend._queryRowValue(named: column) else { return nil }
         let value: KeysetAnchor.Value
-        switch spec.kind {
-        case .int, .int64:
-            value = .int(backend.getInt(named: column))
-        case .float, .double, .date:
-            value = .double(backend.getDouble(named: column))
-        case .string:
-            value = .string(backend.getString(named: column))
-        case .data:
-            value = .blob(backend.getData(named: column))
+        // Preserve SQLite storage classes, including an INTEGER stored in a
+        // REAL-affinity column. Coercing via a model getter can change order.
+        switch stored {
         case .null:
-            return nil
+            value = .null
+        case .int64(let number):
+            value = .int(number)
+        case .real(let number):
+            guard !number.isNaN else { return nil }
+            value = .double(number)
+        case .text(let text):
+            value = .string(text)
+        case .blob(let data):
+            value = .blob(data)
         }
         return KeysetAnchor(value: value, id: id)
     }

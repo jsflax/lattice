@@ -307,6 +307,27 @@ private final class ExternalWriteLock: @unchecked Sendable {
     private let stdoutPipe = Pipe()
     private let seen = LockedBox("")
     private let releasedOnce = AtomicOnce()
+    private let timing = LockedBox(Timing())
+
+    struct Timing: Sendable {
+        var heldObservedNS: UInt64?
+        var releaseRequestedNS: UInt64?
+        var releaseObservedNS: UInt64?
+        var processExitObservedNS: UInt64?
+        var exitStatus: Int32?
+        var exitedNormally = false
+
+        // A conservative interval: acquisition was already confirmed and
+        // no COMMIT had yet been requested. Pipe delivery can be delayed,
+        // so releaseObservedNS is an upper bound, not the COMMIT instant.
+        func confirmsHeld(at time: UInt64) -> Bool {
+            guard let heldObservedNS, heldObservedNS <= time else { return false }
+            return releaseRequestedNS.map { time < $0 } ?? true
+        }
+    }
+
+    var timingSnapshot: Timing { timing.withLock { $0 } }
+    var isRunning: Bool { proc.isRunning }
 
     init(path: String) throws {
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
@@ -314,25 +335,46 @@ private final class ExternalWriteLock: @unchecked Sendable {
         proc.standardInput = stdinPipe
         proc.standardOutput = stdoutPipe
         proc.standardError = FileHandle.nullDevice
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [seen] h in
+        stdoutPipe.fileHandleForReading.readabilityHandler = { [seen, timing] h in
             let d = h.availableData
-            if !d.isEmpty { seen.withLock { $0 += String(decoding: d, as: UTF8.self) } }
+            if !d.isEmpty {
+                let now = DispatchTime.now().uptimeNanoseconds
+                let markers = seen.withLock { value in
+                    value += String(decoding: d, as: UTF8.self)
+                    return (value.contains("LOCKHELD"), value.contains("LOCKRELEASED"))
+                }
+                timing.withLock { value in
+                    if markers.0, value.heldObservedNS == nil { value.heldObservedNS = now }
+                    if markers.1, value.releaseObservedNS == nil { value.releaseObservedNS = now }
+                }
+            }
         }
         try proc.run()
-        stdinPipe.fileHandleForWriting.write(Data("BEGIN IMMEDIATE;\nSELECT 'LOCKHELD';\n".utf8))
+        // Without bail, sqlite3 can print LOCKHELD after a failed BEGIN.
+        stdinPipe.fileHandleForWriting.write(Data(".bail on\nBEGIN IMMEDIATE;\nSELECT 'LOCKHELD';\n".utf8))
     }
 
     func waitUntilHeld(timeout: TimeInterval) async -> Bool {
-        await poll(timeout: timeout) { [seen] in seen.withLock { $0.contains("LOCKHELD") } }
+        await poll(timeout: timeout) { [timing] in
+            timing.withLock { $0.heldObservedNS != nil }
+        }
     }
 
     /// Idempotent: the tests release as soon as they have their answer and
     /// again in a deadline task, whichever comes first.
     func release() {
         guard releasedOnce.tryFire() else { return }
-        stdinPipe.fileHandleForWriting.write(Data("COMMIT;\n.quit\n".utf8))
+        timing.withLock { $0.releaseRequestedNS = DispatchTime.now().uptimeNanoseconds }
+        if proc.isRunning {
+            stdinPipe.fileHandleForWriting.write(Data("COMMIT;\nSELECT 'LOCKRELEASED';\n.quit\n".utf8))
+        }
         try? stdinPipe.fileHandleForWriting.close()
         proc.waitUntilExit()
+        timing.withLock {
+            $0.processExitObservedNS = DispatchTime.now().uptimeNanoseconds
+            $0.exitStatus = proc.terminationStatus
+            $0.exitedNormally = proc.terminationReason == .exit
+        }
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
     }
 }
@@ -629,8 +671,16 @@ final class BusySafeApplyForensicsTests: BaseTest {
         try #require(await poll(timeout: 60) { uploader.ackTime(for: warmId) != nil },
                      "warmup frame was not acked — harness is wrong, not the relay")
 
+        // Complete donor I/O and encoding before starting the finite lock
+        // window; fixture work must not consume the contention coverage.
+        let upload = try makeUploadEntries(donorPath: "donor-locked-\(String.random(length: 8)).sqlite", value: 99)
+        let uploadId = try #require(upload.first?.globalId)
+        let uploadBytes = Array(buffer: try frame(upload))
+        let peerPagesBefore = peer.pages
+
         // Another process takes the write lock and holds it.
         let lock = try ExternalWriteLock(path: harness.channelFileURL.path)
+        defer { lock.release() }
         try #require(await lock.waitUntilHeld(timeout: 30), "external lock never engaged")
         // Deadline release, so a regression can't hang the suite.
         let deadlineRelease = Task { [lock] in
@@ -638,20 +688,34 @@ final class BusySafeApplyForensicsTests: BaseTest {
             lock.release()
         }
 
-        let upload = try makeUploadEntries(donorPath: "donor-locked-\(String.random(length: 8)).sqlite", value: 99)
-        let uploadId = try #require(upload.first?.globalId)
-        let peerPagesBefore = peer.pages
+        defer { deadlineRelease.cancel() }
+        try #require(lock.isRunning, "external lock holder exited before the upload")
         let t0 = DispatchTime.now()
-        try await uploader.socket!.send(Array(buffer: try frame(upload)))
+        try await uploader.socket!.send(uploadBytes)
+        let sendReturnedNS = DispatchTime.now().uptimeNanoseconds
 
         // The headline: an answer arrives while the lock is STILL HELD.
         let nacked = await poll(timeout: holdSeconds) { uploader.nackTime(for: uploadId) != nil }
-        let nackMs = uploader.nackTime(for: uploadId).map {
+        let answerObservedNS = DispatchTime.now().uptimeNanoseconds
+        let nackTime = uploader.nackTime(for: uploadId)
+        let nackMs = nackTime.map {
             Double($0.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
         }
-        let ackedWhileLocked = uploader.ackTime(for: uploadId) != nil
+        let ackBeforeRelease = uploader.ackTime(for: uploadId)
         lock.release()
         deadlineRelease.cancel()
+        // If the deadline won release admission, it owns process reaping.
+        // Await it before treating release completion as cleanup evidence.
+        await deadlineRelease.value
+        let timing = lock.timingSnapshot
+        let sendBeganWhileLocked = timing.confirmsHeld(at: t0.uptimeNanoseconds)
+        let sendReturnedWhileLocked = timing.confirmsHeld(at: sendReturnedNS)
+        let nackedWhileLocked = nackTime.map {
+            timing.confirmsHeld(at: $0.uptimeNanoseconds)
+        } ?? false
+        let ackedWhileLocked = ackBeforeRelease.map {
+            timing.confirmsHeld(at: $0.uptimeNanoseconds)
+        } ?? false
 
         // Nothing may be applied after the fact either: the relay dropped the
         // frame deliberately and told the client to resend it.
@@ -661,12 +725,24 @@ final class BusySafeApplyForensicsTests: BaseTest {
 
         print("""
         FORENSIC lock-contention: hold_s=\(holdSeconds) nacked=\(nacked) \
+        send_began_while_locked=\(sendBeganWhileLocked) send_returned_while_locked=\(sendReturnedWhileLocked) \
+        nacked_while_locked=\(nackedWhileLocked) \
+        held_observed_ns=\(timing.heldObservedNS.map { String($0) } ?? "NONE") \
+        send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) \
+        answer_observed_ns=\(answerObservedNS) \
+        release_requested_ns=\(timing.releaseRequestedNS.map { String($0) } ?? "NONE") \
+        release_observed_ns=\(timing.releaseObservedNS.map { String($0) } ?? "NONE") \
+        process_exit_observed_ns=\(timing.processExitObservedNS.map { String($0) } ?? "NONE") \
+        holder_exit_status=\(timing.exitStatus.map { String($0) } ?? "NONE") holder_exited_normally=\(timing.exitedNormally) \
         nack_ms=\(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER") \
         acked_while_locked=\(ackedWhileLocked) acked_eventually=\(ackedEventually) \
         nacks=\(uploader.nacks.count) fanned_out_to_peer=\(fannedOut) \
         reason=\(uploader.nacks.first ?? "-")
         """)
 
+        #expect(timing.exitedNormally && timing.exitStatus == 0, "the external lock holder must complete its confirmed transaction successfully")
+        #expect(sendBeganWhileLocked, "the upload send must begin while the confirmed external write lock is held")
+        #expect(nackedWhileLocked, "the nack must be observed before the external lock is released")
         #expect(nacked, "a contended apply must answer with a nack, not silence")
         #expect(nackMs ?? .infinity < 9_000,
                 Comment(rawValue: "the nack took \(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER")ms — "

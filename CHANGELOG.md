@@ -2,8 +2,8 @@
 
 ## [2.0.0] - Unreleased
 
-LatticeCore dependency floor raised to `2.0.0` (audit-history hygiene: see
-its changelog). An Orbital room store reached 17 GB with under 1 MB of live
+LatticeCore dependency floor raised to `2.0.1` (audit-history hygiene and
+observer cursor correctness: see its changelog). An Orbital room store reached 17 GB with under 1 MB of live
 data — every streamed rewrite of one message row was kept in full in the
 audit log, nothing pruned it on a store without sync partners, and the one
 nuclear tool renumbered ids and silenced every other process.
@@ -17,7 +17,7 @@ nuclear tool renumbered ids and silenced every other process.
   `pruneAuditLog`, `recordAuditWatermark`, `backdateAuditWatermarks`,
   `setReplicationSlotObserver`, `noHistoryLiveValuesJSON` and `auditHeader`.
   These inherited audit requirements do not have default implementations.
-- Bind this wrapper to the qualified LatticeCore 2.0.0 release, with matching
+- Bind this wrapper to the qualified LatticeCore 2.0.1 release, with matching
   manifest minimum and resolved tag revision.
 
 ### Added
@@ -73,6 +73,15 @@ nuclear tool renumbered ids and silenced every other process.
   uploads core treats it like `nil`.
 
 ### Fixed
+- Require Core 2.0.1 so a stale shared reader cannot rewind the local observer
+  cursor and replay a committed change.
+- Install relay WebSocket receive handlers during synchronous upgrade so an
+  upload sent immediately after connecting is buffered before asynchronous
+  authorization and store setup begin.
+- Preserve a collection observer's attaching actor when its query handle is
+  resolved on the delivery worker.
+- Release the wrapper cache lock before closing a deleted store's backends,
+  so native shutdown can finish callbacks that need the cache.
 - Surface preserving-global-ID insertion failures through the existing
   throwing `add` API instead of allowing a bridge failure to escape.
 - Capture covered primitive, list, removal and query failures before later

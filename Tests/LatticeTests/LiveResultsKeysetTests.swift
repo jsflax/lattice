@@ -288,18 +288,12 @@ class LiveResultsKeysetTests: BaseTest {
     /// depth-invariant by construction (the OFFSET cost lives inside SQLite's
     /// b-tree skip, not in statement count or per-frame work).
     ///
-    /// `threadSQLStatementCount` counts EVERY statement on the thread, and a
-    /// fill also pays a fixed non-collection overhead — since Commit 7 the
-    /// per-row fill mechanic is prime-then-hydrate: enable the fetched
-    /// handle's row cache (ONE full-row re-fetch statement), key + registry
-    /// reuse-lookup off the primed pk (free), hydrate with the pk reads
-    /// served from the snapshot (free — probed at 1/row total, down from
-    /// 2/row pre-Commit-7), restore live reads. The end-of-page anchor
-    /// extraction re-enables the last element's WARM snapshot — zero
-    /// statements. The test calibrates that overhead by replaying the same
-    /// mechanic on rows the fills never touch, then asserts EXACT totals:
-    /// any regression to per-row OFFSET reads, per-page extra statements, or
-    /// O(depth) statement growth breaks the equality.
+    /// `threadSQLStatementCount` counts EVERY statement on this thread.
+    /// Once count/coordinator setup is primed, a page fill has a fixed
+    /// ceiling of three statements, including its collection SELECT. Bound
+    /// identity and the SELECT's captured anchor must need no per-row SQL.
+    /// Keep this budget independent of the implementation: calibrating it
+    /// from hydration would silently accept an N+1 regression.
     @Test func deepScroll_jumpPaysOneOffsetStatement_thenKeyset() throws {
         let lattice = try testLattice(KeysetItem.self)
         try lattice.transaction {
@@ -314,53 +308,32 @@ class LiveResultsKeysetTests: BaseTest {
         #expect(results.count == 3000)
         #expect(shape.fillCounts == (0, 0))
 
-        // Calibrate the fixed per-fill hydration overhead on page-0 rows
-        // (the scroll below only touches pages 25-27): 1 raw collection
-        // statement, then the Commit-7 primed per-row mechanic — row-cache
-        // prime, pk key, hydrate, restore live reads (§1.6 reuse misses
-        // hydrate exactly like this; hits skip the hydration, which issues
-        // no statements either way).
-        var before = Lattice.threadSQLStatementCount
-        let rawRows = lattice.backend.objects(table: KeysetItem.entityName, where: nil,
-                                              orderBy: "id ASC", limit: 100, offset: nil,
-                                              groupBy: nil, distinctBy: nil)
-        #expect(Lattice.threadSQLStatementCount - before == 1,
-                "a raw 100-row page query must be exactly ONE statement")
-        before = Lattice.threadSQLStatementCount
-        _ = rawRows.map { row -> KeysetItem in
-            row.enableRowCache()
-            _ = row.getInt(named: "id")
-            let element = KeysetItem(dynamicObject: row)
-            row.disableRowCache()
-            return element
-        }
-        let hydrationStatements = Lattice.threadSQLStatementCount - before
-        // One full-page fill = 1 collection statement + primed hydration.
-        // The end-of-page anchor extraction costs ZERO further statements:
-        // the last element's handle retains the priming snapshot after
-        // `disableRowCache`, so `extractAnchor`'s re-enable is a warm no-op.
-        let fillBudget: UInt64 = 1 + hydrationStatements
+        let fillBudget: UInt64 = 3
 
         // Cold random jump deep into the collection: exactly ONE collection
-        // statement (the session's only OFFSET statement) + fixed overhead.
-        before = Lattice.threadSQLStatementCount
+        // statement (the session's only OFFSET statement) within the fixed
+        // total budget. Property reads stay outside the measured interval.
+        var before = Lattice.threadSQLStatementCount
         let jumped = results[2_500]
         let jumpStatements = Lattice.threadSQLStatementCount - before
-        #expect(jumpStatements == fillBudget,
-                "cold jump must be exactly 1 OFFSET collection statement + fixed fill overhead (\(fillBudget)), was \(jumpStatements)")
+        #expect(jumpStatements <= fillBudget,
+                "cold 100-row page fill must use at most \(fillBudget) statements, was \(jumpStatements)")
         #expect(shape.fillCounts == (1, 0),
                 "the jump is the session's one and only OFFSET fill: \(shape.fillCounts)")
         #expect(jumped.rank == 2_500)
 
-        // Scrolling on from the jump: pure keyset fills — each the SAME
-        // exact budget as the jump (no O(depth) statement growth), ZERO
-        // further OFFSET fills, anchored off the jump page.
+        // Scrolling on from the jump: pure keyset fills, each measured
+        // separately against the same ceiling, with ZERO further OFFSETs.
         before = Lattice.threadSQLStatementCount
         let e2600 = results[2_600]
+        let firstScrollStatements = Lattice.threadSQLStatementCount - before
+        #expect(firstScrollStatements <= fillBudget,
+                "first keyset page fill must use at most \(fillBudget) statements, was \(firstScrollStatements)")
+        before = Lattice.threadSQLStatementCount
         let e2700 = results[2_700]
-        let scrollStatements = Lattice.threadSQLStatementCount - before
-        #expect(scrollStatements == 2 * fillBudget,
-                "2 keyset page fills must cost exactly 2 fill budgets (\(2 * fillBudget)), were \(scrollStatements)")
+        let secondScrollStatements = Lattice.threadSQLStatementCount - before
+        #expect(secondScrollStatements <= fillBudget,
+                "second keyset page fill must use at most \(fillBudget) statements, was \(secondScrollStatements)")
         #expect(shape.fillCounts == (1, 2),
                 "scroll after the jump must be keyset, not OFFSET: \(shape.fillCounts)")
         #expect(e2600.rank == 2_600)

@@ -123,11 +123,13 @@ private func _runT1ChildWorkload(storage: String) async throws {
     }
 
     // Phase B: unpinned tight iterations on a background thread — at least
-    // 5,000 iterations AND at least 2 s of wall-clock racing, so the deleter
-    // is guaranteed real interleaving however fast the reads are.
+    // 5,000 iterations AND at least 2 s of wall-clock racing AND 8 completed
+    // delete bursts. The time and read counts are minimum coverage, not a
+    // throughput deadline for the deleter. The parent's existing 240 s
+    // watchdog bounds failure to make progress.
     let phaseBStart = Date()
     var phaseBIterations = 0
-    while phaseBIterations < 5_000 || Date().timeIntervalSince(phaseBStart) < 2.0 {
+    while phaseBIterations < 5_000 || Date().timeIntervalSince(phaseBStart) < 2.0 || bursts.value < 8 {
         let count = results.count
         if count > 0 {
             _ = results[count - 1]
@@ -140,6 +142,8 @@ private func _runT1ChildWorkload(storage: String) async throws {
     while !deleterDone.value && Date() < deadline {
         try await Task.sleep(for: .milliseconds(20))
     }
+    try #require(deleterDone.value,
+                 "T1(\(storage)): deleter did not stop within the existing 30 s join deadline")
     // The race must have been REAL: enough full-table delete bursts landed
     // while the reader ran that stale count → fetch windows were plentiful.
     // (Guards against a vacuous pass where the deleter never got scheduled.)

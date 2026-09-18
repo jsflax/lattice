@@ -65,10 +65,13 @@ struct ObserverSendBoundaryProbe: Sendable {
         enum Stage: String, Sendable {
             case groupInstallEntry, observerRegistered, subscribed, activated
             case commitCallback, nudgeEntry, nudgeSubscription, pumpScheduled, pumpEntry
+            case nudgeTaskStarted, pumpTaskStarted, sendAwaitReturned
+            case advanceRequested, advanceEntry, advanceReturned
             case beginPassRequested, beginPassEntry, beginPassReturned
             case pageReadBegin, pageReadEnd, encodeBegin, encodeEnd, encodeFailed, sendPage, finishPass
         }
         struct Event: Sendable {
+            let actorGroupID: UInt64?
             let stage: Stage
             let parent: UInt64?
             let related: UInt64?
@@ -92,11 +95,12 @@ struct ObserverSendBoundaryProbe: Sendable {
                      cursor: Int64? = nil, count: Int? = nil, lastPK: Int64? = nil,
                      active: Bool? = nil, dirty: Bool? = nil, pumping: Bool? = nil,
                      callbackCovered: Bool? = nil, auditIDs: [UUID?] = [],
+                     actorGroupID: UInt64? = nil,
                      at uptime: UInt64? = nil) -> UInt64? {
             // Timestamp BEFORE recorder locking (sendPage reuses the existing
             // send timestamp). Observation overhead is never subtracted.
             let capturedUptime = uptime ?? DispatchTime.now().uptimeNanoseconds
-            return record(Event(stage: stage, parent: parent, related: related,
+            return record(Event(actorGroupID: actorGroupID, stage: stage, parent: parent, related: related,
                                 cursor: cursor, count: count, lastPK: lastPK,
                                 active: active, dirty: dirty, pumping: pumping,
                                 callbackCovered: callbackCovered,
@@ -104,7 +108,8 @@ struct ObserverSendBoundaryProbe: Sendable {
         }
     }
 
-    func capture(page: [AuditLog], route: Route, pipelinePage: UInt64? = nil) {
+    @discardableResult
+    func capture(page: [AuditLog], route: Route, pipelinePage: UInt64? = nil) -> UInt64? {
         // Preserve every entry in order, including coalesced IDs and nil IDs.
         let ids = page.map { $0.globalId }
         let uptime = DispatchTime.now().uptimeNanoseconds
@@ -112,9 +117,10 @@ struct ObserverSendBoundaryProbe: Sendable {
         if let pipelinePage {
             // Reuse the EXISTING IDs/time, without an extra AuditLog traversal.
             // Only the push pump supplies a page scope; catch-up stays separate.
-            pipeline?.capture(.sendPage, parent: pipelinePage, count: ids.count,
-                              auditIDs: ids, at: uptime)
+            return pipeline?.capture(.sendPage, parent: pipelinePage, count: ids.count,
+                                     auditIDs: ids, at: uptime)
         }
+        return nil
     }
 }
 
@@ -219,6 +225,8 @@ final class PushSubscription: @unchecked Sendable {
     let sendBoundaryProbe: ObserverSendBoundaryProbe?
     /// Recorder-local identity, immutable for this subscription (nil when off).
     let pipelineSubscription: UInt64?
+    /// Process-local group incarnation, nil unless actor diagnostics are enabled.
+    let diagnosticGroupID: UInt64?
     /// `nil` = parked (connect-time catch-up in flight). Installed once by
     /// `activate(_:cursor:)` with the catch-up boundary, then only advanced
     /// by the pump after a successful awaited send.
@@ -234,13 +242,14 @@ final class PushSubscription: @unchecked Sendable {
 
     init(socket: WebSocket, revocation: RevocationFlag, key: String, pageSize: Int,
          sendBoundaryProbe: ObserverSendBoundaryProbe? = nil,
-         pipelineSubscription: UInt64? = nil) {
+         pipelineSubscription: UInt64? = nil, diagnosticGroupID: UInt64? = nil) {
         self.socket = socket
         self.revocation = revocation
         self.key = key
         self.pageSize = max(1, pageSize)
         self.sendBoundaryProbe = sendBoundaryProbe
         self.pipelineSubscription = pipelineSubscription
+        self.diagnosticGroupID = diagnosticGroupID
     }
 }
 
@@ -268,12 +277,14 @@ private final class FileWatchGroup {
     // file observer. Later subscribers neither replace nor install a hook.
     let pipeline: ObserverSendBoundaryProbe.Pipeline?
     let pipelineGroup: UInt64?
+    let diagnosticGroupID: UInt64?
 
     init(watcher: UnsafeSendableBox<Lattice>,
-         pipeline: ObserverSendBoundaryProbe.Pipeline?, pipelineGroup: UInt64?) {
+         pipeline: ObserverSendBoundaryProbe.Pipeline?, pipelineGroup: UInt64?, diagnosticGroupID: UInt64?) {
         self.watcher = watcher
         self.pipeline = pipeline
         self.pipelineGroup = pipelineGroup
+        self.diagnosticGroupID = diagnosticGroupID
     }
 }
 
@@ -311,6 +322,9 @@ actor FileWatchManager {
     private var opensStarted: [String: Int] = [:]
 
     private let log = Logger(label: "lattice.observer-push")
+    // Each scope below covers only a synchronous actor chunk, never an await.
+    // Phase returns are call-site markers, not implicit ARC cleanup barriers.
+    private let actorDiagnostics = ObserverActorDiagnostics.shared
 
     /// Whether a live watch group exists for the given channel file —
     /// key-scoped teardown observability (the manager is process-wide, so a
@@ -318,12 +332,22 @@ actor FileWatchManager {
     /// this goes false after the last subscriber leaves, so a big fleet
     /// cannot accumulate watcher opens/fds.
     func hasGroup(forFile fileURL: URL) -> Bool {
-        groups[Self.canonicalKey(for: fileURL)] != nil
+        let scope = actorDiagnostics.begin(.hasGroup)
+        defer { actorDiagnostics.end(scope) }
+        actorDiagnostics.phase(scope, .canonicalization)
+        let key = Self.canonicalKey(for: fileURL)
+        actorDiagnostics.phase(scope, .actorBody, group: groups[key]?.diagnosticGroupID)
+        return groups[key] != nil
     }
 
     /// Live subscriber count on the given file's group (0 when no group).
     func subscriberCount(forFile fileURL: URL) -> Int {
-        groups[Self.canonicalKey(for: fileURL)]?.subscribers.count ?? 0
+        let scope = actorDiagnostics.begin(.subscriberCount)
+        defer { actorDiagnostics.end(scope) }
+        actorDiagnostics.phase(scope, .canonicalization)
+        let key = Self.canonicalKey(for: fileURL)
+        actorDiagnostics.phase(scope, .actorBody, group: groups[key]?.diagnosticGroupID)
+        return groups[key]?.subscribers.count ?? 0
     }
 
     /// Watcher opens started for this file since its current group began —
@@ -331,7 +355,12 @@ actor FileWatchManager {
     /// race to be the first subscriber, a live group must report 1: the
     /// per-key in-flight task dedupes them onto ONE open.
     func watcherOpenCount(forFile fileURL: URL) -> Int {
-        opensStarted[Self.canonicalKey(for: fileURL)] ?? 0
+        let scope = actorDiagnostics.begin(.watcherOpenCount)
+        defer { actorDiagnostics.end(scope) }
+        actorDiagnostics.phase(scope, .canonicalization)
+        let key = Self.canonicalKey(for: fileURL)
+        actorDiagnostics.phase(scope, .actorBody, group: groups[key]?.diagnosticGroupID)
+        return opensStarted[key] ?? 0
     }
 
     /// Registers a PARKED subscription (no cursor yet). MUST be called
@@ -355,19 +384,26 @@ actor FileWatchManager {
     func subscribe(fileURL: URL, context: MountPushContext,
                    socket: WebSocket, revocation: RevocationFlag,
                    sendBoundaryProbe: ObserverSendBoundaryProbe? = nil) async -> PushSubscription? {
+        let canonicalScope = actorDiagnostics.begin(.subscribeCanonicalization)
+        actorDiagnostics.phase(canonicalScope, .canonicalization)
         let key = Self.canonicalKey(for: fileURL)
+        actorDiagnostics.end(canonicalScope)
         guard let group = await resolveGroup(key: key, fileURL: fileURL, context: context,
                                             sendBoundaryProbe: sendBoundaryProbe) else {
             return nil
         }
+        let scope = actorDiagnostics.begin(.subscribePublish, group: group.diagnosticGroupID)
+        defer { actorDiagnostics.end(scope) }
         let pipeline = sendBoundaryProbe?.pipeline
         let subscriptionTrace = pipeline?.capture(
             .subscribed, related: group.pipeline === pipeline ? group.pipelineGroup : nil,
-            callbackCovered: group.pipeline === pipeline && group.token != nil)
+            callbackCovered: group.pipeline === pipeline && group.token != nil,
+            actorGroupID: group.diagnosticGroupID)
         let sub = PushSubscription(socket: socket, revocation: revocation, key: key,
                                    pageSize: context.options.pageSize,
                                    sendBoundaryProbe: sendBoundaryProbe,
-                                   pipelineSubscription: subscriptionTrace)
+                                   pipelineSubscription: subscriptionTrace,
+                                   diagnosticGroupID: group.diagnosticGroupID)
         group.subscribers.append(sub)
         return sub
     }
@@ -379,6 +415,8 @@ actor FileWatchManager {
     /// with — or duplicate — catch-up pages; it also drains any nudges that
     /// buffered while parked (a clean pass is one indexed SELECT).
     func activate(_ sub: PushSubscription, cursor: Int64) {
+        let scope = actorDiagnostics.begin(.activate, group: sub.diagnosticGroupID)
+        defer { actorDiagnostics.end(scope) }
         guard sub.active else { return }
         sub.cursor = cursor
         sub.dirty = true
@@ -401,18 +439,26 @@ actor FileWatchManager {
     /// (this detached clear or the final pump task) lets go, always in a
     /// detached-task context.
     func unsubscribe(_ sub: PushSubscription) {
+        let scope = actorDiagnostics.begin(.unsubscribe, group: sub.diagnosticGroupID)
+        defer { actorDiagnostics.end(scope) }
         sub.active = false
         guard let group = groups[sub.key] else { return }
         group.subscribers.removeAll { $0 === sub }
         if group.subscribers.isEmpty {
             groups[sub.key] = nil
             opensStarted[sub.key] = nil
+            actorDiagnostics.phase(scope, .observerRemoval, group: group.diagnosticGroupID)
             group.token?.cancel()
+            actorDiagnostics.phase(scope, .tokenRelease)
             group.token = nil
+            actorDiagnostics.phase(scope, .reconcileCancellation)
             group.reconcile?.cancel()
+            actorDiagnostics.phase(scope, .reconcileRelease)
             group.reconcile = nil
+            actorDiagnostics.phase(scope, .watcherReleaseHandoff)
             let box = group.watcher
             Task.detached { box.clear() }
+            actorDiagnostics.phase(scope, .actorBody)
         }
     }
 
@@ -422,8 +468,10 @@ actor FileWatchManager {
     /// coalesced by `dirty`: N commits during one pump pass cost exactly one
     /// extra pass — O(new entries), not O(commits).
     func nudge(key: String, pipeline: ObserverSendBoundaryProbe.Pipeline? = nil,
-               pipelineCallback: UInt64? = nil) {
-        let nudgeTrace = pipeline?.capture(.nudgeEntry, parent: pipelineCallback)
+               pipelineCallback: UInt64? = nil, pipelineTask: UInt64? = nil) {
+        let scope = actorDiagnostics.begin(.nudge, group: groups[key]?.diagnosticGroupID)
+        defer { actorDiagnostics.end(scope) }
+        let nudgeTrace = pipeline?.capture(.nudgeEntry, parent: pipelineCallback, related: pipelineTask)
         guard let group = groups[key] else { return }
         for sub in group.subscribers {
             let wake = sub.sendBoundaryProbe?.pipeline?.capture(
@@ -464,7 +512,9 @@ actor FileWatchManager {
         // subscription; every other subscription pumps independently, so a
         // slow socket lags only itself.
         Task.detached { [weak self] in
-            await self?.pump(sub, watcher: watcher, pageSize: pageSize, pipelinePump: pumpTrace)
+            let started = sub.sendBoundaryProbe?.pipeline?.capture(.pumpTaskStarted, parent: pumpTrace)
+            await self?.pump(sub, watcher: watcher, pageSize: pageSize,
+                             pipelinePump: pumpTrace, pipelineTask: started)
         }
     }
 
@@ -474,9 +524,9 @@ actor FileWatchManager {
     /// writer's post-commit WAL hook, so "don't hold the apply/write
     /// transaction while fanning" is satisfied by construction.
     private nonisolated func pump(_ sub: PushSubscription, watcher: WatcherRef, pageSize: Int,
-                                 pipelinePump: UInt64?) async {
+                                 pipelinePump: UInt64?, pipelineTask: UInt64?) async {
         let pipeline = sub.sendBoundaryProbe?.pipeline
-        let pumpTrace = pipeline?.capture(.pumpEntry, parent: pipelinePump)
+        let pumpTrace = pipeline?.capture(.pumpEntry, parent: pipelinePump, related: pipelineTask)
         while true {
             let request = pipeline?.capture(.beginPassRequested, parent: pumpTrace)
             guard var cursor = await beginPass(sub, pipelineRequest: request) else { return }
@@ -509,13 +559,17 @@ actor FileWatchManager {
                     return
                 }
                 pipeline?.capture(.encodeEnd, parent: encoding, count: encoded.count)
+                let sendReturned: UInt64?
                 do {
                     // AWAIT the write promise — flow control. The pump
                     // self-throttles to THIS socket's drain rate instead of
                     // stuffing the unbounded outbound buffer; memory bound is
                     // one page in flight per socket.
-                    sub.sendBoundaryProbe?.capture(page: page, route: .push, pipelinePage: pageReadEnd)
+                    let send = sub.sendBoundaryProbe?.capture(page: page, route: .push, pipelinePage: pageReadEnd)
                     try await sub.socket.send(raw: encoded, opcode: .binary)
+                    // Includes both socket promise completion and task resumption;
+                    // it is not an event-loop-only write-completion timestamp.
+                    sendReturned = pipeline?.capture(.sendAwaitReturned, parent: send)
                 } catch {
                     await unsubscribe(sub)
                     await clearPumping(sub)
@@ -526,7 +580,10 @@ actor FileWatchManager {
                 // class, multiplied).
                 log.debug("observer-push: sent \(page.count) entries (\(cursor + 1)...\(last))")
                 cursor = last
-                await advance(sub, to: last)
+                let advanceRequest = pipeline?.capture(.advanceRequested, parent: sendReturned, cursor: last,
+                                                       actorGroupID: sub.diagnosticGroupID)
+                await advance(sub, to: last, pipelineRequest: advanceRequest)
+                pipeline?.capture(.advanceReturned, parent: advanceRequest, cursor: last)
             }
             if await finishPass(sub, pipelinePass: pass) == false { return }
         }
@@ -536,6 +593,8 @@ actor FileWatchManager {
     /// `nil` = subscription gone or still parked; the pump exits (pumping
     /// released so a later nudge/activation can start a fresh one).
     private func beginPass(_ sub: PushSubscription, pipelineRequest: UInt64?) -> Int64? {
+        let scope = actorDiagnostics.begin(.beginPass, group: sub.diagnosticGroupID)
+        defer { actorDiagnostics.end(scope) }
         sub.sendBoundaryProbe?.pipeline?.capture(
             .beginPassEntry, parent: pipelineRequest, cursor: sub.cursor,
             active: sub.active, dirty: sub.dirty, pumping: sub.pumping)
@@ -550,7 +609,11 @@ actor FileWatchManager {
     /// The cursor only advances after a successful awaited send — every
     /// frame is produced by `id > cursor ORDER BY id ASC`, so no dupes by
     /// construction.
-    private func advance(_ sub: PushSubscription, to cursor: Int64) {
+    private func advance(_ sub: PushSubscription, to cursor: Int64, pipelineRequest: UInt64?) {
+        let scope = actorDiagnostics.begin(.advance, group: sub.diagnosticGroupID)
+        defer { actorDiagnostics.end(scope) }
+        sub.sendBoundaryProbe?.pipeline?.capture(.advanceEntry, parent: pipelineRequest, cursor: cursor,
+                                                actorGroupID: sub.diagnosticGroupID)
         sub.cursor = cursor
     }
 
@@ -561,6 +624,8 @@ actor FileWatchManager {
     /// lost (it either re-loops this pump or — after release — spawns a
     /// fresh one).
     private func finishPass(_ sub: PushSubscription, pipelinePass: UInt64?) -> Bool {
+        let scope = actorDiagnostics.begin(.finishPass, group: sub.diagnosticGroupID)
+        defer { actorDiagnostics.end(scope) }
         sub.sendBoundaryProbe?.pipeline?.capture(
             .finishPass, parent: pipelinePass, cursor: sub.cursor,
             active: sub.active, dirty: sub.dirty, pumping: sub.pumping)
@@ -570,6 +635,8 @@ actor FileWatchManager {
     }
 
     private func clearPumping(_ sub: PushSubscription) {
+        let scope = actorDiagnostics.begin(.clearPumping, group: sub.diagnosticGroupID)
+        defer { actorDiagnostics.end(scope) }
         sub.pumping = false
     }
 
@@ -594,7 +661,11 @@ actor FileWatchManager {
     private func resolveGroup(key: String, fileURL: URL,
                               context: MountPushContext,
                               sendBoundaryProbe: ObserverSendBoundaryProbe?) async -> FileWatchGroup? {
-        if let live = groups[key] { return live }
+        let scope = actorDiagnostics.begin(.resolveGroupSetup, group: groups[key]?.diagnosticGroupID)
+        if let live = groups[key] {
+            actorDiagnostics.end(scope)
+            return live
+        }
         let creation: Task<Bool, Never>
         if let inFlight = creating[key] {
             creation = inFlight
@@ -619,7 +690,10 @@ actor FileWatchManager {
         // group (and clears `creating`) before it completes, so the lookup
         // below is authoritative for every waiter, whichever order they
         // resume in.
+        actorDiagnostics.end(scope)
         _ = await creation.value
+        let returned = actorDiagnostics.begin(.resolveGroupReturn, group: groups[key]?.diagnosticGroupID)
+        defer { actorDiagnostics.end(returned) }
         return groups[key]
     }
 
@@ -632,6 +706,9 @@ actor FileWatchManager {
     private func installGroup(key: String, watcher box: UnsafeSendableBox<Lattice>?,
                               context: MountPushContext,
                               sendBoundaryProbe: ObserverSendBoundaryProbe?) -> Bool {
+        let diagnosticGroupID = actorDiagnostics.groupID()
+        let scope = actorDiagnostics.begin(.installGroup, group: diagnosticGroupID)
+        defer { actorDiagnostics.end(scope) }
         creating[key] = nil
         guard let box, let watcher = box.valueIfPresent else {
             opensStarted[key] = nil
@@ -639,8 +716,9 @@ actor FileWatchManager {
             return false
         }
         let pipeline = sendBoundaryProbe?.pipeline
-        let groupTrace = pipeline?.capture(.groupInstallEntry)
-        let group = FileWatchGroup(watcher: box, pipeline: pipeline, pipelineGroup: groupTrace)
+        let groupTrace = pipeline?.capture(.groupInstallEntry, actorGroupID: diagnosticGroupID)
+        let group = FileWatchGroup(watcher: box, pipeline: pipeline, pipelineGroup: groupTrace,
+                                   diagnosticGroupID: diagnosticGroupID)
         // Payload-free commit signal. The callback runs on the core's
         // notification thread: flag-set + task-spawn (and bounded metadata
         // only for the benchmark probe; no SQL, encoding or hydration). The pump
@@ -650,11 +728,17 @@ actor FileWatchManager {
         // `subscribe` returns, which is what closes the
         // snapshot-versus-watch gap.
         if !context.options._suppressCommitObserverForTesting {
+            actorDiagnostics.phase(scope, .observerRegistration)
             group.token = watcher.observeCommits { [weak self] in
                 let callback = pipeline?.capture(.commitCallback, parent: groupTrace)
                 guard let self else { return }
-                Task { await self.nudge(key: key, pipeline: pipeline, pipelineCallback: callback) }
+                Task {
+                    let started = pipeline?.capture(.nudgeTaskStarted, parent: callback)
+                    await self.nudge(key: key, pipeline: pipeline,
+                                     pipelineCallback: callback, pipelineTask: started)
+                }
             }
+            actorDiagnostics.phase(scope, .actorBody)
             pipeline?.capture(.observerRegistered, parent: groupTrace)
         }
         if let interval = context.options.reconcileInterval {

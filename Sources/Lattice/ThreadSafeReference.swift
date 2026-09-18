@@ -129,8 +129,19 @@ extension TableResults {
         // metadata reference at link time (swift-foundation bug: AllowedComparison
         // metadata not exported on Linux release builds).
         let sortComparator: (any SortComparator)? = self.sortStatement
+        let boundsConstraint = self.boundsConstraint
+        let groupByColumn = self.groupByColumn
+        let distinctByColumn = self.distinctByColumn
+        let fetchLimit = self._fetchLimit
         return .init { lattice in
-            TableResults(lattice, whereStatement: whereStatement, sortStatement: sortComparator)
+            // Rebuild the query on the receiving handle without carrying live
+            // instances, generation state, or the source handle's isolation.
+            let results = TableResults<Element>(
+                lattice, whereStatement: whereStatement, sortStatement: sortComparator,
+                boundsConstraint: boundsConstraint, groupByColumn: groupByColumn,
+                distinctByColumn: distinctByColumn)
+            results._fetchLimit = fetchLimit
+            return results
         }
     }
 }

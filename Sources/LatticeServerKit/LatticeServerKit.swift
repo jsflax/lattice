@@ -25,6 +25,40 @@ enum ACKPathDiagnostics {
     }
 }
 
+/// Test-only, exact-mount hooks. The setup gate never blocks an event loop;
+/// the ingress notification carries only a byte count, never the frame.
+final class RelayIngressTestHooks: Sendable {
+    let beforeAsyncSetup: @Sendable () async -> Void
+    let didBufferFrame: @Sendable (Int) -> Void
+    let didFinishAsyncSetup: @Sendable () -> Void
+
+    init(beforeAsyncSetup: @escaping @Sendable () async -> Void,
+         didBufferFrame: @escaping @Sendable (Int) -> Void,
+         didFinishAsyncSetup: @escaping @Sendable () -> Void) {
+        self.beforeAsyncSetup = beforeAsyncSetup
+        self.didBufferFrame = didBufferFrame
+        self.didFinishAsyncSetup = didFinishAsyncSetup
+    }
+}
+
+enum RelayIngressTesting {
+    private static let mounts = NIOLockedValueBox<[URL: RelayIngressTestHooks]>([:])
+
+    static func install(_ hooks: RelayIngressTestHooks, for storageURL: URL) {
+        mounts.withLockedValue { $0[storageURL] = hooks }
+    }
+
+    static func hooks(for storageURL: URL) -> RelayIngressTestHooks? {
+        mounts.withLockedValue { $0[storageURL] }
+    }
+
+    static func remove(_ hooks: RelayIngressTestHooks, for storageURL: URL) {
+        mounts.withLockedValue {
+            if $0[storageURL] === hooks { $0.removeValue(forKey: storageURL) }
+        }
+    }
+}
+
 enum ACKPathRole: Int, Codable, Sendable { case peer, uploader }
 
 /// Integer stage codes keep even a full 256-record snapshot below the output
@@ -729,6 +763,7 @@ extension Lattice {
     ) -> SyncRelayHandle {
         let sockets = SocketManager()
         let ackPathRecorder = ACKPathDiagnostics.recorder(for: storageURL)
+        let ingressHooks = RelayIngressTesting.hooks(for: storageURL)
         nonisolated(unsafe) let schema = schema
         // ONE watch manager per PROCESS: push-enabled mounts share
         // `FileWatchManager.shared`, so two push mounts over the same
@@ -739,7 +774,12 @@ extension Lattice {
         let pushContext = observerPush.map {
             MountPushContext(schema: schema, storeConfiguration: storeConfiguration, options: $0)
         }
-        routes.webSocket(path, maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 300 * 1024 * 1024)) { [ackPathRecorder] req, ws in
+        // Select Vapor's synchronous upgrade overload. Its async overload
+        // starts a Task before invoking our closure, while WebSocketKit's
+        // initial onBinary is still a no-op. Install ingress before returning
+        // from upgrade, then move only setup work into the async task below.
+        let onUpgrade: @Sendable (Request, WebSocket) -> Void = { [ackPathRecorder, ingressHooks] req, ws in
+            precondition(ws.eventLoop.inEventLoop)
             let ackPath = ackPathRecorder.flatMap { recorder -> ACKPathConnection? in
                 guard let raw = req.headers.first(name: "X-Test-User"),
                       let id = UUID(uuidString: raw) else { return nil }
@@ -782,563 +822,569 @@ extension Lattice {
             // has nothing to deregister; `state.process` is installed at
             // go-live alongside the lattice.
             ackPath?.record(.handlersScheduled)
-            ws.eventLoop.execute { [ackPath] in
-                ackPath?.record(.handlersEntered)
-                ws.onText { ws, str in
-                    print("🧦", "Received String Event", str)
+            ackPath?.record(.handlersEntered)
+            ws.onText { ws, str in
+                print("🧦", "Received String Event", str)
+            }
+            ws.onBinary { [ackPath] ws, bb in
+                ackPath?.record(.binaryEntered, bytes: bb.readableBytes)
+                // Revoked or refused: consume and discard. Never apply,
+                // never ack, never fan out, never buffer.
+                guard !state.revocation.isRevoked, !state.isRefused else {
+                    ackPath?.record(.ingressDiscarded, bytes: bb.readableBytes)
+                    return
                 }
-                ws.onBinary { [ackPath] ws, bb in
-                    ackPath?.record(.binaryEntered, bytes: bb.readableBytes)
-                    // Revoked or refused: consume and discard. Never apply,
-                    // never ack, never fan out, never buffer.
-                    guard !state.revocation.isRevoked, !state.isRefused else {
-                        ackPath?.record(.ingressDiscarded, bytes: bb.readableBytes)
-                        return
-                    }
-                    if state.lattice != nil, let cont = state.applyContinuation {
-                        // Post-go-live: hand the frame to this connection's
-                        // serial applier. The queued-bytes cap bounds server
-                        // memory against a client that outruns apply — same
-                        // policy (and same cap) as the pre-open buffer.
-                        if state.queuedApplyBytes + bb.readableBytes > maxBufferedFrameBytes {
-                            ackPath?.record(.ingressRefused, bytes: bb.readableBytes, count: state.queuedApplyBytes)
-                            print(">>> Apply queue cap exceeded; closing connection")
-                            state.isRefused = true
-                            cont.finish()
-                            ws.pingInterval = .seconds(5)
-                            _ = ws.close(code: .policyViolation)
-                        } else {
-                            state.queuedApplyBytes += bb.readableBytes
-                            cont.yield(bb)
-                            ackPath?.record(.ingressYielded, bytes: bb.readableBytes, count: state.queuedApplyBytes)
-                        }
-                    } else if state.bufferedBytes + bb.readableBytes <= maxBufferedFrameBytes {
-                        state.bufferedBytes += bb.readableBytes
-                        state.buffered.append(bb)
-                        ackPath?.record(.ingressBuffered, bytes: bb.readableBytes, count: state.bufferedBytes)
-                    } else {
-                        ackPath?.record(.ingressRefused, bytes: bb.readableBytes, count: state.bufferedBytes)
-                        print(">>> Pre-open buffer cap exceeded; closing connection")
+                if state.lattice != nil, let cont = state.applyContinuation {
+                    // Post-go-live: hand the frame to this connection's
+                    // serial applier. The queued-bytes cap bounds server
+                    // memory against a client that outruns apply — same
+                    // policy (and same cap) as the pre-open buffer.
+                    if state.queuedApplyBytes + bb.readableBytes > maxBufferedFrameBytes {
+                        ackPath?.record(.ingressRefused, bytes: bb.readableBytes, count: state.queuedApplyBytes)
+                        print(">>> Apply queue cap exceeded; closing connection")
                         state.isRefused = true
-                        state.buffered.removeAll()
-                        state.bufferedBytes = 0
+                        cont.finish()
                         ws.pingInterval = .seconds(5)
                         _ = ws.close(code: .policyViolation)
-                    }
-                }
-                ws.onClose.whenComplete { [ackPath] _ in
-                    ackPath?.record(.connectionClosed)
-                    Task {
-                        if let channelId = state.channelId {
-                            await sockets.remove(socket: ws, channelId: channelId)
-                        }
-                        // Observer push: drop this socket's subscription
-                        // (idempotent — the pump's send-failure path may have
-                        // beaten us here). Group teardown when the last
-                        // subscriber leaves happens inside the manager, with
-                        // the watcher released off-loop.
-                        if let sub = state.pushSubscription {
-                            await watchManager?.unsubscribe(sub)
-                        }
-                        // Detach the per-connection lattice ON the loop (state
-                        // is loop-confined) but RELEASE it OFF the loop:
-                        // ~lattice_db tears down sync threads, and running
-                        // that inline in `execute` stalls the shared event
-                        // loop for every other connection (observed as
-                        // time-limit storms in the in-process relay tests).
-                        ws.eventLoop.execute {
-                            // Stop the apply pipeline: finish drains the
-                            // stream; the consumer exits after the in-flight
-                            // apply (revocation gates any queued remainder).
-                            state.applyContinuation?.finish()
-                            state.applyContinuation = nil
-                            state.applyConsumer = nil
-                            let box = state.lattice.map(UnsafeSendableBox.init)
-                            state.lattice = nil
-                            state.process = nil
-                            state.buffered.removeAll()
-                            state.bufferedBytes = 0
-                            if let box {
-                                Task.detached { box.clear() }
-                            }
-                        }
-                    }
-                }
-                ackPath?.record(.handlersComplete)
-            }
-
-            // Schema handshake: version skew closes with an explicit,
-            // attributable reason instead of the silent apply-wedge class.
-            if let refusal = handshake?.refusal(for: req) {
-                ackPath?.record(.handshakeRefused)
-                print(">>> Sync handshake refused: \(refusal)")
-                state.isRefused = true
-                try? await ws.send("schema-handshake: \(refusal)")
-                ws.pingInterval = .seconds(5)   // drop a peer that ignores the close
-                try? await ws.close(code: .policyViolation)
-                return
-            }
-
-            let channel: SyncChannel
-            ackPath?.record(.extractorBegin)
-            do {
-                channel = try await channelExtractor(req)
-                ackPath?.record(.extractorEnd)
-            } catch {
-                ackPath?.record(.extractorError)
-                ackPath?.record(.extractorRefused)
-                print(">>> Could not authorize sync connection: \(error)")
-                state.isRefused = true
-                ws.pingInterval = .seconds(5)
-                try? await ws.close()
-                return
-            }
-
-            // Defense in depth against path traversal: channel ids commonly
-            // embed request-controlled path parameters (Vapor percent-decodes
-            // them, so an encoded `../` can reach here past an extractor that
-            // forgot to validate). The database name must be a single path
-            // component inside storageURL.
-            guard !channel.databaseFileName.isEmpty,
-                  !channel.databaseFileName.contains("/"),
-                  !channel.databaseFileName.contains("\\"),
-                  !channel.databaseFileName.hasPrefix(".") else {
-                ackPath?.record(.unsafeNameRefused)
-                print(">>> Refusing unsafe database filename for channel \(channel.id)")
-                state.isRefused = true
-                ws.pingInterval = .seconds(5)
-                try? await ws.close(code: .policyViolation)
-                return
-            }
-
-            try? FileManager.default.createDirectory(at: storageURL, withIntermediateDirectories: true)
-
-            let latticeURL: URL? = storageURL
-                .appending(path: channel.databaseFileName)
-            // Apply-serialization key: the SAME canonical channel-file key
-            // the observer-push watch groups use, so two mounts over one file
-            // (writer + watch, or two writer mounts) share one apply queue
-            // rather than inventing a second path normalization. The
-            // channel-id fallback is unreachable in practice (the URL is
-            // always built above) and only exists so the key is never empty.
-            let applyKey = latticeURL.map { FileWatchManager.canonicalKey(for: $0) }
-                ?? "channel:\(channel.id)"
-
-            @Sendable func processFrame(_ ws: WebSocket, _ bb: ByteBuffer, _ lattice: Lattice) async {
-                ackPath?.record(.processEntered, bytes: bb.readableBytes)
-                // Authoritative revocation: a kicked connection stops
-                // affecting the channel immediately, even if its transport
-                // lingers because the peer never answered the close frame.
-                guard !state.revocation.isRevoked else {
-                    ackPath?.record(.processRevoked)
-                    return
-                }
-                let data = Data(buffer: bb)
-                // ONE parse for the whole path: the write-policy gate reads
-                // it, and so does the shortfall diff below (which globalIds
-                // did this frame ask us to store?).
-                let frame = RelayFrame(data)
-                // This span begins only at the existing parse. Ingress/dequeue
-                // records intentionally make no audit-ID/queue-ordinal claim.
-                let frameSpan = ackPath?.record(frame.root == nil ? .frameMalformed : .frameParsed,
-                                                bytes: frame.byteCount, count: frame.requestedIds.count,
-                                                matching: frame.requestedIds) ?? 0
-                // Write-policy gate: a violating frame is refused whole —
-                // not applied, not fanned out, its entries left unACKed.
-                if let policy = writePolicy, let reason = policy.violation(inFrame: frame) {
-                    ackPath?.record(.policyRefused, span: frameSpan, matching: frame.requestedIds)
-                    print(">>> Sync frame rejected on \(channel.id): \(reason)")
-                    if let encoded = try? JSONEncoder().encode(ServerSentEvent.rejected(reason: reason)) {
-                        ws.send(ByteBuffer(data: encoded))
-                    }
-                    return
-                }
-
-                // Per-FILE serialization + bounded busy retry. Every write
-                // through this relay — uploads AND the catch-up ack
-                // bookkeeping, which is also a BEGIN + UPDATE burst
-                // (`mark_audit_entries_synced`) — queues on the channel
-                // file's apply slot, so concurrent connections take turns
-                // instead of burning each other's busy budget inside
-                // `begin_transaction` on the ONE shared, serialized SQLite
-                // connection they all alias.
-                ackPath?.record(.applyRequested, span: frameSpan, count: frame.requestedIds.count,
-                                matching: frame.requestedIds)
-                let outcome = await withApplyLock(applyKey) { [ackPath] in
-                    ackPath?.record(.applyBodyEntered, span: frameSpan, matching: frame.requestedIds)
-                    let applied = applyWithRetry(lattice: lattice, data: data, frame: frame,
-                                                 channelId: channel.id, userId: channel.userId)
-                    ackPath?.record(.applyBodyReturned, span: frameSpan, count: frame.requestedIds.count,
-                                    applied: applied.applied.count, missing: applied.unapplied.count,
-                                    attempts: applied.attempts, matching: applied.applied)
-                    return applied
-                }
-                ackPath?.record(.applyGateReturned, span: frameSpan, count: frame.requestedIds.count,
-                                applied: outcome.applied.count, missing: outcome.unapplied.count,
-                                attempts: outcome.attempts, matching: outcome.applied)
-
-                // §1.7.2 governor: apply-coupled checkpoint (threshold- or time-due), OUTSIDE the
-                // apply gate so the slot hold is never extended — RelayCheckpoint.swift carries the
-                // starvation mechanism and the wedge-alarm law.
-                if let url = latticeURL {
-                    ackPath?.record(.afterApplyBegin, span: frameSpan)
-                    RelayCheckpointGovernor.shared.afterApply(lattice: lattice, storePath: url.path)
-                    ackPath?.record(.afterApplyEnd, span: frameSpan)
-                }
-
-                // B3.8: never ack an empty apply — in particular incoming
-                // ACK frames used to be re-acked (ack-of-ack ping-pong, one
-                // empty bookkeeping round trip per client download ack,
-                // forever).
-                ackPath?.record(.ackDecision, span: frameSpan, applied: outcome.applied.count,
-                                missing: outcome.unapplied.count, matching: outcome.applied)
-                if !outcome.applied.isEmpty {
-                    ackPath?.record(.ackEncodeBegin, span: frameSpan)
-                    if let encoded = try? JSONEncoder().encode(ServerSentEvent.ack(outcome.applied)) {
-                        ackPath?.record(.ackEncodeEnd, span: frameSpan, bytes: encoded.count)
-                        ackPath?.record(.ackSendBegin, span: frameSpan, bytes: encoded.count)
-                        ws.send(ByteBuffer(data: encoded))
-                        // Existing synchronous send-call return, not write completion.
-                        ackPath?.record(.ackSendReturn, span: frameSpan)
                     } else {
-                        ackPath?.record(.ackEncodeFailure, span: frameSpan)
+                        state.queuedApplyBytes += bb.readableBytes
+                        cont.yield(bb)
+                        ackPath?.record(.ingressYielded, bytes: bb.readableBytes, count: state.queuedApplyBytes)
                     }
+                } else if state.bufferedBytes + bb.readableBytes <= maxBufferedFrameBytes {
+                    state.bufferedBytes += bb.readableBytes
+                    state.buffered.append(bb)
+                    ackPath?.record(.ingressBuffered, bytes: bb.readableBytes, count: state.bufferedBytes)
+                    ingressHooks?.didBufferFrame(bb.readableBytes)
                 } else {
-                    ackPath?.record(.ackEmpty, span: frameSpan)
-                }
-
-                // The silent-drop hole, closed. Before 1.7.1 a frame whose
-                // apply came back short produced NOTHING: no ack (the id list
-                // was empty), no nack (there was no nack), and no log line
-                // (nothing threw, so the print-only catch never ran). Now the
-                // shortfall is loud and the client is told exactly which
-                // entries to resend.
-                if !outcome.unapplied.isEmpty {
-                    relayLog.error("""
-                        relay apply INCOMPLETE: channel=\(channel.id) user=\(channel.userId) \
-                        sqlite=\(outcome.errorClass.rawValue) frameBytes=\(frame.byteCount) \
-                        requested=\(frame.requestedIds.count) applied=\(outcome.applied.count) \
-                        unapplied=\(outcome.unapplied.count) attempts=\(outcome.attempts) \
-                        elapsedMs=\(Int(outcome.elapsedMs)) — nacking\
-                        \(outcome.lastError.map { " error=\($0)" } ?? "")
-                        """)
-                    if let encoded = try? JSONEncoder().encode(
-                        ServerSentEvent.nack(ids: outcome.unapplied, reason: outcome.nackReason)) {
-                        ws.send(ByteBuffer(data: encoded))
-                    }
-                } else if let error = outcome.lastError {
-                    if frame.root == nil || frame.claimsUpload {
-                        // An UPLOAD this relay could not parse (or whose
-                        // entries yielded no extractable globalIds) failed
-                        // terminally. There is nothing to nack BY ID — and
-                        // this used to log as bookkeeping noise while the
-                        // sender's entries were LOST. Be loud and CLOSE: a
-                        // native writer redials and resends; a browser
-                        // writer at least sees the break instead of a
-                        // healthy socket over a dropped frame.
-                        relayLog.error("""
-                            relay apply failed on a frame it could not parse as an upload: \
-                            channel=\(channel.id) user=\(channel.userId) \
-                            sqlite=\(outcome.errorClass.rawValue) frameBytes=\(frame.byteCount) \
-                            attempts=\(outcome.attempts) elapsedMs=\(Int(outcome.elapsedMs)) \
-                            — closing so the client redials error=\(error)
-                            """)
-                        ackPath?.record(.applyFailureClose, span: frameSpan)
-                        try? await ws.close(code: .unexpectedServerError)
-                    } else {
-                        // A non-upload frame (an ack's bookkeeping write) that
-                        // failed: nothing to nack — the client's entries are
-                        // already durable — but never silent.
-                        relayLog.warning("""
-                            relay bookkeeping apply failed: channel=\(channel.id) \
-                            user=\(channel.userId) sqlite=\(outcome.errorClass.rawValue) \
-                            frameBytes=\(frame.byteCount) attempts=\(outcome.attempts) \
-                            elapsedMs=\(Int(outcome.elapsedMs)) error=\(error)
-                            """)
-                    }
-                }
-
-                // Legacy same-channel fan-out — unchanged on mounts without
-                // observer push (writer mounts keep verbatim fan-out
-                // byte-for-byte on the healthy path). On push-enabled mounts
-                // it is skipped entirely: delivery is the pump's job
-                // (commit-ordered, cursor-deduped), uploads are policy-refused
-                // anyway, and fanning every frame would echo each observer's
-                // ack to every other observer — N² frames per commit.
-                //
-                // Fan out ONLY what the channel database actually holds. A
-                // frame that failed to apply used to be fanned out anyway:
-                // live peers applied entries the relay store never got, so
-                // catch-up replay could never deliver them to anyone who
-                // reconnected or joined later — permanent divergence between
-                // live observers and the channel of record (program-plan
-                // sync-M7, reproduced during this incident). A PARTIAL apply
-                // fans the applied subset; a total failure fans nothing.
-                guard watchManager == nil else { return }
-                let fanOut: ByteBuffer?
-                if outcome.isComplete {
-                    fanOut = bb
-                } else if !outcome.applied.isEmpty,
-                          let reduced = frame.reencoded(keeping: Set(outcome.applied)) {
-                    fanOut = ByteBuffer(data: reduced)
-                } else {
-                    fanOut = nil
-                }
-                guard let fanOut else { return }
-                for socket in await sockets.sockets(channelId: channel.id) where socket !== ws {
-                    socket.send(fanOut)
-                }
-            }
-
-            // Register BEFORE the slow lattice open (kick-race fix): a
-            // revocation during the open window can now see — and close —
-            // this socket. Fan-out frames sent to a pre-open socket are fine
-            // (the client applies them independently of our open state).
-            // channelId publishes to the loop first so a kick-triggered
-            // onClose can always deregister.
-            state.channelId = channel.id
-            ackPath?.record(.registryAddBegin)
-            await sockets.add(socket: ws, channelId: channel.id,
-                              userId: channel.userId, revocation: state.revocation)
-            ackPath?.record(.registryAddEnd)
-            // A socket that closed while the extractor was awaiting ran its
-            // onClose with channelId still nil and deregistered nothing —
-            // without this it would sit in the registry for the process
-            // lifetime, retaining a dead socket and slowing every fan-out.
-            if ws.isClosed {
-                ackPath?.record(.closedDuringSetup)
-                await sockets.remove(socket: ws, channelId: channel.id)
-                return
-            }
-
-            // The ONLY per-connection open. `storeConfiguration` lets the
-            // mount open files another writer created at a higher schema
-            // version; the default raw open targets version 1 and would
-            // refuse them (the "Could not open lattice for url" close-1001
-            // class on projector-owned channel files). The relay's bounded
-            // busy budget is layered on top (2s instead of the library's 30s)
-            // unless the mount asked for a specific one — a live socket must
-            // never park half a minute inside one `BEGIN IMMEDIATE`.
-            let configuration = SyncRelayApplyPolicy.configuration(
-                fileURL: latticeURL, storeConfiguration: storeConfiguration)
-            ackPath?.record(.storeOpenBegin)
-            guard let connectionLattice = try? Lattice(for: schema, configuration: configuration) else {
-                ackPath?.record(.storeOpenFailure)
-                print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
-                await sockets.remove(socket: ws, channelId: channel.id)
-                try? await ws.close()
-                return
-            }
-            ackPath?.record(.storeOpenEnd)
-            let held = UnsafeSendableBox(connectionLattice)
-
-            // Observer push: register a PARKED subscription now — BEFORE the
-            // go-live hop and the catch-up snapshot below. The commit
-            // observer is live from this point, so no commit can fall
-            // between the snapshot and the watch: anything that lands during
-            // catch-up buffers as a `dirty` nudge and activation's first
-            // pump (which reads strictly beyond the catch-up boundary) picks
-            // it up — no gaps, no dupes, in order. A nil subscription
-            // (watcher open failure) leaves this socket catch-up-only.
-            let sendBoundaryProbe: ObserverSendBoundaryProbe?
-            if let probe = pushContext?.options._sendBoundaryProbeForTesting,
-               probe.channelID == channel.id {
-                sendBoundaryProbe = probe
-            } else {
-                sendBoundaryProbe = nil
-            }
-            if let watchManager, let pushContext, let latticeURL {
-                state.pushSubscription = await watchManager.subscribe(
-                    fileURL: latticeURL, context: pushContext,
-                    socket: ws, revocation: state.revocation,
-                    sendBoundaryProbe: sendBoundaryProbe)
-            }
-
-            // Go live: replay anything that arrived during the open, in
-            // order, then hand subsequent frames straight to the lattice.
-            // If a revocation closed this socket while we were opening,
-            // abandon: never install the lattice on a dead connection
-            // (onClose has already run its cleanup, which found nil).
-            ackPath?.record(.goLiveScheduled)
-            ws.eventLoop.execute { [ackPath] in
-                ackPath?.record(.goLiveEntered)
-                guard !ws.isClosed, !state.revocation.isRevoked else {
-                    ackPath?.record(.goLiveAbandoned)
+                    ackPath?.record(.ingressRefused, bytes: bb.readableBytes, count: state.bufferedBytes)
+                    print(">>> Pre-open buffer cap exceeded; closing connection")
+                    state.isRefused = true
                     state.buffered.removeAll()
                     state.bufferedBytes = 0
-                    // The catch-up task below force-unwraps `held.value`;
-                    // clearing here would trap it. Mark abandoned instead
-                    // and let the catch-up guard release it.
-                    state.abandoned = true
+                    ws.pingInterval = .seconds(5)
+                    _ = ws.close(code: .policyViolation)
+                }
+            }
+            ws.onClose.whenComplete { [ackPath] _ in
+                ackPath?.record(.connectionClosed)
+                Task {
+                    if let channelId = state.channelId {
+                        await sockets.remove(socket: ws, channelId: channelId)
+                    }
+                    // Observer push: drop this socket's subscription
+                    // (idempotent — the pump's send-failure path may have
+                    // beaten us here). Group teardown when the last
+                    // subscriber leaves happens inside the manager, with
+                    // the watcher released off-loop.
+                    if let sub = state.pushSubscription {
+                        await watchManager?.unsubscribe(sub)
+                    }
+                    // Detach the per-connection lattice ON the loop (state
+                    // is loop-confined) but RELEASE it OFF the loop:
+                    // ~lattice_db tears down sync threads, and running
+                    // that inline in `execute` stalls the shared event
+                    // loop for every other connection (observed as
+                    // time-limit storms in the in-process relay tests).
+                    ws.eventLoop.execute {
+                        // Stop the apply pipeline: finish drains the
+                        // stream; the consumer exits after the in-flight
+                        // apply (revocation gates any queued remainder).
+                        state.applyContinuation?.finish()
+                        state.applyContinuation = nil
+                        state.applyConsumer = nil
+                        let box = state.lattice.map(UnsafeSendableBox.init)
+                        state.lattice = nil
+                        state.process = nil
+                        state.buffered.removeAll()
+                        state.bufferedBytes = 0
+                        if let box {
+                            Task.detached { box.clear() }
+                        }
+                    }
+                }
+            }
+            ackPath?.record(.handlersComplete)
+
+            Task { [ackPath, ingressHooks] in
+                defer { ingressHooks?.didFinishAsyncSetup() }
+                await ingressHooks?.beforeAsyncSetup()
+                // Schema handshake: version skew closes with an explicit,
+                // attributable reason instead of the silent apply-wedge class.
+                if let refusal = handshake?.refusal(for: req) {
+                    ackPath?.record(.handshakeRefused)
+                    print(">>> Sync handshake refused: \(refusal)")
+                    state.isRefused = true
+                    try? await ws.send("schema-handshake: \(refusal)")
+                    ws.pingInterval = .seconds(5)   // drop a peer that ignores the close
+                    try? await ws.close(code: .policyViolation)
                     return
                 }
-                state.process = processFrame
-                // B3.2: applies run on a per-connection serial consumer, OFF
-                // the event loop — one slow apply no longer blocks every
-                // other socket on this loop (the client made the same move in
-                // sync.cpp:1053 long ago). Ordering is preserved: one
-                // consumer, frames yielded in arrival order, ack + fan-out
-                // still happen inside processFrame after the apply commits.
-                let lattice = held.value
-                let (stream, cont) = AsyncStream<ByteBuffer>.makeStream()
-                state.applyContinuation = cont
-                state.applyConsumer = Task.detached { [ackPath] in
-                    ackPath?.record(.consumerStarted)
-                    for await frame in stream {
-                        ackPath?.record(.frameDequeued, bytes: frame.readableBytes)
-                        guard !state.revocation.isRevoked else {
-                            ackPath?.record(.dequeueRevoked, bytes: frame.readableBytes)
-                            continue
-                        }
-                        await processFrame(ws, frame, lattice)
-                        let n = frame.readableBytes
-                        ws.eventLoop.execute { state.queuedApplyBytes -= n }
-                    }
-                }
-                ackPath?.record(.consumerCreated)
-                for bb in state.buffered {
-                    state.queuedApplyBytes += bb.readableBytes
-                    cont.yield(bb)
-                    ackPath?.record(.ingressYielded, bytes: bb.readableBytes, count: state.queuedApplyBytes)
-                }
-                state.buffered.removeAll()
-                state.bufferedBytes = 0
-                state.lattice = held.value
-                // Keepalive on the healthy path (until here pings only ran on
-                // kick/refusal). An idle-but-healthy connection otherwise sends
-                // nothing, and intermediaries cut it: Cloudflare's proxied-WS
-                // idle timeout is ~100s, AWS NLBs 340s. Browsers answer
-                // protocol pings automatically, so this keeps traffic flowing
-                // both ways for every client class — and gives the relay
-                // dead-peer detection it previously got only on kicks.
-                ws.pingInterval = .seconds(30)
-                ackPath?.record(.goLiveComplete)
-            }
 
-            // Catch-up AFTER handlers are live. Incoming frames during
-            // catch-up serialize through the same per-channel lattice.
-            do {
-                try await Task {
-                    // The go-live hop hands ownership here when it abandons:
-                    // release the opened lattice off-loop and do not touch
-                    // `held.value` again. A parked push subscription is
-                    // dropped too — it would otherwise never activate.
-                    if state.abandoned {
-                        Task.detached { held.clear() }
-                        if let sub = state.pushSubscription {
-                            await watchManager?.unsubscribe(sub)
+                let channel: SyncChannel
+                ackPath?.record(.extractorBegin)
+                do {
+                    channel = try await channelExtractor(req)
+                    ackPath?.record(.extractorEnd)
+                } catch {
+                    ackPath?.record(.extractorError)
+                    ackPath?.record(.extractorRefused)
+                    print(">>> Could not authorize sync connection: \(error)")
+                    state.isRefused = true
+                    ws.pingInterval = .seconds(5)
+                    try? await ws.close()
+                    return
+                }
+
+                // Defense in depth against path traversal: channel ids commonly
+                // embed request-controlled path parameters (Vapor percent-decodes
+                // them, so an encoded `../` can reach here past an extractor that
+                // forgot to validate). The database name must be a single path
+                // component inside storageURL.
+                guard !channel.databaseFileName.isEmpty,
+                      !channel.databaseFileName.contains("/"),
+                      !channel.databaseFileName.contains("\\"),
+                      !channel.databaseFileName.hasPrefix(".") else {
+                    ackPath?.record(.unsafeNameRefused)
+                    print(">>> Refusing unsafe database filename for channel \(channel.id)")
+                    state.isRefused = true
+                    ws.pingInterval = .seconds(5)
+                    try? await ws.close(code: .policyViolation)
+                    return
+                }
+
+                try? FileManager.default.createDirectory(at: storageURL, withIntermediateDirectories: true)
+
+                let latticeURL: URL? = storageURL
+                    .appending(path: channel.databaseFileName)
+                // Apply-serialization key: the SAME canonical channel-file key
+                // the observer-push watch groups use, so two mounts over one file
+                // (writer + watch, or two writer mounts) share one apply queue
+                // rather than inventing a second path normalization. The
+                // channel-id fallback is unreachable in practice (the URL is
+                // always built above) and only exists so the key is never empty.
+                let applyKey = latticeURL.map { FileWatchManager.canonicalKey(for: $0) }
+                    ?? "channel:\(channel.id)"
+
+                @Sendable func processFrame(_ ws: WebSocket, _ bb: ByteBuffer, _ lattice: Lattice) async {
+                    ackPath?.record(.processEntered, bytes: bb.readableBytes)
+                    // Authoritative revocation: a kicked connection stops
+                    // affecting the channel immediately, even if its transport
+                    // lingers because the peer never answered the close frame.
+                    guard !state.revocation.isRevoked else {
+                        ackPath?.record(.processRevoked)
+                        return
+                    }
+                    let data = Data(buffer: bb)
+                    // ONE parse for the whole path: the write-policy gate reads
+                    // it, and so does the shortfall diff below (which globalIds
+                    // did this frame ask us to store?).
+                    let frame = RelayFrame(data)
+                    // This span begins only at the existing parse. Ingress/dequeue
+                    // records intentionally make no audit-ID/queue-ordinal claim.
+                    let frameSpan = ackPath?.record(frame.root == nil ? .frameMalformed : .frameParsed,
+                                                    bytes: frame.byteCount, count: frame.requestedIds.count,
+                                                    matching: frame.requestedIds) ?? 0
+                    // Write-policy gate: a violating frame is refused whole —
+                    // not applied, not fanned out, its entries left unACKed.
+                    if let policy = writePolicy, let reason = policy.violation(inFrame: frame) {
+                        ackPath?.record(.policyRefused, span: frameSpan, matching: frame.requestedIds)
+                        print(">>> Sync frame rejected on \(channel.id): \(reason)")
+                        if let encoded = try? JSONEncoder().encode(ServerSentEvent.rejected(reason: reason)) {
+                            ws.send(ByteBuffer(data: encoded))
                         }
                         return
                     }
-                    guard !ws.isClosed, !state.revocation.isRevoked else {
-                        if let sub = state.pushSubscription {
-                            await watchManager?.unsubscribe(sub)
+
+                    // Per-FILE serialization + bounded busy retry. Every write
+                    // through this relay — uploads AND the catch-up ack
+                    // bookkeeping, which is also a BEGIN + UPDATE burst
+                    // (`mark_audit_entries_synced`) — queues on the channel
+                    // file's apply slot, so concurrent connections take turns
+                    // instead of burning each other's busy budget inside
+                    // `begin_transaction` on the ONE shared, serialized SQLite
+                    // connection they all alias.
+                    ackPath?.record(.applyRequested, span: frameSpan, count: frame.requestedIds.count,
+                                    matching: frame.requestedIds)
+                    let outcome = await withApplyLock(applyKey) { [ackPath] in
+                        ackPath?.record(.applyBodyEntered, span: frameSpan, matching: frame.requestedIds)
+                        let applied = applyWithRetry(lattice: lattice, data: data, frame: frame,
+                                                     channelId: channel.id, userId: channel.userId)
+                        ackPath?.record(.applyBodyReturned, span: frameSpan, count: frame.requestedIds.count,
+                                        applied: applied.applied.count, missing: applied.unapplied.count,
+                                        attempts: applied.attempts, matching: applied.applied)
+                        return applied
+                    }
+                    ackPath?.record(.applyGateReturned, span: frameSpan, count: frame.requestedIds.count,
+                                    applied: outcome.applied.count, missing: outcome.unapplied.count,
+                                    attempts: outcome.attempts, matching: outcome.applied)
+
+                    // §1.7.2 governor: apply-coupled checkpoint (threshold- or time-due), OUTSIDE the
+                    // apply gate so the slot hold is never extended — RelayCheckpoint.swift carries the
+                    // starvation mechanism and the wedge-alarm law.
+                    if let url = latticeURL {
+                        ackPath?.record(.afterApplyBegin, span: frameSpan)
+                        RelayCheckpointGovernor.shared.afterApply(lattice: lattice, storePath: url.path)
+                        ackPath?.record(.afterApplyEnd, span: frameSpan)
+                    }
+
+                    // B3.8: never ack an empty apply — in particular incoming
+                    // ACK frames used to be re-acked (ack-of-ack ping-pong, one
+                    // empty bookkeeping round trip per client download ack,
+                    // forever).
+                    ackPath?.record(.ackDecision, span: frameSpan, applied: outcome.applied.count,
+                                    missing: outcome.unapplied.count, matching: outcome.applied)
+                    if !outcome.applied.isEmpty {
+                        ackPath?.record(.ackEncodeBegin, span: frameSpan)
+                        if let encoded = try? JSONEncoder().encode(ServerSentEvent.ack(outcome.applied)) {
+                            ackPath?.record(.ackEncodeEnd, span: frameSpan, bytes: encoded.count)
+                            ackPath?.record(.ackSendBegin, span: frameSpan, bytes: encoded.count)
+                            ws.send(ByteBuffer(data: encoded))
+                            // Existing synchronous send-call return, not write completion.
+                            ackPath?.record(.ackSendReturn, span: frameSpan)
+                        } else {
+                            ackPath?.record(.ackEncodeFailure, span: frameSpan)
                         }
-                        return
-                    }
-                    let lattice = held.value
-
-                    // TEST-ONLY fault injection (nil in production): proves
-                    // the catch block below releases a parked subscription.
-                    if let fault = _catchUpFaultForTesting.withLockedValue({ $0 }) {
-                        try fault(channel.id)
+                    } else {
+                        ackPath?.record(.ackEmpty, span: frameSpan)
                     }
 
-                    let lastEventId = try? req.query.get(UUID?.self, at: "last-event-id")
-
-                    // §1.7.2 FLOOR HONESTY: a claimed floor the durable history cannot back was
-                    // previously swallowed (the probe returned nil, the filter dropped, and a
-                    // full replay proceeded with NO signal) — the exact shape under which a client
-                    // whose acked rows were lost never learns to re-upload them. Detect it, say it
-                    // on the wire BEFORE the pages (shipped C++ clients ignore the unknown kind),
-                    // attribute it via the boot ledger, and keep the socket open — the full replay
-                    // that follows is now explicit, not accidental.
-                    if let claimed = lastEventId, let url = latticeURL {
-                        let floorSuspect = DurableHeadLedger.shared.bootCheck(lattice: lattice, storePath: url.path)
-                        let known = !lattice.objects(AuditLog.self).where { $0.globalId == claimed }
-                            .snapshot(limit: 1).isEmpty
-                        if !known {
-                            let head = lattice.objects(AuditLog.self)
-                                .sortedBy(\.primaryKey, order: .reverse).snapshot(limit: 1).first
-                            let reason = floorSuspect
-                                ? "server lost history (durable head regressed at boot)"
-                                : "client floor unknown to this channel"
+                    // The silent-drop hole, closed. Before 1.7.1 a frame whose
+                    // apply came back short produced NOTHING: no ack (the id list
+                    // was empty), no nack (there was no nack), and no log line
+                    // (nothing threw, so the print-only catch never ran). Now the
+                    // shortfall is loud and the client is told exactly which
+                    // entries to resend.
+                    if !outcome.unapplied.isEmpty {
+                        relayLog.error("""
+                            relay apply INCOMPLETE: channel=\(channel.id) user=\(channel.userId) \
+                            sqlite=\(outcome.errorClass.rawValue) frameBytes=\(frame.byteCount) \
+                            requested=\(frame.requestedIds.count) applied=\(outcome.applied.count) \
+                            unapplied=\(outcome.unapplied.count) attempts=\(outcome.attempts) \
+                            elapsedMs=\(Int(outcome.elapsedMs)) — nacking\
+                            \(outcome.lastError.map { " error=\($0)" } ?? "")
+                            """)
+                        if let encoded = try? JSONEncoder().encode(
+                            ServerSentEvent.nack(ids: outcome.unapplied, reason: outcome.nackReason)) {
+                            ws.send(ByteBuffer(data: encoded))
+                        }
+                    } else if let error = outcome.lastError {
+                        if frame.root == nil || frame.claimsUpload {
+                            // An UPLOAD this relay could not parse (or whose
+                            // entries yielded no extractable globalIds) failed
+                            // terminally. There is nothing to nack BY ID — and
+                            // this used to log as bookkeeping noise while the
+                            // sender's entries were LOST. Be loud and CLOSE: a
+                            // native writer redials and resends; a browser
+                            // writer at least sees the break instead of a
+                            // healthy socket over a dropped frame.
                             relayLog.error("""
-                                FLOOR VIOLATION: channel=\(channel.id) user=\(channel.userId) \
-                                claimed=\(claimed) durableHead=\(head?.globalId?.uuidString ?? "nil") \
-                                — \(reason); serving explicit full-history replay
+                                relay apply failed on a frame it could not parse as an upload: \
+                                channel=\(channel.id) user=\(channel.userId) \
+                                sqlite=\(outcome.errorClass.rawValue) frameBytes=\(frame.byteCount) \
+                                attempts=\(outcome.attempts) elapsedMs=\(Int(outcome.elapsedMs)) \
+                                — closing so the client redials error=\(error)
                                 """)
-                            if let encoded = try? JSONEncoder().encode(
-                                ServerSentEvent.floorReset(durableHead: head?.globalId, reason: reason)) {
-                                await ws.send(ByteBuffer(data: encoded))
+                            ackPath?.record(.applyFailureClose, span: frameSpan)
+                            try? await ws.close(code: .unexpectedServerError)
+                        } else {
+                            // A non-upload frame (an ack's bookkeeping write) that
+                            // failed: nothing to nack — the client's entries are
+                            // already durable — but never silent.
+                            relayLog.warning("""
+                                relay bookkeeping apply failed: channel=\(channel.id) \
+                                user=\(channel.userId) sqlite=\(outcome.errorClass.rawValue) \
+                                frameBytes=\(frame.byteCount) attempts=\(outcome.attempts) \
+                                elapsedMs=\(Int(outcome.elapsedMs)) error=\(error)
+                                """)
+                        }
+                    }
+
+                    // Legacy same-channel fan-out — unchanged on mounts without
+                    // observer push (writer mounts keep verbatim fan-out
+                    // byte-for-byte on the healthy path). On push-enabled mounts
+                    // it is skipped entirely: delivery is the pump's job
+                    // (commit-ordered, cursor-deduped), uploads are policy-refused
+                    // anyway, and fanning every frame would echo each observer's
+                    // ack to every other observer — N² frames per commit.
+                    //
+                    // Fan out ONLY what the channel database actually holds. A
+                    // frame that failed to apply used to be fanned out anyway:
+                    // live peers applied entries the relay store never got, so
+                    // catch-up replay could never deliver them to anyone who
+                    // reconnected or joined later — permanent divergence between
+                    // live observers and the channel of record (program-plan
+                    // sync-M7, reproduced during this incident). A PARTIAL apply
+                    // fans the applied subset; a total failure fans nothing.
+                    guard watchManager == nil else { return }
+                    let fanOut: ByteBuffer?
+                    if outcome.isComplete {
+                        fanOut = bb
+                    } else if !outcome.applied.isEmpty,
+                              let reduced = frame.reencoded(keeping: Set(outcome.applied)) {
+                        fanOut = ByteBuffer(data: reduced)
+                    } else {
+                        fanOut = nil
+                    }
+                    guard let fanOut else { return }
+                    for socket in await sockets.sockets(channelId: channel.id) where socket !== ws {
+                        socket.send(fanOut)
+                    }
+                }
+
+                // Register BEFORE the slow lattice open (kick-race fix): a
+                // revocation during the open window can now see — and close —
+                // this socket. Fan-out frames sent to a pre-open socket are fine
+                // (the client applies them independently of our open state).
+                // channelId publishes to the loop first so a kick-triggered
+                // onClose can always deregister.
+                state.channelId = channel.id
+                ackPath?.record(.registryAddBegin)
+                await sockets.add(socket: ws, channelId: channel.id,
+                                  userId: channel.userId, revocation: state.revocation)
+                ackPath?.record(.registryAddEnd)
+                // A socket that closed while the extractor was awaiting ran its
+                // onClose with channelId still nil and deregistered nothing —
+                // without this it would sit in the registry for the process
+                // lifetime, retaining a dead socket and slowing every fan-out.
+                if ws.isClosed {
+                    ackPath?.record(.closedDuringSetup)
+                    await sockets.remove(socket: ws, channelId: channel.id)
+                    return
+                }
+
+                // The ONLY per-connection open. `storeConfiguration` lets the
+                // mount open files another writer created at a higher schema
+                // version; the default raw open targets version 1 and would
+                // refuse them (the "Could not open lattice for url" close-1001
+                // class on projector-owned channel files). The relay's bounded
+                // busy budget is layered on top (2s instead of the library's 30s)
+                // unless the mount asked for a specific one — a live socket must
+                // never park half a minute inside one `BEGIN IMMEDIATE`.
+                let configuration = SyncRelayApplyPolicy.configuration(
+                    fileURL: latticeURL, storeConfiguration: storeConfiguration)
+                ackPath?.record(.storeOpenBegin)
+                guard let connectionLattice = try? Lattice(for: schema, configuration: configuration) else {
+                    ackPath?.record(.storeOpenFailure)
+                    print(">>> Could not open lattice for url: \(String(describing: latticeURL))")
+                    await sockets.remove(socket: ws, channelId: channel.id)
+                    try? await ws.close()
+                    return
+                }
+                ackPath?.record(.storeOpenEnd)
+                let held = UnsafeSendableBox(connectionLattice)
+
+                // Observer push: register a PARKED subscription now — BEFORE the
+                // go-live hop and the catch-up snapshot below. The commit
+                // observer is live from this point, so no commit can fall
+                // between the snapshot and the watch: anything that lands during
+                // catch-up buffers as a `dirty` nudge and activation's first
+                // pump (which reads strictly beyond the catch-up boundary) picks
+                // it up — no gaps, no dupes, in order. A nil subscription
+                // (watcher open failure) leaves this socket catch-up-only.
+                let sendBoundaryProbe: ObserverSendBoundaryProbe?
+                if let probe = pushContext?.options._sendBoundaryProbeForTesting,
+                   probe.channelID == channel.id {
+                    sendBoundaryProbe = probe
+                } else {
+                    sendBoundaryProbe = nil
+                }
+                if let watchManager, let pushContext, let latticeURL {
+                    state.pushSubscription = await watchManager.subscribe(
+                        fileURL: latticeURL, context: pushContext,
+                        socket: ws, revocation: state.revocation,
+                        sendBoundaryProbe: sendBoundaryProbe)
+                }
+
+                // Go live: replay anything that arrived during the open, in
+                // order, then hand subsequent frames straight to the lattice.
+                // If a revocation closed this socket while we were opening,
+                // abandon: never install the lattice on a dead connection
+                // (onClose has already run its cleanup, which found nil).
+                ackPath?.record(.goLiveScheduled)
+                ws.eventLoop.execute { [ackPath] in
+                    ackPath?.record(.goLiveEntered)
+                    guard !ws.isClosed, !state.revocation.isRevoked else {
+                        ackPath?.record(.goLiveAbandoned)
+                        state.buffered.removeAll()
+                        state.bufferedBytes = 0
+                        // The catch-up task below force-unwraps `held.value`;
+                        // clearing here would trap it. Mark abandoned instead
+                        // and let the catch-up guard release it.
+                        state.abandoned = true
+                        return
+                    }
+                    state.process = processFrame
+                    // B3.2: applies run on a per-connection serial consumer, OFF
+                    // the event loop — one slow apply no longer blocks every
+                    // other socket on this loop (the client made the same move in
+                    // sync.cpp:1053 long ago). Ordering is preserved: one
+                    // consumer, frames yielded in arrival order, ack + fan-out
+                    // still happen inside processFrame after the apply commits.
+                    let lattice = held.value
+                    let (stream, cont) = AsyncStream<ByteBuffer>.makeStream()
+                    state.applyContinuation = cont
+                    state.applyConsumer = Task.detached { [ackPath] in
+                        ackPath?.record(.consumerStarted)
+                        for await frame in stream {
+                            ackPath?.record(.frameDequeued, bytes: frame.readableBytes)
+                            guard !state.revocation.isRevoked else {
+                                ackPath?.record(.dequeueRevoked, bytes: frame.readableBytes)
+                                continue
+                            }
+                            await processFrame(ws, frame, lattice)
+                            let n = frame.readableBytes
+                            ws.eventLoop.execute { state.queuedApplyBytes -= n }
+                        }
+                    }
+                    ackPath?.record(.consumerCreated)
+                    for bb in state.buffered {
+                        state.queuedApplyBytes += bb.readableBytes
+                        cont.yield(bb)
+                        ackPath?.record(.ingressYielded, bytes: bb.readableBytes, count: state.queuedApplyBytes)
+                    }
+                    state.buffered.removeAll()
+                    state.bufferedBytes = 0
+                    state.lattice = held.value
+                    // Keepalive on the healthy path (until here pings only ran on
+                    // kick/refusal). An idle-but-healthy connection otherwise sends
+                    // nothing, and intermediaries cut it: Cloudflare's proxied-WS
+                    // idle timeout is ~100s, AWS NLBs 340s. Browsers answer
+                    // protocol pings automatically, so this keeps traffic flowing
+                    // both ways for every client class — and gives the relay
+                    // dead-peer detection it previously got only on kicks.
+                    ws.pingInterval = .seconds(30)
+                    ackPath?.record(.goLiveComplete)
+                }
+
+                // Catch-up AFTER handlers are live. Incoming frames during
+                // catch-up serialize through the same per-channel lattice.
+                do {
+                    try await Task {
+                        // The go-live hop hands ownership here when it abandons:
+                        // release the opened lattice off-loop and do not touch
+                        // `held.value` again. A parked push subscription is
+                        // dropped too — it would otherwise never activate.
+                        if state.abandoned {
+                            Task.detached { held.clear() }
+                            if let sub = state.pushSubscription {
+                                await watchManager?.unsubscribe(sub)
+                            }
+                            return
+                        }
+                        guard !ws.isClosed, !state.revocation.isRevoked else {
+                            if let sub = state.pushSubscription {
+                                await watchManager?.unsubscribe(sub)
+                            }
+                            return
+                        }
+                        let lattice = held.value
+
+                        // TEST-ONLY fault injection (nil in production): proves
+                        // the catch block below releases a parked subscription.
+                        if let fault = _catchUpFaultForTesting.withLockedValue({ $0 }) {
+                            try fault(channel.id)
+                        }
+
+                        let lastEventId = try? req.query.get(UUID?.self, at: "last-event-id")
+
+                        // §1.7.2 FLOOR HONESTY: a claimed floor the durable history cannot back was
+                        // previously swallowed (the probe returned nil, the filter dropped, and a
+                        // full replay proceeded with NO signal) — the exact shape under which a client
+                        // whose acked rows were lost never learns to re-upload them. Detect it, say it
+                        // on the wire BEFORE the pages (shipped C++ clients ignore the unknown kind),
+                        // attribute it via the boot ledger, and keep the socket open — the full replay
+                        // that follows is now explicit, not accidental.
+                        if let claimed = lastEventId, let url = latticeURL {
+                            let floorSuspect = DurableHeadLedger.shared.bootCheck(lattice: lattice, storePath: url.path)
+                            let known = !lattice.objects(AuditLog.self).where { $0.globalId == claimed }
+                                .snapshot(limit: 1).isEmpty
+                            if !known {
+                                let head = lattice.objects(AuditLog.self)
+                                    .sortedBy(\.primaryKey, order: .reverse).snapshot(limit: 1).first
+                                let reason = floorSuspect
+                                    ? "server lost history (durable head regressed at boot)"
+                                    : "client floor unknown to this channel"
+                                relayLog.error("""
+                                    FLOOR VIOLATION: channel=\(channel.id) user=\(channel.userId) \
+                                    claimed=\(claimed) durableHead=\(head?.globalId?.uuidString ?? "nil") \
+                                    — \(reason); serving explicit full-history replay
+                                    """)
+                                if let encoded = try? JSONEncoder().encode(
+                                    ServerSentEvent.floorReset(durableHead: head?.globalId, reason: reason)) {
+                                    await ws.send(ByteBuffer(data: encoded))
+                                }
                             }
                         }
-                    }
 
-                    let events = lattice.eventsAfter(globalId: lastEventId)
-                    let count = events.count
-                    // Observer-push activation boundary: the pk of the last
-                    // catch-up entry this socket was sent, taken from the
-                    // SAME results object (a separate MAX(id) read could
-                    // skew against concurrent commits — dupe/skip window);
-                    // else the checkpoint entry's pk when the client was
-                    // already up to date; else 0 on an empty log. The first
-                    // pump reads strictly beyond it.
-                    var boundary: Int64 = 0
-                    if count > 0 {
-                        print(">>> Bringing channel \(channel.id) connection up to date with \(count) events")
-                        for i in stride(from: 0, to: count, by: 1000) {
-                            guard !state.revocation.isRevoked else { break }
-                            // Late-bind @NoHistory columns — this page is serialized
-                            // here in Swift, outside core's upload-side fill.
-                            let page = lattice.lateBindNoHistory(Array(events[i..<min(count, i + 1000)]))
-                            let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
-                            sendBoundaryProbe?.capture(page: page, route: .catchup)
-                            await ws.send(ByteBuffer(data: encoded))
-                            boundary = page.last?.primaryKey ?? boundary
+                        let events = lattice.eventsAfter(globalId: lastEventId)
+                        let count = events.count
+                        // Observer-push activation boundary: the pk of the last
+                        // catch-up entry this socket was sent, taken from the
+                        // SAME results object (a separate MAX(id) read could
+                        // skew against concurrent commits — dupe/skip window);
+                        // else the checkpoint entry's pk when the client was
+                        // already up to date; else 0 on an empty log. The first
+                        // pump reads strictly beyond it.
+                        var boundary: Int64 = 0
+                        if count > 0 {
+                            print(">>> Bringing channel \(channel.id) connection up to date with \(count) events")
+                            for i in stride(from: 0, to: count, by: 1000) {
+                                guard !state.revocation.isRevoked else { break }
+                                // Late-bind @NoHistory columns — this page is serialized
+                                // here in Swift, outside core's upload-side fill.
+                                let page = lattice.lateBindNoHistory(Array(events[i..<min(count, i + 1000)]))
+                                let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
+                                sendBoundaryProbe?.capture(page: page, route: .catchup)
+                                await ws.send(ByteBuffer(data: encoded))
+                                boundary = page.last?.primaryKey ?? boundary
+                            }
+                        } else if let lastEventId, state.pushSubscription != nil {
+                            // The boundary only feeds push activation — legacy
+                            // mounts (and sockets whose watcher open failed)
+                            // skip this SELECT entirely rather than paying it
+                            // on every redial for a value nobody reads.
+                            boundary = lattice.objects(AuditLog.self)
+                                .where { $0.globalId == lastEventId }
+                                .snapshot(limit: 1)
+                                .first?.primaryKey ?? 0
                         }
-                    } else if let lastEventId, state.pushSubscription != nil {
-                        // The boundary only feeds push activation — legacy
-                        // mounts (and sockets whose watcher open failed)
-                        // skip this SELECT entirely rather than paying it
-                        // on every redial for a value nobody reads.
-                        boundary = lattice.objects(AuditLog.self)
-                            .where { $0.globalId == lastEventId }
-                            .snapshot(limit: 1)
-                            .first?.primaryKey ?? 0
-                    }
-                    // Activate push (cursor = catch-up boundary) — or drop
-                    // the parked subscription if this socket died/was
-                    // revoked during catch-up.
+                        // Activate push (cursor = catch-up boundary) — or drop
+                        // the parked subscription if this socket died/was
+                        // revoked during catch-up.
+                        if let sub = state.pushSubscription {
+                            if state.revocation.isRevoked || ws.isClosed {
+                                await watchManager?.unsubscribe(sub)
+                            } else {
+                                await watchManager?.activate(sub, cursor: boundary)
+                            }
+                        }
+                    }.value
+                } catch {
+                    print("Error bringing channel connection up to date: \(error.localizedDescription)")
+                    // A throw here (encode failure, a send that fails mid-page)
+                    // used to leave the push subscription PARKED: never
+                    // activated, never unsubscribed. That pins the file's watch
+                    // group — and its watcher `Lattice` — alive for the process
+                    // lifetime on a socket that can never receive a pushed frame
+                    // (no cursor), while the socket itself stayed OPEN so the
+                    // client's redial fallback never fired either: a
+                    // permanently silent observer plus a leaked watcher per
+                    // occurrence. Release the subscription, then close, so the
+                    // client redials and re-runs catch-up from its
+                    // last-event-id.
                     if let sub = state.pushSubscription {
-                        if state.revocation.isRevoked || ws.isClosed {
-                            await watchManager?.unsubscribe(sub)
-                        } else {
-                            await watchManager?.activate(sub, cursor: boundary)
-                        }
+                        state.pushSubscription = nil
+                        await watchManager?.unsubscribe(sub)
                     }
-                }.value
-            } catch {
-                print("Error bringing channel connection up to date: \(error.localizedDescription)")
-                // A throw here (encode failure, a send that fails mid-page)
-                // used to leave the push subscription PARKED: never
-                // activated, never unsubscribed. That pins the file's watch
-                // group — and its watcher `Lattice` — alive for the process
-                // lifetime on a socket that can never receive a pushed frame
-                // (no cursor), while the socket itself stayed OPEN so the
-                // client's redial fallback never fired either: a
-                // permanently silent observer plus a leaked watcher per
-                // occurrence. Release the subscription, then close, so the
-                // client redials and re-runs catch-up from its
-                // last-event-id.
-                if let sub = state.pushSubscription {
-                    state.pushSubscription = nil
-                    await watchManager?.unsubscribe(sub)
+                    ws.pingInterval = .seconds(5)   // drop a peer that ignores the close
+                    try? await ws.close(code: .unexpectedServerError)
                 }
-                ws.pingInterval = .seconds(5)   // drop a peer that ignores the close
-                try? await ws.close(code: .unexpectedServerError)
             }
         }
+        routes.webSocket(path, maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 300 * 1024 * 1024),
+                         shouldUpgrade: { $0.eventLoop.makeSucceededFuture(HTTPHeaders?.some([:])) },
+                         onUpgrade: onUpgrade)
         return SyncRelayHandle(manager: sockets, pushManager: watchManager)
     }
 

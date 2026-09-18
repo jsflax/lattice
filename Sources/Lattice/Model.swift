@@ -37,6 +37,10 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     private struct WeakModelRef: @unchecked Sendable {
         weak var instance: (any Model)?
         let objectIdentifier: ObjectIdentifier
+        // A query over attached stores can return the same entity and local
+        // primary key from different schemas on ONE backend. Keep the Core
+        // write route for instance reuse; observer keys remain logical tables.
+        let physicalRoute: String
         var cxxObserverId: UInt64?
         // Boxed backend handle; deregister recovers the swift_lattice_ref via
         // asCxxLatticeRef (the handle works on every OS — value-converted
@@ -49,9 +53,10 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         // owning handle's isolation never changes, so the register-time
         // capture is equivalent and touches no model storage.
         weak var isolation: (any Actor)?
-        init(_ model: any Model) {
+        init(_ model: any Model, physicalRoute: String) {
             self.instance = model
             self.objectIdentifier = ObjectIdentifier(model)
+            self.physicalRoute = physicalRoute
         }
     }
 
@@ -66,13 +71,13 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     /// Register a model instance for cross-instance and cross-process observation
     func register(_ model: any Model, tableName: String) {
         LatticePerf.bump(.registrations)
-        guard let primaryKey = model.primaryKey else { return }
+        guard let primaryKey = model._dynamicObject._ref._managedPrimaryKey ?? model.primaryKey else { return }
         guard let latticeBackend = model._dynamicObject._ref.lattice else { return }
         // Cross-process object observation uses the C++ object-observer API.
         guard let latticeRef = latticeBackend.asCxxLatticeRef else { return }
         let dbPath = String(latticeRef.path())
         let key = InstanceKey(databasePath: dbPath, tableName: tableName, primaryKey: primaryKey)
-        var ref = WeakModelRef(model)
+        var ref = WeakModelRef(model, physicalRoute: model._dynamicObject._ref.tableName)
         ref.isolation = model.lattice?.isolation
         let objectId = ObjectIdentifier(model)
 
@@ -220,18 +225,23 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     /// interleaving with B's transactions (an overlapping BEGIN throws —
     /// pinned by `test_WriteWhileIterating`). Same-handle instances are the
     /// ones whose write routing is already ours.
+    /// `physicalRoute`, when supplied by a fetched row, also distinguishes
+    /// schemas on an attaching handle: local primary keys are not unique
+    /// across stores. Match the Core route exactly rather than interpreting
+    /// quoted schema names or changing the logical observation namespace.
     ///
     /// The weak refs are resolved OUTSIDE the lock: reading a weak var
     /// creates a temporary strong ref whose release can trigger
     /// Model.deinit → deregister → deadlock on this non-recursive lock
     /// (same discipline as `deregister`).
     func lookup(databasePath: String, tableName: String, primaryKey: Int64,
-                backendIdentity: Int64) -> (any Model)? {
+                backendIdentity: Int64, physicalRoute: String? = nil) -> (any Model)? {
         let key = InstanceKey(databasePath: databasePath, tableName: tableName, primaryKey: primaryKey)
         lock.lock()
         let refs = instances[key] ?? []
         lock.unlock()
         for ref in refs where ref.latticeBackend?.identityHash == backendIdentity {
+            if let physicalRoute, ref.physicalRoute != physicalRoute { continue }
             if let model = ref.instance { return model }
         }
         return nil
@@ -433,6 +443,9 @@ public protocol Model: AnyObject, ObservableObject, Hashable, Identifiable, Sche
     func _triggerObservers_send(keyPath: String)
     var _lastKeyPathUsed: String? { get set }
     static func _nameForKeyPath(_ keyPath: AnyKeyPath) -> String
+    /// The SQL column for a direct stored scalar key path, or nil if unsupported.
+    /// Unlike `_nameForKeyPath`, this never infers a name from reflected text.
+    static func _storedColumn(for keyPath: AnyKeyPath) -> String?
     static var constraints: [Constraint] { get }
     static var fullTextProperties: Set<String> { get }
     static var indexedProperties: Set<String> { get }
@@ -454,8 +467,13 @@ extension Model {
         LatticePerf.bump(.materializations)
         self.init(isolation: isolation)
         self._dynamicObject._ref = dynamicObject
-        // Register for cross-instance observation if this object has a primaryKey
-        if self.primaryKey != nil {
+        // Query metadata is needed only while building this instance. It is
+        // separate from the opt-in materialized-read cache and must not pin
+        // a fetched row image for the lifetime of an application model.
+        defer { dynamicObject._releaseQueryRowImage() }
+        // Query handles already carry their identity. Registration must not
+        // refetch a row merely to discover the key or enable snapshot reads.
+        if dynamicObject._managedPrimaryKey != nil || self.primaryKey != nil {
             ModelInstanceRegistry.shared.register(self, tableName: Self.entityName)
         }
     }
@@ -483,6 +501,8 @@ extension Model {
     public static var fullTextProperties: Set<String> { [] }
     public static var indexedProperties: Set<String> { [] }
     public static var noHistoryProperties: Set<String> { [] }
+    /// Manual conformers must explicitly provide their stored scalar mapping.
+    public static func _storedColumn(for keyPath: AnyKeyPath) -> String? { nil }
 
     public var lattice: Lattice? {
         _dynamicObject._ref.lattice?.asCxxLatticeRef.flatMap { Lattice.init(ref: $0) }
