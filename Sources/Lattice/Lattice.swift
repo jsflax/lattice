@@ -836,6 +836,7 @@ public struct Lattice {
         backend.asCxxLatticeRef!
     }
     internal var isolation: (any Actor)?
+    private let observerActorDelivery: ObserverActorDelivery?
     var _isolation: (any Actor)? { isolation }
     
     /// Resolve the Lattice wrapper for a C++ ref arriving through a trampoline
@@ -868,12 +869,14 @@ public struct Lattice {
                   configuration: Configuration,
                   modelTypes: [any Model.Type],
                   schema: _Schema?,
-                  isolation: (any Actor)?) {
+                  isolation: (any Actor)?,
+                  observerActorDelivery: ObserverActorDelivery?) {
         self.backend = backend
         self.configuration = configuration
         self.modelTypes = modelTypes
         self.schema = schema
         self.isolation = isolation
+        self.observerActorDelivery = observerActorDelivery
     }
     
     private static let cacheLock = UnfairLock(initialState: ())
@@ -910,6 +913,7 @@ public struct Lattice {
         let modelTypes: [any Model.Type]
         let schema: _Schema?
         let isolation: (any Actor)?
+        let observerActorDelivery: ObserverActorDelivery?
 
         init(_ lattice: Lattice) {
             self.backend = lattice.backend
@@ -917,12 +921,14 @@ public struct Lattice {
             self.modelTypes = lattice.modelTypes
             self.schema = lattice.schema
             self.isolation = lattice.isolation
+            self.observerActorDelivery = lattice.observerActorDelivery
         }
 
         func resurrect() -> Lattice? {
             guard let backend else { return nil }
             return Lattice(backend: backend, configuration: configuration,
-                           modelTypes: modelTypes, schema: schema, isolation: isolation)
+                           modelTypes: modelTypes, schema: schema, isolation: isolation,
+                           observerActorDelivery: observerActorDelivery)
         }
     }
 
@@ -943,6 +949,11 @@ public struct Lattice {
         Self.registerNetworkFactoryIfNeeded()
 
         self.isolation = isolation
+        if isolation != nil {
+            self.observerActorDelivery = ObserverActorDelivery(isolation: isolation)
+        } else {
+            self.observerActorDelivery = nil
+        }
         self.configuration = configuration
 
         // Discover all linked types from the provided schema
@@ -990,7 +1001,7 @@ public struct Lattice {
             let targetVersion = migration.keys.max() ?? 1
 
             // Create swift_configuration with row migration callback
-            var swiftConfig =  configuration.cxxConfiguration()//lattice.swift_configuration(configuration.cxxConfiguration())
+            var swiftConfig = configuration.cxxConfiguration(isolation: isolation)
             swiftConfig.target_schema_version = Int32(targetVersion)
 
             // Pre-populate migration schema pairs (no callback needed)
@@ -1033,7 +1044,7 @@ public struct Lattice {
                                                           schemas: cxxSchemas,
                                                           error: &error)
         } else {
-            createdRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(), schemas: cxxSchemas, error: &error)
+            createdRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(isolation: isolation), schemas: cxxSchemas, error: &error)
         }
         guard error.msg.empty() else {
             throw error
@@ -1058,7 +1069,7 @@ public struct Lattice {
     public init(isolation: isolated (any Actor)? = #isolation,
                 for schema: [any Model.Type],
                 configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: schema, configuration: configuration, isSynchronizing: false)
+        try self.init(isolation: isolation, for: schema, configuration: configuration, isSynchronizing: false)
     }
 
     internal var schema: _Schema?
@@ -1111,7 +1122,7 @@ public struct Lattice {
         for type in repeat each modelTypes {
             types.append(type)
         }
-        try self.init(for: types, configuration: configuration)
+        try self.init(isolation: isolation, for: types, configuration: configuration)
         // schema is already set by the designated init (as a SchemaCompat).
     }
 
@@ -1119,22 +1130,22 @@ public struct Lattice {
     // deployment targets. They forward to `init(for:)`; for more types than
     // these cover, use `init(for: [any Model.Type])`.
     public init<A: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a], configuration: configuration)
+        try self.init(isolation: isolation, for: [a], configuration: configuration)
     }
     public init<A: Model, B: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a, b], configuration: configuration)
+        try self.init(isolation: isolation, for: [a, b], configuration: configuration)
     }
     public init<A: Model, B: Model, C: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a, b, c], configuration: configuration)
+        try self.init(isolation: isolation, for: [a, b, c], configuration: configuration)
     }
     public init<A: Model, B: Model, C: Model, D: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a, b, c, d], configuration: configuration)
+        try self.init(isolation: isolation, for: [a, b, c, d], configuration: configuration)
     }
     public init<A: Model, B: Model, C: Model, D: Model, E: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, _ e: E.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a, b, c, d, e], configuration: configuration)
+        try self.init(isolation: isolation, for: [a, b, c, d, e], configuration: configuration)
     }
     public init<A: Model, B: Model, C: Model, D: Model, E: Model, F: Model>(isolation: isolated (any Actor)? = #isolation, _ a: A.Type, _ b: B.Type, _ c: C.Type, _ d: D.Type, _ e: E.Type, _ f: F.Type, configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [a, b, c, d, e, f], configuration: configuration)
+        try self.init(isolation: isolation, for: [a, b, c, d, e, f], configuration: configuration)
     }
 
     /// Open with no model types (e.g. a SwiftUI environment placeholder). This
@@ -1143,7 +1154,7 @@ public struct Lattice {
     /// `init<each M>` (empty pack), which is iOS 17+ (parameter packs).
     public init(isolation: isolated (any Actor)? = #isolation,
                 configuration: Configuration = defaultConfiguration) throws {
-        try self.init(for: [], configuration: configuration)
+        try self.init(isolation: isolation, for: [], configuration: configuration)
     }
 
     enum Error: Swift.Error {
@@ -2280,7 +2291,7 @@ public struct Lattice {
         // Resolving on the worker gives SQL its own nonisolated handle. Keep
         // the attaching actor separately so resolution cannot change where
         // the observer's block is delivered.
-        let isolation = self.isolation
+        let actorDelivery = self.observerActorDelivery
         let workerStoreIdentity = backend.identityHash
 
         let block = UnsafeBlock(block: block)
@@ -2405,19 +2416,18 @@ public struct Lattice {
                 }
                 diagnosticBatch?.record("collection_decisions_completed", count: decisions.count)
                 guard !decisions.isEmpty else { return }
-                if let isolation {
-                    // One hop per batch: the user's block runs on its actor,
-                    // in commit order, exactly as before.
+                if let actorDelivery {
+                    // The captured mailbox operation already carries the
+                    // handle's creation actor, including off-actor registration.
+                    // Batches remain whole and FIFO through that actor's drain.
                     let batch = decisions
                     diagnosticBatch?.record("collection_actor_hop")
                     ObserverDeliveryWorker.shared.diagnosticPhase(.actorHandoff)
-                    Task {
-                        diagnosticBatch?.record("collection_actor_task_started")
-                        await isolation.invoke { _ in
-                            diagnosticBatch?.record("collection_emission_started", count: batch.count)
-                            for change in batch { block(change) }
-                            diagnosticBatch?.record("collection_emission_returned", count: batch.count)
-                        }
+                    actorDelivery.enqueue {
+                        diagnosticBatch?.record("collection_actor_delivery_started")
+                        diagnosticBatch?.record("collection_emission_started", count: batch.count)
+                        for change in batch { block(change) }
+                        diagnosticBatch?.record("collection_emission_returned", count: batch.count)
                     }
                 } else {
                     // No isolation requested: deliver ON the worker — the
@@ -2700,7 +2710,8 @@ public struct Lattice {
                                  configuration: queryConfig,
                                  modelTypes: modelTypes,
                                  schema: schema,
-                                 isolation: isolation)
+                                 isolation: isolation,
+                                 observerActorDelivery: observerActorDelivery)
         // Item A §4.2: the clone unions rows from the attached store — writes
         // on either store must invalidate its shapes (see attach(lattice:)).
         // Mint the attached store's coordinator so its core hook relays

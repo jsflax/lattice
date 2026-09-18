@@ -18,7 +18,7 @@ final class ObserverActorDiagnostics: @unchecked Sendable {
         case actorBody, canonicalization, observerRegistration, observerRemoval
         case tokenRelease, reconcileCancellation, reconcileRelease, watcherReleaseHandoff
     }
-    enum Reason: String, Sendable { case warmupTimeout, incompleteIteration, p95Gate, thrownFailure }
+    enum Reason: String, Sendable { case warmupTimeout, incompleteIteration, p95Gate, thrownFailure, pushHarnessWait }
     struct Scope: Sendable { fileprivate let id: UInt64 }
     private struct Record: Sendable {
         let id: UInt64

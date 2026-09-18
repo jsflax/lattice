@@ -225,6 +225,7 @@ final class PushSubscription: @unchecked Sendable {
     let sendBoundaryProbe: ObserverSendBoundaryProbe?
     /// Recorder-local identity, immutable for this subscription (nil when off).
     let pipelineSubscription: UInt64?
+    let setupDiagnostic: ACKPathConnection?
     /// Process-local group incarnation, nil unless actor diagnostics are enabled.
     let diagnosticGroupID: UInt64?
     /// `nil` = parked (connect-time catch-up in flight). Installed once by
@@ -242,7 +243,7 @@ final class PushSubscription: @unchecked Sendable {
 
     init(socket: WebSocket, revocation: RevocationFlag, key: String, pageSize: Int,
          sendBoundaryProbe: ObserverSendBoundaryProbe? = nil,
-         pipelineSubscription: UInt64? = nil, diagnosticGroupID: UInt64? = nil) {
+         pipelineSubscription: UInt64? = nil, diagnosticGroupID: UInt64? = nil, setupDiagnostic: ACKPathConnection? = nil) {
         self.socket = socket
         self.revocation = revocation
         self.key = key
@@ -250,6 +251,7 @@ final class PushSubscription: @unchecked Sendable {
         self.sendBoundaryProbe = sendBoundaryProbe
         self.pipelineSubscription = pipelineSubscription
         self.diagnosticGroupID = diagnosticGroupID
+        self.setupDiagnostic = setupDiagnostic
     }
 }
 
@@ -383,13 +385,16 @@ actor FileWatchManager {
     /// redial fallback remains correct), retried on the next subscriber join.
     func subscribe(fileURL: URL, context: MountPushContext,
                    socket: WebSocket, revocation: RevocationFlag,
-                   sendBoundaryProbe: ObserverSendBoundaryProbe? = nil) async -> PushSubscription? {
+                   sendBoundaryProbe: ObserverSendBoundaryProbe? = nil,
+                   setupDiagnostic: ACKPathConnection? = nil) async -> PushSubscription? {
+        setupDiagnostic?.record(.watchSubscribeEntered)
         let canonicalScope = actorDiagnostics.begin(.subscribeCanonicalization)
         actorDiagnostics.phase(canonicalScope, .canonicalization)
         let key = Self.canonicalKey(for: fileURL)
         actorDiagnostics.end(canonicalScope)
         guard let group = await resolveGroup(key: key, fileURL: fileURL, context: context,
-                                            sendBoundaryProbe: sendBoundaryProbe) else {
+                                            sendBoundaryProbe: sendBoundaryProbe,
+                                            setupDiagnostic: setupDiagnostic) else {
             return nil
         }
         let scope = actorDiagnostics.begin(.subscribePublish, group: group.diagnosticGroupID)
@@ -403,8 +408,11 @@ actor FileWatchManager {
                                    pageSize: context.options.pageSize,
                                    sendBoundaryProbe: sendBoundaryProbe,
                                    pipelineSubscription: subscriptionTrace,
-                                   diagnosticGroupID: group.diagnosticGroupID)
+                                   diagnosticGroupID: group.diagnosticGroupID,
+                                   setupDiagnostic: setupDiagnostic)
         group.subscribers.append(sub)
+        setupDiagnostic?.record(.watchSubscribePublished, span: group.diagnosticGroupID ?? 0,
+                                count: group.subscribers.count)
         return sub
     }
 
@@ -419,6 +427,7 @@ actor FileWatchManager {
         defer { actorDiagnostics.end(scope) }
         guard sub.active else { return }
         sub.cursor = cursor
+        sub.setupDiagnostic?.record(.watchActivated, span: sub.diagnosticGroupID ?? 0)
         sub.dirty = true
         // This is the actual activation fact; receipt of a warmup frame is not.
         let activation = sub.sendBoundaryProbe?.pipeline?.capture(
@@ -511,7 +520,9 @@ actor FileWatchManager {
         // on any socket's event loop (the B3.2 lesson). One task per
         // subscription; every other subscription pumps independently, so a
         // slow socket lags only itself.
+        sub.setupDiagnostic?.record(.pushPumpScheduled, span: sub.diagnosticGroupID ?? 0)
         Task.detached { [weak self] in
+            sub.setupDiagnostic?.record(.pushPumpTaskStarted, span: sub.diagnosticGroupID ?? 0)
             let started = sub.sendBoundaryProbe?.pipeline?.capture(.pumpTaskStarted, parent: pumpTrace)
             await self?.pump(sub, watcher: watcher, pageSize: pageSize,
                              pipelinePump: pumpTrace, pipelineTask: started)
@@ -541,6 +552,7 @@ actor FileWatchManager {
                 }
                 // Late-bind @NoHistory columns: this page is serialized in
                 // Swift, so core's upload-side fill never sees it.
+                sub.setupDiagnostic?.record(.pushPageBegin, span: sub.diagnosticGroupID ?? 0)
                 let pageRead = pipeline?.capture(.pageReadBegin, parent: pass, cursor: cursor)
                 let page = watcher.lattice.lateBindNoHistory(
                     watcher.lattice.eventsAfter(id: cursor).snapshot(limit: Int64(pageSize)))
@@ -548,6 +560,7 @@ actor FileWatchManager {
                 // The send boundary later links its already-computed IDs here.
                 let pageReadEnd = pipeline?.capture(.pageReadEnd, parent: pageRead,
                                                     cursor: cursor, count: page.count)
+                sub.setupDiagnostic?.record(.pushPageEnd, span: sub.diagnosticGroupID ?? 0, count: page.count)
                 guard !page.isEmpty, let last = page.last?.primaryKey else { break }
                 let encoding = pipeline?.capture(.encodeBegin, parent: pageReadEnd,
                                                  cursor: cursor, count: page.count, lastPK: last)
@@ -566,7 +579,10 @@ actor FileWatchManager {
                     // stuffing the unbounded outbound buffer; memory bound is
                     // one page in flight per socket.
                     let send = sub.sendBoundaryProbe?.capture(page: page, route: .push, pipelinePage: pageReadEnd)
+                    sub.setupDiagnostic?.record(.pushSendBegin, span: sub.diagnosticGroupID ?? 0,
+                                                bytes: encoded.count, count: page.count)
                     try await sub.socket.send(raw: encoded, opcode: .binary)
+                    sub.setupDiagnostic?.record(.pushSendReturn, span: sub.diagnosticGroupID ?? 0)
                     // Includes both socket promise completion and task resumption;
                     // it is not an event-loop-only write-completion timestamp.
                     sendReturned = pipeline?.capture(.sendAwaitReturned, parent: send)
@@ -660,7 +676,8 @@ actor FileWatchManager {
     /// rather than retrying in turn (the retry is the NEXT subscriber join).
     private func resolveGroup(key: String, fileURL: URL,
                               context: MountPushContext,
-                              sendBoundaryProbe: ObserverSendBoundaryProbe?) async -> FileWatchGroup? {
+                              sendBoundaryProbe: ObserverSendBoundaryProbe?,
+                              setupDiagnostic: ACKPathConnection?) async -> FileWatchGroup? {
         let scope = actorDiagnostics.begin(.resolveGroupSetup, group: groups[key]?.diagnosticGroupID)
         if let live = groups[key] {
             actorDiagnostics.end(scope)
@@ -671,8 +688,12 @@ actor FileWatchManager {
             creation = inFlight
         } else {
             opensStarted[key, default: 0] += 1
+            setupDiagnostic?.record(.watchOpenScheduled)
             creation = Task.detached { [weak self] in
+                setupDiagnostic?.record(.watchOpenTaskStarted)
+                setupDiagnostic?.record(.watchOpenBegin)
                 let opened = Self.openWatcher(fileURL: fileURL, context: context)
+                setupDiagnostic?.record(.watchOpenEnd, result: opened != nil)
                 guard let self else {
                     // The manager is a process-wide singleton, so this is
                     // unreachable in production — but a watcher that has
@@ -681,8 +702,10 @@ actor FileWatchManager {
                     opened?.clear()
                     return false
                 }
+                setupDiagnostic?.record(.watchInstallRequested)
                 return await self.installGroup(key: key, watcher: opened, context: context,
-                                               sendBoundaryProbe: sendBoundaryProbe)
+                                               sendBoundaryProbe: sendBoundaryProbe,
+                                               setupDiagnostic: setupDiagnostic)
             }
             creating[key] = creation
         }
@@ -705,7 +728,9 @@ actor FileWatchManager {
     /// open succeeded.
     private func installGroup(key: String, watcher box: UnsafeSendableBox<Lattice>?,
                               context: MountPushContext,
-                              sendBoundaryProbe: ObserverSendBoundaryProbe?) -> Bool {
+                              sendBoundaryProbe: ObserverSendBoundaryProbe?,
+                              setupDiagnostic: ACKPathConnection?) -> Bool {
+        setupDiagnostic?.record(.watchInstallEntered)
         let diagnosticGroupID = actorDiagnostics.groupID()
         let scope = actorDiagnostics.begin(.installGroup, group: diagnosticGroupID)
         defer { actorDiagnostics.end(scope) }
@@ -740,6 +765,7 @@ actor FileWatchManager {
             }
             actorDiagnostics.phase(scope, .actorBody)
             pipeline?.capture(.observerRegistered, parent: groupTrace)
+            setupDiagnostic?.record(.watchObserverRegistered, span: diagnosticGroupID ?? 0)
         }
         if let interval = context.options.reconcileInterval {
             group.reconcile = Task { [weak self] in
