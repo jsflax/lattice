@@ -173,7 +173,7 @@ def main():
                 graph(context, 'before-build')
                 source = sources(context, 'before-build')
                 guard.save_json(receipts / (arm + '-source-proof.json'), source)
-                argv = [config['swift'], 'build', *common(context), '-c', 'release', '--force-resolved-versions', '--build-tests', '-j', str(config['j']), '-v']
+                argv = [config['swift'], 'build', *common(context), '-c', 'release', '--force-resolved-versions', '--build-tests', '-Xswiftc', '-enable-testing', '-j', str(config['j']), '-v']
                 log = command(arm + '-release-build', argv, sdk, timeout=config['buildSeconds'])
                 proof = build_proof.make(log, sdk, context['core'], home / 'scratch', config['overlay'])
                 guard.save_json(receipts / (arm + '-compiler-proof.json'), proof)

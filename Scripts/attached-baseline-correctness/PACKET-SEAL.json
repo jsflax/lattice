@@ -1,26 +1,26 @@
 {
+  "schemaVersion": 1,
+  "scope": "Prepared source successor; root review and full synthetic checks required before execution admission",
+  "sourceOnly": true,
   "actualNativeTests": null,
+  "attachedOverlayCompiled": false,
+  "priorPacketSealSHA256": "cc0e5fa6f85159e7c0b39399939a2d733ac727f8846fc9a12603175f73c69495",
+  "authoredSyntheticPythonChecks": 22,
+  "currentFullSyntheticExecuted": false,
+  "exactCommandContractCheckPassed": true,
   "files": {
     "AttachedBaselineCorrectnessTests.swift": "952e4b750c23ae54643b405e0d2b6e80679c7dbcee175e4c3fa2d4ee0a095321",
-    "PREPARATION.json": "88b7749b61efbeab5f3507f875567f30720c11e7909481c1ad3e3ec41234aa90",
-    "PYTHON-CHECKS-002.json": "02c66336a8faaed6eb67a637c64c46c5cc39387e5a87ea04262c686fe3bd40e5",
-    "PYTHON-CHECKS-002.log": "795ea5748308594754cd52697f057aea6971a19e4f9c4da1366db44e70ec6701",
-    "PYTHON-CHECKS-003.json": "1eaf4a4a7a52bb43aced75c48e98d812ef43ddd8f4a886fe8dfa54dda8743d68",
-    "PYTHON-CHECKS-003.log": "9de2b753839de83b480e0a3637b79b2ae945041a98a71d5ce5067136122ce640",
-    "PYTHON-CHECKS.json": "694f4e3b56f21e0fc26583d3566c4467264627b4fedc91f8ce292e28b8562082",
-    "PYTHON-CHECKS.log": "ff37c89e37b7957a2bc9fe62fbc72f5d86681592824ef69c64e2b010033c69c8",
-    "README.md": "32e8f133b6cb683c8f5e14f822e2735e496ddddc2939e4a0f8d37ad97ea1cd24",
+    "PREPARATION.json": "97d96904523a04a0f203f726f67ad1c6457579cb4e1cd7c6e3102d467b2ca77f",
+    "PRIOR-RUN-DIAGNOSIS.json": "55f55363036d25cb6891af21d44bfe0f091ac775eee590b6e7707797a5cf54d0",
+    "README.md": "e2b6f63ed5dfddfa2a8c6b6b0c23680adb407974b96b8d7c47ea6e16e187c710",
+    "STATIC-CHECKS.json": "2f4a8cc995ccc778f853f21d0b4d2fd066c3fef5d3850c88afaf69e9ec800a96",
     "analyze.py": "b42bb22a757669451c51bae17013eeab7877201278679b5757c945e898b8d640",
-    "build_proof.py": "e2be02f4a21d07847dcbbb6ab9de0a5547a2ea3af59d0863b8fc5535e7722777",
+    "build_proof.py": "460e951c874349c0a725221769a3bda303dce59fcd9aeeaa341328848be4e45a",
     "config.json": "e5d64b7d541320c28fd369b41e24e27a6654b8403469af3a41b31174535c9749",
     "expected-tests.json": "ff1291247cb31d81bef733f99bd1def2441b55ff1f9a36c85991dae3636fb985",
     "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
     "product.patch": "2b4827d6db82a3d935aad91749323fe7995423a8d0ee301a3405a4109ed89eb2",
-    "qualify.py": "54953c5f0004671c930571ed85008d3aa4b8e00cf7e162abadf767ae7bec7643",
-    "test_analysis.py": "81a16b259f74e59a06f09b26f303e9525034c5bbaad06c5a1c415dda5143089f"
-  },
-  "priorPacketSealSHA256": "fb0f38892171af0917f42fcb8acac60932cb67bad37edfb6f1fce791e87de93a",
-  "schemaVersion": 1,
-  "scope": "Source-only successor; root review and execution admission remain required",
-  "syntheticPythonChecks": 18
+    "qualify.py": "6cb4a6b0e15267718c0726cea0fbab2b5f94cf0c5cb6b615ff1b4774697314b0",
+    "test_analysis.py": "12496af88c9f679d3a22fd1077c8b639f0238ab7865f8caa0fa96e854a1d3e33"
+  }
 }

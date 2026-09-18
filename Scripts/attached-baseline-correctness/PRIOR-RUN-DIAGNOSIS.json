@@ -1,0 +1,112 @@
+{
+  "runID": 35382590089,
+  "workflowCommit": "cf2cc104c0a4ee211ab8e208f14a0cf71d2e3e6a",
+  "artifactID": 10563740146,
+  "archiveSHA256": "378b26a64b21ca24383f348a6e8ca164f183782d61fc0cb1bdfcb62ae4b10246",
+  "logArchiveMember": "qualification/receipts/original-release-build.log",
+  "logSHA256": "c1d3cfd0d232f2368f81cddfbae82fca7b1353544a26814aec9b149768f533ad",
+  "logBytes": 3368070,
+  "distinctDiagnostic": "SerializedStdioLifetimeTests.swift:5:18: module 'LatticeMCPTransport' was not compiled for testing",
+  "diagnosticOccurrences": [
+    {
+      "line": 2433,
+      "text": "/Users/runner/localdev/lattice-attached-correctness-35382590089-1/qualification/original/lattice/Tests/LatticeMCPTransportTests/SerializedStdioLifetimeTests.swift:5:18: error: module 'LatticeMCPTransport' was not compiled for testing [#ModuleNotTestable]",
+      "context": [
+        "  3 | import MCP",
+        "  4 | import Testing",
+        "  5 | @testable import LatticeMCPTransport",
+        "    |                  `- error: module 'LatticeMCPTransport' was not compiled for testing [#ModuleNotTestable]",
+        "  6 | ",
+        "  7 | /// Authored UNRUN. The selected Lattice manifest has no transport test target;"
+      ]
+    },
+    {
+      "line": 2437,
+      "text": "    |                  `- error: module 'LatticeMCPTransport' was not compiled for testing [#ModuleNotTestable]",
+      "context": [
+        "  6 | ",
+        "  7 | /// Authored UNRUN. The selected Lattice manifest has no transport test target;",
+        "",
+        "[#ModuleNotTestable]: <https://docs.swift.org/compiler/documentation/diagnostics/module-not-testable>"
+      ]
+    }
+  ],
+  "compileFlagEvidence": [
+    {
+      "line": 2417,
+      "compiler": "swiftc",
+      "module": "LatticeMCPTransport",
+      "optimizationFlags": [
+        "-O"
+      ],
+      "enableTesting": false,
+      "target": "arm64-apple-macosx14.0"
+    },
+    {
+      "line": 2420,
+      "compiler": "swift-frontend",
+      "module": "LatticeMCPTransport",
+      "optimizationFlags": [
+        "-O"
+      ],
+      "enableTesting": false,
+      "target": "arm64-apple-macosx14.0"
+    }
+  ],
+  "swiftVersion": "swift-driver version: 1.148.6 Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+  "phase": "first original Release build; before compiler provenance parser/discovery/tests",
+  "buildElapsedSeconds": 769.065482084,
+  "wholeRunElapsedSeconds": 930.6045395000001,
+  "exitCode": 1,
+  "cleanup": {
+    "errors": [],
+    "groupGone": true,
+    "leaderReaped": true,
+    "proof": "killpg ESRCH",
+    "signals": []
+  },
+  "stopReason": null,
+  "receivedSignals": [],
+  "minFreeBytes": 100345556992,
+  "peakPacketBytes": 2130247680,
+  "arms": {},
+  "acceptance": {
+    "success": false,
+    "experimentCompleted": false,
+    "reproductionConfirmed": false,
+    "correctedFocusedAccepted": false,
+    "performanceQualified": false,
+    "fullContractQualified": false
+  },
+  "secondaryEvidenceError": {
+    "actual": [
+      {
+        "message": "",
+        "type": "AssertionError"
+      }
+    ],
+    "source": "runner-002/qualify.py finalization loops over runner.records and calls analyze.command with expected exit0 for original-release-build; analyze.command first assertion rejects its actual exit1 again. No separate cleanup or resource failure is reported by the command receipt.",
+    "primaryErrorPreserved": {
+      "message": "unqualified command: original-release-build",
+      "type": "RuntimeError"
+    }
+  },
+  "testabilityEvidence": {
+    "retainedTestHelpPath": "/Users/jason/localdev/lattice-perf-refinement-20260917/dependency-release/receipts/graph-d9da6db-core3d831/macos-terminal/macos/receipts/test-help.log",
+    "sha256": "0d107c743b5d16c6679b15d200f33dd8f687e40f65afedb3b8813006fa907c46",
+    "excerpt": [
+      "  --enable-testable-imports/--disable-testable-imports",
+      "                          Enable or disable testable imports. Enabled by",
+      "                          default. (default: --enable-testable-imports)"
+    ],
+    "sourcePhysicalRunner": "execution/preparation/physical-local-benchmark-56-cc/source/run-release-benchmark.py:260",
+    "sourceRemoteRunner": "execution/qualification-workflows/Scripts/remote-benchmark-local-only/run-release-benchmark.py:220",
+    "distinction": "Both benchmark source runners invoke swift test with disabled benchmark filter. The retained swift test help says testable imports default enabled. Attached runner used swift build --build-tests and its actual Release module compiler lines lack -enable-testing."
+  },
+  "proposedCorrection": "Only add -Xswiftc -enable-testing to the shared fresh original/corrected Release build argv, retaining -c release, -j2, build proof requiring -O and -enable-testing, and both-builds-before-tests ordering. Include previously reviewed runner003 parser fixes in prospective successor.",
+  "qualificationLimits": [
+    "No new C++/Swift compilation, native tests, network or physical benchmark reads.",
+    "No original defect reproduced or corrected acceptance; both test arms unrun.",
+    "No parser failure inferred from this run; original build itself failed first."
+  ]
+}

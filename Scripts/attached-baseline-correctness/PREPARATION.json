@@ -69,6 +69,17 @@
     "jobs": 2
   },
   "workflow": "Separate proposal only; root owns installation, exact-seal review, push and dispatch. All runner paths are derived under the execution host localdev.",
-  "priorPacketSealSHA256": "fb0f38892171af0917f42fcb8acac60932cb67bad37edfb6f1fce791e87de93a",
-  "revisionReason": "Clear top-level acceptance/completion on final custody or receipt failure; retain per-arm raw observations and original reproduction evidence."
+  "priorPacketSealSHA256": "cc0e5fa6f85159e7c0b39399939a2d733ac727f8846fc9a12603175f73c69495",
+  "revisionReason": "Explicit Release testability for actual remote module-not-testable compile failure; preserve reviewed response/filelist parser support.",
+  "syntheticChecks": {
+    "authored": 22,
+    "currentPacketExecuted": null,
+    "priorRunner003Executed": 21,
+    "deferredReason": "physical A/A2/B measurement active; no synthetic SQLite fixture work during measurement"
+  },
+  "priorRemoteRun": {
+    "runID": 35382590089,
+    "stage": "original build failed",
+    "testsRan": false
+  }
 }

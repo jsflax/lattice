@@ -1,0 +1,13 @@
+{
+  "pythonFilesParsed": [
+    "analyze.py",
+    "build_proof.py",
+    "guarded_runner.py",
+    "qualify.py",
+    "test_analysis.py"
+  ],
+  "exactNewCommandContractCheckPassed": true,
+  "fullSyntheticSuiteExecuted": false,
+  "nativeCommands": 0,
+  "physicalPacketAccessed": false
+}

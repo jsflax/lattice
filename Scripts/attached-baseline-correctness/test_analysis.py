@@ -68,6 +68,26 @@ def fixtures(root, arm, physical=False):
         (directory / 'RESULT.json').write_text(json.dumps(data))
 
 class Oracle(unittest.TestCase):
+    def test_release_build_command_explicit_testability_and_no_early_tests(self):
+        tree = ast.parse((P / 'qualify.py').read_text())
+        lists = [n for n in ast.walk(tree) if isinstance(n, ast.List)
+            and any(isinstance(x, ast.Constant) and x.value == '--build-tests' for x in n.elts)]
+        self.assertEqual(len(lists), 1)
+        expression = ast.Expression(body=lists[0])
+        argv = eval(compile(expression, 'exact Release argv', 'eval'),
+            {'config': {'swift': '/owned/swift', 'j': 2}, 'common': lambda c: ['--scratch-path', '/owned/scratch'], 'context': {}})
+        self.assertEqual(argv, ['/owned/swift', 'build', '--scratch-path', '/owned/scratch',
+            '-c', 'release', '--force-resolved-versions', '--build-tests', '-Xswiftc', '-enable-testing', '-j', '2', '-v'])
+        loops = [n for n in ast.walk(tree) if isinstance(n, ast.For)
+            and any(isinstance(c, ast.List) and c is lists[0] for c in ast.walk(n))]
+        self.assertEqual(len(loops), 1)
+        loop = loops[0]
+        self.assertEqual(ast.literal_eval(loop.iter), ('original', 'corrected'))
+        test_calls = [n for n in ast.walk(tree) if isinstance(n, ast.List)
+            and any(isinstance(x, ast.Constant) and x.value == '--xunit-output' for x in n.elts)]
+        self.assertEqual(len(test_calls), 1)
+        self.assertGreater(test_calls[0].lineno, loop.end_lineno)
+
     def test_final_custody_clears_acceptance_but_retains_observations(self):
         original = dict(success=True, primaryError=None, evidenceErrors=[], receivedSignals=[],
             experimentCompleted=True, correctedFocusedAccepted=True, reproductionConfirmed=True,
@@ -186,8 +206,37 @@ class Oracle(unittest.TestCase):
         self.assertEqual(len(proof['nativeObjects']), 2)
         self.assertEqual(len(proof['linkGraph']), 2)
 
+    def test_native_filelist_preserves_literal_spaces(self):
+        args = self.compile_fixture(); scratch = args[3]
+        old = scratch / 'Lattice.o'; new = scratch / 'Lattice with spaces.o'; old.rename(new)
+        mapping = scratch / 'Lattice.map'; mapping.write_text(mapping.read_text().replace(str(old), str(new)))
+        filelist = scratch / 'partial.LinkFileList'; filelist.write_text(filelist.read_text().replace(str(old), str(new)))
+        proof = b.make(*args); b.verify(proof)
+        self.assertIn(str(new), proof['swiftModules']['Lattice']['objects'])
+
+    def test_owned_native_response_control_and_drift(self):
+        args = self.compile_fixture(); response = args[3] / 'native.resp'; response.write_text('-O3 -fexceptions')
+        args[0].write_text(args[0].read_text().replace('-O3', '@' + str(response)))
+        proof = b.make(*args); b.verify(proof)
+        self.assertEqual(proof['nativeResponseFiles'], {str(response): a.digest(response)})
+        response.write_text('-O0')
+        with self.assertRaises(AssertionError): b.verify(proof)
+        with self.assertRaises(AssertionError): b.make(*args)
+
+    def test_native_response_escape_cycle_depth_and_bytes_rejected(self):
+        args = self.compile_fixture(); scratch = args[3]; outside = scratch.parent / 'outside.resp'; outside.write_text('-O3')
+        with self.assertRaises(AssertionError): b.native_arguments(['@' + str(outside)], scratch)
+        with self.assertRaises(AssertionError): b.native_arguments(['@relative.resp'], scratch)
+        response = scratch / 'cycle.resp'; response.write_text('@' + str(response))
+        with self.assertRaises(AssertionError): b.native_arguments(['@' + str(response)], scratch)
+        response.write_text('x' * (1024 * 1024 + 1))
+        with self.assertRaises(AssertionError): b.native_arguments(['@' + str(response)], scratch)
+        chain = [scratch / f'depth{i}.resp' for i in range(9)]
+        for index, path in enumerate(chain): path.write_text('@' + str(chain[index+1]) if index < 8 else '-O3')
+        with self.assertRaises(AssertionError): b.native_arguments(['@' + str(chain[0])], scratch)
+
     def test_compiler_missing_input_or_release_flag_rejected(self):
-        for transform in (lambda t: '\n'.join(t.splitlines()[1:]), lambda t: t.replace('-O3', '-O0')):
+        for transform in (lambda t: '\n'.join(t.splitlines()[1:]), lambda t: t.replace('-O3', '-O0'), lambda t: t.replace('-enable-testing', '')):
             args = self.compile_fixture(); args[0].write_text(transform(args[0].read_text()))
             with self.assertRaises((AssertionError, ValueError)): b.make(*args)
 
