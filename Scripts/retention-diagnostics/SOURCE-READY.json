@@ -2,11 +2,13 @@
   "sourceReady": true,
   "source": "7b11c282800d2bd6478538edb4e87de81953d315",
   "tree": "18b482a47df9413e151887ef77a9dc5abb6be041",
-  "scope": "Reviewed diagnostic source admitted by root under existing user execution authorization; no safety or performance qualification claimed.",
+  "scope": "Root and independent source review admit changed diagnostic only; no safety or performance qualification.",
   "unchangedTimingRun": 35365051287,
   "review": {
-    "root": "combined integration and exact-source contract reviewed",
-    "sourceCore": "independent no-concrete-blocker review of dual targets, uniform source/objects/archive/map proof, stage separation and all harness hashes",
-    "harnessSHA256": "ab670de9c960739fc5059f2077d3ac19414e2df5117c7b7adee5c5a84cea4bb9"
-  }
+    "root": "Trace lifetime, bounded classifications and honest boundary/thread attribution reviewed; original failures retained.",
+    "sourceCoreSHA256": "f0c09f2a56221ed32c8641072540a68c1f5df9dbe376a038616ccab3e57f34fd",
+    "preparedManifestSHA256": "4ca23e3b96dde707d0a96579bcde163e7923ac00f8d4b0c1feea6c120f9837d7"
+  },
+  "priorFailedDiagnosticRun": 35368549000,
+  "repeatFloorBaseline": false
 }

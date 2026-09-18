@@ -131,12 +131,21 @@ void maintenance(const std::string& path,const std::string& arm,bool traced,bool
     retention_phases::recorder phases;
     retention_phases::registration phase_hook(db.handle());
     require(!phase_traced || !traced,"separate diagnostic modes");
-    if(phase_traced)require(phase_hook.install(phases)==SQLITE_OK,"phase trace install");
     emit({{"kind","ready"},{"role","maintenance"}});command();
+    // Keep incidental connection work during the parent command wait out of
+    // the bounded diagnostic capture without stopping any background worker.
+    uint64_t install_started=0,install_returned=0,remove_started=0,remove_returned=0;
+    if(phase_traced) {
+        install_started=ns();require(phase_hook.install(phases)==SQLITE_OK,"phase trace install");
+        install_returned=ns();
+    }
     emit({{"kind","tickEntering"}}); const auto start=ns(); owner.run_audit_retention_tick(); const auto end=ns();
     if(traced)require(sqlite3_trace_v2(db.handle(),0,nullptr,nullptr)==SQLITE_OK,"trace remove");
-    if(phase_traced)require(phase_hook.remove()==SQLITE_OK,"phase trace remove");
-    // Hook removal precedes all allocation/formatting. This record contains no
+    if(phase_traced) {
+        remove_started=ns();require(phase_hook.remove()==SQLITE_OK,"phase trace remove");
+        remove_returned=ns();
+    }
+    // Phase-record formatting begins after hook removal. This record contains no
     // SQL bodies, bound values, paths or statement addresses. PROFILE is an
     // approximate SQLite duration, not a return code or lock-acquisition event.
     if(phase_traced) {
@@ -145,9 +154,14 @@ void maintenance(const std::string& path,const std::string& arm,bool traced,bool
             const auto& row=phases.records[i];
             records.push_back({{"ordinal",i},{"phase",retention_phases::name(row.label)},
                 {"startNS",row.start_ns},{"endNS",row.end_ns},{"finished",row.finished},
-                {"sqliteProfileNS",row.sqlite_profile_ns}});
+                {"sqliteProfileNS",row.sqlite_profile_ns},
+                {"startedOnTickThread",row.started_on_tick_thread},{"endedOnTickThread",row.ended_on_tick_thread},
+                {"unknownSQLFingerprint",std::to_string(row.unknown_sql_fingerprint)},
+                {"fingerprintBytes",row.fingerprint_bytes},{"fingerprintTruncated",row.fingerprint_truncated}});
         }
-        emit({{"kind","maintenancePhases"},{"schema","retention.phases/1"},
+        emit({{"kind","maintenancePhases"},{"schema","retention.phases/2"},
+            {"installStartedNS",install_started},{"installReturnedNS",install_returned},
+            {"removeStartedNS",remove_started},{"removeReturnedNS",remove_returned},
             {"capacity",phases.capacity},{"activeCapacity",phases.active_capacity},
             {"recordCount",phases.count},{"records",records},
             {"statementCallbacks",phases.statement_callbacks},{"profileCallbacks",phases.profile_callbacks},

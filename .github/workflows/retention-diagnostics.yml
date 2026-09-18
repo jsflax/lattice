@@ -1,5 +1,5 @@
-name: Retention phase and floor diagnostics
-# One traced maintenance sample plus independent floor-race controls. No performance acceptance.
+name: Retention phase coverage follow-up
+# One changed phase trace only. Prior floor-race safety failure is retained; not rerun.
 on:
   push:
     branches: [codex/perf-qualification-20260918]
@@ -59,13 +59,6 @@ jobs:
         run: |
           set -euo pipefail
           python3 "$TASK_ROOT/packet/harness/run.py" run
-      - name: Check late writer floors in four independent retained-history cases
-        if: ${{ always() && steps.uniform-build.outcome == 'success' }}
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 "$TASK_ROOT/packet/harness/run.py" floor
       - name: Preserve all receipts and failed fixture evidence
         if: always() && env.TASK_ROOT != ''
         timeout-minutes: 5

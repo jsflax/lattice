@@ -5,16 +5,19 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <thread>
 
 // Diagnostic-only connection-local recorder. The owner installs this after its
-// maintenance thread stops, runs one synchronous tick, removes the hook, and
+// command wait, runs one synchronous tick, removes the hook, and
 // only then reads/formats it. No callback allocation, logging, lock, SQL, payload
-// copying, expanded SQL or application callback. SQL text is inspected only to
-// select a fixed enum; no SQL, paths, bound values or pointers are emitted.
+// copying, expanded SQL or application callback. Text selects a fixed enum;
+// unknown SQL gets only a bounded prefix fingerprint (not an identity proof).
+// No SQL, paths, bound values, thread IDs or pointers are emitted. Background
+// threads remain enabled; each record says whether it ran on the tick thread.
 namespace retention_phases {
 enum class phase : uint8_t {
     other, epoch_read, claim, watermark_max, watermark_store, watermark_bound,
-    floor_schema, floor_read, watermark_cleanup, cursor_read, disabled_read,
+    floor_schema, floor_migration, floor_read, vector_catalog, local_audit_head, watermark_cleanup, cursor_read, disabled_read,
     receipt_schema, begin, disable_sync, delete_audit, delete_sync,
     delete_receipts, restore_sync, commit, rollback, release_claim
 };
@@ -23,7 +26,8 @@ inline const char* name(phase p) noexcept {
 #define PHASE_NAME(value) case phase::value: return #value
         PHASE_NAME(other); PHASE_NAME(epoch_read); PHASE_NAME(claim);
         PHASE_NAME(watermark_max); PHASE_NAME(watermark_store);
-        PHASE_NAME(watermark_bound); PHASE_NAME(floor_schema); PHASE_NAME(floor_read);
+        PHASE_NAME(watermark_bound); PHASE_NAME(floor_schema); PHASE_NAME(floor_migration);
+        PHASE_NAME(floor_read); PHASE_NAME(vector_catalog); PHASE_NAME(local_audit_head);
         PHASE_NAME(watermark_cleanup); PHASE_NAME(cursor_read); PHASE_NAME(disabled_read);
         PHASE_NAME(receipt_schema); PHASE_NAME(begin); PHASE_NAME(disable_sync);
         PHASE_NAME(delete_audit); PHASE_NAME(delete_sync); PHASE_NAME(delete_receipts);
@@ -49,6 +53,9 @@ inline phase classify(const char* input) noexcept {
     if (prefix(s, "INSERT OR REPLACE INTO _lattice_meta(key, value) VALUES(?, ?)")) return phase::watermark_store;
     if (prefix(s, "SELECT MAX(CAST(value AS INTEGER)) AS m FROM _lattice_meta")) return phase::watermark_bound;
     if (prefix(s, "PRAGMA table_info(_lattice_replication_slots)")) return phase::floor_schema;
+    if (std::strcmp(s, "ALTER TABLE _lattice_replication_slots ADD COLUMN is_observer INTEGER NOT NULL DEFAULT 0") == 0) return phase::floor_migration;
+    if (std::strcmp(s, "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?") == 0) return phase::vector_catalog;
+    if (std::strcmp(s, "SELECT MAX(id) AS max_id FROM AuditLog") == 0) return phase::local_audit_head;
     if (prefix(s, "SELECT COUNT(*) AS cnt, MIN(upload_floor) AS floor")) return phase::floor_read;
     if (prefix(s, "DELETE FROM _lattice_meta WHERE key LIKE 'audit_wm:%'")) return phase::watermark_cleanup;
     if (prefix(s, "SELECT COUNT(*) AS c FROM _lattice_replication_slots")) return phase::cursor_read;
@@ -75,12 +82,31 @@ inline void increment(uint64_t& value) noexcept {
 struct interval {
     phase label = phase::other;
     uint64_t start_ns = 0, end_ns = 0, sqlite_profile_ns = 0;
-    bool finished = false;
+    uint64_t unknown_sql_fingerprint = 0;
+    uint16_t fingerprint_bytes = 0;
+    bool fingerprint_truncated = false;
+    bool finished = false, started_on_tick_thread = false, ended_on_tick_thread = false;
 };
+inline void fingerprint_unknown(interval& row, const char* sql) noexcept {
+    // Fixed work and storage; never inspect expanded SQL or copy literal text.
+    // This non-cryptographic bounded fingerprint aids source matching only;
+    // collisions/truncation cannot qualify an otherwise unknown statement.
+    constexpr uint16_t limit = 512;
+    row.unknown_sql_fingerprint = UINT64_C(14695981039346656037);
+    while (row.fingerprint_bytes < limit && sql[row.fingerprint_bytes]) {
+        row.unknown_sql_fingerprint ^= static_cast<unsigned char>(sql[row.fingerprint_bytes++]);
+        row.unknown_sql_fingerprint *= UINT64_C(1099511628211);
+    }
+    row.fingerprint_truncated = sql[row.fingerprint_bytes] != 0;
+}
 struct recorder {
     static constexpr size_t capacity = 256;
     static constexpr size_t active_capacity = 32;
     struct active_statement { sqlite3_stmt* statement = nullptr; size_t index = 0; };
+    // Constructed on the synchronous tick thread and immutable thereafter.
+    // SQLite FULLMUTEX serializes callback writes; the owner reads only after
+    // unregistering the hook. No new lock or thread scheduling is introduced.
+    const std::thread::id tick_thread = std::this_thread::get_id();
     std::array<interval, capacity> records{};
     std::array<active_statement, active_capacity> active{};
     size_t count = 0;
@@ -109,7 +135,10 @@ struct recorder {
             if (!free) { increment(self.active_overflow); return 0; }
             if (self.count == capacity) { increment(self.dropped_records); return 0; }
             const auto index = self.count++;
-            self.records[index] = {classify(sql), started, 0, 0, false};
+            auto& row = self.records[index];
+            row.label = classify(sql); row.start_ns = started;
+            row.started_on_tick_thread = std::this_thread::get_id() == self.tick_thread;
+            if (row.label == phase::other) fingerprint_unknown(row, sql);
             *free = {key, index};
         } else if (event == SQLITE_TRACE_PROFILE) {
             const auto ended = now_ns();
@@ -119,6 +148,7 @@ struct recorder {
                 auto& record = self.records[slot.index];
                 record.end_ns = ended;
                 if (detail) std::memcpy(&record.sqlite_profile_ns, detail, sizeof(uint64_t));
+                record.ended_on_tick_thread = std::this_thread::get_id() == self.tick_thread;
                 record.finished = true;
                 slot = {};
                 return 0;
