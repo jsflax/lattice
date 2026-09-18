@@ -5,12 +5,13 @@ import Foundation
 import Testing
 @testable import Lattice
 
-/// Documents the per-isolation reading pattern for code that runs
-/// inside an observer block.
+/// Documents the per-isolation reading pattern for work started by an
+/// observer block. The block returns promptly; a private read thread races
+/// its resolved handle's reads against closing the attaching actor's handle.
 ///
-/// **Background.** When `Lattice.observe(_:where:block:)` fires a
-/// notification, the user's block runs inside a cooperative
-/// `Task.detached` (Lattice.swift ~1497). If the block captures the
+/// **Background (original implementation).** When
+/// `Lattice.observe(_:where:block:)` fired a notification, the user's block
+/// ran inside a cooperative `Task.detached`. If the block captures the
 /// attaching actor's `Lattice` and reads through it (e.g.
 /// `lattice.objects(T.self).snapshot()`), it goes through the
 /// attaching `swift_lattice`'s `db_` from a thread the attaching
@@ -27,9 +28,9 @@ import Testing
 /// Crash dump: `claudecodeirc-2026-04-30-084830.ips`.
 ///
 /// **Safe pattern.** Capture `lattice.sendableReference` and call
-/// `ref.resolve()` *inside* the observer body. `resolve()` returns
+/// `ref.resolve()` on the independent read thread. `resolve()` returns
 /// a `Lattice` keyed on the *current* isolation's scheduler — for
-/// `Task.detached` that's a separate `swift_lattice` with its own
+/// this nonisolated thread that's a separate `swift_lattice` with its own
 /// `db_`, so an in-flight `close()` on the attaching actor's
 /// instance can't tear down what we're reading. The C++
 /// `LatticeCache` returns the same instance for the same
@@ -44,85 +45,63 @@ import Testing
 class ObserveCloseRaceTests: BaseTest {
     private let path: String = "\(String.random(length: 32)).sqlite"
 
-    /// `@MainActor`-isolated open + close. Observer body resolves
-    /// its own per-isolation `Lattice` via `sendableReference` so
-    /// the read survives the close on main.
+    // Retain the legacy macOS exclusion and its recorded rationale pending
+    // qualification of this revised handshake; its callback no longer blocks.
+
+    /// `@MainActor`-isolated open + close. The observer schedules a private
+    /// reader so its resolved handle's reads can overlap the close on main.
     @MainActor
     @Test(.disabled(if: isMacOSCI, "cooperative-pool starvation on small CI runners: the test blocks pool threads on DispatchSemaphore.wait inside observer closures; with ~3 pool threads the signaling tasks never schedule. Runs locally + Linux CI. Owner: 1.0 test hygiene (item F)"), .timeLimit(.minutes(5)))
     func test_PerIsolationResolve_SurvivesCloseOnMain() async throws {
         let lattice = try testLattice(path: path, Person.self)
         try Self.seed(lattice: lattice, count: 500)
 
-        nonisolated(unsafe) var enteredContinuation: CheckedContinuation<Void, Never>?
-        nonisolated(unsafe) var exitedContinuation: CheckedContinuation<Void, Never>?
-        let proceed = DispatchSemaphore(value: 0)
-        let ref = lattice.sendableReference
-
+        let reader = CloseRaceReadWorker(reference: lattice.sendableReference)
+        defer { reader.cancel() }
         let token = lattice.objects(Person.self).observe { _ in
-            enteredContinuation?.resume()
-            enteredContinuation = nil
-            proceed.wait()
-            // Resolve on the cooperative isolation. Different
-            // scheduler than `@MainActor` → different
-            // `swift_lattice` → different `db_`. The close on main
-            // doesn't reach this instance.
-            guard let cooperative = ref.resolve() else { return }
-            let snapshot = Array(cooperative.objects(Person.self))
-            #expect(snapshot.count >= 500)
-            exitedContinuation?.resume()
-            exitedContinuation = nil
+            reader.startOnce()
         }
+        defer { token.cancel() }
 
-        await withCheckedContinuation { continuation in
-            enteredContinuation = continuation
-            let trigger = Person()
-            trigger.name = "trigger"
-            trigger.age = 0
-            try! lattice.add(trigger)
-        }
+        let trigger = Person()
+        trigger.name = "trigger"
+        trigger.age = 0
+        try lattice.add(trigger)
 
-        await withCheckedContinuation { continuation in
-            exitedContinuation = continuation
-            proceed.signal()
-            lattice.close()
-        }
-
-        _ = token
+        let entered = await reader.waitUntilEntered()
+        try #require(entered, "independent reader did not resolve its handle")
+        reader.proceed()
+        let reading = await reader.waitUntilReading()
+        try #require(reading, "independent reader did not enter its read loop")
+        lattice.close()
+        reader.finishClosing()
+        let snapshotCount = try #require(await reader.waitUntilExited())
+        #expect(snapshotCount >= 500)
     }
 
     /// Same race, attaching isolation pinned to a custom `actor`
     /// (the shape used by ClaudeCodeIRC's `RoomSyncServer`).
     @Test(.disabled(if: isMacOSCI, "cooperative-pool starvation on small CI runners: the test blocks pool threads on DispatchSemaphore.wait inside observer closures; with ~3 pool threads the signaling tasks never schedule. Runs locally + Linux CI. Owner: 1.0 test hygiene (item F)"), .timeLimit(.minutes(5)))
     func test_PerIsolationResolve_SurvivesCloseOnCustomActor() async throws {
-        nonisolated(unsafe) var enteredContinuation: CheckedContinuation<Void, Never>?
-        nonisolated(unsafe) var exitedContinuation: CheckedContinuation<Void, Never>?
-        let proceed = DispatchSemaphore(value: 0)
-
         let owner = LatticeOwner()
         try await owner.open(path: path)
         try await owner.seed(count: 500)
-        let ref = await owner.sendableReference()
+        let reader = CloseRaceReadWorker(reference: await owner.sendableReference())
+        defer { reader.cancel() }
         await owner.attachObserver { _ in
-            enteredContinuation?.resume()
-            enteredContinuation = nil
-            proceed.wait()
-            guard let cooperative = ref.resolve() else { return }
-            let snapshot = Array(cooperative.objects(Person.self))
-            #expect(snapshot.count >= 500)
-            exitedContinuation?.resume()
-            exitedContinuation = nil
+            reader.startOnce()
         }
 
-        await withCheckedContinuation { continuation in
-            enteredContinuation = continuation
-            Task { try! await owner.fireTrigger() }
-        }
-
-        await withCheckedContinuation { continuation in
-            exitedContinuation = continuation
-            proceed.signal()
-            Task { await owner.close() }
-        }
+        try await owner.fireTrigger()
+        let entered = await reader.waitUntilEntered()
+        try #require(entered, "independent reader did not resolve its handle")
+        reader.proceed()
+        let reading = await reader.waitUntilReading()
+        try #require(reading, "independent reader did not enter its read loop")
+        await owner.close()
+        reader.finishClosing()
+        let snapshotCount = try #require(await reader.waitUntilExited())
+        #expect(snapshotCount >= 500)
     }
 
     private static func seed(lattice: Lattice, count: Int) throws {
@@ -135,6 +114,110 @@ class ObserveCloseRaceTests: BaseTest {
             p.age = i
             try lattice.add(p)
         }
+    }
+}
+
+/// One deliberate blocking step on a private, deep-stack thread. No observer
+/// callback waits, and repeated callbacks cannot launch another parked thread.
+private final class CloseRaceReadWorker: @unchecked Sendable {
+    private let reference: LatticeThreadSafeReference
+    private let lock = NSLock()
+    private let gate = DispatchSemaphore(value: 0)
+    private var started = false
+    private var cancelled = false
+    private var closingFinished = false
+    private let entered = AsyncStream<Void>.makeStream()
+    private let reading = AsyncStream<Void>.makeStream()
+    private let exited = AsyncStream<Int>.makeStream()
+
+    init(reference: LatticeThreadSafeReference) { self.reference = reference }
+
+    func startOnce() {
+        lock.lock()
+        guard !started, !cancelled else { lock.unlock(); return }
+        started = true
+        lock.unlock()
+
+        let thread = Thread { [self] in
+            defer {
+                entered.continuation.finish()
+                reading.continuation.finish()
+                exited.continuation.finish()
+            }
+            // performReads owns the resolved handle until it returns; the
+            // exit signal therefore follows that handle's read lifetime.
+            if let minimumCount = performReads() {
+                exited.continuation.yield(minimumCount)
+            }
+        }
+        thread.name = "lattice.test-close-race-reader"
+        thread.stackSize = 8 << 20
+        thread.start()
+    }
+
+    private func performReads() -> Int? {
+        // Resolve before the attaching handle closes; the worker's nil
+        // isolation gives it an independently owned read handle.
+        guard !isCancelled, let cooperative = reference.resolve() else { return nil }
+        entered.continuation.yield()
+        entered.continuation.finish()
+        gate.wait()
+        guard !isCancelled else { return nil }
+
+        // Establish a real pre-close read before allowing the owner to close.
+        var minimumCount = Array(cooperative.objects(Person.self)).count
+        reading.continuation.yield()
+        reading.continuation.finish()
+        // Race continued reads against close, then require a final post-close
+        // read too. No timing assumption decides when this loop is finished.
+        repeat {
+            minimumCount = min(minimumCount, Array(cooperative.objects(Person.self)).count)
+        } while !shouldFinishReading
+        guard !isCancelled else { return nil }
+        return min(minimumCount, Array(cooperative.objects(Person.self)).count)
+    }
+
+    func proceed() { gate.signal() }
+
+    func finishClosing() {
+        lock.lock(); defer { lock.unlock() }
+        closingFinished = true
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+        // Release parked waits and end stream waits. Resolver/SQL operations
+        // are not interrupted; the worker exits after its current call returns.
+        gate.signal()
+        entered.continuation.finish()
+        reading.continuation.finish()
+    }
+
+    private var isCancelled: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled
+    }
+
+    private var shouldFinishReading: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled || closingFinished
+    }
+
+    func waitUntilEntered() async -> Bool {
+        for await _ in entered.stream { return true }
+        return false
+    }
+
+    func waitUntilReading() async -> Bool {
+        for await _ in reading.stream { return true }
+        return false
+    }
+
+    func waitUntilExited() async -> Int? {
+        for await count in exited.stream { return count }
+        return nil
     }
 }
 
