@@ -21,6 +21,31 @@ import Lattice
 // (observer nudge → pump), not the safety-net poll.
 // ============================================================================
 
+
+/// Each harness owns at most eight diagnostic connections, 256 head records,
+/// and sixteen latest scalar facts. No model values, audit IDs or paths are recorded.
+private final class PushHarnessDiagnostics: @unchecked Sendable {
+    let recorder = ACKPathRecorder(testRunID: UUID(), connectionLimit: 8, retainLatestStages: true)
+    private let lock = NSLock()
+    private var failed = false
+
+    func firstFailure(site: UInt) {
+        lock.lock()
+        guard !failed else { lock.unlock(); return }
+        failed = true
+        let cutoff = DispatchTime.now().uptimeNanoseconds
+        lock.unlock()
+        let ack = recorder.closeSnapshot(partial: true)
+        // Capture without hopping onto the potentially stalled manager actor.
+        let actor = ObserverActorDiagnostics.shared.snapshotLines(reason: .pushHarnessWait)
+        print("DIAGNOSTIC PushHarnessFailure: test=\(recorder.testRunID) site=\(site) uptime_ns=\(cutoff) actor_lines=\(actor.count) first_failure=true subsequent_cascade=unclassified")
+        if let ack { ACKPathRecorder.emitSnapshot(ack) }
+        for line in actor { print(line) }
+    }
+
+    func finish() { _ = recorder.closeSnapshot(partial: false) }
+}
+
 /// Records everything a raw push client receives: frame kinds, the ordered
 /// globalId sequence across every auditLog frame, per-globalId arrival
 /// timestamps (for the latency bench), texts, and close state.
@@ -31,11 +56,21 @@ final class PushFrameCollector: @unchecked Sendable {
     private var arrival: [String: DispatchTime] = [:]
     private var texts: [String] = []
     private(set) var socket: WebSocket?
+    private let diagnostic: ACKPathConnection?
+    private let failureDiagnostic: (@Sendable (UInt) -> Void)?
+    private var recordedFirstBinary = false
+
+    init(diagnostic: ACKPathConnection? = nil,
+         failureDiagnostic: (@Sendable (UInt) -> Void)? = nil) {
+        self.diagnostic = diagnostic
+        self.failureDiagnostic = failureDiagnostic
+    }
 
     var isClosed: Bool { socket?.isClosed ?? true }
 
     func attach(_ ws: WebSocket) {
         socket = ws
+        diagnostic?.record(.clientHandlersAttached)
         ws.onBinary { [weak self] _, bb in
             guard let self else { return }
             let now = DispatchTime.now()
@@ -43,6 +78,8 @@ final class PushFrameCollector: @unchecked Sendable {
             let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let kind = root?["kind"] as? String ?? "?"
             self.lock.lock()
+            let firstBinary = !self.recordedFirstBinary
+            self.recordedFirstBinary = true
             self.binaryKinds.append(kind)
             if kind == "auditLog", let entries = root?["auditLog"] as? [[String: Any]] {
                 for entry in entries {
@@ -55,6 +92,7 @@ final class PushFrameCollector: @unchecked Sendable {
                 }
             }
             self.lock.unlock()
+            if firstBinary { self.diagnostic?.record(.pushClientFirstBinaryProcessed, bytes: data.count) }
         }
         ws.onText { [weak self] _, text in
             guard let self else { return }
@@ -75,13 +113,16 @@ final class PushFrameCollector: @unchecked Sendable {
     }
 
     /// Awaits until `predicate` over this collector holds, or timeout.
-    func wait(timeout: TimeInterval = 10, until predicate: @escaping @Sendable (PushFrameCollector) -> Bool) async -> Bool {
+    func wait(timeout: TimeInterval = 10, site: UInt = #line,
+              until predicate: @escaping @Sendable (PushFrameCollector) -> Bool) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if predicate(self) { return true }
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
-        return predicate(self)
+        let result = predicate(self)
+        if !result { failureDiagnostic?(site) }
+        return result
     }
 }
 
@@ -104,6 +145,7 @@ final class PushHarness: @unchecked Sendable {
     let app: Application
     let storageURL: URL
     let port: Int
+    private let diagnostics: PushHarnessDiagnostics?
     /// Legacy mount: verbatim same-channel fan-out, no push.
     let writerHandle: SyncRelayHandle
     /// Push-enabled watch mount over the same channel files.
@@ -113,6 +155,9 @@ final class PushHarness: @unchecked Sendable {
     let watch2Handle: SyncRelayHandle
 
     init(push: SyncObserverPush = SyncObserverPush(reconcileInterval: nil)) async throws {
+        let diagnostics = ProcessInfo.processInfo.environment["LATTICE_ACK_PATH_DIAGNOSTICS"] == "1"
+            ? PushHarnessDiagnostics() : nil
+        self.diagnostics = diagnostics
         storageURL = FileManager.default.temporaryDirectory
             .appending(path: "push-harness-\(String.random(length: 12))")
         var env = try Environment.detect()
@@ -125,6 +170,15 @@ final class PushHarness: @unchecked Sendable {
         // shutdownTimeout waits out, once per test. Half a second is plenty
         // for a loopback close and keeps the awaited cleanup cheap.
         app.http.server.configuration.shutdownTimeout = .milliseconds(500)
+        let diagnosticMount = storageURL
+        var initialized = false
+        if let diagnostics { ACKPathDiagnostics.install(diagnostics.recorder, for: diagnosticMount) }
+        defer {
+            if !initialized, let diagnostics {
+                ACKPathDiagnostics.remove(diagnostics.recorder, for: diagnosticMount)
+                diagnostics.firstFailure(site: #line)
+            }
+        }
         writerHandle = Lattice.configureSyncRelay(
             on: app.routes, path: ["writer", "group", ":groupID"],
             for: [SimpleSyncObject.self], storageURL: storageURL,
@@ -144,13 +198,30 @@ final class PushHarness: @unchecked Sendable {
             throw Abort(.internalServerError, reason: "no port")
         }
         port = assigned
+        initialized = true
     }
 
     func connect(pathSuffix: String, user: UUID,
                  on group: EventLoopGroup? = nil) async throws -> PushFrameCollector {
-        let collector = PushFrameCollector()
+        let diagnostic = diagnostics.flatMap { diagnostics in
+            diagnostics.recorder.registerConnection(id: UUID(),
+                role: pathSuffix.hasPrefix("writer/") ? .uploader : .peer)
+        }
+        let failureDiagnostic: (@Sendable (UInt) -> Void)?
+        if let diagnostics {
+            failureDiagnostic = { site in diagnostics.firstFailure(site: site) }
+        } else {
+            failureDiagnostic = nil
+        }
+        let collector = PushFrameCollector(diagnostic: diagnostic, failureDiagnostic: failureDiagnostic)
+        // Fixed mount code, never an unbounded path string:1=watch,2=watch2,3=writer,0=other.
+        let mount = pathSuffix.hasPrefix("watch/") ? 1 : pathSuffix.hasPrefix("watch2/") ? 2 : pathSuffix.hasPrefix("writer/") ? 3 : 0
+        diagnostic?.record(.connectBegin, count: mount)
         var headers = HTTPHeaders()
         headers.add(name: "X-Test-User", value: user.uuidString)
+        if let diagnostic {
+            headers.add(name: "X-Lattice-Diagnostic-Connection", value: diagnostic.id.uuidString)
+        }
         // A 1000-entry catch-up page blows past WebSocketKit's 16KB default
         // client maxFrameSize — raise it (same as BenchRelayHarness).
         var config = WebSocketClient.Configuration()
@@ -164,8 +235,11 @@ final class PushHarness: @unchecked Sendable {
                 on: group ?? app.eventLoopGroup
             ) { ws in
                 collector.attach(ws)
+                diagnostic?.record(.connectEnd)
                 if once.tryFire() { cont.resume() }
             }.whenFailure { error in
+                diagnostic?.record(.connectError)
+                failureDiagnostic?(#line)
                 if once.tryFire() { cont.resume(throwing: error) }
             }
         }
@@ -185,7 +259,15 @@ final class PushHarness: @unchecked Sendable {
         return try Lattice(SimpleSyncObject.self, configuration: .init(fileURL: channelFile(gid)))
     }
 
+    func diagnosticResult(_ result: Bool, site: UInt = #line) -> Bool {
+        if !result { diagnostics?.firstFailure(site: site) }
+        return result
+    }
+
     func shutdown() async {
+        // The first failed predicate freezes earlier; a passing harness closes silently.
+        diagnostics?.finish()
+        if let diagnostics { ACKPathDiagnostics.remove(diagnostics.recorder, for: storageURL) }
         try? await app.asyncShutdown()
         try? FileManager.default.removeItem(at: storageURL)
     }
@@ -210,6 +292,7 @@ func withPushHarness(
     do {
         try await body(harness)
     } catch {
+        _ = harness.diagnosticResult(false)
         await harness.shutdown()
         throw error
     }
@@ -494,18 +577,18 @@ final class ObserverPushTests: BaseTest {
 
             let a = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
             let b = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
-            #expect(await pollSubscriberCount(manager, file: file, equals: 2))
+            #expect(harness.diagnosticResult(await pollSubscriberCount(manager, file: file, equals: 2)))
 
             try await a.socket!.close(code: .goingAway)
             try? await Task.sleep(nanoseconds: 300_000_000)
             #expect(await manager.hasGroup(forFile: file))   // b still holds the group
 
             try await b.socket!.close(code: .goingAway)
-            #expect(await pollHasGroup(manager, file: file, equals: false))
+            #expect(harness.diagnosticResult(await pollHasGroup(manager, file: file, equals: false)))
 
             // Rejoin: fresh group over the same file, push still flows.
             let c = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
-            #expect(await pollHasGroup(manager, file: file, equals: true))
+            #expect(harness.diagnosticResult(await pollHasGroup(manager, file: file, equals: true)))
             let co = try harness.coWriter("g1")
             try co.add(SimpleSyncObject(value: 7, floatValue: 7))
             #expect(await c.wait { $0.receivedGlobalIds.count >= 1 })
@@ -530,7 +613,7 @@ final class ObserverPushTests: BaseTest {
             let a = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
             let b = try await harness.connect(pathSuffix: "watch2/group/g1", user: UUID())
             // Exactly one group holds BOTH mounts' subscribers.
-            #expect(await pollSubscriberCount(m1, file: file, equals: 2))
+            #expect(harness.diagnosticResult(await pollSubscriberCount(m1, file: file, equals: 2)))
             #expect(await m1.hasGroup(forFile: file))
 
             // One co-process commit reaches both mounts' sockets via that one
@@ -546,10 +629,10 @@ final class ObserverPushTests: BaseTest {
             // Cross-mount teardown: the group survives either mount's socket
             // and dies with the last one.
             try await a.socket!.close(code: .goingAway)
-            #expect(await pollSubscriberCount(m1, file: file, equals: 1))
+            #expect(harness.diagnosticResult(await pollSubscriberCount(m1, file: file, equals: 1)))
             #expect(await m1.hasGroup(forFile: file))
             try await b.socket!.close(code: .goingAway)
-            #expect(await pollHasGroup(m1, file: file, equals: false))
+            #expect(harness.diagnosticResult(await pollHasGroup(m1, file: file, equals: false)))
         }
     }
 
@@ -700,7 +783,7 @@ final class ObserverPushTests: BaseTest {
 
             // The system survived the churn: the group tore down cleanly and a
             // fresh subscriber still gets live push over the same file.
-            #expect(await pollHasGroup(manager, file: file, equals: false))
+            #expect(harness.diagnosticResult(await pollHasGroup(manager, file: file, equals: false)))
             let after = try await harness.connect(pathSuffix: "watch/group/g1", user: UUID())
             let co = try harness.coWriter("g1")
             try co.add(SimpleSyncObject(value: -1, floatValue: -1))
@@ -744,7 +827,7 @@ final class ObserverPushTests: BaseTest {
             // about whether a group ever existed.
             let healthy = try await harness.connect(pathSuffix: "watch/group/gfail", user: UUID())
             #expect(await healthy.wait { $0.receivedGlobalIds.count >= 1 })
-            #expect(await pollSubscriberCount(manager, file: file, equals: 1))
+            #expect(harness.diagnosticResult(await pollSubscriberCount(manager, file: file, equals: 1)))
 
             _catchUpFaultForTesting.withLockedValue { $0 = { channelId in
                 if channelId == "group-gfail" { throw InjectedCatchUpFault.injected }
@@ -758,7 +841,7 @@ final class ObserverPushTests: BaseTest {
             let doomed = try await harness.connect(pathSuffix: "watch/group/gfail", user: UUID())
             #expect(await doomed.wait { $0.isClosed })
             #expect(doomed.receivedGlobalIds.isEmpty)
-            #expect(await pollSubscriberCount(manager, file: file, equals: 1))
+            #expect(harness.diagnosticResult(await pollSubscriberCount(manager, file: file, equals: 1)))
 
             // The decisive one: with the failed connection's subscription
             // released, the LAST healthy socket leaving tears the group
@@ -766,7 +849,7 @@ final class ObserverPushTests: BaseTest {
             // `subscribers` non-empty, so the group — and the watcher
             // Lattice it holds — outlived every real observer.
             try await healthy.socket!.close(code: .goingAway)
-            #expect(await pollHasGroup(manager, file: file, equals: false))
+            #expect(harness.diagnosticResult(await pollHasGroup(manager, file: file, equals: false)))
         }
     }
 
@@ -804,7 +887,7 @@ final class ObserverPushTests: BaseTest {
                 return all
             }
             #expect(collectors.count == 6)
-            #expect(await pollSubscriberCount(manager, file: file, equals: 6))
+            #expect(harness.diagnosticResult(await pollSubscriberCount(manager, file: file, equals: 6)))
             // ONE open for the six racing subscribers — the dedupe.
             #expect(await manager.watcherOpenCount(forFile: file) == 1)
 

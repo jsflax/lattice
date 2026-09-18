@@ -225,7 +225,7 @@ public struct LatticeThreadSafeReference: Sendable {
         // would recreate an empty `.sqlite` on disk and fire a spurious empty
         // snapshot. For in-memory configs there is no file to check.
         guard !_backingFileIsMissing else { return nil }
-        return try? Lattice(for: self.modelTypes, configuration: configuration)
+        return try? Lattice(isolation: isolation, for: self.modelTypes, configuration: configuration)
     }
 
     /// The same best-effort deletion guard used by resolve(), without opening

@@ -82,6 +82,31 @@ enum ACKPathStage: Int, Codable, Sendable {
     case warmSendBegin, warmSendReturn, warmSendError, pollBegin, pollEnd
     case connectionClosed, closedDuringSetup, handshakeRefused, extractorRefused, unsafeNameRefused
     case applyFailureClose
+    // Append-only: retain existing diagnostic stage codes.
+    case setupTaskStarted, watchSubscribeRequested, watchSubscribeEntered, watchSubscribeReturned
+    case watchOpenScheduled, watchOpenTaskStarted, watchOpenBegin, watchOpenEnd
+    case watchInstallRequested, watchInstallEntered, watchObserverRegistered, watchSubscribePublished
+    case watchActivated, catchUpTaskStarted, catchUpReadBegin, catchUpReadEnd
+    case catchUpSendBegin, catchUpSendReturn, pushPumpScheduled, pushPumpTaskStarted
+    case pushPageBegin, pushPageEnd, pushSendBegin, pushSendReturn, pushClientFirstBinaryProcessed
+
+    var isSetupStage: Bool {
+        switch self {
+        case .routeEntered, .handlersScheduled, .handlersEntered, .handlersComplete,
+             .extractorBegin, .extractorEnd, .extractorError, .registryAddBegin, .registryAddEnd,
+             .storeOpenBegin, .storeOpenEnd, .storeOpenFailure,
+             .goLiveScheduled, .goLiveEntered, .goLiveComplete, .goLiveAbandoned,
+             .closedDuringSetup, .handshakeRefused, .extractorRefused, .unsafeNameRefused,
+             .setupTaskStarted, .watchSubscribeRequested, .watchSubscribeEntered,
+             .watchSubscribeReturned, .watchOpenScheduled, .watchOpenTaskStarted,
+             .watchOpenBegin, .watchOpenEnd, .watchInstallRequested, .watchInstallEntered,
+             .watchObserverRegistered, .watchSubscribePublished, .watchActivated,
+             .catchUpTaskStarted, .catchUpReadBegin, .catchUpReadEnd,
+             .catchUpSendBegin, .catchUpSendReturn:
+            return true
+        default: return false
+        }
+    }
 }
 
 struct ACKPathConnection: Sendable {
@@ -116,6 +141,11 @@ final class ACKPathRecorder: @unchecked Sendable {
     private let processID = ProcessInfo.processInfo.processIdentifier
     private let lock = NSLock()
     private var connections: [UUID: ACKPathRole] = [:]
+    private let connectionLimit: Int
+    private let retainLatestStages: Bool
+    private var rejectedConnections = 0
+    private var latestStages: [UUID: Record] = [:]
+    private var latestSetupStages: [UUID: Record] = [:]
     private var warmID: UUID?
     private var warmEntryCount = 0
     private var selectionRejected = 0
@@ -161,17 +191,32 @@ final class ACKPathRecorder: @unchecked Sendable {
         let dropped: Int
         var outputOmittedRecords: Int
         var records: [Record]
+        let connectionLimit: Int
+        let rejectedConnections: Int
+        let latestStages: [Record]
+        let latestSetupStages: [Record]
     }
 
-    init(testRunID: UUID) {
+    init(testRunID: UUID, connectionLimit: Int = 2, retainLatestStages: Bool = false) {
+        precondition((1...8).contains(connectionLimit))
+        self.connectionLimit = connectionLimit
+        self.retainLatestStages = retainLatestStages
         self.testRunID = testRunID
         records.reserveCapacity(Self.recordLimit)
-        connections.reserveCapacity(2)
+        connections.reserveCapacity(connectionLimit)
+        if retainLatestStages {
+            latestStages.reserveCapacity(connectionLimit)
+            latestSetupStages.reserveCapacity(connectionLimit)
+        }
     }
 
     func registerConnection(id: UUID, role: ACKPathRole) -> ACKPathConnection? {
         lock.lock(); defer { lock.unlock() }
-        guard !closed, connections.count < 2, connections[id] == nil else { return nil }
+        guard !closed else { return nil }
+        guard connections.count < connectionLimit, connections[id] == nil else {
+            if rejectedConnections < Int.max { rejectedConnections += 1 }
+            return nil
+        }
         connections[id] = role
         return ACKPathConnection(recorder: self, id: id, role: role)
     }
@@ -229,15 +274,28 @@ final class ACKPathRecorder: @unchecked Sendable {
                         timestamp: UInt64, bytes: Int, count: Int, applied: Int, missing: Int,
                         attempts: Int, result: Bool?, warmMatch: Bool?) -> UInt64 {
         guard !closed else { return 0 }
-        guard records.count < Self.recordLimit else {
+        let admitted = records.count < Self.recordLimit
+        let sequence = admitted ? UInt64(records.count + 1) : 0
+        let record = Record(test: testRunID, connection: connection.id, role: connection.role,
+                            stage: stage, sequence: sequence, span: span, pid: processID,
+                            uptime: timestamp, bytes: bytes, count: count, applied: applied,
+                            missing: missing, attempts: attempts, result: result, warmMatch: warmMatch)
+        // Optional fixed-size latest facts survive head-trace overflow. Timestamp
+        // comparison avoids an earlier event overwriting a later event at lock admission.
+        if retainLatestStages, connections[connection.id] != nil {
+            if latestStages[connection.id].map({ $0.uptime <= timestamp }) ?? true {
+                latestStages[connection.id] = record
+            }
+            if stage.isSetupStage,
+               latestSetupStages[connection.id].map({ $0.uptime <= timestamp }) ?? true {
+                latestSetupStages[connection.id] = record
+            }
+        }
+        guard admitted else {
             if dropped < Int.max { dropped += 1 }
             return 0
         }
-        let sequence = UInt64(records.count + 1)
-        records.append(Record(test: testRunID, connection: connection.id, role: connection.role,
-                              stage: stage, sequence: sequence, span: span, pid: processID,
-                              uptime: timestamp, bytes: bytes, count: count, applied: applied,
-                              missing: missing, attempts: attempts, result: result, warmMatch: warmMatch))
+        records.append(record)
         return sequence
     }
 
@@ -251,15 +309,23 @@ final class ACKPathRecorder: @unchecked Sendable {
                         cutoffUptime: DispatchTime.now().uptimeNanoseconds, partial: partial,
                         warmID: warmID, warmEntryCount: warmEntryCount,
                         selectionRejected: selectionRejected, dropped: dropped,
-                        outputOmittedRecords: 0, records: records)
+                        outputOmittedRecords: 0, records: records,
+                        connectionLimit: connectionLimit, rejectedConnections: rejectedConnections,
+                        latestStages: latestStages.values.sorted { $0.uptime < $1.uptime },
+                        latestSetupStages: latestSetupStages.values.sorted { $0.uptime < $1.uptime })
     }
 
     func emitSnapshot(partial: Bool) {
-        guard var snapshot = closeSnapshot(partial: partial) else { return }
+        guard let snapshot = closeSnapshot(partial: partial) else { return }
+        Self.emitSnapshot(snapshot)
+    }
+
+    static func emitSnapshot(_ captured: Snapshot) {
+        var snapshot = captured
         let prefix = "ACK_PATH_DIAGNOSTIC "
         let encoder = JSONEncoder()
         guard var data = try? encoder.encode(snapshot) else {
-            print("ACK_PATH_DIAGNOSTIC unavailable encoding_failure test=\(testRunID)")
+            print("ACK_PATH_DIAGNOSTIC unavailable encoding_failure test=\(snapshot.test)")
             return
         }
         if prefix.utf8.count + data.count + 1 > Self.outputByteLimit {
@@ -781,7 +847,8 @@ extension Lattice {
         let onUpgrade: @Sendable (Request, WebSocket) -> Void = { [ackPathRecorder, ingressHooks] req, ws in
             precondition(ws.eventLoop.inEventLoop)
             let ackPath = ackPathRecorder.flatMap { recorder -> ACKPathConnection? in
-                guard let raw = req.headers.first(name: "X-Test-User"),
+                guard let raw = req.headers.first(name: "X-Lattice-Diagnostic-Connection")
+                        ?? req.headers.first(name: "X-Test-User"),
                       let id = UUID(uuidString: raw) else { return nil }
                 return recorder.connection(id: id)
             }
@@ -907,6 +974,7 @@ extension Lattice {
             ackPath?.record(.handlersComplete)
 
             Task { [ackPath, ingressHooks] in
+                ackPath?.record(.setupTaskStarted)
                 defer { ingressHooks?.didFinishAsyncSetup() }
                 await ingressHooks?.beforeAsyncSetup()
                 // Schema handshake: version skew closes with an explicit,
@@ -1190,10 +1258,12 @@ extension Lattice {
                     sendBoundaryProbe = nil
                 }
                 if let watchManager, let pushContext, let latticeURL {
+                    ackPath?.record(.watchSubscribeRequested)
                     state.pushSubscription = await watchManager.subscribe(
                         fileURL: latticeURL, context: pushContext,
                         socket: ws, revocation: state.revocation,
-                        sendBoundaryProbe: sendBoundaryProbe)
+                        sendBoundaryProbe: sendBoundaryProbe, setupDiagnostic: ackPath)
+                    ackPath?.record(.watchSubscribeReturned, result: state.pushSubscription != nil)
                 }
 
                 // Go live: replay anything that arrived during the open, in
@@ -1261,6 +1331,7 @@ extension Lattice {
                 // catch-up serialize through the same per-channel lattice.
                 do {
                     try await Task {
+                        ackPath?.record(.catchUpTaskStarted)
                         // The go-live hop hands ownership here when it abandons:
                         // release the opened lattice off-loop and do not touch
                         // `held.value` again. A parked push subscription is
@@ -1317,8 +1388,10 @@ extension Lattice {
                             }
                         }
 
+                        ackPath?.record(.catchUpReadBegin)
                         let events = lattice.eventsAfter(globalId: lastEventId)
                         let count = events.count
+                        ackPath?.record(.catchUpReadEnd, count: count)
                         // Observer-push activation boundary: the pk of the last
                         // catch-up entry this socket was sent, taken from the
                         // SAME results object (a separate MAX(id) read could
@@ -1336,7 +1409,9 @@ extension Lattice {
                                 let page = lattice.lateBindNoHistory(Array(events[i..<min(count, i + 1000)]))
                                 let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
                                 sendBoundaryProbe?.capture(page: page, route: .catchup)
+                                ackPath?.record(.catchUpSendBegin, bytes: encoded.count, count: page.count)
                                 await ws.send(ByteBuffer(data: encoded))
+                                ackPath?.record(.catchUpSendReturn)
                                 boundary = page.last?.primaryKey ?? boundary
                             }
                         } else if let lastEventId, state.pushSubscription != nil {
