@@ -63,6 +63,11 @@ nuclear tool renumbered ids and silenced every other process.
   `vacuum()`/`checkpoint()` now return values.
 
 ### Changed
+- Observer-push watcher opens, page reads/encoding and final watcher release
+  use two dedicated native workers, with per-file FIFO and fair store turns.
+  A separate control executor handles pump state; coalesced commit/timer hints
+  and one page or socket send per subscription avoid duplicate admission.
+  External route/catch-up continuations retain their existing scheduling.
 - Rotate the existing 8 MiB observer worker between ready backend identities,
   preserving FIFO within each backend and serial callback execution. A queued
   burst no longer has to drain before another backend receives a turn; a running

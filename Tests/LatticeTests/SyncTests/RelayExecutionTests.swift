@@ -1,0 +1,272 @@
+import Foundation
+import Testing
+@testable import LatticeServerKit
+#if canImport(Darwin)
+import Darwin
+#endif
+
+@Suite("Dedicated relay execution")
+struct RelayExecutionTests {
+    @Test(.timeLimit(.minutes(1)))
+    func blockedStoreLeavesSecondWorkerAndPreservesItsFIFO() async throws {
+        let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.parallel")
+        let gate = RelayTestGate(), done = RelayTestSignal(), other = RelayTestSignal()
+        let values = RelayTestBox<[Int]>([]), stack = RelayTestBox(false)
+        defer { gate.release.signal() }
+        pool.submitRequired(for: "A") { gate.entered.send(); gate.wait() }
+        try await gate.entered.wait()
+        for i in 0..<80 {
+            pool.submitRequired(for: "A") {
+                values.withLock { $0.append(i) }
+                if i == 79 { done.send() }
+            }
+        }
+        pool.submitRequired(for: "B") {
+            #if canImport(Darwin)
+            stack.withLock { $0 = pthread_get_stacksize_np(pthread_self()) >= RelayExecutionPool.stackSize }
+            #else
+            stack.withLock { $0 = true }
+            #endif
+            other.send()
+        }
+        try await other.wait()
+        try #require(values.withLock { $0.isEmpty })
+        try #require(stack.withLock { $0 })
+        gate.release.signal()
+        try await done.wait()
+        await pool.shutdown()
+        try #require(values.withLock { $0 } == Array(0..<80))
+        try #require(!gate.timedOut)
+        try #require(pool.snapshot.liveWorkers == 0)
+        try #require(pool.snapshot.startedWorkers == 2)
+        try #require(pool.snapshot.queued == 0 && pool.snapshot.running == 0)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func oneWorkerRotatesStoresWithoutReorderingAStore() async throws {
+        let pool = RelayExecutionPool(workerCount: 1, name: "relay.test.rotation")
+        let gate = RelayTestGate(), done = RelayTestSignal()
+        let values = RelayTestBox<[Int]>([])
+        defer { gate.release.signal() }
+        pool.submitRequired(for: "A") { gate.entered.send(); gate.wait() }
+        try await gate.entered.wait()
+        for i in 1...3 { pool.submitRequired(for: "A") { values.withLock { $0.append(i) } } }
+        for i in 11...12 { pool.submitRequired(for: "B") { values.withLock { $0.append(i) } } }
+        pool.submitRequired(for: "A") { done.send() }
+        gate.release.signal()
+        try await done.wait()
+        await pool.shutdown()
+        try #require(values.withLock { $0 } == [11, 1, 12, 2, 3])
+        try #require(!gate.timedOut)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func finalCaptureReleaseCanSubmitWithoutOwningTheQueueLock() async throws {
+        let pool = RelayExecutionPool(workerCount: 1, name: "relay.test.release")
+        let gate = RelayTestGate(), done = RelayTestSignal()
+        let releasedOffLock = RelayTestBox(false)
+        defer { gate.release.signal() }
+        pool.submitRequired(for: "A") { gate.entered.send(); gate.wait() }
+        try await gate.entered.wait()
+        func submitCapture() {
+            let capture = RelayTestLifetime {
+                // A regression must fail promptly instead of deadlocking the
+                // Swift test process. A separate thread attempts admission;
+                // the deinitializer waits at most 0.5 s for that admission.
+                let admitted = DispatchSemaphore(value: 0)
+                Thread {
+                    pool.submitRequired(for: "A") { done.send() }
+                    admitted.signal()
+                }.start()
+                let available = admitted.wait(timeout: .now() + 0.5) == .success
+                releasedOffLock.withLock { $0 = available }
+            }
+            pool.submitRequired(for: "A") { withExtendedLifetime(capture) {} }
+        }
+        submitCapture()
+        gate.release.signal()
+        try await done.wait()
+        await pool.shutdown()
+        try #require(releasedOffLock.withLock { $0 })
+        try #require(!gate.timedOut)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func shutdownClosesAdmissionAndDrainsAnAlreadyAdmittedBody() async throws {
+        let pool = RelayExecutionPool(workerCount: 1, name: "relay.test.shutdown")
+        let gate = RelayTestGate(), closed = RelayTestBox(false)
+        defer { gate.release.signal() }
+        pool.submitRequired(for: "A") { gate.entered.send(); gate.wait() }
+        try await gate.entered.wait()
+        let shutdown = Task { await pool.shutdown(); closed.withLock { $0 = true } }
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !pool.snapshot.stopping && ContinuousClock.now < deadline {
+            try Task.checkCancellation()
+            await Task.yield()
+        }
+        try #require(pool.snapshot.stopping)
+        try #require(!closed.withLock { $0 })
+        let accepted = pool.submit(for: "B") {}
+        try #require(!accepted)
+        gate.release.signal()
+        await shutdown.value
+        try #require(closed.withLock { $0 })
+        try #require(pool.snapshot.liveWorkers == 0 && !gate.timedOut)
+        // Repeated completed shutdown does not leak or double-resume a waiter.
+        await pool.shutdown()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func nativeHintsCoalesceAndDirtyDuringDeliverySchedulesOneNextTurn() async throws {
+        let done = RelayTestSignal()
+        var owner: RelaySignalOwner? = await RelaySignalOwner(done: done)
+        weak var weakOwner = owner
+        let signal = await owner!.makeSignal()
+        defer { signal.cancel() }
+        // This is a short, synchronous fixture turn. It queues a burst before
+        // the delivery turn, without sleeping or parking the shared actor.
+        await Task { @RelayControlActor in
+            for value in UInt64(1)...200 { signal.signal(callback: value) }
+        }.value
+        try await done.wait()
+        let delivered = await owner!.values
+        try #require(delivered == [200, 202])
+        await Task { @RelayControlActor in
+            signal.signal(callback: 203)
+            signal.cancel()
+        }.value
+        // The prior queued delivery has either observed cancellation already
+        // or runs before this actor barrier; it must not publish callback203.
+        let afterCancel = await owner!.values
+        try #require(afterCancel == [200, 202])
+        signal.signal(callback: 204) // a copied/late native callback is inert
+        owner = nil
+        try #require(weakOwner == nil, "stored signal operation must not retain its owner")
+    }
+
+    @Test
+    func reconcileTimerDelayHandlesFullDurationRangeWithoutOverflow() throws {
+        try #require(RelayReconcileInterval(seconds: Int64.max, attoseconds: 0).delayNanoseconds == 86_400_000_000_000)
+        try #require(RelayReconcileInterval(seconds: Int64.min, attoseconds: 0).delayNanoseconds == 1)
+        try #require(RelayReconcileInterval(seconds: 0, attoseconds: 0).delayNanoseconds == 1)
+        try #require(RelayReconcileInterval(seconds: 0, attoseconds: 1).delayNanoseconds == 1)
+        try #require(RelayReconcileInterval(seconds: 0, attoseconds: 25_000_000_000_000_000).delayNanoseconds == 25_000_000)
+        var long = RelayReconcileInterval(seconds: Int64.max, attoseconds: 1)
+        let longElapsed = long.consume(elapsedNanoseconds: 86_400_000_000_000)
+        try #require(!longElapsed)
+        try #require(long.seconds == UInt64(Int64.max) - 86_400 && long.nanoseconds == 1)
+        var carry = RelayReconcileInterval(seconds: 1, attoseconds: 1)
+        let firstElapsed = carry.consume(elapsedNanoseconds: 2)
+        try #require(!firstElapsed)
+        try #require(carry.seconds == 0 && carry.nanoseconds == 999_999_999)
+        let finalElapsed = carry.consume(elapsedNanoseconds: 999_999_999)
+        try #require(finalElapsed)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func reconcileOnlyTimerSignalsAndCancellationReleasesOwner() async throws {
+        let done = RelayTestSignal()
+        var owner: RelayTimerOwner? = await RelayTimerOwner(done: done)
+        weak var weakOwner = owner
+        let signal = await owner!.makeSignal()
+        var timer: RelayReconcileTimer? = RelayReconcileTimer(seconds: 0, attoseconds: 10_000_000_000_000_000, signal: signal)
+        weak var weakTimer = timer
+        defer { signal.cancel(); timer?.cancel() }
+        try await done.wait()
+        // Match last-subscriber teardown: invalidate delivery before stopping
+        // the timer, so a callback already copied by Dispatch is inert.
+        signal.cancel()
+        timer?.cancel()
+        timer?.cancel()
+        timer = nil
+        let afterCancel = await owner!.count
+        try #require(afterCancel >= 1)
+        signal.signal(callback: nil)
+        let afterLateTick = await owner!.count
+        try #require(afterLateTick == afterCancel)
+        // cancel() is not a Dispatch callback join; an already-running tick
+        // may briefly retain the timer until its synchronous body returns.
+        let releaseDeadline = ContinuousClock.now + .seconds(3)
+        while weakTimer != nil && ContinuousClock.now < releaseDeadline {
+            try Task.checkCancellation()
+            await Task.yield()
+        }
+        try #require(weakTimer == nil)
+        owner = nil
+        try #require(weakOwner == nil)
+    }
+}
+
+private final class RelayTestSignal: Sendable {
+    let stream: AsyncStream<Void>
+    let continuation: AsyncStream<Void>.Continuation
+    init() {
+        let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        stream = pair.stream; continuation = pair.continuation
+    }
+    func send() { continuation.yield(()); continuation.finish() }
+    func wait() async throws {
+        var iterator = stream.makeAsyncIterator()
+        guard await iterator.next() != nil else { throw CancellationError() }
+    }
+}
+
+private final class RelayTestBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Value
+    init(_ value: Value) { self.value = value }
+    func withLock<Result>(_ body: (inout Value) throws -> Result) rethrows -> Result {
+        lock.lock(); defer { lock.unlock() }; return try body(&value)
+    }
+}
+
+private final class RelayTestGate: Sendable {
+    let entered = RelayTestSignal()
+    let release = DispatchSemaphore(value: 0)
+    private let expired = RelayTestBox(false)
+    var timedOut: Bool { expired.withLock { $0 } }
+    func wait() { expired.withLock { $0 = release.wait(timeout: .now() + 5) != .success } }
+}
+
+private final class RelayTestLifetime: Sendable {
+    let onRelease: @Sendable () -> Void
+    init(_ onRelease: @escaping @Sendable () -> Void) { self.onRelease = onRelease }
+    deinit { onRelease() }
+}
+
+@RelayControlActor private final class RelaySignalOwner {
+    let done: RelayTestSignal
+    var values: [UInt64] = []
+    init(done: RelayTestSignal) { self.done = done }
+    func makeSignal() -> RelayCoalescedSignal {
+        let signal = RelayCoalescedSignal()
+        signal.install { @RelayControlActor [weak self, weak signal] in
+            guard let self, let signal, let callback = signal.take(), let callback else { return }
+            defer { signal.finish() }
+            self.values.append(callback)
+            if callback == 200 {
+                signal.signal(callback: 201)
+                signal.signal(callback: 202)
+            }
+            if callback == 202 { self.done.send() }
+        }
+        return signal
+    }
+}
+
+@RelayControlActor private final class RelayTimerOwner {
+    let done: RelayTestSignal
+    var count = 0
+    init(done: RelayTestSignal) { self.done = done }
+    func makeSignal() -> RelayCoalescedSignal {
+        let signal = RelayCoalescedSignal()
+        signal.install { @RelayControlActor [weak self, weak signal] in
+            guard let self, let signal else { return }
+            defer { signal.finish() }
+            guard signal.take() != nil else { return }
+            count += 1
+            done.send()
+        }
+        return signal
+    }
+}
