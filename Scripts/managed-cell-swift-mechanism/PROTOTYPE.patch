@@ -1,0 +1,812 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -63,6 +63,7 @@
+ # =============================================================================
+ add_library(LatticeCore STATIC
+     Sources/LatticeCore/src/db.cpp
++    Sources/LatticeCore/src/managed_cell_pool.cpp
+     Sources/LatticeCore/src/schema.cpp
+     Sources/LatticeCore/src/sync.cpp
+     Sources/LatticeCore/src/network.cpp
+@@ -83,6 +84,13 @@
+ # and every sqlite3_* call expands to the undefined sqlite3_api thunk table
+ # (bites on Linux, where libsqlite3-dev ships sqlite3ext.h).
+ target_compile_definitions(LatticeCore PRIVATE SQLITE_CORE)
++option(LATTICE_MANAGED_CELL_STATEMENT_REUSE "Diagnostic-only live scalar statement reuse" OFF)
++if(LATTICE_MANAGED_CELL_STATEMENT_REUSE)
++    if(EMSCRIPTEN)
++        message(FATAL_ERROR "Managed-cell reuse prototype is native-only; WASM qualification pending")
++    endif()
++    target_compile_definitions(LatticeCore PUBLIC LATTICE_MANAGED_CELL_STATEMENT_REUSE=1)
++endif()
+ target_link_libraries(LatticeCore PUBLIC
+     SqliteVec
+     SQLite::SQLite3
+@@ -228,6 +236,9 @@
+     Tests/LatticeCoreTests/CAPISurfaceTests.cpp
+     Tests/LatticeCAPIHeaderCheck/capi_header_compiles.c
+ )
++if(LATTICE_MANAGED_CELL_STATEMENT_REUSE)
++    target_sources(LatticeCoreTests PRIVATE Tests/LatticeCoreTests/ManagedCellStatementReuseTests.cpp)
++endif()
+ target_link_libraries(LatticeCoreTests PRIVATE LatticeCore LatticeSwiftCppBridge gtest_main)
+ target_include_directories(LatticeCoreTests PRIVATE
+     Tests/LatticeCoreTests
+diff --git a/Sources/LatticeCore/include/lattice/db.hpp b/Sources/LatticeCore/include/lattice/db.hpp
+--- a/Sources/LatticeCore/include/lattice/db.hpp
++++ b/Sources/LatticeCore/include/lattice/db.hpp
+@@ -49,6 +49,10 @@
+         return device == other.device && inode == other.inode;
+     }
+ };
++
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++class managed_cell_pool;
++#endif
+ 
+ class database {
+     friend class lattice_db;
+@@ -257,6 +261,19 @@
+     bool is_closed() const { return closed_.load(std::memory_order_acquire); }
+ 
+ private:
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    friend struct managed_cell_pool_test_access;
++    mutable managed_cell_pool* managed_cell_pool_ = nullptr; // owned; out-of-line deletion
++    struct managed_cell_policy_scope {
++        const database& owner;
++        explicit managed_cell_policy_scope(const database&) noexcept;
++        ~managed_cell_policy_scope() noexcept;
++        managed_cell_policy_scope(const managed_cell_policy_scope&) = delete;
++        managed_cell_policy_scope& operator=(const managed_cell_policy_scope&) = delete;
++    };
++    void suspend_managed_cells() const noexcept;
++    void resume_managed_cells() const noexcept;
++#endif
+     // Trusted Core/bridge callers only; never return this pointer to a client.
+     sqlite3* internal_handle() const noexcept { return db_; }
+     sqlite3* db_ = nullptr;
+@@ -281,7 +298,11 @@
+     // Empty optional means no matching first-row cell; a present nullptr is
+     // SQL NULL. The owning connection, fresh statement and settled tail remain.
+     std::optional<column_value_t> query_managed_cell(
+-        const std::string& sql, const std::string& column, primary_key_t row_id);
++        const std::string& sql, const std::string& column, primary_key_t row_id
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++        , bool generated_plain_column = false
++#endif
++    );
+     // ATTACH-only internal operation. Capture metadata in the same SQLite
+     // execution scope, before a competing writer can win a second acquisition.
+     // This captures only internal metadata; deferred user delivery stays after it.
+diff --git a/Sources/LatticeCore/include/lattice/lattice.hpp b/Sources/LatticeCore/include/lattice/lattice.hpp
+--- a/Sources/LatticeCore/include/lattice/lattice.hpp
++++ b/Sources/LatticeCore/include/lattice/lattice.hpp
+@@ -7126,6 +7126,9 @@
+     /// fast path (triggers reference sync_disabled() at execution time).
+     void register_sql_functions() { register_sql_functions(*db_); }
+     void register_sql_functions(database& connection) {
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++        database::managed_cell_policy_scope no_reuse(connection);
++#endif
+         // sync_disabled() lets triggers check if sync is disabled
+         sqlite3_create_function(
+             connection.internal_handle(),
+diff --git a/Sources/LatticeCore/include/lattice/managed.hpp b/Sources/LatticeCore/include/lattice/managed.hpp
+--- a/Sources/LatticeCore/include/lattice/managed.hpp
++++ b/Sources/LatticeCore/include/lattice/managed.hpp
+@@ -162,6 +162,20 @@
+     return route.schema_sql + '.' + managed_quote_identifier("_" + route.table + "_" + suffix);
+ }
+ 
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++// Eligibility only: unusual/manual field SQL keeps the existing fresh path.
++inline bool managed_plain_column(const std::string& name) noexcept {
++    if (name.empty()) return false;
++    for (size_t i = 0; i < name.size(); ++i) {
++        const auto c = static_cast<unsigned char>(name[i]);
++        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' ||
++            (i && c >= '0' && c <= '9')) continue;
++        return false;
++    }
++    return true;
++}
++#endif
++
+ struct managed_base {
+     database* db = nullptr;
+     lattice_db* lattice = nullptr;
+@@ -386,7 +400,11 @@
+         if (is_bound()) {
+             auto cell = db->query_managed_cell(
+                 "SELECT " + column_name + " FROM " + managed_table_sql(table_name) + " WHERE id = ?",
+-                column_name, row_id);
++                column_name, row_id
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++                , managed_plain_column(column_name)
++#endif
++            );
+             if (cell && std::holds_alternative<int64_t>(*cell)) {
+                 return std::get<int64_t>(std::move(*cell));
+             }
+@@ -459,7 +477,11 @@
+         if (is_bound()) {
+             auto cell = db->query_managed_cell(
+                 "SELECT " + column_name + " FROM " + managed_table_sql(table_name) + " WHERE id = ?",
+-                column_name, row_id);
++                column_name, row_id
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++                , managed_plain_column(column_name)
++#endif
++            );
+             if (cell && std::holds_alternative<double>(*cell)) {
+                 return std::get<double>(std::move(*cell));
+             }
+@@ -587,7 +609,11 @@
+         if (is_bound()) {
+             auto cell = db->query_managed_cell(
+                 "SELECT " + column_name + " FROM " + managed_table_sql(table_name) + " WHERE id = ?",
+-                column_name, row_id);
++                column_name, row_id
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++                , managed_plain_column(column_name)
++#endif
++            );
+             if (cell && std::holds_alternative<std::string>(*cell)) {
+                 return std::get<std::string>(std::move(*cell));
+             }
+diff --git a/Sources/LatticeCore/src/db.cpp b/Sources/LatticeCore/src/db.cpp
+--- a/Sources/LatticeCore/src/db.cpp
++++ b/Sources/LatticeCore/src/db.cpp
+@@ -1,3 +1,5 @@
++#include "managed_cell_pool.hpp"
++#include <new>
+ #include "lattice/db.hpp"
+ #include "lattice/projection.hpp"
+ #include "lattice/log.hpp"
+@@ -116,6 +118,9 @@
+ 
+ std::shared_ptr<const physical_store_identity> database::attach_and_capture_identity(
+     const std::string& attach_sql, const std::string& schema) {
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    managed_cell_policy_scope no_reuse(*this);
++#endif
+     if (closed_.load(std::memory_order_acquire)) return {};
+     struct capture_context {
+         database* owner;
+@@ -376,9 +381,26 @@
+         db_ = nullptr;
+         throw;
+     }
+-}
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    // Eager only in this diagnostic build, before database publication. Avoid
++    // a lazy-initialization race with concurrent getters/close. Allocation
++    // failure leaves the existing fresh-statement path available.
++    if (mode_ == open_mode::read_write && !read_control_)
++        managed_cell_pool_ = new (std::nothrow) managed_cell_pool;
++#endif
++}
++
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++void database::suspend_managed_cells() const noexcept { if (managed_cell_pool_) managed_cell_pool_->suspend(); }
++void database::resume_managed_cells() const noexcept { if (managed_cell_pool_) managed_cell_pool_->resume(); }
++database::managed_cell_policy_scope::managed_cell_policy_scope(const database& db) noexcept : owner(db) { owner.suspend_managed_cells(); }
++database::managed_cell_policy_scope::~managed_cell_policy_scope() noexcept { owner.resume_managed_cells(); }
++#endif
+ 
+ database::~database() {
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    delete managed_cell_pool_; managed_cell_pool_ = nullptr;
++#endif
+     if (read_control_) read_control_->unpublish(db_);
+     if (db_) {
+         if (mode_ == open_mode::read_write) {
+@@ -417,6 +439,9 @@
+     // maintenance scope likewise settles its complete transaction on its
+     // owning thread; logical close never strands that transaction halfway.
+     closed_.store(true, std::memory_order_release);
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    if (managed_cell_pool_) managed_cell_pool_->close_admission();
++#endif
+ }
+ 
+ sqlite3* database::handle() const {
+@@ -426,6 +451,9 @@
+     auto* mutex = sqlite3_db_mutex(db_);
+     sqlite3_mutex_enter(mutex);
+     raw_handle_escaped_.store(true, std::memory_order_release);
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    if (managed_cell_pool_) managed_cell_pool_->disable();
++#endif
+     sqlite3_mutex_leave(mutex);
+     return db_;
+ }
+@@ -492,11 +520,19 @@
+       busy_timeout_ms_(other.busy_timeout_ms_), read_control_(std::move(other.read_control_)),
+       main_physical_identity_(std::atomic_load(&other.main_physical_identity_)) {
+     raw_handle_escaped_.store(other.raw_handle_escaped_.load(std::memory_order_acquire));
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    // Moves require external quiescence. Purge rather than transfer cache state.
++    delete other.managed_cell_pool_; other.managed_cell_pool_ = nullptr;
++#endif
+     other.db_ = nullptr;
+ }
+ 
+ database& database::operator=(database&& other) noexcept {
+     if (this != &other) {
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++        delete managed_cell_pool_; managed_cell_pool_ = nullptr;
++        delete other.managed_cell_pool_; other.managed_cell_pool_ = nullptr;
++#endif
+         if (read_control_) read_control_->unpublish(db_);
+         if (db_) {
+             sqlite3_close_v2(db_);
+@@ -519,6 +555,9 @@
+ }
+ 
+ void database::execute(const std::string& sql, const std::vector<column_value_t>& params) {
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    managed_cell_policy_scope no_reuse(*this);
++#endif
+     if (closed_.load(std::memory_order_acquire) && !maintenance_scope::active_for(db_)) return;
+     g_statement_count.fetch_add(1, std::memory_order_relaxed);
+     ++t_statement_count;
+@@ -903,6 +942,9 @@
+ 
+ std::vector<database::row_t> database::query(const std::string& sql,
+                                              const std::vector<column_value_t>& params) {
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    managed_cell_policy_scope no_reuse(*this);
++#endif
+     g_statement_count.fetch_add(1, std::memory_order_relaxed);
+     ++t_statement_count;
+     if (closed_.load(std::memory_order_acquire) && !maintenance_scope::active_for(db_)) return {};
+@@ -965,21 +1007,41 @@
+ }
+ 
+ std::optional<column_value_t> database::query_managed_cell(
+-    const std::string& sql, const std::string& column, primary_key_t row_id) {
++    const std::string& sql, const std::string& column, primary_key_t row_id
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    , bool generated_plain_column
++#endif
++) {
+     g_statement_count.fetch_add(1, std::memory_order_relaxed);
+     ++t_statement_count;
+     if (closed_.load(std::memory_order_acquire)) return std::nullopt;
+ 
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    managed_cell_pool::lease statement(managed_cell_pool_, sql,
++        generated_plain_column && !raw_handle_escaped_.load(std::memory_order_acquire));
++    int rc = SQLITE_OK;
++    if (!statement.statement) {
++        statement.prepared();
++        rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &statement.statement, nullptr);
++    }
++    auto* raw = statement.statement;
++#else
+     sqlite3_stmt* raw = nullptr;
+     int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &raw, nullptr);
+     std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>
+         statement(raw, &sqlite3_finalize);
++#endif
+     if (rc != SQLITE_OK) {
+         auto errmsg = sqlite3_errmsg(db_);
+         LOG_ERROR("db", "%s in %s", errmsg, sql.c_str());
+         std::cerr << "db: " << errmsg << " " << sql.c_str() << std::endl;
+         throw db_error("Failed to prepare query: " + std::string(errmsg));
+     }
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    const bool reusable_shape = generated_plain_column && sqlite3_stmt_readonly(raw) &&
++        sqlite3_bind_parameter_count(raw) == 1 && sqlite3_column_count(raw) == 1;
++    if (managed_cell_pool_) managed_cell_pool_->before_step();
++#endif
+     bind_value(raw, 1, row_id);
+ 
+     // Normal primitive getters select one column. Retain the old name-match
+@@ -999,13 +1061,25 @@
+     std::optional<column_value_t> value;
+     bool first_row = true;
+     while ((rc = sqlite3_step(raw)) == SQLITE_ROW) {
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++        if (first_row && reusable_shape) {
++            // A v2 step may recompile after external DDL. Re-read the name.
++            const char* name = sqlite3_column_name(raw, 0);
++            if (!name) throw db_error("Query failed: out of memory reading column name");
++            value_index = column == name ? 0 : -1;
++        }
++#endif
+         if (first_row && value_index >= 0) value = extract_column(raw, value_index);
+         first_row = false;
+     }
+     // Release the read statement before invoking any settled callback. Keep
+     // the same completion/error policy as query(); the RAII owner also covers
+     // allocation or conversion exceptions before normal completion.
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    statement.finish(rc == SQLITE_DONE && reusable_shape);
++#else
+     statement.reset();
++#endif
+     if (rc != SQLITE_DONE) {
+         auto error = std::string(sqlite3_errmsg(db_));
+         LOG_ERROR("db", "Query failed: %s", error.c_str());
+diff --git a/Sources/LatticeCore/src/managed_cell_pool.cpp b/Sources/LatticeCore/src/managed_cell_pool.cpp
+--- /dev/null
++++ b/Sources/LatticeCore/src/managed_cell_pool.cpp
+@@ -0,0 +1,127 @@
++#include "managed_cell_pool.hpp"
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++#include <limits>
++#include <utility>
++
++namespace lattice {
++managed_cell_pool::lease::lease(managed_cell_pool* owner, const std::string& sql,
++                                bool eligible) noexcept {
++    if (!owner || !eligible || sql.size() > max_key) return;
++    // A failed key allocation only disables retention for this invocation.
++    try { key_ = sql; } catch (...) { return; }
++    if (key_.capacity() > max_key) return;
++    std::string discarded_key;
++    std::lock_guard<std::mutex> lock(owner->mutex_);
++    if (owner->state_.disabled || owner->state_.suspensions) return;
++    owner_ = owner;
++    generation_ = owner->generation_;
++    retain_ = true;
++    ++owner->state_.active;
++    for (auto& slot : owner->slots_) {
++        if (slot.statement && slot.key == key_) {
++            statement = std::exchange(slot.statement, nullptr);
++            owner->state_.retained_bytes -= slot.bytes;
++            slot.bytes = 0;
++            // Empty the now-unused key without freeing it under the pool lock.
++            key_.swap(slot.key);
++            discarded_key.swap(slot.key);
++            --owner->state_.idle;
++            ++owner->state_.hits;
++            break;
++        }
++    }
++}
++managed_cell_pool::lease::~lease() noexcept { finish(false); }
++void managed_cell_pool::lease::prepared() noexcept {
++    if (owner_) { std::lock_guard<std::mutex> lock(owner_->mutex_); ++owner_->state_.prepares; }
++}
++void managed_cell_pool::lease::finish(bool completed) noexcept {
++    if (owner_) owner_->release(*this, completed);
++    else if (statement) sqlite3_finalize(std::exchange(statement, nullptr));
++}
++managed_cell_pool::managed_cell_pool() noexcept { state_.retained_bytes = sizeof(*this); }
++managed_cell_pool::~managed_cell_pool() noexcept { disable(); }
++void managed_cell_pool::close_admission() noexcept {
++    // Only bounded bookkeeping; never acquire SQLite or wait for a lease.
++    std::lock_guard<std::mutex> lock(mutex_); state_.disabled = true;
++}
++
++void managed_cell_pool::invalidate(bool suspend, bool disable) noexcept {
++    std::array<slot, capacity> retired;
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        if (generation_ == std::numeric_limits<uint64_t>::max()) state_.disabled = true;
++        else ++generation_;
++        if (disable) state_.disabled = true;
++        if (suspend) {
++            if (state_.suspensions == std::numeric_limits<size_t>::max()) state_.disabled = true;
++            else ++state_.suspensions;
++        }
++        retired.swap(slots_);
++        state_.retired += state_.idle;
++        state_.idle = 0; state_.retained_bytes = sizeof(*this);
++    }
++    // SQLite may run extension cleanup here. No pool/publication lock is held.
++    for (auto& item : retired) if (item.statement) sqlite3_finalize(item.statement);
++}
++void managed_cell_pool::suspend() noexcept { invalidate(true, false); }
++void managed_cell_pool::resume() noexcept {
++    // Retire nested ephemeral-era candidates before reopening admission.
++    invalidate(false, false);
++    std::lock_guard<std::mutex> lock(mutex_);
++    if (state_.suspensions) --state_.suspensions;
++}
++void managed_cell_pool::disable() noexcept { invalidate(false, true); }
++managed_cell_pool::observation managed_cell_pool::inspect() const {
++    std::lock_guard<std::mutex> lock(mutex_); return state_;
++}
++void managed_cell_pool::set_before_step(void (*hook)(void*), void* context) noexcept {
++    std::lock_guard<std::mutex> lock(mutex_);
++    before_step_ = hook; before_step_context_ = context;
++}
++void managed_cell_pool::before_step() const {
++    void (*hook)(void*); void* context;
++    { std::lock_guard<std::mutex> lock(mutex_); hook = before_step_; context = before_step_context_; }
++    if (hook) hook(context);
++}
++void managed_cell_pool::fail_next_reset_for_test() noexcept {
++    std::lock_guard<std::mutex> lock(mutex_); fail_reset_ = true;
++}
++void managed_cell_pool::release(lease& lease, bool completed) noexcept {
++    auto* statement = std::exchange(lease.statement, nullptr);
++    bool reset_failed = false;
++    if (statement && completed && lease.retain_) {
++        // Original successful-DONE path ignores finalize's return. A reset-only
++        // failure retires the VM without changing that successful return value.
++        const int reset = sqlite3_reset(statement);
++        const int clear = sqlite3_clear_bindings(statement);
++        reset_failed = reset != SQLITE_OK || clear != SQLITE_OK;
++        if (reset_failed) completed = false;
++    }
++    const int memory = statement ? sqlite3_stmt_status(statement, SQLITE_STMTSTATUS_MEMUSED, 0) : 0;
++    const size_t bytes = sizeof(slot) + lease.key_.capacity() + 1 + (memory > 0 ? size_t(memory) : max_bytes);
++    {
++        std::lock_guard<std::mutex> lock(mutex_);
++        if (fail_reset_ && completed && statement) {
++            fail_reset_ = false; reset_failed = true; completed = false;
++        }
++        if (reset_failed) ++state_.reset_failures;
++        if (statement && completed && lease.retain_ && !state_.disabled && !state_.suspensions &&
++            generation_ == lease.generation_ && bytes <= max_bytes && state_.retained_bytes <= max_bytes - bytes) {
++            bool duplicate = false;
++            for (const auto& slot : slots_) if (slot.statement && slot.key == lease.key_) duplicate = true;
++            if (!duplicate) for (auto& slot : slots_) if (!slot.statement) {
++                slot.statement = std::exchange(statement, nullptr);
++                slot.key.swap(lease.key_); slot.bytes = bytes;
++                ++state_.idle; state_.retained_bytes += bytes;
++                break;
++            }
++        }
++        if (statement) ++state_.retired;
++        --state_.active;
++        lease.owner_ = nullptr;
++    }
++    if (statement) sqlite3_finalize(statement);
++}
++} // namespace lattice
++#endif
+diff --git a/Sources/LatticeCore/src/managed_cell_pool.hpp b/Sources/LatticeCore/src/managed_cell_pool.hpp
+--- /dev/null
++++ b/Sources/LatticeCore/src/managed_cell_pool.hpp
+@@ -0,0 +1,62 @@
++#pragma once
++
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++#include <sqlite3.h>
++#include <array>
++#include <cstddef>
++#include <cstdint>
++#include <mutex>
++#include <string>
++
++namespace lattice {
++// Private diagnostic implementation. No values, transaction, or connection
++// ownership are stored here. The database must outlive every synchronous lease.
++class managed_cell_pool {
++public:
++    static constexpr size_t capacity = 16, max_key = 4096, max_bytes = 256 * 1024;
++    struct observation {
++        size_t idle = 0, retained_bytes = 0, active = 0, suspensions = 0;
++        uint64_t hits = 0, prepares = 0, retired = 0, reset_failures = 0;
++        bool disabled = false;
++    };
++    class lease {
++        friend class managed_cell_pool;
++        managed_cell_pool* owner_ = nullptr;
++        std::string key_;
++        uint64_t generation_ = 0;
++        bool retain_ = false;
++    public:
++        sqlite3_stmt* statement = nullptr;
++        lease(managed_cell_pool* owner, const std::string& sql, bool eligible) noexcept;
++        ~lease() noexcept;
++        lease(const lease&) = delete;
++        lease& operator=(const lease&) = delete;
++        void prepared() noexcept;
++        void finish(bool completed) noexcept;
++    };
++    managed_cell_pool() noexcept;
++    ~managed_cell_pool() noexcept;
++    void close_admission() noexcept;
++    void suspend() noexcept;
++    void resume() noexcept;
++    void disable() noexcept;
++    observation inspect() const;
++    // Private diagnostic seams. Called with no pool lock held; never installed
++    // by a production caller. Caller supplies a live, synchronized context.
++    void set_before_step(void (*hook)(void*), void* context) noexcept;
++    void before_step() const;
++    void fail_next_reset_for_test() noexcept;
++private:
++    struct slot { sqlite3_stmt* statement = nullptr; std::string key; size_t bytes = 0; };
++    mutable std::mutex mutex_;
++    std::array<slot, capacity> slots_;
++    observation state_;
++    uint64_t generation_ = 0;
++    bool fail_reset_ = false;
++    void (*before_step_)(void*) = nullptr;
++    void* before_step_context_ = nullptr;
++    void invalidate(bool suspend, bool disable) noexcept;
++    void release(lease&, bool completed) noexcept;
++};
++} // namespace lattice
++#endif
+diff --git a/Sources/LatticeCore/src/projection_memory.cpp b/Sources/LatticeCore/src/projection_memory.cpp
+--- a/Sources/LatticeCore/src/projection_memory.cpp
++++ b/Sources/LatticeCore/src/projection_memory.cpp
+@@ -317,6 +317,10 @@
+ 
+         // Mark installed before the first policy mutation so constructor throws
+         // restore all known policies. There is no BEGIN/ROLLBACK or settled drain.
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++        database_.suspend_managed_cells();
++        managed_cells_suspended_ = true;
++#endif
+         installed_ = true;
+         sqlite3_progress_handler(handle_, 1000, progress, this);
+         if (sqlite3_busy_handler(handle_, busy, this) != SQLITE_OK)
+@@ -358,6 +362,12 @@
+         sqlite3_busy_timeout(handle_, prior_busy_timeout_);
+         installed_ = false;
+     }
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    if (managed_cells_suspended_) {
++        database_.resume_managed_cells();
++        managed_cells_suspended_ = false;
++    }
++#endif
+     if (current_ == this) current_ = previous_;
+     if (locked_) { sqlite3_mutex_leave(mutex_); locked_ = false; }
+ }
+diff --git a/Sources/LatticeCore/src/projection_memory.hpp b/Sources/LatticeCore/src/projection_memory.hpp
+--- a/Sources/LatticeCore/src/projection_memory.hpp
++++ b/Sources/LatticeCore/src/projection_memory.hpp
+@@ -122,6 +122,9 @@
+     sqlite3_mutex* mutex_ = nullptr;
+     int prior_busy_timeout_ = 0;
+     bool locked_ = false, installed_ = false, denied_ = false;
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++    bool managed_cells_suspended_ = false;
++#endif
+     std::unordered_set<std::string> builtin_functions_;
+     database_projection_capture* previous_ = nullptr;
+     static thread_local database_projection_capture* current_;
+diff --git a/Tests/LatticeCoreTests/ManagedCellStatementReuseTests.cpp b/Tests/LatticeCoreTests/ManagedCellStatementReuseTests.cpp
+--- /dev/null
++++ b/Tests/LatticeCoreTests/ManagedCellStatementReuseTests.cpp
+@@ -0,0 +1,237 @@
++// SwiftPM discovers this file too; default-OFF builds get an empty TU.
++#ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++#include "TestHelpers.hpp"
++#include "../../Sources/LatticeCore/src/managed_cell_pool.hpp"
++#include "../../Sources/LatticeCore/src/projection_memory.hpp"
++#include <atomic>
++#include <condition_variable>
++#include <functional>
++#include <mutex>
++#include <thread>
++
++namespace lattice {
++struct managed_cell_pool_test_access {
++    static managed_cell_pool* pool(database& db) { return db.managed_cell_pool_; }
++    static sqlite3* trusted(database& db) { return db.internal_handle(); }
++    static void policy(database& db, const std::function<void(sqlite3*)>& body) {
++        database::managed_cell_policy_scope scope(db); body(db.internal_handle());
++    }
++};
++}
++namespace {
++using namespace lattice;
++using namespace std::chrono_literals;
++void table(database& db) {
++    db.execute("CREATE TABLE Cell(id INTEGER PRIMARY KEY,i INTEGER,r REAL,t TEXT,j INTEGER,k INTEGER,u TEXT)");
++    db.execute("INSERT INTO Cell VALUES(1,7,2.5,'first',11,13,'tail'),(2,70,25.5,'second',110,130,'end')");
++}
++managed<int64_t> integer(database& db, const std::string& model="Cell", const std::string& column="i", int64_t id=1) {
++    managed<int64_t> field(int64_t(-7)); field.assign(&db,nullptr,model,column,id); return field;
++}
++auto state(database& db) { return managed_cell_pool_test_access::pool(db)->inspect(); }
++struct Gate {
++    std::mutex mutex; std::condition_variable condition; bool entered=false,open=false;
++    std::atomic<unsigned> calls{0};
++    static void pause_first(void* context) {
++        auto& gate=*static_cast<Gate*>(context);
++        if (gate.calls.fetch_add(1)!=0) return;
++        std::unique_lock<std::mutex> lock(gate.mutex); gate.entered=true; gate.condition.notify_all();
++        if (!gate.condition.wait_for(lock,2s,[&]{return gate.open;})) throw std::runtime_error("lease gate expired");
++    }
++    bool wait() { std::unique_lock<std::mutex> lock(mutex);return condition.wait_for(lock,1s,[&]{return entered;}); }
++    void release() { std::lock_guard<std::mutex> lock(mutex);open=true;condition.notify_all(); }
++};
++}
++
++TEST(ManagedCellStatementReuse, SixHundredLiveReadsExecuteWithSixPrepares) {
++    database db(":memory:"); table(db); ASSERT_NE(managed_cell_pool_test_access::pool(db),nullptr);
++    auto i=integer(db),j=integer(db,"Cell","j"),k=integer(db,"Cell","k");
++    managed<double> r; r.assign(&db,nullptr,"Cell","r",1);
++    managed<std::string> t,u; t.assign(&db,nullptr,"Cell","t",1);u.assign(&db,nullptr,"Cell","u",1);
++    const auto before=database::thread_statement_count();
++    for(int n=0;n<100;++n) {
++        const int64_t id=n%2+1;i.row_id=j.row_id=k.row_id=r.row_id=t.row_id=u.row_id=id;
++        EXPECT_EQ(i.detach(),id==1?7:70);EXPECT_EQ(j.detach(),id==1?11:110);EXPECT_EQ(k.detach(),id==1?13:130);
++        EXPECT_DOUBLE_EQ(r.detach(),id==1?2.5:25.5);EXPECT_EQ(t.detach(),id==1?"first":"second");EXPECT_EQ(u.detach(),id==1?"tail":"end");
++    }
++    EXPECT_EQ(database::thread_statement_count()-before,600u);
++    const auto snapshot=state(db);EXPECT_EQ(snapshot.prepares,6u);EXPECT_EQ(snapshot.hits,594u);
++    EXPECT_EQ(snapshot.idle,6u);EXPECT_EQ(snapshot.active,0u);EXPECT_LE(snapshot.retained_bytes,managed_cell_pool::max_bytes);
++}
++
++TEST(ManagedCellStatementReuse, ExternalUpdatesAndOwnRollbackRemainVisible) {
++    TempDB path("pool_live_values");database owner(path.str());table(owner);database writer(path.str());
++    auto field=integer(owner);EXPECT_EQ(field.detach(),7);
++    writer.execute("UPDATE Cell SET i=9 WHERE id=1");EXPECT_EQ(field.detach(),9);
++    EXPECT_EQ(state(owner).prepares,1u);EXPECT_EQ(state(owner).hits,1u);
++    owner.begin_transaction();owner.execute("UPDATE Cell SET i=12 WHERE id=1");EXPECT_EQ(field.detach(),12);
++    owner.rollback();EXPECT_EQ(field.detach(),9);
++    writer.execute("UPDATE Cell SET i=NULL WHERE id=1");EXPECT_EQ(field.detach(),-7);
++    writer.execute("UPDATE Cell SET i='wrong' WHERE id=1");EXPECT_EQ(field.detach(),-7);
++    writer.execute("DELETE FROM Cell WHERE id=1");EXPECT_EQ(field.detach(),-7);
++}
++
++TEST(ManagedCellStatementReuse, CompletedGetterDoesNotRetainWalReadTransaction) {
++    TempDB path("pool_wal_release");database owner(path.str());table(owner);database writer(path.str());
++    auto field=integer(owner);EXPECT_EQ(field.detach(),7);ASSERT_EQ(state(owner).idle,1u);
++    auto* raw=managed_cell_pool_test_access::trusted(owner);
++    EXPECT_EQ(sqlite3_txn_state(raw,nullptr),SQLITE_TXN_NONE);
++    for(auto* stmt=sqlite3_next_stmt(raw,nullptr);stmt;stmt=sqlite3_next_stmt(raw,stmt)) EXPECT_FALSE(sqlite3_stmt_busy(stmt));
++    writer.execute("UPDATE Cell SET i=22 WHERE id=1");
++    const auto checkpoint=writer.wal_checkpoint(true,100);EXPECT_EQ(checkpoint.busy,0);
++    EXPECT_EQ(field.detach(),22);
++}
++
++TEST(ManagedCellStatementReuse, ExternalDdlRepreparesAndSameConnectionPragmaRetires) {
++    TempDB path("pool_ddl");database owner(path.str());table(owner);database writer(path.str());auto field=integer(owner);
++    EXPECT_EQ(field.detach(),7);
++    writer.execute("ALTER TABLE Cell RENAME COLUMN i TO old_i");EXPECT_THROW(field.detach(),db_error);
++    writer.execute("ALTER TABLE Cell ADD COLUMN i INTEGER");writer.execute("UPDATE Cell SET i=41");EXPECT_EQ(field.detach(),41);
++    writer.execute("DROP TABLE Cell");writer.execute("CREATE TABLE Cell(id INTEGER PRIMARY KEY,i INTEGER)");writer.execute("INSERT INTO Cell VALUES(1,51)");EXPECT_EQ(field.detach(),51);
++    owner.execute("CREATE VIEW LikeCell AS SELECT 1 AS id,('a' LIKE 'A') AS i");field.table_name="LikeCell";
++    owner.execute("PRAGMA case_sensitive_like=OFF");EXPECT_EQ(field.detach(),1);ASSERT_EQ(state(owner).idle,1u);
++    owner.execute("PRAGMA case_sensitive_like=ON");EXPECT_EQ(state(owner).idle,0u);EXPECT_EQ(field.detach(),0);
++}
++
++TEST(ManagedCellStatementReuse, AttachedEqualIdsAndAliasRebindStayPhysical) {
++    TempDB local("pool_local"),a("pool_attached_a"),b("pool_attached_b");
++    database owner(local.str()),first(a.str()),second(b.str());table(owner);table(first);table(second);
++    first.execute("UPDATE Cell SET i=71");second.execute("UPDATE Cell SET i=81");
++    const auto alias=managed_quote_identifier("attached.\"quoted");
++    owner.execute("ATTACH DATABASE ? AS "+alias,{a.str()});
++    auto own=integer(owner),attached=integer(owner,alias+".Cell");
++    EXPECT_EQ(own.detach(),7);EXPECT_EQ(attached.detach(),71);EXPECT_EQ(state(owner).idle,2u);
++    owner.execute("DETACH DATABASE "+alias);owner.execute("ATTACH DATABASE ? AS "+alias,{b.str()});
++    EXPECT_EQ(own.detach(),7);EXPECT_EQ(attached.detach(),81);
++    attached=int64_t(91);EXPECT_EQ(std::get<int64_t>(second.query("SELECT i FROM Cell WHERE id=1")[0].at("i")),91);
++    EXPECT_EQ(own.detach(),7);
++}
++
++TEST(ManagedCellStatementReuse, ManualFieldSqlAndRawAuthorizerUseFreshPreparation) {
++    database db(":memory:");table(db);auto field=integer(db);
++    field.column_name="i AS different";EXPECT_EQ(field.detach(),-7);EXPECT_EQ(state(db).idle,0u);
++    field.column_name="i";EXPECT_EQ(field.detach(),7);ASSERT_EQ(state(db).idle,1u);
++    auto* raw=db.handle();EXPECT_TRUE(state(db).disabled);EXPECT_EQ(state(db).idle,0u);
++    EXPECT_EQ(sqlite3_next_stmt(raw,nullptr),nullptr);
++    bool allow=true;
++    // An unexpected getter exception must clear the callback before its stack
++    // context dies; database destruction may execute PRAGMA optimize.
++    struct ClearAuthorizer {
++        sqlite3* handle;
++        ~ClearAuthorizer() { sqlite3_set_authorizer(handle,nullptr,nullptr); }
++    } clear_authorizer{raw};
++    ASSERT_EQ(sqlite3_set_authorizer(raw,[](void* context,int action,const char*,const char*,const char*,const char*){
++        return action==SQLITE_READ&&! *static_cast<bool*>(context)?SQLITE_DENY:SQLITE_OK;
++    },&allow),SQLITE_OK);
++    EXPECT_EQ(field.detach(),7);allow=false;EXPECT_THROW(field.detach(),db_error);
++    allow=true;EXPECT_EQ(field.detach(),7);sqlite3_set_authorizer(raw,nullptr,nullptr);
++    EXPECT_EQ(sqlite3_next_stmt(raw,nullptr),nullptr);EXPECT_EQ(state(db).idle,0u);
++}
++
++TEST(ManagedCellStatementReuse, ReentrantSameSqlUsesIndependentLease) {
++    database db(":memory:");table(db);auto field=integer(db);EXPECT_EQ(field.detach(),7);
++    struct Context { database* db; managed<int64_t>* field; int64_t nested=0;size_t active=0; } context{&db,&field};
++    auto* pool=managed_cell_pool_test_access::pool(db);
++    pool->set_before_step([](void* p){auto& c=*static_cast<Context*>(p);auto* pool=managed_cell_pool_test_access::pool(*c.db);
++        pool->set_before_step(nullptr,nullptr);c.active=pool->inspect().active;c.nested=c.field->detach();},&context);
++    EXPECT_EQ(field.detach(),7);EXPECT_EQ(context.nested,7);EXPECT_EQ(context.active,1u);
++    EXPECT_EQ(state(db).prepares,2u);EXPECT_EQ(state(db).active,0u);EXPECT_EQ(state(db).idle,1u);
++}
++
++TEST(ManagedCellStatementReuse, ConcurrentSameSqlNeverWaitsForPausedLease) {
++    database db(":memory:");table(db);auto field=integer(db);EXPECT_EQ(field.detach(),7);Gate gate;
++    managed_cell_pool_test_access::pool(db)->set_before_step(Gate::pause_first,&gate);
++    std::exception_ptr worker_failure,main_failure;int64_t first=0;
++    std::thread worker([&]{try{first=field.detach();}catch(...){worker_failure=std::current_exception();}});
++    const bool entered=gate.wait();
++    // Always release/join even when an expectation fails; the gate itself is bounded.
++    int64_t second=0;try{if(entered)second=field.detach();}catch(...){main_failure=std::current_exception();}
++    gate.release();worker.join();managed_cell_pool_test_access::pool(db)->set_before_step(nullptr,nullptr);
++    EXPECT_TRUE(entered);EXPECT_FALSE(worker_failure);EXPECT_FALSE(main_failure);EXPECT_EQ(first,7);EXPECT_EQ(second,7);
++    EXPECT_EQ(state(db).prepares,2u);EXPECT_EQ(state(db).active,0u);EXPECT_EQ(state(db).idle,1u);
++}
++
++TEST(ManagedCellStatementReuse, CloseAndRawEscapeDoNotFinalizeActiveLease) {
++    for(bool escape:{false,true}) {
++        database db(":memory:");table(db);auto field=integer(db);EXPECT_EQ(field.detach(),7);Gate gate;
++        managed_cell_pool_test_access::pool(db)->set_before_step(Gate::pause_first,&gate);
++        std::exception_ptr failure;int64_t answer=0;
++        std::thread worker([&]{try{answer=field.detach();}catch(...){failure=std::current_exception();}});
++        const bool entered=gate.wait();if(escape)(void)db.handle();else db.close();
++        gate.release();worker.join();managed_cell_pool_test_access::pool(db)->set_before_step(nullptr,nullptr);
++        EXPECT_TRUE(entered);EXPECT_FALSE(failure);EXPECT_EQ(answer,7);
++        EXPECT_TRUE(state(db).disabled);EXPECT_EQ(state(db).active,0u);EXPECT_EQ(state(db).idle,0u);
++        EXPECT_EQ(field.detach(),escape?7:-7);
++    }
++}
++
++TEST(ManagedCellStatementReuse, ScopedCapturePurgesAndCannotBypassAuthorization) {
++    database db(":memory:");db.execute("CREATE VIEW RandomCell AS SELECT 1 AS id,random() AS i");
++    auto field=integer(db,"RandomCell");EXPECT_NO_THROW((void)field.detach());ASSERT_EQ(state(db).idle,1u);
++    auto control=std::make_shared<database_read_control>();control->deadline=std::chrono::steady_clock::now()+2s;
++    sqlite3_stmt* statement=nullptr;
++    struct UnwindCapture {};
++    bool entered=false,unwound=false;
++    try {
++        database_projection_capture capture(db,control,statement);
++        entered=true;
++        EXPECT_EQ(state(db).idle,0u);EXPECT_EQ(state(db).suspensions,1u);
++        EXPECT_THROW(field.detach(),db_error);EXPECT_TRUE(capture.denied());
++        throw UnwindCapture{};
++    } catch(const UnwindCapture&) { unwound=true; }
++    EXPECT_TRUE(entered);EXPECT_TRUE(unwound);
++    EXPECT_EQ(statement,nullptr);EXPECT_EQ(state(db).suspensions,0u);
++    EXPECT_NO_THROW((void)field.detach());EXPECT_EQ(state(db).idle,1u);
++}
++
++TEST(ManagedCellStatementReuse, ResetOnlyFailureEvictsWithoutChangingSuccessfulValue) {
++    database db(":memory:");table(db);auto field=integer(db);EXPECT_EQ(field.detach(),7);
++    managed_cell_pool_test_access::pool(db)->fail_next_reset_for_test();EXPECT_EQ(field.detach(),7);
++    EXPECT_EQ(state(db).reset_failures,1u);EXPECT_EQ(state(db).idle,0u);
++    EXPECT_EQ(field.detach(),7);EXPECT_EQ(state(db).prepares,2u);
++}
++
++TEST(ManagedCellStatementReuse, CapacityOversizeKeysAndLargeVmFallBackWithoutLosingValues) {
++    database db(":memory:");std::string create="CREATE TABLE Many(id INTEGER PRIMARY KEY",insert="INSERT INTO Many VALUES(1";
++    for(int n=0;n<20;++n){create+=",c"+std::to_string(n)+" INTEGER";insert+=","+std::to_string(n);}
++    db.execute(create+")");db.execute(insert+")");
++    for(int n=0;n<20;++n)EXPECT_EQ(integer(db,"Many","c"+std::to_string(n)).detach(),n);
++    EXPECT_EQ(state(db).idle,16u);EXPECT_LE(state(db).retained_bytes,managed_cell_pool::max_bytes);
++    const std::string long_name(5000,'c');db.execute("CREATE TABLE LongKey(id INTEGER PRIMARY KEY,"+long_name+" INTEGER)");db.execute("INSERT INTO LongKey VALUES(1,77)");
++    EXPECT_EQ(integer(db,"LongKey",long_name).detach(),77);EXPECT_EQ(state(db).idle,0u);
++    const std::string large(300*1024,'x');db.execute("CREATE VIEW LargeVM AS SELECT 1 AS id,'"+large+"' AS t");
++    managed<std::string> text;text.assign(&db,nullptr,"LargeVM","t",1);EXPECT_EQ(text.detach(),large);
++    EXPECT_EQ(state(db).idle,0u);EXPECT_LE(state(db).retained_bytes,managed_cell_pool::max_bytes);
++}
++
++TEST(ManagedCellStatementReuse, InterruptedAndThrowingLeaseRetiresBeforeNextRead) {
++    database db(":memory:");table(db);auto field=integer(db);EXPECT_EQ(field.detach(),7);
++    auto* pool=managed_cell_pool_test_access::pool(db);
++    pool->set_before_step([](void*){throw std::runtime_error("injected before-step failure");},nullptr);
++    EXPECT_THROW(field.detach(),std::runtime_error);pool->set_before_step(nullptr,nullptr);
++    EXPECT_EQ(state(db).active,0u);EXPECT_EQ(state(db).idle,0u);
++    auto* raw=managed_cell_pool_test_access::trusted(db);
++    sqlite3_progress_handler(raw,1,[](void*){return 1;},nullptr);
++    EXPECT_THROW(field.detach(),db_error);sqlite3_progress_handler(raw,0,nullptr,nullptr);
++    EXPECT_EQ(state(db).active,0u);EXPECT_EQ(state(db).idle,0u);EXPECT_EQ(field.detach(),7);
++}
++
++TEST(ManagedCellStatementReuse, SettledCallbackRunsOffPoolLocksAndMayClose) {
++    database db(":memory:");table(db);auto field=integer(db);int calls=0;
++    db.set_txn_hooks([&]{++calls;EXPECT_EQ(state(db).active,0u);EXPECT_EQ(field.detach(),7);db.close();},[]{});
++    db.mark_txn_dirty();EXPECT_EQ(field.detach(),7);EXPECT_EQ(calls,1);
++    EXPECT_EQ(field.detach(),-7);EXPECT_TRUE(state(db).disabled);
++}
++
++TEST(ManagedCellStatementReuse, MovesPurgeAndRetiredReadLeaseKeepsItsOwnConnection) {
++    database original(":memory:");table(original);EXPECT_EQ(integer(original).detach(),7);
++    database moved(std::move(original));EXPECT_EQ(managed_cell_pool_test_access::pool(moved),nullptr);
++    EXPECT_EQ(integer(moved).detach(),7);
++    database destination(":memory:");table(destination);EXPECT_EQ(integer(destination).detach(),7);
++    destination=std::move(moved);EXPECT_EQ(managed_cell_pool_test_access::pool(destination),nullptr);EXPECT_EQ(integer(destination).detach(),7);
++    TempDB path("pool_retired_reader");configuration config(path.str());config.audit_retention_seconds=0;
++    lattice_db owner(config);owner.add(TestPerson{"reader",42,std::nullopt});
++    auto reader=owner.borrow_read_connection();ASSERT_TRUE(reader);EXPECT_EQ(managed_cell_pool_test_access::pool(*reader),nullptr);
++    owner.close_read_db();EXPECT_EQ(integer(*reader,"TestPerson","age").detach(),42);
++}
++#endif

@@ -1,0 +1,127 @@
+--- a/Tests/LatticeTests/PerfRefinementBenchmarks.swift
++++ b/Tests/LatticeTests/PerfRefinementBenchmarks.swift
+@@ -122,6 +122,55 @@
+     let samples: [PerfRefinementSample]
+ }
+ 
++// BEGIN MANAGED-CELL-DIAGNOSTIC helpers
++#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++private struct ManagedCellMechanismSnapshot: Codable {
++    let read_ok: Bool, pool_present: Bool, raw_escaped: Bool, closed: Bool, disabled: Bool
++    let thread_statements: UInt64, hits: UInt64, prepares: UInt64, retired: UInt64
++    let reset_failures: UInt64, idle: UInt64, retained_bytes: UInt64, active: UInt64, suspensions: UInt64
++    init(_ value: lattice.managed_cell_mechanism_snapshot) {
++        read_ok = value.read_ok; pool_present = value.pool_present
++        raw_escaped = value.raw_escaped; closed = value.closed; disabled = value.disabled
++        thread_statements = value.thread_statements; hits = value.hits; prepares = value.prepares
++        retired = value.retired; reset_failures = value.reset_failures; idle = value.idle
++        retained_bytes = value.retained_bytes; active = value.active; suspensions = value.suspensions
++    }
++}
++private struct ManagedCellMechanismPhase: Codable {
++    let phase: String
++    let sqlStatements: UInt64
++    let actualRows: Int
++    let actualFieldsPerRow: Int
++    let before: ManagedCellMechanismSnapshot
++    let after: ManagedCellMechanismSnapshot
++}
++private struct ManagedCellMechanismSidecar: Codable {
++    let schema = "lattice.swift-managed-cell-mechanism/1"
++    let variant: String
++    let iteration: Int
++    let warmup: Bool
++    let readChecksum: String
++    let phases: [ManagedCellMechanismPhase]
++}
++private func managedCellFieldCount(_ rows: [PerfRefinementValues]) throws -> Int {
++    guard let first = rows.first else { throw PerfRefinementFailure.invalid("empty mechanism values") }
++    let count = Mirror(reflecting: first).children.count
++    guard count == 6, rows.allSatisfy({ Mirror(reflecting: $0).children.count == count }) else {
++        throw PerfRefinementFailure.invalid("mechanism value field inventory changed")
++    }
++    return count
++}
++private func writeManagedCellSidecar(_ sidecar: ManagedCellMechanismSidecar, to path: URL) throws {
++    let encoder = JSONEncoder()
++    encoder.outputFormatting = [.sortedKeys]
++    let data = try encoder.encode(sidecar)
++    guard data.count <= 4_096, !FileManager.default.fileExists(atPath: path.path) else {
++        throw PerfRefinementFailure.invalid("mechanism sidecar bound or ownership failure")
++    }
++    try data.write(to: path, options: .withoutOverwriting)
++}
++#endif
++// END MANAGED-CELL-DIAGNOSTIC helpers
+ @Suite("PerfRefinementBenchmarks", .serialized)
+ struct PerfRefinementBenchmarks {
+     private static let updateRanks = [7, 100, 333, 999, 1234, 2345, 3456, 4567, 5678, 6789, 9998]
+@@ -320,6 +369,12 @@
+                     "read shape is unexpectedly warm")
+         var rows: [PerfRefinementMemory] = []
+         rows.reserveCapacity(100)
++// BEGIN MANAGED-CELL-DIAGNOSTIC cold-storage
++#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++        var mechanismColdBefore: lattice.managed_cell_mechanism_snapshot? = nil
++        var mechanismColdAfter: lattice.managed_cell_mechanism_snapshot? = nil
++#endif
++// END MANAGED-CELL-DIAGNOSTIC cold-storage
+         let (readResult, readTotal) = try measure {
+             let (_, cold) = try measure {
+                 for index in 4_000..<4_100 {
+@@ -329,7 +384,17 @@
+                     rows.append(row)
+                 }
+             }
++// BEGIN MANAGED-CELL-DIAGNOSTIC cold-before
++#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++            mechanismColdBefore = query.cxxLatticeRef.managedCellMechanismSnapshotForTest()
++#endif
++// END MANAGED-CELL-DIAGNOSTIC cold-before
+             let (displayed, scalars) = measure { rows.map { PerfRefinementValues($0) } }
++// BEGIN MANAGED-CELL-DIAGNOSTIC cold-after
++#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++            mechanismColdAfter = query.cxxLatticeRef.managedCellMechanismSnapshotForTest()
++#endif
++// END MANAGED-CELL-DIAGNOSTIC cold-after
+             return (cold, displayed, scalars)
+         }
+         let (cold, displayed, scalars) = readResult
+@@ -354,9 +419,37 @@
+         }
+         let warmFills = shape.fillCounts
+         let warmAnchors = shape.anchorCount
++// BEGIN MANAGED-CELL-DIAGNOSTIC warm-before
++#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++        let mechanismWarmBefore = query.cxxLatticeRef.managedCellMechanismSnapshotForTest()
++#endif
++// END MANAGED-CELL-DIAGNOSTIC warm-before
+         let (warmValues, warmScalars) = measure { warmRows.map { PerfRefinementValues($0) } }
++// BEGIN MANAGED-CELL-DIAGNOSTIC warm-after
++#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++        let mechanismWarmAfter = query.cxxLatticeRef.managedCellMechanismSnapshotForTest()
++#endif
++// END MANAGED-CELL-DIAGNOSTIC warm-after
+         try require(warmValues == displayed, "warm values changed")
+         try require(zip(rows, warmRows).allSatisfy { $0.0 === $0.1 }, "warm identity changed")
++// BEGIN MANAGED-CELL-DIAGNOSTIC sidecar
++#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++        guard let mechanismColdBefore, let mechanismColdAfter else {
++            throw PerfRefinementFailure.invalid("missing cold mechanism snapshots")
++        }
++        let mechanism = ManagedCellMechanismSidecar(
++            variant: variant, iteration: iteration, warmup: warmup, readChecksum: readChecksum,
++            phases: [
++                .init(phase: "read.live_scalars", sqlStatements: scalars.sqlStatements,
++                      actualRows: displayed.count, actualFieldsPerRow: try managedCellFieldCount(displayed),
++                      before: .init(mechanismColdBefore), after: .init(mechanismColdAfter)),
++                .init(phase: "read.warm_live_scalars", sqlStatements: warmScalars.sqlStatements,
++                      actualRows: warmValues.count, actualFieldsPerRow: try managedCellFieldCount(warmValues),
++                      before: .init(mechanismWarmBefore), after: .init(mechanismWarmAfter))])
++        try writeManagedCellSidecar(mechanism, to: directory.deletingLastPathComponent()
++            .appendingPathComponent(String(format: "mechanism-%04d.json", iteration)))
++#endif
++// END MANAGED-CELL-DIAGNOSTIC sidecar
+ 
+         // The complete baseline is one checked transaction, including ID
+         // discovery/hydration/routing and COMMIT. Never substitute += for the

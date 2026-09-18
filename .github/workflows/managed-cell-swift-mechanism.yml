@@ -1,0 +1,75 @@
+name: Swift managed-cell reuse mechanism
+on:
+  push:
+    branches: [codex/perf-qualification-20260918]
+    paths: ['.github/workflows/managed-cell-swift-mechanism.yml', 'Scripts/managed-cell-swift-mechanism/**']
+  workflow_dispatch:
+    inputs:
+      packetSealSHA256:
+        description: Reviewed installed packet seal SHA256
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  macos-mechanism:
+    runs-on: macos-26
+    timeout-minutes: 170
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Fetch exact reviewed tooling under owned localdev
+        timeout-minutes: 5
+        shell: bash
+        env:
+          REVIEWED_SEAL: ${{ inputs.packetSealSHA256 || 'ab117277958c144c282158c2a081d64b8dc75e2b208e3d44a65c8671488f871c' }}
+        run: |
+          set -euo pipefail
+          TASK_ROOT="$HOME/localdev/managed-cell-swift-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$TASK_ROOT"
+          mkdir -p "$TASK_ROOT/tmp" "$TASK_ROOT/packet" "$TASK_ROOT/qualification/tmp"
+          echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          git init "$TASK_ROOT/tools"
+          git -C "$TASK_ROOT/tools" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          test "$(git -C "$TASK_ROOT/tools" rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          git -C "$TASK_ROOT/tools" archive FETCH_HEAD Scripts/managed-cell-swift-mechanism | tar -x -C "$TASK_ROOT/packet" --strip-components=2
+          export TASK_ROOT
+          python3 -B - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          root=Path(os.environ['TASK_ROOT'])
+          seal=hashlib.sha256((root/'packet/PACKET-SEAL.json').read_bytes()).hexdigest()
+          assert seal==os.environ['REVIEWED_SEAL']
+          tree=subprocess.check_output(['git','-C',str(root/'tools'),'rev-parse','FETCH_HEAD^{tree}'],text=True).strip()
+          (root/'WORKFLOW-SOURCE.json').write_text(json.dumps({'sha':os.environ['GITHUB_SHA'],'tree':tree,
+              'repository':os.environ['GITHUB_REPOSITORY'],'runId':os.environ['GITHUB_RUN_ID'],
+              'runAttempt':os.environ['GITHUB_RUN_ATTEMPT'],'packetSealSHA256':seal},indent=2)+'\n')
+          PY
+      - name: Fresh uniform Release build and unchanged local then attached workloads
+        timeout-minutes: 155
+        shell: bash
+        env:
+          REVIEWED_SEAL: ${{ inputs.packetSealSHA256 || 'ab117277958c144c282158c2a081d64b8dc75e2b208e3d44a65c8671488f871c' }}
+        run: |
+          set -euo pipefail
+          export TMPDIR="$TASK_ROOT/qualification/tmp" TMP="$TASK_ROOT/qualification/tmp" TEMP="$TASK_ROOT/qualification/tmp"
+          SWIFT_EXECUTABLE="$(xcrun --find swift)"
+          python3 -B "$TASK_ROOT/packet/qualify.py" --root "$TASK_ROOT/qualification" --seal-sha256 "$REVIEWED_SEAL" --swift "$SWIFT_EXECUTABLE"
+      - name: Retain exact source, observations, command receipts and failures
+        if: always() && env.TASK_ROOT != ''
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: swift-managed-cell-mechanism-${{ github.run_attempt }}
+          path: |
+            ${{ env.TASK_ROOT }}/WORKFLOW-SOURCE.json
+            ${{ env.TASK_ROOT }}/packet
+            ${{ env.TASK_ROOT }}/qualification/receipts
+            ${{ env.TASK_ROOT }}/qualification/runs
+            ${{ env.TASK_ROOT }}/qualification/test-logs
+            ${{ env.TASK_ROOT }}/qualification/scratch/workspace-state.json
+            ${{ env.TASK_ROOT }}/qualification/scratch/**/release/*.xctest/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

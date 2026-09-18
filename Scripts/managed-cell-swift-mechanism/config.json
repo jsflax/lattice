@@ -1,0 +1,54 @@
+{
+  "buildSeconds": 5400,
+  "changedPaths": {
+    "Core": [
+      "CMakeLists.txt",
+      "Sources/LatticeCore/include/lattice/db.hpp",
+      "Sources/LatticeCore/include/lattice/lattice.hpp",
+      "Sources/LatticeCore/include/lattice/managed.hpp",
+      "Sources/LatticeCore/src/db.cpp",
+      "Sources/LatticeCore/src/managed_cell_pool.cpp",
+      "Sources/LatticeCore/src/managed_cell_pool.hpp",
+      "Sources/LatticeCore/src/projection_memory.cpp",
+      "Sources/LatticeCore/src/projection_memory.hpp",
+      "Sources/LatticeSwiftCppBridge/include/lattice.hpp",
+      "Sources/LatticeSwiftCppBridge/include/managed_cell_mechanism.hpp",
+      "Sources/LatticeSwiftCppBridge/src/managed_cell_mechanism.cpp",
+      "Tests/LatticeCoreTests/ManagedCellStatementReuseTests.cpp"
+    ],
+    "SDK": [
+      "Tests/LatticeTests/PerfRefinementBenchmarks.swift"
+    ]
+  },
+  "core": "234afb4ad4f74174bd875035e6bb47b1a878ac56",
+  "coreTree": "06cacd09ecaf80a460418dad52c352abade58654",
+  "coreURL": "https://github.com/jsflax/LatticeCore.git",
+  "defaultOff": true,
+  "freeFloorBytes": 12884901888,
+  "frozenBenchmarkSHA256": "993d3a6f384958185c9ee5817e6ba1f125a037f722a074a3a719ef71226455e2",
+  "logCeilingBytes": 536870912,
+  "overallSeconds": 9000,
+  "packetCeilingBytes": 32212254720,
+  "performanceTargetClaimed": false,
+  "reserveSeconds": 600,
+  "resolveSeconds": 600,
+  "runSeconds": 1200,
+  "samples": 100,
+  "schemaVersion": 1,
+  "sdk": "af7775a269d87c37f2ad9a25a5aa60bbcac7b88f",
+  "sdkTree": "ebce11cee9cac7d62e08c0ff830703d66c9c78d2",
+  "sdkURL": "https://github.com/jsflax/Lattice.git",
+  "settleSeconds": 60,
+  "sourceFileCounts": {
+    "Core": 905,
+    "SDK": 252
+  },
+  "testFilter": "PerfRefinementBenchmarks/releaseRead100AndUpdate11",
+  "testPath": "Tests/LatticeTests/PerfRefinementBenchmarks.swift",
+  "unknownAuthorizersSupported": false,
+  "variants": [
+    "local",
+    "attached"
+  ],
+  "warmups": 5
+}

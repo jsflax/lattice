@@ -1,0 +1,105 @@
+--- a/Sources/LatticeCore/include/lattice/db.hpp
++++ b/Sources/LatticeCore/include/lattice/db.hpp
+@@ -263,6 +263,9 @@
+ private:
+ #ifdef LATTICE_MANAGED_CELL_STATEMENT_REUSE
+     friend struct managed_cell_pool_test_access;
++#ifdef LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++    friend struct managed_cell_swift_mechanism_access;
++#endif
+     mutable managed_cell_pool* managed_cell_pool_ = nullptr; // owned; out-of-line deletion
+     struct managed_cell_policy_scope {
+         const database& owner;
+--- a/Sources/LatticeSwiftCppBridge/include/lattice.hpp
++++ b/Sources/LatticeSwiftCppBridge/include/lattice.hpp
+@@ -16,6 +16,7 @@
+ 
+ #include <dynamic_object.hpp>
+ #include <bulk_mutation.hpp>
++#include <managed_cell_mechanism.hpp>
+ #include <projection.hpp>
+ #include <list.hpp>
+ #include <error.hpp>
+@@ -3727,6 +3728,11 @@
+     //      non-const swift_lattice methods through the shared_ptr member is
+     //      legal in a const method). ----
+ 
++#ifdef LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++    managed_cell_mechanism_snapshot managed_cell_mechanism_snapshot_for_test() const noexcept
++        SWIFT_NAME(managedCellMechanismSnapshotForTest());
++#endif
++
+     // CRUD
+     void add(const dynamic_object_ref& ref, cxx_error& err) const { impl().add(ref, err); }
+     void add_preserving_global_id(const dynamic_object_ref& ref, const std::string& preserved_global_id) const {
+--- /dev/null
++++ b/Sources/LatticeSwiftCppBridge/include/managed_cell_mechanism.hpp
+@@ -0,0 +1,26 @@
++#pragma once
++// Private diagnostic overlay only; absent unless explicitly opted in.
++#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
++#ifndef LATTICE_MANAGED_CELL_STATEMENT_REUSE
++#error "Swift mechanism diagnostic requires the statement-reuse opt-in"
++#endif
++#include <cstdint>
++namespace lattice {
++struct managed_cell_mechanism_snapshot {
++    bool read_ok = false;
++    bool pool_present = false;
++    bool raw_escaped = false;
++    bool closed = false;
++    bool disabled = false;
++    uint64_t thread_statements = 0;
++    uint64_t hits = 0;
++    uint64_t prepares = 0;
++    uint64_t retired = 0;
++    uint64_t reset_failures = 0;
++    uint64_t idle = 0;
++    uint64_t retained_bytes = 0;
++    uint64_t active = 0;
++    uint64_t suspensions = 0;
++};
++}
++#endif
+--- /dev/null
++++ b/Sources/LatticeSwiftCppBridge/src/managed_cell_mechanism.cpp
+@@ -0,0 +1,39 @@
++// Private stock-runtime mechanism diagnostic; no raw handle or callback changes.
++#include <lattice.hpp>
++#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
++#include "../../LatticeCore/src/managed_cell_pool.hpp"
++namespace lattice {
++// A distinct friend avoids an ODR conflict with existing GTest test_access.
++struct managed_cell_swift_mechanism_access {
++    static managed_cell_mechanism_snapshot read(const database& db) {
++        managed_cell_mechanism_snapshot out;
++        out.closed = db.is_closed();
++        out.raw_escaped = db.raw_handle_escaped_.load(std::memory_order_acquire);
++        out.thread_statements = database::thread_statement_count();
++        if (const auto* pool = db.managed_cell_pool_) {
++            const auto value = pool->inspect();
++            out.pool_present = true;
++            out.hits = value.hits;
++            out.prepares = value.prepares;
++            out.retired = value.retired;
++            out.reset_failures = value.reset_failures;
++            out.idle = value.idle;
++            out.retained_bytes = value.retained_bytes;
++            out.active = value.active;
++            out.suspensions = value.suspensions;
++            out.disabled = value.disabled;
++        }
++        out.read_ok = true;
++        return out;
++    }
++};
++managed_cell_mechanism_snapshot
++swift_lattice_ref::managed_cell_mechanism_snapshot_for_test() const noexcept {
++    // impl() is PRIVATE: an out-of-line member is required, not a free caller.
++    // The synchronous benchmark retains the live query owner and does not
++    // concurrently close/reopen it. This does not introduce a writer lease.
++    try { return managed_cell_swift_mechanism_access::read(impl().db()); }
++    catch (...) { return {}; } // read_ok=false rejects diagnostic acceptance.
++}
++}
++#endif
