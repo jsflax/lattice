@@ -230,7 +230,11 @@ public struct DistanceEntry: Sendable, Equatable {
 public protocol ObjectBackend: AnyObject, Sendable {
 
     // Identity / metadata
+    /// Physical table route used by this handle for identity and persistence.
     var tableName: String { get }
+    /// Schema model name used to select a Swift model type. This can differ
+    /// from the physical route for rows read through attached-store unions.
+    var logicalModelTableName: String { get }
     var lattice: (any LatticeBackend)? { get }   // CROSS-REF; nil when unmanaged
     /// Cheap managed-check (no backend boxing) — `lattice != nil` without
     /// allocating the boxed handle. Used by the per-add guards.
@@ -292,6 +296,7 @@ public protocol ObjectBackend: AnyObject, Sendable {
 }
 
 public extension ObjectBackend {
+    var logicalModelTableName: String { tableName }
     var _managedPrimaryKey: Int64? { nil }
     func _queryRowValue(named name: String) -> ColumnValue? { nil }
     func _releaseQueryRowImage() {}

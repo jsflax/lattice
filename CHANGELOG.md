@@ -90,6 +90,9 @@ nuclear tool renumbered ids and silenced every other process.
   uploads core treats it like `nil`.
 
 ### Fixed
+- Virtual results use the logical model name to hydrate attached rows while
+  preserving their physical store route for identity and writes. Both the
+  parameter-pack and compatibility paths retain filtered, paged results.
 - Reject new cached Results reads after the shared native database closes,
   including handles whose collection caches are retained by another wrapper.
   Reads already in flight keep their existing lifetime contract.

@@ -142,6 +142,7 @@ final class CxxObjectBackend: ObjectBackend, @unchecked Sendable {
     @inlinable init(_ ref: CxxDynamicObjectRef) { self.ref = ref }
 
     var tableName: String { String(ref.getTableName()) }
+    var logicalModelTableName: String { String(ref.getModelTableName()) }
     var lattice: (any LatticeBackend)? { _optLatticeRef(ref.lattice).map { CxxBackend($0) } }
     @inlinable var hasLattice: Bool { ref.is_managed() }
     @inlinable var _managedPrimaryKey: Int64? {

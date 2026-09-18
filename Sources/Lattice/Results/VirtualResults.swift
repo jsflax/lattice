@@ -107,7 +107,7 @@ public final class _VirtualResults<each M: Model, Element>: VirtualResults, Obse
         
         for row in cxxResults {
             for type in repeat (each M).self {
-                if type.entityName == row.tableName {
+                if type.entityName == row.logicalModelTableName {
                     objects.append(type.init(dynamicObject: row) as! Element)
                     break
                 }
