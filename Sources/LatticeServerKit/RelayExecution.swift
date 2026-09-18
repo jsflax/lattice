@@ -201,10 +201,17 @@ private final class RelayExecutionState: @unchecked Sendable {
             queued -= 1
             running += 1
             condition.unlock()
+            // Final captured owners and Darwin autoreleased objects drain
+            // outside the queue lock; their deinitializers may enqueue work.
+            #if canImport(Darwin)
+            autoreleasepool {
+                body()
+                body = {}
+            }
+            #else
             body()
-            // Final captured owner releases, including endpoint release and
-            // recursive enqueues, must precede locking the queue again.
             body = {}
+            #endif
             condition.lock()
             store.running = false
             running -= 1

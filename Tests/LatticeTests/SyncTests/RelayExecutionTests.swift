@@ -13,15 +13,20 @@ struct RelayExecutionTests {
         let gate = RelayTestGate(), done = RelayTestSignal(), other = RelayTestSignal()
         let values = RelayTestBox<[Int]>([]), stack = RelayTestBox(false)
         defer { gate.release.signal() }
-        pool.submitRequired(for: "A") { gate.entered.send(); gate.wait() }
-        try await gate.entered.wait()
+        pool.submitRequired(for: "A") { gate.entered.signal(); gate.wait() }
         for i in 0..<80 {
             pool.submitRequired(for: "A") {
                 values.withLock { $0.append(i) }
                 if i == 79 { done.send() }
             }
         }
+        let overlapped = RelayTestBox(false)
         pool.submitRequired(for: "B") {
+            // Observe/release from the independent native worker. Generic test
+            // task resumption must not consume the blocker's five-second gate.
+            defer { gate.release.signal() }
+            let entered = gate.entered.wait(timeout: .now() + 5) == .success
+            overlapped.withLock { $0 = entered && values.withLock { $0.isEmpty } }
             #if canImport(Darwin)
             stack.withLock { $0 = pthread_get_stacksize_np(pthread_self()) >= RelayExecutionPool.stackSize }
             #else
@@ -30,11 +35,10 @@ struct RelayExecutionTests {
             other.send()
         }
         try await other.wait()
-        try #require(values.withLock { $0.isEmpty })
-        try #require(stack.withLock { $0 })
-        gate.release.signal()
         try await done.wait()
         await pool.shutdown()
+        try #require(overlapped.withLock { $0 })
+        try #require(stack.withLock { $0 })
         try #require(values.withLock { $0 } == Array(0..<80))
         try #require(!gate.timedOut)
         try #require(pool.snapshot.liveWorkers == 0)
@@ -48,8 +52,7 @@ struct RelayExecutionTests {
         let gate = RelayTestGate(), done = RelayTestSignal()
         let values = RelayTestBox<[Int]>([])
         defer { gate.release.signal() }
-        pool.submitRequired(for: "A") { gate.entered.send(); gate.wait() }
-        try await gate.entered.wait()
+        pool.submitRequired(for: "A") { gate.entered.signal(); gate.wait() }
         for i in 1...3 { pool.submitRequired(for: "A") { values.withLock { $0.append(i) } } }
         for i in 11...12 { pool.submitRequired(for: "B") { values.withLock { $0.append(i) } } }
         pool.submitRequired(for: "A") { done.send() }
@@ -66,8 +69,7 @@ struct RelayExecutionTests {
         let gate = RelayTestGate(), done = RelayTestSignal()
         let releasedOffLock = RelayTestBox(false)
         defer { gate.release.signal() }
-        pool.submitRequired(for: "A") { gate.entered.send(); gate.wait() }
-        try await gate.entered.wait()
+        pool.submitRequired(for: "A") { gate.entered.signal(); gate.wait() }
         func submitCapture() {
             let capture = RelayTestLifetime {
                 // A regression must fail promptly instead of deadlocking the
@@ -91,25 +93,87 @@ struct RelayExecutionTests {
         try #require(!gate.timedOut)
     }
 
+    #if canImport(Darwin)
+    @Test(.timeLimit(.minutes(1)))
+    func autoreleasedObjectsDrainBetweenJobsAndCanEnqueueDuringDeinit() async throws {
+        let pool = RelayExecutionPool(workerCount: 1, name: "relay.test.autorelease")
+        let drained = RelayTestSignal()
+        let released = RelayTestBox(0), beforeNextJob = RelayTestBox(-1)
+        let releasedOffLock = RelayTestBox(false)
+        pool.submitRequired(for: "A") {
+            for _ in 0..<32 {
+                _ = Unmanaged.passRetained(RelayAutoreleaseSentinel {
+                    released.withLock { $0 += 1 }
+                }).autorelease()
+            }
+            _ = Unmanaged.passRetained(RelayAutoreleaseSentinel {
+                released.withLock { $0 += 1 }
+                // A lock regression fails without hanging the test process.
+                let admitted = DispatchSemaphore(value: 0)
+                Thread {
+                    _ = pool.submit(for: "A") { drained.send() }
+                    admitted.signal()
+                }.start()
+                releasedOffLock.withLock {
+                    $0 = admitted.wait(timeout: .now() + 0.5) == .success
+                }
+            }).autorelease()
+        }
+        pool.submitRequired(for: "A") { beforeNextJob.withLock { $0 = released.withLock { $0 } } }
+        // In the red implementation the deinitializer cannot run until worker
+        // shutdown. Observe the second job independently, then stop the pool;
+        // never make shutdown depend on the autoreleased callback firing.
+        let secondJob = RelayTestSignal()
+        pool.submitRequired(for: "A") { secondJob.send() }
+        try await secondJob.wait()
+        let releasedBeforeShutdown = beforeNextJob.withLock { $0 }
+        // Drain is expected before this point; cancellation of admission here
+        // must not race a delayed reentrant enqueue in the failing case.
+        if releasedBeforeShutdown == 33 {
+            try await drained.wait()
+        }
+        await pool.shutdown()
+        try #require(releasedBeforeShutdown == 33)
+        try #require(releasedOffLock.withLock { $0 })
+    }
+    #endif
+
     @Test(.timeLimit(.minutes(1)))
     func shutdownClosesAdmissionAndDrainsAnAlreadyAdmittedBody() async throws {
         let pool = RelayExecutionPool(workerCount: 1, name: "relay.test.shutdown")
         let gate = RelayTestGate(), closed = RelayTestBox(false)
+        let observed = RelayTestSignal()
+        let enteredBeforeStop = RelayTestBox(false), stoppedWhileHeld = RelayTestBox(false)
+        let rejectedNewWork = RelayTestBox(false)
         defer { gate.release.signal() }
-        pool.submitRequired(for: "A") { gate.entered.send(); gate.wait() }
-        try await gate.entered.wait()
-        let shutdown = Task { await pool.shutdown(); closed.withLock { $0 = true } }
-        let deadline = ContinuousClock.now + .seconds(3)
-        while !pool.snapshot.stopping && ContinuousClock.now < deadline {
-            try Task.checkCancellation()
-            await Task.yield()
+        // Task admission may be delayed. Start the timed native fixture only
+        // once this task begins, then enter shutdown without another await.
+        let shutdown = Task {
+            pool.submitRequired(for: "A") { gate.entered.signal(); gate.wait() }
+            Thread {
+                let entered = gate.entered.wait(timeout: .now() + 5) == .success
+                enteredBeforeStop.withLock { $0 = entered }
+                let deadline = ContinuousClock.now + .seconds(3)
+                while !pool.snapshot.stopping && ContinuousClock.now < deadline {
+                    Thread.sleep(forTimeInterval: 0.001)
+                }
+                let snapshot = pool.snapshot
+                stoppedWhileHeld.withLock {
+                    $0 = snapshot.stopping && snapshot.running == 1 && !closed.withLock { $0 }
+                }
+                let accepted = pool.submit(for: "B") {}
+                rejectedNewWork.withLock { $0 = !accepted }
+                gate.release.signal()
+                observed.send()
+            }.start()
+            await pool.shutdown()
+            closed.withLock { $0 = true }
         }
-        try #require(pool.snapshot.stopping)
-        try #require(!closed.withLock { $0 })
-        let accepted = pool.submit(for: "B") {}
-        try #require(!accepted)
-        gate.release.signal()
+        try await observed.wait()
         await shutdown.value
+        try #require(enteredBeforeStop.withLock { $0 })
+        try #require(stoppedWhileHeld.withLock { $0 })
+        try #require(rejectedNewWork.withLock { $0 })
         try #require(closed.withLock { $0 })
         try #require(pool.snapshot.liveWorkers == 0 && !gate.timedOut)
         // Repeated completed shutdown does not leak or double-resume a waiter.
@@ -221,11 +285,14 @@ private final class RelayTestBox<Value>: @unchecked Sendable {
 }
 
 private final class RelayTestGate: Sendable {
-    let entered = RelayTestSignal()
+    let entered = DispatchSemaphore(value: 0)
     let release = DispatchSemaphore(value: 0)
     private let expired = RelayTestBox(false)
     var timedOut: Bool { expired.withLock { $0 } }
-    func wait() { expired.withLock { $0 = release.wait(timeout: .now() + 5) != .success } }
+    func wait() {
+        let timedOut = release.wait(timeout: .now() + 5) != .success
+        expired.withLock { $0 = timedOut }
+    }
 }
 
 private final class RelayTestLifetime: Sendable {
@@ -270,3 +337,14 @@ private final class RelayTestLifetime: Sendable {
         return signal
     }
 }
+
+#if canImport(Darwin)
+private final class RelayAutoreleaseSentinel: NSObject {
+    let onRelease: @Sendable () -> Void
+    init(_ onRelease: @escaping @Sendable () -> Void) {
+        self.onRelease = onRelease
+        super.init()
+    }
+    deinit { onRelease() }
+}
+#endif
