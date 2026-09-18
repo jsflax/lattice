@@ -29,36 +29,38 @@ def fingerprint(info):
 def image_identity(path,allowed_types=(2,8)):
     """Bounded header read plus existing-style streaming full SHA; no native tool."""
     path=Path(path)
-    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
-    with os.fdopen(fd,'rb') as stream:
-        before=os.fstat(stream.fileno())
-        require(stat.S_ISREG(before.st_mode) and 32<=before.st_size<=2*2**30,'image file type/size')
-        header=stream.read(32)
-        magic,cpu,subtype,kind,count,size,flags,reserved=struct.unpack('<8I',header)
-        require(magic==0xfeedfacf and cpu==0x0100000c and kind in allowed_types,'unsupported image format/type; thin arm64 required')
-        require(0<count<=256 and 8*count<=size<=65536 and 32+size<=before.st_size,'image load command bounds')
-        commands=stream.read(size);require(len(commands)==size,'truncated image commands')
-        cursor=0;found=None
-        for _ in range(count):
-            require(cursor+8<=size,'truncated image command header')
-            command,length=struct.unpack_from('<2I',commands,cursor)
-            require(length>=8 and length%8==0 and cursor+length<=size,'invalid image command extent')
-            if command==0x1b:
-                require(length==24 and found is None,'invalid/duplicate image LC_UUID')
-                raw=commands[cursor+8:cursor+24];require(any(raw),'nil image LC_UUID');found=str(uuid.UUID(bytes=raw))
-            cursor+=length
-        require(cursor==size and found is not None,'image command span/missing LC_UUID')
-        # Hash exactly the same FD whose header supplied UUID, in bounded memory.
-        stream.seek(0);digest=hashlib.sha256();read=0
-        while True:
-            block=stream.read(min(2**20,before.st_size-read+1))
-            if not block:break
-            read+=len(block);require(read<=before.st_size,'image grew during hashing');digest.update(block)
-        after=os.fstat(stream.fileno())
-    require(read==before.st_size and fingerprint(before)==fingerprint(after)==fingerprint(path.stat(follow_symlinks=False)),
-            'image identity changed during read')
-    return {'path':str(path),'sha256':digest.hexdigest(),'uuid':found,'bytes':read,'fileType':kind,
-            'format':'thin little-endian arm64 Mach-O','loadCommands':count,'loadCommandBytes':size}
+    evidence={'diagnosticOnly':True,'fullFileHashEstablished':False,'stableDuringInspection':False}
+    try:
+        fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        with os.fdopen(fd,'rb') as stream:
+            before=os.fstat(stream.fileno())
+            evidence['fileBytes']=before.st_size
+            require(stat.S_ISREG(before.st_mode) and 0<=before.st_size<=2*2**30,'image file type/size')
+            try:
+                header=macho_identity.image_header(stream,before.st_size,allowed_types,evidence)
+                # Hash the complete container, not only the selected slice,
+                # from the same FD that supplied every header and UUID.
+                stream.seek(0);digest=hashlib.sha256();read=0
+                while True:
+                    block=stream.read(min(2**20,before.st_size-read+1))
+                    if not block:break
+                    read+=len(block);require(read<=before.st_size,'image grew during hashing');digest.update(block)
+                require(read==before.st_size,'image size changed during hashing')
+            finally:
+                try:
+                    after=os.fstat(stream.fileno())
+                    evidence['stableDuringInspection']=(fingerprint(before)==fingerprint(after)==fingerprint(path.stat(follow_symlinks=False)))
+                except OSError as error:
+                    # Preserve an earlier parsing error while still reporting
+                    # that stable-path evidence could not be established.
+                    evidence['stabilityError']=str(error)[:512]
+            require(evidence['stableDuringInspection'],'image identity changed during read')
+        return {'path':str(path),'sha256':digest.hexdigest(),'bytes':read,**header}
+    except (OSError,ValueError) as error:
+        # Rejection metadata is bounded, observed evidence only. It never
+        # supplies an admitted identity or substitutes for the full-file hash.
+        error.image_evidence=evidence
+        raise
 
 
 class Images:
@@ -74,9 +76,11 @@ class Images:
                 require(real.name in ('swiftpm-testing-helper','xctest'),'unexpected exact helper basename')
                 proof=image_identity(real,(2,))
                 self.images[str(real)]=proof
-            except (OSError,ValueError) as error:self.errors.append({
-                'path':str(path),'resolvedPath':str(real) if real is not None else None,
-                'errorType':type(error).__name__,'error':str(error)[:512]})
+            except (OSError,ValueError) as error:
+                rejected={'path':str(path),'resolvedPath':str(real) if real is not None else None,
+                          'errorType':type(error).__name__,'error':str(error)[:512]}
+                if hasattr(error,'image_evidence'):rejected['formatEvidence']=error.image_evidence
+                self.errors.append(rejected)
         # Preserve candidate evidence before mandatory admission can throw.
         # The optional sink must finish successfully before any SDK checkout.
         if inventory_sink is not None:inventory_sink(self.snapshot())

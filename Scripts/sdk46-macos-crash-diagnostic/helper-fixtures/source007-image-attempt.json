@@ -1,0 +1,26 @@
+{
+  "bundle": null,
+  "images": {},
+  "selectedSwift": "/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend",
+  "selectedXCTest": "/Applications/Xcode_26.6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Xcode/Agents/xctest",
+  "unsupportedOrMissingImages": [
+    {
+      "error": "unsupported image format/type; thin arm64 required",
+      "errorType": "ValueError",
+      "path": "/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/libexec/swift/pm/swiftpm-testing-helper",
+      "resolvedPath": "/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/libexec/swift/pm/swiftpm-testing-helper"
+    },
+    {
+      "error": "[Errno 2] No such file or directory: '/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftpm-testing-helper'",
+      "errorType": "FileNotFoundError",
+      "path": "/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftpm-testing-helper",
+      "resolvedPath": null
+    },
+    {
+      "error": "unsupported image format/type; thin arm64 required",
+      "errorType": "ValueError",
+      "path": "/Applications/Xcode_26.6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Xcode/Agents/xctest",
+      "resolvedPath": "/Applications/Xcode_26.6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Xcode/Agents/xctest"
+    }
+  ]
+}

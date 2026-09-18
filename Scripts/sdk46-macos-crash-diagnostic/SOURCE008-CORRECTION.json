@@ -1,0 +1,24 @@
+{
+  "actualHostedFatFormatConfirmed": false,
+  "actualImageAttemptSHA256": "b230f869329814d9576d6d9f2eb77a38688c3ac466b281cd867547bf08e4eec3",
+  "changedRuntimeFiles": [
+    "macho_identity.py",
+    "sdk_capture.py"
+  ],
+  "controlParserFunctionsUnchanged": true,
+  "existingMaximumSDKImageBytes": 2147483648,
+  "failedRun": 35397830417,
+  "helperCompatibilityEstablished": false,
+  "maximumArchitectureEntries": 8,
+  "maximumImageHeaderBytesRead": 66080,
+  "nativeExecution": false,
+  "network": false,
+  "patchSHA256": "ae61631892fb3e73375a0806fbf7357fb4e490c91317f90d414611d584a3f99c",
+  "predecessorSealSHA256": "29f2774aa992f28d3108f72d120a598056820565cd4ce9ae4e202817d56345b5",
+  "scope": "Bounded SDK image FAT32/FAT64 plain-arm64 selection and observed rejection header evidence",
+  "sdkRuntimeQualified": false,
+  "selectedUUIDAndWholeFileHashRequired": true,
+  "sourceGraphEnvironmentArgvNativeBoundsUnchanged": true,
+  "stackOwnershipUUIDPathAdmissionUnchanged": true,
+  "unknownOrAmbiguousArchitectureAccepted": false
+}

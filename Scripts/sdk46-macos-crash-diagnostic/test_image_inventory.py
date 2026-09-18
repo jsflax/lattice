@@ -36,7 +36,10 @@ class ImageInventory(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'no exact supported SwiftPM helper'):
             capture.Images(self.swift,self.xctest,inventory_sink=snapshots.append)
         first=snapshots[0]['unsupportedOrMissingImages'][0]
-        self.assertEqual(first['resolvedPath'],str(self.helper));self.assertIn('thin arm64 required',first['error'])
+        self.assertEqual(first['resolvedPath'],str(self.helper));self.assertIn('unsupported image magic',first['error'])
+        self.assertEqual(first['formatEvidence']['prefixHex'],(b'unknown-format'*8)[:32].hex())
+        self.assertTrue(first['formatEvidence']['diagnosticOnly'])
+        self.assertFalse(first['formatEvidence']['fullFileHashEstablished'])
     def test_valid_helper_acceptance_and_identity_unchanged(self):
         self.valid_helper();snapshots=[]
         result=capture.Images(self.swift,self.xctest,inventory_sink=snapshots.append)

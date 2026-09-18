@@ -1,0 +1,28 @@
+{
+  "formatFacts": {
+    "ARM64Type": "0x0100000c",
+    "FAT_MAGIC": "0xcafebabe",
+    "FAT_MAGIC_64": "0xcafebabf",
+    "LC_UUID": "0x1b",
+    "X86_64Type": "0x01000007",
+    "fatStructures": "big-endian on disk",
+    "fat_archBytes": 20,
+    "fat_arch_64Bytes": 32,
+    "mach_header_64Bytes": 32,
+    "supportedARM64Subtype": 0,
+    "supportedCompanionSubtypes": [
+      3,
+      8,
+      2147483651,
+      2147483656
+    ],
+    "uuidCommandBytes": 24
+  },
+  "headers": {
+    "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach-o/fat.h": "19925cdb5fed9b5b7981b05420856f65b99abb54bca34ea95e0e581da8cc580f",
+    "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach-o/loader.h": "5862aeb7fbf183453080bc887c0d502fe25a86ff5bd81291bbcc408bd7fe6e74",
+    "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include/mach/machine.h": "00d57dcf5a8332ba5a759b447f8305b3ef8bf15a9025c142af04e13c2a5b14f5"
+  },
+  "hostedImagesRead": false,
+  "kind": "local primary SDK header source only"
+}
