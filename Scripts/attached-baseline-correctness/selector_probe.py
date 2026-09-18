@@ -139,8 +139,8 @@ def run(packet, root, receipts, runner, command, config, version_log):
             result = framework(bounded_text(xml), bounded_text(log), mode)
             results[mode] = result
             state['files'].update({str(xml): guard.digest(xml), str(log): guard.digest(log)})
-            guard.save_json(receipts / ('SELECTOR-' + mode + '.json'), result)
-            state['files'][str(receipts / ('SELECTOR-' + mode + '.json'))] = guard.digest(receipts / ('SELECTOR-' + mode + '.json'))
+            guard.save_json(receipts / ('selector-' + mode + '-classification.json'), result)
+            state['files'][str(receipts / ('selector-' + mode + '-classification.json'))] = guard.digest(receipts / ('selector-' + mode + '-classification.json'))
             verify(state)
         chosen = [x for x in results['baseline']['bodies'] if x[0] == 'chosen']
         assert results['selected']['bodies'] == chosen

@@ -124,8 +124,15 @@ class Selector(unittest.TestCase):
                 root=Path(tmp).resolve(); receipts=root/'receipts';receipts.mkdir()
                 version=receipts/'version.log';version.write_text(version_text)
                 original={'KEEP':'exact'};runner=SimpleNamespace(env=original);calls=[]
+                # Model real lowercase command receipts, with filesystem-independent casefold exclusion.
+                original_save = p.guard.save_json
+                def casefold_save(path, value):
+                    if path.name.casefold() in {x.name.casefold() for x in path.parent.iterdir()}:
+                        raise FileExistsError('casefold receipt collision: ' + path.name)
+                    return original_save(path, value)
                 def command(label, argv, cwd, timeout):
                     calls.append((label,argv,timeout)); log=receipts/(label+'.log')
+                    p.guard.save_json(receipts/(label+'.json'), {'fakeCommandLabel':label, 'ownedCommandReceipt':True})
                     if label=='selector-build-tests':
                         binary=root/'selector-probe/scratch/arm64-apple-macosx/debug/FilterProbePackageTests.xctest/Contents/MacOS/FilterProbePackageTests'
                         binary.parent.mkdir(parents=True);binary.write_bytes(b'fake image for pure orchestration check')
@@ -137,15 +144,31 @@ class Selector(unittest.TestCase):
                         if fail and mode=='selected':raise RuntimeError('fake selected failure')
                         xml,text=evidence(mode);Path(argv[-1]).write_text(xml);log.write_text(text)
                     return log
+                def run_probe():
+                    from unittest.mock import patch
+                    with patch.object(p.guard, 'save_json', casefold_save):
+                        return p.run(P,root,receipts,runner,command,{'swift':'/owned/swift','j':2},version)
                 if fail:
                     with self.assertRaisesRegex(RuntimeError,'fake selected failure'):
-                        p.run(P,root,receipts,runner,command,{'swift':'/owned/swift','j':2},version)
+                        run_probe()
                 else:
-                    state=p.run(P,root,receipts,runner,command,{'swift':'/owned/swift','j':2},version)
+                    state=run_probe()
                     p.verify(state);self.assertTrue((receipts/'SELECTOR-PROBE.json').is_file())
                     inventory=json.loads((receipts/'SELECTOR-BINARY-CANDIDATES.json').read_text())['paths']
                     self.assertEqual(len(inventory),2);self.assertTrue(any(x.endswith('.dSYM') for x in inventory))
                     self.assertFalse(any(x.endswith('.dSYM') for x in state['files']))
+                names = [x.name.casefold() for x in receipts.iterdir()]
+                self.assertEqual(len(names), len(set(names)))
+                for label, _, _ in calls:
+                    self.assertEqual(json.loads((receipts/(label+'.json')).read_text()),
+                        {'fakeCommandLabel':label, 'ownedCommandReceipt':True})
+                for mode in ('baseline', 'old-anchor-zero') + (() if fail else ('selected',)):
+                    command_receipt = receipts/('selector-'+mode+'.json')
+                    classification = receipts/('selector-'+mode+'-classification.json')
+                    self.assertNotEqual(command_receipt.name.casefold(), classification.name.casefold())
+                    self.assertEqual(json.loads(classification.read_text()), p.framework(*evidence(mode), mode))
+                    if not fail:
+                        self.assertEqual(state['files'][str(classification)], p.guard.digest(classification))
                 self.assertIs(runner.env, original)
                 self.assertEqual([(x[0],x[2]) for x in calls],[('selector-build-tests',60),('selector-discovery',15),('selector-baseline',15),('selector-old-anchor-zero',15),('selector-selected',15)])
                 self.assertEqual(calls[-2][1][calls[-2][1].index('--filter')+1],p.OLD_FILTER)

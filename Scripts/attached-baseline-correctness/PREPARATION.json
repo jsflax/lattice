@@ -9,6 +9,13 @@
   "guardSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
   "legacyRuntimeQualified": false,
   "noNativeOrNetwork": true,
+  "observed010Failure": {
+    "error": "FileExistsError: SELECTOR-baseline.json collides with existing selector-baseline.json on case-insensitive filesystem",
+    "legacyExecuted": false,
+    "run": 35405754869,
+    "selectorQualified": false,
+    "stage": "classification receipt after successful hosted baseline3"
+  },
   "observedHostedVersion": {
     "meaning": "Actual version text from predecessor007 only; no selector body or fixture qualification inferred.",
     "origin": "/Users/jason/localdev/lattice-perf-refinement-20260917/dependency-release/receipts/attached-legacy-35402139697/artifacts/qualification/receipts/local-swift-version.log",
@@ -20,9 +27,10 @@
   "originalArmReexecuted": false,
   "predecessor007PacketSealSHA256": "8a1ba5bdd2282786caa14d00898c98e8e8507b794f093ec35000d32d63b07779",
   "predecessor008PacketSealSHA256": "3053d8635f14ebff8acb4cefd4a448b43a772f4819a662f2d03242add4764b63",
+  "predecessor010PacketSealSHA256": "50a21d0b7e63c61a4b3aebc57891624b0dac39aab96c2df931651f3bd9221053",
   "predecessorAssessmentSHA256": "baca4a6fd9fac4bc461873307b99edf93ed1f668283eedf13f3c4e2bde63660e",
   "predecessorRun": 35394332578,
-  "scope": "Source-only selector preflight009: observed numeric swift-driver prefix correction; corrected historical baseline four-case follow-on",
+  "scope": "Source-only selector preflight011 casefold-safe classification receipts and unchanged historical four-case follow-on",
   "selectorNativeQualified": false,
   "sourceBase": {
     "buildSeconds": 5400,
@@ -61,12 +69,14 @@
     }
   },
   "sourceChecks": {
+    "casefoldCommandAndClassificationSeparationPassed": true,
     "inherited007PatchAndLegacySourceProofPreserved": true,
     "legacyTestBodiesChanged": false,
     "newPureSelectorTests": 14,
     "pureRealProbeOrchestrationAndEnvRestorePassed": true,
     "retainedHosted633VersionGateRegressionPassed": true,
     "retainedSwift64ThreeZeroOneClassifierPassed": true,
+    "unchangedClassifierHostedBaselineReplayPassed": true,
     "unchangedLegacyClassifierTestsRerun": 10
   },
   "successor010": {
