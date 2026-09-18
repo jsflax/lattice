@@ -1,0 +1,14 @@
+{
+  "swift": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift",
+  "developerDirectory": "/Applications/Xcode.app/Contents/Developer",
+  "freeFloorBytes": 12884901888,
+  "packetCeilingBytes": 32212254720,
+  "logCeilingBytes": 536870912,
+  "runtimeLogCeilingBytes": 1048576,
+  "overallSeconds": 7200,
+  "reserveSeconds": 600,
+  "buildSeconds": 5400,
+  "resolveSeconds": 600,
+  "runtimeSeconds": 30,
+  "jobs": 2
+}

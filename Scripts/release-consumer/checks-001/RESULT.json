@@ -1,0 +1,16 @@
+{
+  "scope": "18 synthetic Python rejection checks; no Swift/native/compiler/SQLite/network",
+  "command": [
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "-B",
+    "-m",
+    "unittest",
+    "-v",
+    "test_validate"
+  ],
+  "exitCode": 0,
+  "tests": 18,
+  "passed": true,
+  "logSHA256": "b16cc011903a636895de7f147a5c04081d7b4eec09395ac117934f88c5874418",
+  "CONSUMER_CHECK_ROOT": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/incremental-release-20260918/clean-consumer-runner-003/checks-001/tmp"
+}

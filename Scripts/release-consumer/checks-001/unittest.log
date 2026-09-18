@@ -1,0 +1,23 @@
+test_compact_command_summary_is_not_full_receipt (test_validate.ValidationTests.test_compact_command_summary_is_not_full_receipt) ... ok
+test_core_receipt_wrong_state_rejected (test_validate.ValidationTests.test_core_receipt_wrong_state_rejected) ... ok
+test_duplicate_json_and_path_escape_rejected (test_validate.ValidationTests.test_duplicate_json_and_path_escape_rejected) ... ok
+test_failed_cleanup_signal_and_receipt_log_drift (test_validate.ValidationTests.test_failed_cleanup_signal_and_receipt_log_drift) ... ok
+test_failed_workflow_and_mismatched_source_rejected (test_validate.ValidationTests.test_failed_workflow_and_mismatched_source_rejected) ... ok
+test_final_failure_clears_acceptance_preserves_observed (test_validate.ValidationTests.test_final_failure_clears_acceptance_preserves_observed) ... ok
+test_fixed_input_closure_and_final_clock_order (test_validate.ValidationTests.test_fixed_input_closure_and_final_clock_order) ... ok
+test_missing_originhash_and_duplicate_pins_rejected (test_validate.ValidationTests.test_missing_originhash_and_duplicate_pins_rejected) ... ok
+test_product_subset_reports_all_omissions (test_validate.ValidationTests.test_product_subset_reports_all_omissions) ... ok
+test_release_bytes_drift_rejected (test_validate.ValidationTests.test_release_bytes_drift_rejected) ... ok
+test_result_write_failure_reset (test_validate.ValidationTests.test_result_write_failure_reset) ... ok
+test_revision_version_repository_and_kind_drift_rejected (test_validate.ValidationTests.test_revision_version_repository_and_kind_drift_rejected) ... ok
+test_runtime_both_phases_accept_exact_rows (test_validate.ValidationTests.test_runtime_both_phases_accept_exact_rows) ... ok
+test_runtime_count_rollback_values_and_types_rejected (test_validate.ValidationTests.test_runtime_count_rollback_values_and_types_rejected) ... ok
+test_runtime_missing_duplicate_wrong_pid_and_wrong_phase (test_validate.ValidationTests.test_runtime_missing_duplicate_wrong_pid_and_wrong_phase) ... ok
+test_synthetic_bound_publication_and_complete_graph (test_validate.ValidationTests.test_synthetic_bound_publication_and_complete_graph) ... ok
+test_unbound_gate_refuses_before_file_reads (test_validate.ValidationTests.test_unbound_gate_refuses_before_file_reads) ... ok
+test_unknown_identity_branch_and_missing_core_rejected (test_validate.ValidationTests.test_unknown_identity_branch_and_missing_core_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.036s
+
+OK

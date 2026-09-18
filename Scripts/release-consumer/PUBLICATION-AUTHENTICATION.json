@@ -1,0 +1,73 @@
+{
+  "publicationQualified": true,
+  "version": "2.0.0",
+  "url": "https://github.com/jsflax/lattice/releases/tag/2.0.0",
+  "publishedAt": "2026-09-18T22:57:53Z",
+  "tagCommit": "0461b210aa028f3c4bb6165fed895e0f4385b565",
+  "tagTree": "a1faa2850ebf2bf7dca152feffa461a24755a154",
+  "run": 35402910258,
+  "attempt": 1,
+  "platformReviews": {
+    "ios/RELEASE-LEG-REVIEW.json": "e40ec985aade04dbff0c3a2967fe3deb669267065887ef489cb9c7fd9d61d9d8",
+    "RELEASE-MACOS-NIGHTLY-REVIEW.json": "c4631cb4bf410b244df0516766c097bf5986d2e2fb70a0b90b03978523a473a3",
+    "linux/RELEASE-LEG-REVIEW.json": "66194484ff44118a8132fa25373a7b19b04a7b866e7e7b8aabd6f8a9575f4f59"
+  },
+  "rawPublicationFiles": {
+    "sdk-tag-ref.json": "7d173b562f71100dbdd9b0347f9930815c8ed874e4d8efbfcc72c531c686ca99",
+    "sdk-release.json": "a4e65bedd024913bd91a52e80932b6044fd4423f0b9cbabb0df1aa343f01cd20",
+    "sdk-release-run.json": "9aa16984eea0f05e4c1b3f6a05737c746d9d7d2c210728363f65206195183e8c",
+    "sdk-tag-commit.json": "3780ad819a7cb22ce6674cfeb21e32f2f35fcf5f26c9fb860336c6498878884e"
+  },
+  "jobs": [
+    {
+      "id": 105786478378,
+      "name": "preflight",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 105786478604,
+      "name": "tests / macos",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 105786478711,
+      "name": "tests / linux (swiftlang/swift:nightly-main-noble)",
+      "status": "completed",
+      "conclusion": "failure"
+    },
+    {
+      "id": 105786478744,
+      "name": "tests / linux (swift:6.3-noble)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 105786478885,
+      "name": "tests / ios-build",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 105789123778,
+      "name": "release",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "preflightLogSHA256": "e486d039177c0513133e66e16485238c38ec384aa2a81dfed578175673498df1",
+  "publicationLogSHA256": "64403da37fbdaa9738f6c2d4775a603d6c1d77f35f24cde03dcb331471feda3f",
+  "upstreamCore": {
+    "version": "2.0.4",
+    "commit": "99e4bc89389d14072e6ab9b658db49a49a3573f5",
+    "publicationAuthenticationSHA256": "415774485feb3d8fc619d26f50fcd099771f56316770183e7c3cc20fd2c26b2e"
+  },
+  "stableRequiredGatesAllPassed": true,
+  "nightlyInformationalFailureRetained": true,
+  "nativeLocalExecutedForRelease": false,
+  "cleanExternalConsumerQualified": false,
+  "performance2xClaimed": false,
+  "sdkReleaseReceiptAssetExists": false,
+  "receiptScope": "Parent authentication of published API tag/object and normal release workflow; SDK workflow emits no Core-style release-receipt asset."
+}

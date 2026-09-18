@@ -1,0 +1,64 @@
+name: Published SDK external consumer
+on:
+  push:
+    branches: [codex/perf-qualification-20260918]
+    paths: ['.github/workflows/release-consumer.yml', 'Scripts/release-consumer/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos-consumer:
+    runs-on: macos-26
+    timeout-minutes: 130
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PACKET_SEAL_SHA256: 3cbc8713e3b78f11d9c9b27a5da5993810da57e5af578574d89278f5060254e1
+    steps:
+      - name: Fetch exact tools beneath owned localdev root
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          TASK_ROOT="$HOME/localdev/lattice-release-consumer-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$TASK_ROOT"
+          mkdir -p "$TASK_ROOT/tmp"
+          echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
+          export TASK_ROOT TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          git init "$TASK_ROOT/tools"
+          git -C "$TASK_ROOT/tools" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C "$TASK_ROOT/tools" checkout --detach "$GITHUB_SHA"
+          test "$(git -C "$TASK_ROOT/tools" rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -B - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          root = Path(os.environ['TASK_ROOT'])
+          tree = subprocess.check_output(['git', '-C', str(root / 'tools'), 'rev-parse', 'HEAD^{tree}'], text=True, timeout=30).strip()
+          record = {key: os.environ[key] for key in ('GITHUB_REPOSITORY', 'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'PACKET_SEAL_SHA256')}
+          record['workflowTree'] = tree
+          with (root / 'WORKFLOW-SOURCE.json').open('x') as output:
+              json.dump(record, output, indent=2)
+          PY
+      - name: Authenticate releases then resolve, build and reopen external consumer
+        timeout-minutes: 121
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          python3 -B "$TASK_ROOT/tools/Scripts/release-consumer/qualify.py" \
+            --root "$TASK_ROOT/qualification" \
+            --packet-seal-sha256 "$PACKET_SEAL_SHA256"
+      - name: Preserve source, pin, runtime and failure evidence
+        if: always() && env.TASK_ROOT != ''
+        timeout-minutes: 4
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-consumer-${{ github.run_attempt }}
+          path: |
+            ${{ env.TASK_ROOT }}/WORKFLOW-SOURCE.json
+            ${{ env.TASK_ROOT }}/tools/Scripts/release-consumer
+            ${{ env.TASK_ROOT }}/qualification/receipts
+            ${{ env.TASK_ROOT }}/qualification/consumer
+            ${{ env.TASK_ROOT }}/qualification/fixture
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

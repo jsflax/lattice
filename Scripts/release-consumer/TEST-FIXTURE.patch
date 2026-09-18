@@ -1,0 +1,10 @@
+--- a/test_validate.py
++++ b/test_validate.py
+@@ -19,6 +19,7 @@
+         self.root = Path(self.temp.name)
+         self.addCleanup(self.temp.cleanup)
+         self.inputs = v.load(P / 'publication-inputs.json')
++        self.inputs.update(publicationQualified=False, dispatchReady=False)
+         self.expected = v.pins({'version': 3, 'pins': v.load(P / 'OBSERVED-SDK-PINS.json')['pins']})
+         self.inputs['sdk']['commit'] = 'a' * 40
+         self.inputs['core']['commit'] = 'c' * 40
