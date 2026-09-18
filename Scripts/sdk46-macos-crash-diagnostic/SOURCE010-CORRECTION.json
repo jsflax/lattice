@@ -1,0 +1,59 @@
+{
+  "argvOwnershipTimeoutGuardsUnchanged": true,
+  "change": "Remove any inherited SWIFT_BACKTRACE from the shared GuardedRunner environment; use a sequential try/finally scope to supply the unchanged setting only for control-signal/focused-test/full-test, restoring identical base environment on success, error or interruption. Metadata/Git/build/resolve/discovery commands no longer receive it.",
+  "checks": {
+    "path": "SOURCE010-CHECKS.json",
+    "sha256": "b645c70be43668b475f650c608cd5f8c69cc77c447756f00b57c35a13bf0dd63"
+  },
+  "createdAt": "2026-09-18T22:14:19.436601+00:00",
+  "localProofLimitation": "Apple /usr/bin/git clean launcher command still produced distinct sandbox warnings and remains an exact-output failure. A separate existing direct-Git command produced exact bytes; no resolver change was introduced and no local hosted-launcher qualification is claimed.",
+  "newResolverOrWarningStripping": false,
+  "parentSourceSealSHA256": "e7cc87a11d76c231c127ac22061716c0c5ddc2b3ffe822fe4b23213730363e0a",
+  "releaseQualified": false,
+  "remote009": {
+    "allPrerequisiteArtifactHashes": {
+      "CONTROL-ADMISSION.json": "3071114accf8c3dc0a11a05842a7f5e9330f69b1cabb777783673e64c421b285",
+      "CONTROL-BINARY-IDENTITY.json": "167274d432029b29d0c57f31c191fe0a537c4dd95a7e90f01174f34d30414a58",
+      "RESULT.json": "6f5468f7e90df0731a667e7a629bcb573ba6d2ab379d63a811910ceedadb4e72",
+      "TOOLCHAIN-IMAGE-IDENTITIES.json": "1f79c647bd001c6318c151d4d888fe1c5bcab547cca65cb3902a8985ae0ca472",
+      "control-signal.json": "fc9db7dd1580e9a2f87a044d4ebe9a2fd32be68ba12ff028074ac97c7acd89d7",
+      "sdk-initial-identity.json": "707620cb701371b75d10a91dd989b3ba942c76ebf34e3fdb623265b360c17fa8",
+      "sdk-initial-identity.log": "8d6270de2fff626e5f516242cb6fa03ddc76a21b4c6651ea8d95b316c0dcbb52"
+    },
+    "compilerAndSDKTestsStarted": false,
+    "controlActualPass": true,
+    "controlReparseProof": "SOURCE010-LOCAL-PROOF.json",
+    "exactIdentityPresentAfterForbiddenNoise": true,
+    "finalAccepted": false,
+    "helperUUID": "4eb4a7d1-5653-3dfc-a72c-b419749a7345",
+    "identityCommandCleaned": true,
+    "identityCommandExit": 0,
+    "primaryError": {
+      "message": "sdk-initial: checkout does not match exact expected commit",
+      "type": "ValueError"
+    },
+    "runID": 35399941301,
+    "stage": "sdk-initial-identity",
+    "toolImagesActuallyFAT32": true,
+    "xctestUUID": "fb06f587-9703-3954-b80e-c3727f094b20"
+  },
+  "runtimeChangeFiles": [
+    "qualify.py"
+  ],
+  "schema": "sdk46.source010.environment-scope-correction/1",
+  "sdkRuntimeQualified": false,
+  "source010NativeControlQualified": false,
+  "sourcePreparedForReview": true,
+  "strictParsersRemainRejectingRealWarningOutput": true,
+  "unchanged": [
+    "development_supervisor.py",
+    "analyze.py",
+    "config.json",
+    "CrashControl.swift",
+    "parse_report.py",
+    "crash_reports.py",
+    "macho_identity.py",
+    "sdk_capture.py",
+    "owned_process_identity.py"
+  ]
+}

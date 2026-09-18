@@ -1,0 +1,45 @@
+{
+  "argv": [
+    "/Applications/Xcode.app/Contents/Developer/usr/bin/git",
+    "show",
+    "--no-patch",
+    "--format=%H %T",
+    "46b5ac4760f329b25640419a07fca212770d14f5"
+  ],
+  "cleanup": {
+    "errors": [],
+    "groupGone": true,
+    "leaderReaped": true,
+    "proof": "killpg ESRCH",
+    "signals": []
+  },
+  "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/lattice",
+  "elapsedSeconds": 0.5230628330027685,
+  "evidenceErrors": [],
+  "exitCode": 0,
+  "final": {
+    "freeBytes": 233881600000,
+    "logBytes": 82,
+    "packetBytes": 4096
+  },
+  "freeFloor": 12884901888,
+  "initial": {
+    "freeBytes": 233881600000,
+    "logBytes": 0,
+    "packetBytes": 0
+  },
+  "logBytes": 82,
+  "logCeiling": 65536,
+  "logSHA256": "10d350dfa41cfe72a7ece6125a7070ebe7df1cbaf0f4cc87d5e7fe5762a95db0",
+  "minFreeBytes": 233881600000,
+  "ownedPGID": 64940,
+  "packetCeiling": 1048576,
+  "peakPacketBytes": 4096,
+  "pid": 64940,
+  "primaryError": null,
+  "receivedSignals": [],
+  "started": true,
+  "stopReason": null,
+  "success": true,
+  "timeoutSeconds": 10
+}

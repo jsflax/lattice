@@ -1,0 +1,52 @@
+{
+  "argv": [
+    "python3",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/sdk46-macos-signal11/source-008",
+    "-p",
+    "test_*.py"
+  ],
+  "changedSourcePaths": [
+    "README.md",
+    "macho_identity.py",
+    "sdk_capture.py",
+    "test_image_inventory.py",
+    "test_universal_identity.py"
+  ],
+  "checks": [
+    "control function AST unchanged: require",
+    "control function AST unchanged: parse",
+    "control function AST unchanged: inspect",
+    "SDK stack/ownership function AST unchanged: Identities",
+    "SDK stack/ownership function AST unchanged: birth_precision",
+    "SDK stack/ownership function AST unchanged: sdk_stack",
+    "SDK stack/ownership function AST unchanged: read_report",
+    "SDK stack/ownership function AST unchanged: fingerprint",
+    "byte-identical007: qualify.py",
+    "byte-identical007: config.json",
+    "byte-identical007: analyze.py",
+    "byte-identical007: crash_reports.py",
+    "byte-identical007: owned_process_identity.py",
+    "byte-identical007: parse_report.py",
+    "byte-identical007: development_supervisor.py",
+    "byte-identical007: CrashControl.swift"
+  ],
+  "nativeExecution": false,
+  "network": false,
+  "primaryHeaderEvidenceSHA256": "06f26800b62824ba5d702186776be361573231ab6ea89c177c9bf286d3815cd3",
+  "success": true,
+  "testCount": 149,
+  "testSourceHashes": {
+    "test_control_identity.py": "46545e8eb2bf587e24fc2cb8f144bcee42282d6ada64a28fa764e01cfe7bfd67",
+    "test_image_inventory.py": "e0d1af303530ba913d45a6ff966c5a177d0e410c780d6cb719d509f3b92251b1",
+    "test_packet.py": "5b7e5bd919a222da87ca662123feebc34c66fda7f79cb140eb7586d1a0c8f321",
+    "test_required_inputs.py": "46b6fe964f553f97a2395431b9d6dd7dd6638dde9cbcbf516cf4522517c25fa8",
+    "test_sdk_capture.py": "625fd95c82e2abf7ef2055a471f24829d9ca301965f1616cbe0a1b218ace8eb9",
+    "test_tool_lookup.py": "cd0057a4d599c00ad2a44424dc9ca49982e1916646cabbf04403ce474d94a18b",
+    "test_universal_identity.py": "49af9e7c59036ec8a109deef93804c31170b0b79334202e2ac0230a0d4587bdf"
+  }
+}

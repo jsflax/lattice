@@ -1,0 +1,128 @@
+{
+  "actual009ControlPass": {
+    "binaryByteRecheckLocallyPossible": false,
+    "cleanCommandCustody": true,
+    "expectedSignal": -11,
+    "hostedBinarySHA256": "d8765ecac7db34f6749c18a53166d376d7d6fc3bcd9952142b9b9022e3c1b654",
+    "limitation": "Hosted binary not retained locally; hosted admission/final custody receipts bind its full hash/UUID. This is offline report reparse, not a new control run.",
+    "proof": {
+      "captureEpoch": 1789769146.7114,
+      "controlFrames": [
+        {
+          "frameIndex": 3,
+          "imageIndex": 0,
+          "imageUUID": "f53cd4c0-d236-475b-9a04-80318c6dae32",
+          "symbol": "latticeSDK46DiagnosticCrashControl()"
+        }
+      ],
+      "faultingThread": 0,
+      "format": "Apple ips JSON",
+      "launchEpoch": 1789769146.7011,
+      "ownedBinaryUUID": "f53cd4c0-d236-475b-9a04-80318c6dae32",
+      "ownedExecutable": "/Users/runner/localdev/sdk46-macos-diagnostic-35399941301-1/diagnostic/control/CrashControl",
+      "pathIdentityMode": "observed-literal-redaction-plus-owned-UUID",
+      "pid": 6371,
+      "procPath": "/Users/USER/*/CrashControl",
+      "signal": "SIGSEGV",
+      "symbolicationPerformed": false
+    },
+    "retainedReportReparsed": true
+  },
+  "actual009ToolImageFormats": {
+    "/Applications/Xcode_26.6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Xcode/Agents/xctest": {
+      "architecture": "arm64",
+      "bytes": 159616,
+      "containerArchitectures": [
+        {
+          "bytes": 52448,
+          "cpuSubtype": 3,
+          "cpuType": 16777223,
+          "index": 0,
+          "offset": 16384
+        },
+        {
+          "bytes": 77696,
+          "cpuSubtype": 0,
+          "cpuType": 16777228,
+          "index": 1,
+          "offset": 81920
+        }
+      ],
+      "cpuSubtype": 0,
+      "fileType": 2,
+      "format": "universal big-endian FAT32",
+      "loadCommandBytes": 3592,
+      "loadCommands": 40,
+      "path": "/Applications/Xcode_26.6.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Xcode/Agents/xctest",
+      "selectedSlice": {
+        "bytes": 77696,
+        "cpuSubtype": 0,
+        "cpuType": 16777228,
+        "index": 1,
+        "offset": 81920
+      },
+      "sha256": "947f17b5df53b2871ed5d542bc53d49059c73a51bb610e2be9bc5bc0d0b2dc16",
+      "uuid": "fb06f587-9703-3954-b80e-c3727f094b20"
+    },
+    "/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/libexec/swift/pm/swiftpm-testing-helper": {
+      "architecture": "arm64",
+      "bytes": 102880,
+      "containerArchitectures": [
+        {
+          "bytes": 28960,
+          "cpuSubtype": 3,
+          "cpuType": 16777223,
+          "index": 0,
+          "offset": 16384
+        },
+        {
+          "bytes": 53728,
+          "cpuSubtype": 0,
+          "cpuType": 16777228,
+          "index": 1,
+          "offset": 49152
+        }
+      ],
+      "cpuSubtype": 0,
+      "fileType": 2,
+      "format": "universal big-endian FAT32",
+      "loadCommandBytes": 1768,
+      "loadCommands": 22,
+      "path": "/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/libexec/swift/pm/swiftpm-testing-helper",
+      "selectedSlice": {
+        "bytes": 53728,
+        "cpuSubtype": 0,
+        "cpuType": 16777228,
+        "index": 1,
+        "offset": 49152
+      },
+      "sha256": "bf9690eee911ded5115ca663e0d5bda8b20e5d42a00ca323e1c00466bfe3609c",
+      "uuid": "4eb4a7d1-5653-3dfc-a72c-b419749a7345"
+    }
+  },
+  "changedDirectGitControl": {
+    "binary": "/Applications/Xcode.app/Contents/Developer/usr/bin/git",
+    "binarySHA256": "9a1c8fc68dc75e1b3c0cd8e5ad9d13ac9bc92cb53c9578b3cff4beaf2e9b1e70",
+    "cleanupReapedAndGone": true,
+    "exactOutputAccepted": true,
+    "exitCode": 0,
+    "limitation": "Existing direct Git, explicit historical commit argument; not proof of the hosted PATH Git launcher or a fresh checkout. This direct path is not added to source010.",
+    "logSHA256": "10d350dfa41cfe72a7ece6125a7070ebe7df1cbaf0f4cc87d5e7fe5762a95db0",
+    "offlineAssemblyKeyErrorPreserved": "The command completed and exact output passed; initial proof assembly used nonexistent CONTROL-ADMISSION.binary.path and raised KeyError. This offline successor reads exact control-signal argv instead; no command rerun.",
+    "path": "local-git-proof-002/receipts/direct-git-clean.json",
+    "receiptSHA256": "fa2beaf3580c3a9d2dc86eaf071b257438e3dddc711620c06110ebf4d72453fc"
+  },
+  "inheritedBacktraceDeliberatelySuppliedThenRemoved": true,
+  "initialLauncherProbe": {
+    "cleanupReapedAndGone": true,
+    "exactOutputAccepted": false,
+    "exitCode": 0,
+    "failedAssertionPreserved": true,
+    "logSHA256": "8b86ed23286916b5896fc00898280318cfa57beb5042ca187029ea75468a59a3",
+    "path": "local-git-proof/receipts/apple-git-clean.json",
+    "reason": "Unrelated local sandbox DVTFilePathFSEvents/DARWIN_USER_CACHE_DIR warnings precede correct identity. Target SWIFT privileged warning absent.",
+    "receiptSHA256": "ce76cb682d84080523f2539754eef3349a4ecb375dcd9fd5e82cad6c43febc27"
+  },
+  "noFurtherNativeCommands": true,
+  "scope": "Offline finalization of two bounded read-only Git metadata commands and retained009 evidence; no compiler/SDK tests/network"
+}

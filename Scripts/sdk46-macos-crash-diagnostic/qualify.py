@@ -46,10 +46,32 @@ def packet(seal_sha):
 
 
 
+
+def command_environment(inherited):
+    # The shared runner handles metadata, Git, resolve, build and discovery.
+    # Neither a caller's setting nor our diagnostic setting belongs there.
+    env = inherited.copy()
+    env.pop('SWIFT_BACKTRACE', None)
+    return env
+
+
+def run_crash_command(runner, label, argv, *, backtrace, **kwargs):
+    assert label in ('control-signal', 'focused-test', 'full-test'), 'unexpected crash command'
+    base = runner.env
+    assert 'SWIFT_BACKTRACE' not in base, 'shared command environment is contaminated'
+    # Guarded commands run sequentially. Preserve argv, ownership and deadlines;
+    # only the owned crash/test process and its children inherit this setting.
+    runner.env = {**base, 'SWIFT_BACKTRACE': backtrace}
+    try:
+        return runner.run(label, argv, **kwargs)
+    finally:
+        runner.env = base
+
+
 def tool_lookup_argv(name):
     assert name in ('swift', 'xctest'), 'unexpected tool lookup'
-    # Only metadata lookups omit this diagnostic runtime setting. The control
-    # and both SDK arms retain the original shared environment unchanged.
+    # Retain the strict, independently exercised lookup command. The shared
+    # runner environment is now clean too; no warning-line stripping is used.
     return ['/usr/bin/env', '-u', 'SWIFT_BACKTRACE', 'xcrun', '--find', name]
 
 
@@ -123,13 +145,12 @@ def main():
     for name in ['tmp', 'module-cache', 'cache', 'config', 'security', 'scratch', 'test-logs', 'control']:
         (root / name).mkdir()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    env = os.environ.copy()
+    env = command_environment(os.environ)
     env.update(TMPDIR=str(root / 'tmp'), TMP=str(root / 'tmp'), TEMP=str(root / 'tmp'),
         CLANG_MODULE_CACHE_PATH=str(root / 'module-cache'), SWIFT_MODULECACHE_PATH=str(root / 'module-cache'),
         SWIFTPM_MODULECACHE_OVERRIDE=str(root / 'module-cache'), PYTHONDONTWRITEBYTECODE='1',
         LATTICE_TEST_LOG_PATH=str(root / 'test-logs/native.log'),
-        LATTICE_ACK_PATH_DIAGNOSTICS='1', LATTICE_OBSERVER_WORKER_DIAGNOSTICS='1',
-        SWIFT_BACKTRACE=config['swiftBacktrace'])
+        LATTICE_ACK_PATH_DIAGNOSTICS='1', LATTICE_OBSERVER_WORKER_DIAGNOSTICS='1')
     result = {'scope': 'diagnosis only; source unchanged; no release or crash-fix qualification',
         'sourceSealSHA256': args.source_seal_sha256, 'sourceFiles': source['files'],
         'sdkCommit': config['sdkCommit'], 'sdkTree': config['sdkTree'],
@@ -137,7 +158,9 @@ def main():
         'workflowCommit': env.get('GITHUB_SHA'), 'workflowRepository': env.get('GITHUB_REPOSITORY'),
         'runID': env.get('GITHUB_RUN_ID'), 'attempt': env.get('GITHUB_RUN_ATTEMPT'),
         'host': {'os': platform.platform(), 'machine': platform.machine(), 'cpuCount': os.cpu_count()},
-        'selectedEnvironment': {k: env[k] for k in ['SWIFT_BACKTRACE', 'LATTICE_ACK_PATH_DIAGNOSTICS', 'LATTICE_OBSERVER_WORKER_DIAGNOSTICS']},
+        'selectedEnvironment': {'SWIFT_BACKTRACE': config['swiftBacktrace'], **{k: env[k] for k in ['LATTICE_ACK_PATH_DIAGNOSTICS', 'LATTICE_OBSERVER_WORKER_DIAGNOSTICS']}},
+        'environmentScopes': {'sharedCommandsHaveSwiftBacktrace': False,
+            'swiftBacktraceOnlyFor': ['control-signal', 'focused-test', 'full-test']},
         'coreDumpEnabled': False, 'controlAccepted': False, 'focusedAccepted': False,
         'fullSuiteAccepted': False, 'success': False, 'experimentCompleted': False,
         'releaseQualified': False, 'crashCauseEstablished': False, 'primaryError': None,
@@ -171,7 +194,8 @@ def main():
             collector = crash_reports.Collector(root, receipts / 'crash-reports', control_begin, identities)
             control_error = None
             try:
-                runner.run('control-signal', [str(control_binary)], cwd=root, timeout=10, require_full_timeout=True)
+                run_crash_command(runner, 'control-signal', [str(control_binary)], backtrace=config['swiftBacktrace'],
+                    cwd=root, timeout=10, require_full_timeout=True)
             except Exception as error:
                 control_error = guard.error_record(error)
             control_end = time.time()
@@ -253,7 +277,8 @@ def main():
                 # Full arm retains original selection, default concurrency and exact timeout.
                 error = None
                 try:
-                    log = runner.run(arm + '-test', argv, cwd=sdk, timeout=1800, require_full_timeout=True, process_observer=observer)
+                    log = run_crash_command(runner, arm + '-test', argv, backtrace=config['swiftBacktrace'],
+                        cwd=sdk, timeout=1800, require_full_timeout=True, process_observer=observer)
                     if arm == 'focused':
                         observed = analyze.focused(record(runner, arm + '-test'), (receipts / 'focused.xml').read_text(), log.read_text(), identifiers)
                     else:

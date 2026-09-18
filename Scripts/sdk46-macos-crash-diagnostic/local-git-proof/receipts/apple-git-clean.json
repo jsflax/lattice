@@ -1,0 +1,45 @@
+{
+  "argv": [
+    "/usr/bin/git",
+    "show",
+    "--no-patch",
+    "--format=%H %T",
+    "46b5ac4760f329b25640419a07fca212770d14f5"
+  ],
+  "cleanup": {
+    "errors": [],
+    "groupGone": true,
+    "leaderReaped": true,
+    "proof": "killpg ESRCH",
+    "signals": []
+  },
+  "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/lattice",
+  "elapsedSeconds": 6.626539750024676,
+  "evidenceErrors": [],
+  "exitCode": 0,
+  "final": {
+    "freeBytes": 233881600000,
+    "logBytes": 428,
+    "packetBytes": 8192
+  },
+  "freeFloor": 12884901888,
+  "initial": {
+    "freeBytes": 233881600000,
+    "logBytes": 0,
+    "packetBytes": 0
+  },
+  "logBytes": 428,
+  "logCeiling": 65536,
+  "logSHA256": "8b86ed23286916b5896fc00898280318cfa57beb5042ca187029ea75468a59a3",
+  "minFreeBytes": 233881600000,
+  "ownedPGID": 41348,
+  "packetCeiling": 1048576,
+  "peakPacketBytes": 8192,
+  "pid": 41348,
+  "primaryError": null,
+  "receivedSignals": [],
+  "started": true,
+  "stopReason": null,
+  "success": true,
+  "timeoutSeconds": 10
+}

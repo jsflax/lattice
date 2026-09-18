@@ -1,0 +1,39 @@
+{
+  "actualTests": 157,
+  "command": [
+    "python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-v",
+    "-p",
+    "test_*.py"
+  ],
+  "exitCode": 0,
+  "failures": 0,
+  "inheritedAndOwnedPathEnvUpdateASTUnchangedExceptBacktraceRemoval": true,
+  "logSHA256": "dfac24dfd5427a4d1ee00e7e847d7dd055326478027cc11fdde592bbf55f937c",
+  "metadataLocalProof": {
+    "path": "SOURCE010-LOCAL-PROOF.json",
+    "sha256": "abaadffa4c0bc08406b3d9ba51d56b61a01e86f4f0b4d7358cd0a0df78e0e4ae"
+  },
+  "nativeCompilerExecuted": false,
+  "networkExecuted": false,
+  "newEnvironmentChecks": 8,
+  "old009AllFilesUnchanged": true,
+  "schema": "sdk46.source010.native-free-checks/1",
+  "sdkTestsExecuted": false,
+  "skips": 0,
+  "strictParserUnchanged": true,
+  "unchangedRuntimeFiles": {
+    "CrashControl.swift": "f577fccf09e9c2e4192f3e76ae04e4559efbc6c9e9bbcb91b5b16e96f1feded4",
+    "analyze.py": "79cb68f783bac9fc92b0a24b09dfea1a1f00f797c1d7e04b3b4f8a17be84aa2c",
+    "config.json": "fdf4d5a1f44a26e6bada35f4a4e52ef4228fed6a295dfc251201fa82bba37ea8",
+    "crash_reports.py": "0823fa6775ec1690ff6fd0a14d5583994ab3cde5931480ee751618c081792736",
+    "development_supervisor.py": "2afeaa3d64438ca21429b28558fc9473691072586fba097ad33caf17229eee51",
+    "macho_identity.py": "4ae7408aead33c8c12361d63a47ef51508cd363a30c01f6ce970b606cc6fd753",
+    "owned_process_identity.py": "349f829083efbc40a82145176a0c3f4262e85967c05d2ae940b291818479c236",
+    "parse_report.py": "d414773fdbc9461f0fed112c61bdb6baf132b87bd37e5aaaac6e494f6cac294f",
+    "sdk_capture.py": "af84c9c707de4841fbd353b717f42e0ee2de2b1d49dd3a5108f7aa633104e9e0"
+  }
+}

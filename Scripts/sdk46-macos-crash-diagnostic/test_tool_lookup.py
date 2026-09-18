@@ -51,4 +51,4 @@ class ToolLookup(unittest.TestCase):
             self.assertEqual(call.args[1].func.id, 'tool_lookup_argv')
             self.assertEqual(next(k.value.value for k in call.keywords if k.arg == 'timeout'), 30)
         source = (P / 'qualify.py').read_text()
-        self.assertIn("SWIFT_BACKTRACE=config['swiftBacktrace']", source)
+        self.assertIn("runner.env = {**base, 'SWIFT_BACKTRACE': backtrace}", source)

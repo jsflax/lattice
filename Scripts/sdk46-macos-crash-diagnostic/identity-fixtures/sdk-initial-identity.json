@@ -1,0 +1,45 @@
+{
+  "argv": [
+    "git",
+    "show",
+    "--no-patch",
+    "--format=%H %T",
+    "HEAD"
+  ],
+  "cleanup": {
+    "errors": [],
+    "groupGone": true,
+    "leaderReaped": true,
+    "proof": "killpg ESRCH",
+    "signals": []
+  },
+  "cwd": "/Users/runner/localdev/sdk46-macos-diagnostic-35399941301-1/diagnostic/lattice",
+  "elapsedSeconds": 0.6221524590000058,
+  "evidenceErrors": [],
+  "exitCode": 0,
+  "final": {
+    "freeBytes": 102353817600,
+    "logBytes": 161,
+    "packetBytes": 30859264
+  },
+  "freeFloor": 12884901888,
+  "initial": {
+    "freeBytes": 102354927616,
+    "logBytes": 0,
+    "packetBytes": 30855168
+  },
+  "logBytes": 161,
+  "logCeiling": 536870912,
+  "logSHA256": "8d6270de2fff626e5f516242cb6fa03ddc76a21b4c6651ea8d95b316c0dcbb52",
+  "minFreeBytes": 102353817600,
+  "ownedPGID": 8072,
+  "packetCeiling": 32212254720,
+  "peakPacketBytes": 30859264,
+  "pid": 8072,
+  "primaryError": null,
+  "receivedSignals": [],
+  "started": true,
+  "stopReason": null,
+  "success": true,
+  "timeoutSeconds": 60
+}
