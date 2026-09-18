@@ -6,6 +6,86 @@ import Darwin
 import Glibc
 #endif
 
+/// Amortized FIFO. Clearing a consumed slot cannot destroy the payload while
+/// the returned value is retained by its caller. Compaction moves only live
+/// suffix entries; consumed slots contain nil.
+private struct ObserverDeliveryFIFO<Element> {
+    private var elements: [Element?] = []
+    private var head = 0
+    var isEmpty: Bool { head == elements.count }
+    var first: Element? { isEmpty ? nil : elements[head] }
+
+    mutating func append(_ element: Element) { elements.append(element) }
+
+    mutating func popFirst() -> Element? {
+        guard !isEmpty else { return nil }
+        let value = elements[head]!
+        elements[head] = nil
+        head += 1
+        if head == elements.count {
+            elements.removeAll(keepingCapacity: true)
+            head = 0
+        } else if head >= 64 && head >= elements.count - head {
+            elements.removeFirst(head)
+            head = 0
+        }
+        return value
+    }
+}
+
+/// One ready token per nonempty backend identity, with FIFO inside each
+/// identity. All access is under the worker's condition; this type performs
+/// no callouts. Identity is the receiving backend, not a process-global
+/// physical-file key across separately opened configurations or aliases.
+struct ObserverDeliveryStoreQueue {
+    struct Job {
+        let enqueueOrdinal: UInt64
+        let operation: @Sendable () -> Void
+    }
+    private final class Store {
+        var jobs = ObserverDeliveryFIFO<Job>()
+    }
+    private var stores: [Int64: Store] = [:]
+    private var ready = ObserverDeliveryFIFO<Int64>()
+    private(set) var count = 0
+    var isEmpty: Bool { count == 0 }
+
+    mutating func append(storeIdentity: Int64, enqueueOrdinal: UInt64,
+                         operation: @escaping @Sendable () -> Void) {
+        let store: Store
+        if let existing = stores[storeIdentity] {
+            store = existing
+        } else {
+            store = Store()
+            stores[storeIdentity] = store
+            ready.append(storeIdentity)
+        }
+        store.jobs.append(Job(enqueueOrdinal: enqueueOrdinal, operation: operation))
+        count += 1
+    }
+
+    mutating func popFirst() -> Job? {
+        guard let identity = ready.popFirst() else { return nil }
+        let store = stores[identity]!
+        let job = store.jobs.popFirst()!
+        count -= 1
+        if store.jobs.isEmpty {
+            // The returned job owns the removed closure; this store now
+            // contains no payload whose final release can run under lock.
+            stores.removeValue(forKey: identity)
+        } else {
+            ready.append(identity)
+        }
+        return job
+    }
+
+    /// Oldest queued enqueue ordinal, NOT the next store selected. Read only
+    /// for opt-in diagnostics; scans one head per active store, not all jobs.
+    var oldestEnqueueOrdinal: UInt64? {
+        stores.values.compactMap { $0.jobs.first?.enqueueOrdinal }.min()
+    }
+}
+
 /// Dedicated delivery thread for observer change batches (crash fix C0a,
 /// Aug 2026 SIGBUS incident).
 ///
@@ -24,8 +104,10 @@ import Glibc
 ///    observer.
 ///
 /// One process-wide worker thread with an EXPLICIT 8MB stack replaces both:
-/// jobs run FIFO, so cross-batch order is at least as strong as before, and
-/// every statement the observe machinery prepares gets a deep stack. Darwin
+/// jobs run FIFO within each receiving backend and rotate between ready
+/// backends, so one queued burst cannot monopolize subsequent admission.
+/// Global callback execution remains serial; inter-backend FIFO is not a
+/// contract. Every statement the observe machinery prepares gets a deep stack. Darwin
 /// secondary threads default to the same 512KB as the cooperative pool — the
 /// explicit `stackSize` is the load-bearing line, and the run loop asserts it
 /// took effect so a regression turns tests red.
@@ -44,7 +126,7 @@ final class ObserverDeliveryWorker: @unchecked Sendable {
     static let requiredStackSize = 8 << 20
 
     private let condition = NSCondition()
-    private var queue: [@Sendable () -> Void] = []
+    private var queue = ObserverDeliveryStoreQueue()
     private var started = false
 
     enum DiagnosticKind: String, Sendable { case audit, stream, headers, collection }
@@ -75,7 +157,9 @@ final class ObserverDeliveryWorker: @unchecked Sendable {
     private static let snapshotLimit = 5
     // Protected by condition. The dictionary is capped independently of the
     // existing unbounded closure queue. No diagnostic retains a model/handle/
-    // closure. Untracked ordinals remain explicit; counters wrap at UInt64.max.
+    // closure. Each queue entry carries only its enqueue ordinal; startedJobs
+    // remains a count, not an identity after store rotation. Untracked
+    // metadata remains explicit; counters wrap at UInt64.max.
     private var pendingMetadata: [UInt64: DiagnosticMetadata] = [:]
     private var currentRecord: DiagnosticRecord?
     private var recentRecords: [DiagnosticRecord] = []
@@ -105,7 +189,7 @@ final class ObserverDeliveryWorker: @unchecked Sendable {
                 droppedMetadata &+= 1
             }
         }
-        queue.append(job)
+        queue.append(storeIdentity: storeIdentity, enqueueOrdinal: enqueuedJobs, operation: job)
         if diagnosticsEnabled { peakQueuedJobs = max(peakQueuedJobs, queue.count) }
         if !started {
             started = true
@@ -154,7 +238,7 @@ final class ObserverDeliveryWorker: @unchecked Sendable {
         let snapshotNumber = emittedSnapshots
         let now = DispatchTime.now().uptimeNanoseconds
         let current = currentRecord
-        let oldestID = queue.isEmpty ? nil : Optional(startedJobs &+ 1)
+        let oldestID = queue.oldestEnqueueOrdinal
         let oldest = oldestID.map {
             DiagnosticRecord(id: $0, metadata: pendingMetadata[$0], startedAt: 0, phaseAt: 0)
         }
@@ -193,6 +277,7 @@ final class ObserverDeliveryWorker: @unchecked Sendable {
             + " current_id=\(current.map { String($0.id) } ?? "none")"
             + " pending_metadata_limit=\(Self.pendingMetadataLimit)"
             + " recent_limit=\(Self.recentLimit) snapshot_limit=\(Self.snapshotLimit)"
+            + " scheduling=backend_round_robin oldest_queued=enqueue_ordinal_not_next_admission"
             + " clock=dispatch_uptime same_process=true overhead_subtracted=false"]
         if let current { lines.append(line(current, state: "current")) }
         if let oldest { lines.append(line(oldest, state: "oldest_queued")) }
@@ -223,12 +308,12 @@ final class ObserverDeliveryWorker: @unchecked Sendable {
                 condition.lock()
                 diagnosticEnteredNextLoop()
                 while queue.isEmpty { condition.wait() }
-                let job = queue.removeFirst()
+                let job = queue.popFirst()!
                 if diagnosticsEnabled {
                     startedJobs &+= 1
                     let now = DispatchTime.now().uptimeNanoseconds
                     currentRecord = DiagnosticRecord(
-                        id: startedJobs, metadata: pendingMetadata.removeValue(forKey: startedJobs),
+                        id: job.enqueueOrdinal, metadata: pendingMetadata.removeValue(forKey: job.enqueueOrdinal),
                         startedAt: now, phaseAt: now)
                 }
                 condition.unlock()
@@ -236,11 +321,11 @@ final class ObserverDeliveryWorker: @unchecked Sendable {
                     // Ensure this closure reference survives through the
                     // marker even when optimized ARC ends other uses early.
                     withExtendedLifetime(job) {
-                        job()
+                        job.operation()
                         diagnosticPhase(.bodyReturnedBeforeNextLoop)
                     }
                 } else {
-                    job()
+                    job.operation()
                 }
             }
         }

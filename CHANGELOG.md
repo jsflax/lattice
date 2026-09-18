@@ -63,6 +63,13 @@ nuclear tool renumbered ids and silenced every other process.
   `vacuum()`/`checkpoint()` now return values.
 
 ### Changed
+- Rotate the existing 8 MiB observer worker between ready backend identities,
+  preserving FIFO within each backend and serial callback execution. A queued
+  burst no longer has to drain before another backend receives a turn; a running
+  callback can still block the shared worker.
+- Deliver unfiltered collection events from their copied operation and row
+  metadata without opening an unused query handle for each batch. Preserve the
+  missing-file guard, attaching actor and order within each batch.
 - **`forceCompactHistory()` keeps the audit id sequence** and regenerates
   link/list rows (core 2.0.0). Fixes the relay's observer-push cursor going
   silent after a server-side compaction.

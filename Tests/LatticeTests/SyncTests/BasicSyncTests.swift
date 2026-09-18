@@ -698,46 +698,40 @@ actor SyncTests {
     @Test(.timeLimit(.minutes(5))) func test_BidirectionalSync() async throws {
         let lattice = localLattice1!
         let lattice2 = localLattice2!
+        // This fixture checks two established peers. The test relay ACKs and
+        // fans out before queued persistence, so a peer joining in between
+        // can miss both that fan-out and its initial database catch-up.
+        try await server.sockets.waitForCountOrCancellation(2)
 
-        // Step 1: lattice1 writes, lattice2 receives
-        var task: Task<Void, any Error>?
-        await withCheckedContinuation { continuation in
-            task = Task.detached {
-                let l2 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice2Configuration)
-                let changeStream = l2.changeStream
-                continuation.resume()
-                for try await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: l2) })
-                    if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
-                        break
-                    }
+        // Register before writing, then consume on this test's task so its
+        // cancellation reaches AsyncThrowingStream without a detached waiter.
+        do {
+            let changeStream = lattice2.changeStream
+            let obj1 = SimpleSyncObject(value: 111, floatValue: 1.1)
+            try lattice.add(obj1)
+            for try await changes in changeStream {
+                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: lattice2) }
+                if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
+                    break
                 }
             }
+            try Task.checkCancellation()
         }
-
-        let obj1 = SimpleSyncObject(value: 111, floatValue: 1.1)
-        try lattice.add(obj1)
-        try await task?.value
         #expect(lattice2.objects(SimpleSyncObject.self).count >= 1, "Lattice2 should receive from lattice1")
 
-        // Step 2: lattice2 writes back, lattice1 receives (reverse direction)
-        await withCheckedContinuation { continuation in
-            task = Task.detached {
-                let l1 = try await Lattice(SimpleSyncObject.self, configuration: self.localLattice1Configuration)
-                let changeStream = l1.changeStream
-                continuation.resume()
-                for try await changes in changeStream {
-                    let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: l1) })
-                    if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
-                        break
-                    }
+        // Step 2: lattice2 writes back, lattice1 receives (reverse direction).
+        do {
+            let changeStream = lattice.changeStream
+            let obj2 = SimpleSyncObject(value: 222, floatValue: 2.2)
+            try lattice2.add(obj2)
+            for try await changes in changeStream {
+                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: lattice) }
+                if resolved.contains(where: { $0.operation == .insert && $0.tableName == "SimpleSyncObject" }) {
+                    break
                 }
             }
+            try Task.checkCancellation()
         }
-
-        let obj2 = SimpleSyncObject(value: 222, floatValue: 2.2)
-        try lattice2.add(obj2)
-        try await task?.value
 
         let l1Values = Set(lattice.objects(SimpleSyncObject.self).map(\.value))
         let l2Values = Set(lattice2.objects(SimpleSyncObject.self).map(\.value))

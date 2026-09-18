@@ -213,11 +213,17 @@ public struct LatticeThreadSafeReference: Sendable {
         // trampoline that re-resolves must bail rather than reopen — reopening
         // would recreate an empty `.sqlite` on disk and fire a spurious empty
         // snapshot. For in-memory configs there is no file to check.
-        if case .file(let url) = configuration.storage,
-           !FileManager.default.fileExists(atPath: url.path) {
-            return nil
-        }
+        guard !_backingFileIsMissing else { return nil }
         return try? Lattice(for: self.modelTypes, configuration: configuration)
+    }
+
+    /// The same best-effort deletion guard used by resolve(), without opening
+    /// a database. Memory stores have no backing file to check.
+    internal var _backingFileIsMissing: Bool {
+        if case .file(let url) = configuration.storage {
+            return !FileManager.default.fileExists(atPath: url.path)
+        }
+        return false
     }
 }
 
