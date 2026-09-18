@@ -7,7 +7,6 @@ import Testing
 }
 
 @Suite("Unfiltered collection delivery", .serialized)
-@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 struct UnfilteredCollectionDeliveryTests {
     @Test(.timeLimit(.minutes(1)))
     func allOperationsPreserveBatchOrderWithoutResolutionOrSQL() async throws {
@@ -113,7 +112,6 @@ private func waitForUnfilteredDelivery(_ predicate: () -> Bool) async -> Bool {
     return predicate()
 }
 
-@available(iOS 16.4, macOS 13.3, tvOS 16.4, watchOS 9.4, *)
 private final class UnfilteredDeliveryCapture: @unchecked Sendable {
     struct Snapshot {
         var deliveries: [String] = []

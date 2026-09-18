@@ -48,7 +48,8 @@ let package = Package(
         // and coordinated vec0 maintenance used by this wrapper.
         // 2.0.1 also prevents local observer replay through a stale shared reader.
         // 2.0.2 releases observer captures outside registry locks.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.0.2"),
+        // 2.0.3 allocates observer tokens atomically across observer kinds.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.0.3"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
