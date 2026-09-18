@@ -1,5 +1,15 @@
 # Changelog
 
+## Performance refinement - Unreleased
+
+- Enable typed projected snapshots and batches for native memory stores.
+  The first pull captures selected values and releases the writer before
+  consumer suspension. `ProjectionReadLimits.maxCaptureBytes` defaults to
+  32 MiB; capture-budget exhaustion reports a typed error. Retained batches
+  remain charged against a64 MiB per-parent ceiling. This coordinated
+  development feature requires the upcoming Core release and still awaits
+  full cross-platform qualification.
+
 ## [2.0.0] - Unreleased
 
 LatticeCore dependency floor raised to `2.0.3` (audit-history hygiene,

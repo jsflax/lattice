@@ -54,6 +54,7 @@ extension CxxBackend: ProjectionReadBackend {
         native.setOffset(0)
         native.setMaxRows(numericCast(request.limits.maxRows))
         native.setMaxCopiedBytes(numericCast(request.limits.maxBytes))
+        native.setMaxCaptureBytes(numericCast(request.limits.maxCaptureBytes))
         let now = DispatchTime.now().uptimeNanoseconds
         guard now < request.deadlineNanoseconds else { throw ProjectionReadError.deadlineExceeded }
         let remaining = request.deadlineNanoseconds - now
@@ -117,6 +118,7 @@ private final class CxxProjectionReadOperation: ProjectionReadOperation, @unchec
         case 9: throw ProjectionReadError.database(String(batch.errorMessage()))
         case 10, 12: throw ProjectionReadError.invalidRequest(String(batch.errorMessage()))
         case 13: throw ProjectionReadError.resourceBusy
+        case 14: throw ProjectionReadError.captureBudgetExceeded
         default: throw ProjectionReadError.database("unknown native projection status")
         }
         guard let count = Int(exactly: batch.rowCount()), count >= 0, count <= maxRows,

@@ -2,16 +2,26 @@ import Foundation
 import Dispatch
 
 /// Explicit bounds for one projected read. No workload-dependent defaults are
-/// inferred. The timeout covers the entire operation, including queue wait.
+/// inferred. Native memory capture has an explicit 32 MiB default storage
+/// policy. The timeout covers the entire operation, including queue wait.
 public struct ProjectionReadLimits: Sendable, Equatable {
     public let maxRows: Int
     public let maxBytes: Int
     public let timeout: TimeInterval
+    /// Requested native capture backing bytes, including charged container
+    /// capacity and cell metadata. This is not a bound on SQLite workspace,
+    /// allocator overhead, Swift decoded values, or process RSS. File-only
+    /// projections validate this option but do not allocate a RAM capture.
+    public let maxCaptureBytes: Int
     private let timeoutNanoseconds: UInt64
 
-    public init(maxRows: Int, maxBytes: Int, timeout: TimeInterval) throws {
+    public init(maxRows: Int, maxBytes: Int, timeout: TimeInterval,
+                maxCaptureBytes: Int = 32 * 1024 * 1024) throws {
         guard maxRows > 0 else { throw ProjectionReadError.invalidRequest("maxRows must be positive") }
         guard maxBytes > 0 else { throw ProjectionReadError.invalidRequest("maxBytes must be positive") }
+        guard maxCaptureBytes > 0, maxCaptureBytes <= 64 * 1024 * 1024 else {
+            throw ProjectionReadError.invalidRequest("maxCaptureBytes must be positive and at most 64 MiB")
+        }
         guard timeout.isFinite, timeout > 0 else {
             throw ProjectionReadError.invalidRequest("timeout must be finite and positive")
         }
@@ -24,6 +34,7 @@ public struct ProjectionReadLimits: Sendable, Equatable {
         self.maxRows = maxRows
         self.maxBytes = maxBytes
         self.timeout = timeout
+        self.maxCaptureBytes = maxCaptureBytes
         timeoutNanoseconds = UInt64(nanoseconds)
     }
 
@@ -44,6 +55,7 @@ public enum ProjectionReadError: Error, Sendable, Equatable {
     case deadlineExceeded
     case rowBudgetExceeded
     case byteBudgetExceeded
+    case captureBudgetExceeded
     case snapshotExpired
     case schemaChanged
     case resourceBusy

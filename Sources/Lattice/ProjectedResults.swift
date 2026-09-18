@@ -42,6 +42,15 @@ public struct ProjectedResults<Output: Sendable>: Sendable {
 
     /// Read the requested rows and release the native snapshot before decoding
     /// values. A resource limit is an error, not silent result truncation.
+    /// Native memory stores capture the complete selected result into capped
+    /// RAM before decoding. They release their writer before returning values;
+    /// capture storage is additionally bounded by `limits.maxCaptureBytes`.
+    /// Memory capture requires a committed, idle, unescaped SQLite connection
+    /// using the supported stock SQLite environment. Unknown callbacks/modules
+    /// and unsafe expressions fail explicitly; process-global SQLite overrides
+    /// and custom VFS implementations are outside this capture contract.
+    /// Attachment changes must use Lattice's attach/detach APIs; raw SQL
+    /// ATTACH/DETACH mutation is outside the owned capture topology contract.
     public func snapshot(limit: Int? = nil, limits: ProjectionReadLimits) async throws -> [Output] {
         let request = try ProjectionReadRequest(descriptor: descriptor,
             selectedColumns: columns, limits: limits, limit: limit)
@@ -81,6 +90,12 @@ public struct ProjectedResults<Output: Sendable>: Sendable {
     /// an iterator retains its snapshot until completion, cancellation, expiry,
     /// or iterator destruction. Drop the iterator or call cancel() on an early
     /// exit. The sequence itself does not retain a cursor.
+    /// For native memory stores, the first demand captures the entire selected
+    /// result into capped RAM and releases the writer before yielding. Later
+    /// batches read immutable captured values; `size` is a delivery bound, not
+    /// a memory bound. Schema snapshots begin progressively across attached
+    /// stores during capture and do not promise one cross-file commit boundary.
+    /// The native capture policy and limits described by `snapshot` also apply.
     public func batches(of size: Int, limit: Int? = nil,
                         limits: ProjectionReadLimits) throws -> ProjectedBatches<Output> {
         guard size > 0, size <= limits.maxRows else {

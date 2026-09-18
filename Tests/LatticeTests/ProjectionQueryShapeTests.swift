@@ -35,6 +35,12 @@ struct ProjectionQueryShapeTests {
                 try ProjectionReadLimits(maxRows: 1, maxBytes: count, timeout: 1)
             }
         }
+        for captureBytes in [0, -1, Int.min, 64 * 1024 * 1024 + 1, Int.max] {
+            #expect(throws: ProjectionReadError.self) {
+                try ProjectionReadLimits(maxRows: 1, maxBytes: 1, timeout: 1,
+                                         maxCaptureBytes: captureBytes)
+            }
+        }
         for timeout in [0.0, -1.0, Double.nan, Double.infinity, -Double.infinity, Double.greatestFiniteMagnitude] {
             #expect(throws: ProjectionReadError.self) {
                 try ProjectionReadLimits(maxRows: 1, maxBytes: 1, timeout: timeout)
@@ -43,6 +49,11 @@ struct ProjectionQueryShapeTests {
         let limits = try ProjectionReadLimits(maxRows: Int.max, maxBytes: Int.max, timeout: 0.25)
         #expect(limits.maxRows == Int.max && limits.maxBytes == Int.max)
         #expect(limits.timeout == 0.25)
+        #expect(limits.maxCaptureBytes == 32 * 1024 * 1024)
+        #expect(try ProjectionReadLimits(maxRows: 1, maxBytes: 1, timeout: 1,
+                                        maxCaptureBytes: 64 * 1024 * 1024).maxCaptureBytes == 64 * 1024 * 1024)
+        #expect(try ProjectionReadLimits(maxRows: 1, maxBytes: 1, timeout: 1,
+                                        maxCaptureBytes: 1).maxCaptureBytes == 1)
         #expect(try limits.deadline(startingAt: 50) == 250_000_050)
         #expect(throws: ProjectionReadError.self) {
             try limits.deadline(startingAt: UInt64.max)
