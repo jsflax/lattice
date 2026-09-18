@@ -319,6 +319,57 @@ struct ProjectedResultsTests {
         await executor.shutdown()
     }
 
+    @Test func explicitlyCancelledIteratorWinsOverExpiredAdmissionDeadline() async throws {
+        let db = try store()
+        defer { db.close() }
+        let executor = ProjectionReadExecutor(workerCount: 1, maxPendingJobs: 2)
+        let operation = ProjectedFakeOperation([.init(rows: [[.int64(1)]], isComplete: false)])
+        let requests = ProjectedTestBox<[ProjectionReadRequest]>([])
+        let projection = inject(try db.objects(ProjectedFacadeItem.self).project(\.rank),
+            executor: executor, operation: operation, requests: requests)
+        let tinyLimits = try ProjectionReadLimits(maxRows: 20, maxBytes: 4096, timeout: 0.000_000_001)
+        var iterator = try projection.batches(of: 1, limits: tinyLimits).makeAsyncIterator()
+        defer { iterator.cancel() }
+        // The actual request was constructed before this upper bound. Wait
+        // asynchronously for this one-nanosecond bound, then verify the premise.
+        let latestPossibleDeadline = try tinyLimits.deadline(startingAt: DispatchTime.now().uptimeNanoseconds)
+        iterator.cancel()
+        try await Task.sleep(nanoseconds: 1)
+        try #require(DispatchTime.now().uptimeNanoseconds >= latestPossibleDeadline)
+        await #expect(throws: ProjectionReadError.cancelled) { try await iterator.next() }
+        #expect(requests.withLock { $0.isEmpty })
+        #expect(operation.snapshot.steps == 0)
+        #expect(executor.snapshot.queuedAdmissions == 0)
+        await executor.shutdown()
+    }
+
+    @Test func taskCancellationStillWinsOverExpiredIteratorAdmissionDeadline() async throws {
+        let db = try store()
+        defer { db.close() }
+        let executor = ProjectionReadExecutor(workerCount: 1, maxPendingJobs: 2)
+        let operation = ProjectedFakeOperation([.init(rows: [[.int64(1)]], isComplete: false)])
+        let requests = ProjectedTestBox<[ProjectionReadRequest]>([])
+        let projection = inject(try db.objects(ProjectedFacadeItem.self).project(\.rank),
+            executor: executor, operation: operation, requests: requests)
+        let tinyLimits = try ProjectionReadLimits(maxRows: 20, maxBytes: 4096, timeout: 0.000_000_001)
+        let sequence = try projection.batches(of: 1, limits: tinyLimits)
+        let latestPossibleDeadline = try tinyLimits.deadline(startingAt: DispatchTime.now().uptimeNanoseconds)
+        try await Task.sleep(nanoseconds: 1)
+        try #require(DispatchTime.now().uptimeNanoseconds >= latestPossibleDeadline)
+        // Cancel only this child task before next() enters. Explicit iterator
+        // cancellation remains false, exercising the executor's own ordering.
+        let task = Task {
+            var iterator = sequence.makeAsyncIterator()
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await iterator.next()
+        }
+        await #expect(throws: ProjectionReadError.cancelled) { try await task.value }
+        #expect(requests.withLock { $0.isEmpty })
+        #expect(operation.snapshot.steps == 0)
+        #expect(executor.snapshot.queuedAdmissions == 0)
+        await executor.shutdown()
+    }
+
     @Test func cancellingQueuedLaterBatchWaitsForNativeCleanupAcknowledgement() async throws {
         let db = try store()
         defer { db.close() }

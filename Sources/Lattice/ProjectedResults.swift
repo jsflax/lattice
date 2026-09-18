@@ -201,6 +201,9 @@ fileprivate final class ProjectionBatchIteratorState<Output: Sendable>: @uncheck
     func next() async throws -> [Output]? {
         guard try begin() else { return nil }
         do {
+            // Honor explicit idle cancellation before admission, while the
+            // executor retains Task-cancellation/deadline precedence.
+            try lifetime.checkCancellation()
             let batch = try await executor.submit(deadline: request.deadlineNanoseconds,
                 onCancel: { [lifetime] in lifetime.cancel() }) { [self] in
                 try lifetime.check(deadline: request.deadlineNanoseconds)

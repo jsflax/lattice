@@ -7,6 +7,7 @@ import Lattice
 @testable import LatticeServerKit
 
 private enum SetupCaseError: Error { case timedOut, ended, injectedWrite }
+private let setupClientFrameLimit = 1 << 20
 
 private final class SetupSignal<Value: Sendable>: Sendable {
     private let stream: AsyncStream<Value>
@@ -65,6 +66,8 @@ private final class SetupCase: @unchecked Sendable {
         var finishedCount = 0
         var closedCount = 0
         var kinds: [String] = []
+        var sentFrameBytes: [Int] = []
+        var injectedWriteFailures = 0
         var sentAuditIDs: [[String]] = []
         var preparedCatchUpIDs: [[String]] = []
     }
@@ -98,10 +101,14 @@ private final class SetupCase: @unchecked Sendable {
         let ids = (object?["auditLog"] as? [[String: Any]] ?? []).compactMap { $0["globalId"] as? String }
         let number = facts.withLockedValue { facts in
             facts.kinds.append(kind)
+            facts.sentFrameBytes.append(bytes.count)
             if kind == "auditLog" { facts.sentAuditIDs.append(ids.map { $0.lowercased() }) }
             return facts.kinds.count
         }
-        if number == failWrite { promise.fail(SetupCaseError.injectedWrite) }
+        if number == failWrite {
+            facts.withLockedValue { $0.injectedWriteFailures += 1 }
+            promise.fail(SetupCaseError.injectedWrite)
+        }
         else { socket.send(raw: bytes, opcode: .binary, promise: promise) }
     }
     func hooks() -> RelayIngressTestHooks {
@@ -180,8 +187,13 @@ private func withSetupCase(
         var headers = HTTPHeaders(); headers.add(name: "X-Test-User", value: user.uuidString)
         let suffix = lastEventID.map { "?last-event-id=\($0.uuidString)" } ?? ""
         attemptedConnect = true
+        // A full 1000-entry catch-up page exceeds WebSocketKit's 16 KiB
+        // client default. Admit this fixture's bounded page before injecting
+        // the intended second-write failure.
+        var clientConfiguration = WebSocketClient.Configuration()
+        clientConfiguration.maxFrameSize = setupClientFrameLimit
         WebSocket.connect(to: "ws://127.0.0.1:\(port)/sync\(suffix)", headers: headers,
-                          on: app.eventLoopGroup) { socket in
+                          configuration: clientConfiguration, on: app.eventLoopGroup) { socket in
             state.collector.attach(socket)
             state.client.install(socket)
             state.connected.send(.success(socket))
@@ -227,6 +239,9 @@ struct RelayConnectionSetupTests {
             _ = try await state.closed.wait()
             let facts = state.facts.withLockedValue { $0 }
             #expect(facts.kinds == ["auditLog", "auditLog"])
+            #expect(facts.injectedWriteFailures == 1)
+            #expect(facts.sentFrameBytes.count == 2)
+            #expect(facts.sentFrameBytes.allSatisfy { $0 > 16 * 1024 && $0 <= setupClientFrameLimit })
             #expect(facts.sentAuditIDs.map(\.count) == [1000, 1000])
             #expect(facts.sentAuditIDs.flatMap { $0 } == Array(ids.prefix(2000)))
             #expect(facts.preparedCatchUpIDs == facts.sentAuditIDs)

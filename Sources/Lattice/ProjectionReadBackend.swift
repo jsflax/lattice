@@ -72,8 +72,12 @@ final class ProjectionReadLifetime: @unchecked Sendable {
 
     func current() -> (any ProjectionReadOperation)? { locked { operation } }
 
-    func check(deadline: UInt64) throws {
+    func checkCancellation() throws {
         if locked({ stopped }) { throw ProjectionReadError.cancelled }
+    }
+
+    func check(deadline: UInt64) throws {
+        try checkCancellation()
         guard DispatchTime.now().uptimeNanoseconds < deadline else {
             throw ProjectionReadError.deadlineExceeded
         }
