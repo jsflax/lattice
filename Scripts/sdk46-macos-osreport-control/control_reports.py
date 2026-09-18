@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import stat
 import time
+import parse_report
 
 MAX_FILE, MAX_TOTAL, MAX_FILES = 8 * 2**20, 16 * 2**20, 8
 MAX_CANDIDATES, MAX_ENTRIES, MAX_METADATA, MAX_TEXT = 64, 4096, 64, 1024
@@ -12,7 +13,7 @@ MAX_CANDIDATES, MAX_ENTRIES, MAX_METADATA, MAX_TEXT = 64, 4096, 64, 1024
 
 
 class Collector:
-    def __init__(self, root, destination, started_at, executable, directories=None):
+    def __init__(self, root, destination, started_at, executable, pid, exit_end, directories=None):
         self.root, self.destination = Path(root), Path(destination)
         self.started_at = started_at
         self.directories = directories if directories is not None else [
@@ -21,13 +22,16 @@ class Collector:
         executable = Path(executable)
         if executable.is_symlink() or not executable.is_file() or executable.parent != self.root / 'control':
             raise ValueError('expected one exact regular owned control executable')
-        self.marker = str(executable).encode()
+        if type(pid) is not int or pid <= 0 or not 0 < started_at <= exit_end:
+            raise ValueError('expected observed owned PID and launch/exit interval')
+        self.executable, self.pid, self.exit_end = str(executable), pid, exit_end
         self.prefixes = (executable.name,)
         self.destination.mkdir(exist_ok=False)
         self.seen, self.hashes = set(), set()
         self.stopped = False
-        self.result = {'scope': 'aggregate exact-owned-control reports; parser must establish crash identity',
+        self.result = {'scope': 'bounded owned PID/name/time report custody; strict path/stack admission remains separate',
             'controlExecutable': str(executable), 'startedAtEpoch': started_at,
+            'ownedPID':pid, 'exitEndEpoch':exit_end,
             'files': [], 'bytes': 0, 'errors': [], 'rejected': [], 'scans': [],
             'inventoryTruncated': False, 'metadataOmitted': {'errors': 0, 'rejected': 0},
             'limits': {'file': MAX_FILE, 'total': MAX_TOTAL, 'files': MAX_FILES,
@@ -106,8 +110,11 @@ class Collector:
                         if len(data) > min(MAX_FILE, MAX_TOTAL - self.result['bytes']):
                             self.record('rejected', {'name': path.name, 'reason': 'aggregate byte limit after read'})
                             continue
-                        if self.marker not in data:
-                            self.record('rejected', {'name': path.name, 'reason': 'exact owned control path absent'})
+                        try:
+                            candidate = parse_report.retention_candidate(data, executable=self.executable, pid=self.pid,
+                                launch_begin=self.started_at, exit_end=self.exit_end, scan_end=time.time())
+                        except (ValueError, UnicodeError, RecursionError) as error:
+                            self.record('rejected', {'name': path.name, 'reason': str(error)[:MAX_TEXT]})
                             continue
                         digest = hashlib.sha256(data).hexdigest()
                         if digest in self.hashes:
@@ -117,7 +124,7 @@ class Collector:
                         # Reserve the entire charge and slot before output starts. A
                         # short/failed write stays accounted and stops all later scans.
                         entry = {'name': name, 'reservedBytes': len(data), 'scan': label,
-                                 'status': 'copy-not-completed'}
+                                 'status': 'copy-not-completed', 'candidateIdentity': candidate}
                         self.result['files'].append(entry)
                         self.result['bytes'] += len(data)
                         try:

@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 15
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      SOURCE_SEAL_SHA256: f45bad29be96c6a9ab8a2530458339daa54e0d25d881324a52b037712a87953d
+      SOURCE_SEAL_SHA256: be57434ddf72d7831bc8c060bbfc2a57ecca7c265d295ace803d81952f4990ee
     steps:
       - name: Fetch exact control tools under localdev
         timeout-minutes: 3

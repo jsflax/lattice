@@ -2,6 +2,7 @@
 import datetime
 import json
 import math
+from pathlib import Path
 import re
 
 MAX_REPORT = 8 * 2**20
@@ -15,18 +16,27 @@ def require(value, message):
 
 def epoch(value):
     require(isinstance(value, str) and len(value) <= 128, 'missing bounded report time')
+    # Accept an explicit numeric-zone report representation. This changes only
+    # syntax, not the launch/capture bounds or timezone requirement.
+    spaced = re.fullmatch(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,9})?) ([+-]\d{4})', value)
+    if spaced:
+        value = spaced[1] + spaced[2]
     parsed = datetime.datetime.fromisoformat(value)
     require(parsed.tzinfo is not None, 'report time lacks offset')
     return parsed.timestamp()
 
 
-def parse(data, *, executable, pid, launch_begin, exit_end, scan_end):
+def decode_body(data):
     require(isinstance(data, bytes) and 0 < len(data) <= MAX_REPORT, 'report byte bounds')
-    require(type(pid) is int and pid > 0, 'invalid owned PID')
-    require(0 < launch_begin <= exit_end <= scan_end and scan_end-launch_begin <= 240, 'invalid control time window')
     text = data.decode('utf-8')
     require('\0' not in text, 'NUL in report')
-    decoder, values, cursor = json.JSONDecoder(), [], 0
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            require(key not in value, 'duplicate JSON key')
+            value[key] = item
+        return value
+    decoder, values, cursor = json.JSONDecoder(object_pairs_hook=unique_object), [], 0
     while cursor < len(text):
         while cursor < len(text) and text[cursor].isspace():
             cursor += 1
@@ -41,6 +51,31 @@ def parse(data, *, executable, pid, launch_begin, exit_end, scan_end):
     body = values[-1]
     if len(values) == 2:
         require('procPath' not in values[0] and 'threads' not in values[0], 'ambiguous report body')
+    return body
+
+
+def retention_candidate(data, *, executable, pid, launch_begin, exit_end, scan_end):
+    """Own-report custody only. Path/exception/symbol rejection must retain evidence."""
+    require(type(pid) is int and pid > 0, 'invalid owned PID')
+    require(0 < launch_begin <= exit_end <= scan_end and scan_end-launch_begin <= 240, 'invalid control time window')
+    body = decode_body(data)
+    require(type(body.get('pid')) is int and body['pid'] == pid, 'candidate PID differs')
+    require(body.get('procName') == Path(executable).name, 'candidate process name differs')
+    captured, launched = epoch(body.get('captureTime')), epoch(body.get('procLaunch'))
+    require(math.floor(launch_begin) <= launched <= math.ceil(exit_end), 'candidate launch outside control window')
+    require(math.floor(launch_begin) <= captured <= math.ceil(scan_end) and launched <= captured, 'candidate capture outside control window')
+    path = body.get('procPath')
+    return {'retentionOnly':True, 'fullAdmission':False, 'pid':pid, 'procName':body['procName'],
+            'launchEpoch':launched, 'captureEpoch':captured,
+            'decodedPathExact':path == executable,
+            'decodedPath':path[:1024] if isinstance(path,str) else None,
+            'decodedPathTruncated':isinstance(path,str) and len(path)>1024}
+
+
+def parse(data, *, executable, pid, launch_begin, exit_end, scan_end):
+    require(type(pid) is int and pid > 0, 'invalid owned PID')
+    require(0 < launch_begin <= exit_end <= scan_end and scan_end-launch_begin <= 240, 'invalid control time window')
+    body = decode_body(data)
     require(body.get('procPath') == executable, 'exact owned executable path differs')
     require(type(body.get('pid')) is int and body['pid'] == pid, 'owned PID differs')
     captured = epoch(body.get('captureTime'))

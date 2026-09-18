@@ -17,7 +17,7 @@ ARGS = dict(executable=EXE,pid=123,launch_begin=1000.25,exit_end=1001.25,scan_en
 
 
 def body():
-    return {'procPath':EXE,'pid':123,'procLaunch':'1970-01-01T00:16:40.300+00:00',
+    return {'procPath':EXE,'procName':'CrashControl','pid':123,'procLaunch':'1970-01-01T00:16:40.300+00:00',
             'captureTime':'1970-01-01T00:16:41+00:00','exception':{'type':'EXC_BAD_ACCESS','signal':'SIGSEGV'},
             'faultingThread':0,'threads':[{'triggered':True,'frames':[{'symbol':'latticeSDK46DiagnosticCrashControl()', 'imageIndex':0}]}],
             'usedImages':[{'path':EXE,'uuid':'12345678-1234-1234-1234-123456789abc'}]}
@@ -72,6 +72,43 @@ class Parser(unittest.TestCase):
         with self.assertRaises(ValueError): self.valid(data)
     def test_report_bound(self):
         with self.assertRaises(ValueError): parse_report.parse(b' '*(parse_report.MAX_REPORT+1),**ARGS)
+    def test_escaped_slashes_decode_before_matching(self):
+        data=encode(body()).replace(b'/',b'\\/')
+        self.assertNotIn(EXE.encode(),data)
+        self.assertTrue(parse_report.retention_candidate(data,**ARGS)['decodedPathExact'])
+        self.assertEqual(parse_report.parse(data,**ARGS)['procPath'],EXE)
+    def test_redacted_path_retained_not_admitted(self):
+        data=body();data['procPath']='/Users/USER/localdev/redacted/CrashControl'
+        proof=parse_report.retention_candidate(encode(data),**ARGS)
+        self.assertTrue(proof['retentionOnly']);self.assertFalse(proof['fullAdmission']);self.assertFalse(proof['decodedPathExact'])
+        with self.assertRaises(ValueError): self.valid(data)
+    def test_missing_path_retained_not_admitted(self):
+        data=body();del data['procPath']
+        self.assertIsNone(parse_report.retention_candidate(encode(data),**ARGS)['decodedPath'])
+        with self.assertRaises(ValueError): self.valid(data)
+    def test_candidate_requires_proc_name(self):
+        data=body();data['procName']='AnotherProcess'
+        with self.assertRaises(ValueError): parse_report.retention_candidate(encode(data),**ARGS)
+    def test_candidate_requires_pid(self):
+        data=body();data['pid']=124
+        with self.assertRaises(ValueError): parse_report.retention_candidate(encode(data),**ARGS)
+    def test_candidate_requires_launch_time(self):
+        data=body();del data['procLaunch']
+        with self.assertRaises(ValueError): parse_report.retention_candidate(encode(data),**ARGS)
+    def test_candidate_rejects_stale_launch(self):
+        data=body();data['procLaunch']='1970-01-01T00:16:30+00:00'
+        with self.assertRaises(ValueError): parse_report.retention_candidate(encode(data),**ARGS)
+    def test_candidate_rejects_future_capture(self):
+        data=body();data['captureTime']='1970-01-01T00:17:43+00:00'
+        with self.assertRaises(ValueError): parse_report.retention_candidate(encode(data),**ARGS)
+    def test_duplicate_identity_key_rejected(self):
+        data=encode(body()).replace(b'"pid": 123',b'"pid": 124, "pid": 123')
+        with self.assertRaises(ValueError): parse_report.retention_candidate(data,**ARGS)
+        with self.assertRaises(ValueError): parse_report.parse(data,**ARGS)
+    def test_fractional_report_time_with_separated_numeric_zone(self):
+        data=body();data['procLaunch']='1970-01-01 00:16:40.3000 +0000';data['captureTime']='1970-01-01 00:16:41.0000 +0000'
+        self.assertEqual(parse_report.retention_candidate(encode(data),**ARGS)['captureEpoch'],1001)
+        self.assertEqual(self.valid(data)['captureEpoch'],1001)
 
 
 class Custody(unittest.TestCase):
@@ -82,12 +119,27 @@ class Custody(unittest.TestCase):
             reports=root/'reports';reports.mkdir();data=body();data['procPath']=str(exe)
             (reports/'CrashControl-valid.ips').write_bytes(encode(data))
             (reports/'LatticePackageTests-unrelated.ips').write_bytes(encode(data))
-            collector=control_reports.Collector(root,root/'out',time.time()-1,exe,directories=[reports])
-            snapshot=collector.scan('synthetic',wait_seconds=0)
+            collector=control_reports.Collector(root,root/'out',ARGS['launch_begin'],exe,123,ARGS['exit_end'],directories=[reports])
+            with patch('control_reports.time.time',return_value=ARGS['scan_end']):
+                snapshot=collector.scan('synthetic',wait_seconds=0)
             self.assertEqual(len(snapshot['files']),1);self.assertEqual(snapshot['limits']['arrivalWindowSeconds'],60)
             self.assertEqual(snapshot['limits']['total'],16*2**20);self.assertEqual(snapshot['limits']['candidates'],64)
             with self.assertRaises(ValueError): collector.scan('duplicate',wait_seconds=0)
             self.assertEqual(len(collector.snapshot()['files']),1)
+    def test_redacted_candidate_raw_survives_strict_rejection(self):
+        temp=P/'tmp';temp.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=temp) as td:
+            root=Path(td);(root/'control').mkdir();exe=root/'control/CrashControl';exe.write_bytes(b'not executable')
+            reports=root/'reports';reports.mkdir();data=body();data['procPath']='/Users/USER/redacted/CrashControl'
+            raw=encode(data);(reports/'CrashControl-own.ips').write_bytes(raw)
+            collector=control_reports.Collector(root,root/'out',ARGS['launch_begin'],exe,123,ARGS['exit_end'],directories=[reports])
+            with patch('control_reports.time.time',return_value=ARGS['scan_end']):
+                snapshot=collector.scan('synthetic',wait_seconds=0)
+            entry=snapshot['files'][0]
+            self.assertFalse(entry['candidateIdentity']['decodedPathExact'])
+            self.assertEqual((root/'out'/entry['name']).read_bytes(),raw)
+            with self.assertRaises(ValueError): parse_report.parse(raw,**dict(ARGS,executable=str(exe)))
+            self.assertEqual(collector.snapshot()['bytes'],len(raw))
     def test_retained_hash_replacement_rejects(self):
         temp=P/'tmp';temp.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=temp) as td:

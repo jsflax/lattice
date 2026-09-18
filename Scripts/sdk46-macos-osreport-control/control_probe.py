@@ -96,7 +96,6 @@ def main():
             assert admitted_source == seal['files']['CrashControl.swift'], 'compiled control source differs'
             result.update(controlSourceSHA256=admitted_source,controlBinarySHA256=admitted_binary)
             launch_begin = time.time()
-            collector = control_reports.Collector(root,rec/'crash-reports',launch_begin,binary)
             try:
                 runner.run('control-signal',[str(binary)],cwd=root,timeout=10,require_full_timeout=True)
             except Exception as error:
@@ -104,6 +103,7 @@ def main():
             exit_end = time.time()
             signal_record = json.loads((rec/'control-signal.json').read_text())
             pid = expected_signal(signal_record)
+            collector = control_reports.Collector(root,rec/'crash-reports',launch_begin,binary,pid,exit_end)
             result['controlCompleted'] = True
             result.update(launchBeginEpoch=launch_begin,exitEndEpoch=exit_end,ownedPID=pid,executable=str(binary))
             assert time.monotonic()+60 <= runner.work_deadline, 'cannot admit complete 60s report window'
