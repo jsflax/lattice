@@ -1,15 +1,15 @@
 {
   "source": "7b11c282800d2bd6478538edb4e87de81953d315",
   "tree": "18b482a47df9413e151887ef77a9dc5abb6be041",
-  "status": "reviewed current-source hosted execution preparation; uncompiled/unexecuted",
+  "status": "Corrected relay-control receive API after first retained native correctness failure; timed arms never ran",
   "files": {
     "CMakeLists.txt": {
       "sha256": "32cd1d8653d70f88f003d5a5a69afc97b85b148f3a75830ef74f9c9ea7c8e678",
       "bytes": 783
     },
     "README.md": {
-      "sha256": "cd9f3164ef5b1b7664fb766fdd23cab316212b25d9138671e12deaacff7748b8",
-      "bytes": 7375
+      "sha256": "d3fd7e22a8dd411dab91aab15db02afa7579ec0a4def86d91beaf712f272ef02",
+      "bytes": 7925
     },
     "guarded_runner.py": {
       "sha256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
@@ -20,8 +20,8 @@
       "bytes": 3743
     },
     "probe.cpp": {
-      "sha256": "29876a4cde34071c99895a24355043cda7cdb08f0a7976433d85cb2cdb7a96f7",
-      "bytes": 15689
+      "sha256": "e32d645991e3e3a86eb24dc81fd7a482a375711def0371a95fcd72572b00dcb6",
+      "bytes": 16271
     },
     "run.py": {
       "sha256": "8a4250c0359eb1f4e9e4e4246891b8effd1b7b02ccbc9be4538d381249b8bf64",
@@ -42,7 +42,7 @@
     "sourceExport": false,
     "nativeCompileOrRun": false
   },
-  "totalAuthoredBytes": 84187,
+  "totalAuthoredBytes": 85319,
   "resources": {
     "packetBytes": 536870912,
     "freeFloorBytes": 13421772800,

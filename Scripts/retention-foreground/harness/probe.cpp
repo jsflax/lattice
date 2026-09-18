@@ -185,12 +185,19 @@ void correctness(const std::string& path,const std::string& recipient_path) {
         e.operation="UPDATE";e.timestamp="1970-01-01T00:00:01.000Z";e.is_from_remote=true;
         e.changed_fields={{"body",std::string(n?"remote-b":"remote-a")},{"revision",int64_t(100+n)}};
         e.changed_fields_names={"body","revision"};remote.push_back(std::move(e));}
-    require(apply_remote_changes(owner,remote).size()==2,"late remote apply");
+    // Cross-transport relay requires per-synchronizer receive bookkeeping.
+    // Global/server apply marks an entry fully synchronized by design.
+    require(apply_remote_changes_for(owner,remote,"ingress").size()==2,"late remote apply");
+    require(query_audit_log_for_sync(db,"ingress",std::nullopt,0,100).size()==5,
+            "ingress must exclude its two received entries while retaining five original pending rows");
     remove_replication_slot(db,"writer");
     require(owner.prune_audit_log(600)==5,"late remote old-range prune");
     require(scalar(db,"SELECT count(*) FROM AuditLog")==2 && scalar(db,"SELECT MIN(id) FROM AuditLog")==11,"ancient fresh arrivals removed");
     auto relay=query_audit_log_for_sync(db,"relay",std::nullopt,0,100);
-    require(relay.size()==2 && apply_remote_changes(recipient,relay).size()==2,"late remote final relay");
+    require(query_audit_log_for_sync(db,"ingress",std::nullopt,0,100).empty(),"received entries must not echo to ingress");
+    require(relay.size()==2 && relay[0].global_id==remote[0].global_id &&
+            relay[1].global_id==remote[1].global_id &&
+            apply_remote_changes(recipient,relay).size()==2,"late remote final relay");
     auto body=recipient.db().query("SELECT body,revision FROM RetentionStream WHERE globalId=?",{original.back().global_row_id});
     require(body.size()==1 && std::get<std::string>(body[0].at("body"))=="remote-b" && std::get<int64_t>(body[0].at("revision"))==101,"final replicated value");
     emit({{"kind","correctness"},{"failedDeleteRolledBack",true},{"claimRetry",true},{"partialAckRemaining",5},
