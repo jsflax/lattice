@@ -1,6 +1,11 @@
 name: Exploratory local-only Release benchmark
 # Development evidence only. Existing release/consumer workflows are unchanged.
+# The first reviewed push uses this explicit candidate because a new dispatch-only
+# workflow is not registered on main. Manual dispatch still requires an exact SHA.
 on:
+  push:
+    branches: [codex/perf-qualification-20260918]
+    paths: ['.github/workflows/release-benchmark-local-only.yml', 'Scripts/remote-benchmark-local-only/**']
   workflow_dispatch:
     inputs:
       candidate_sdk_sha:
@@ -15,7 +20,7 @@ jobs:
     timeout-minutes: 360
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      CANDIDATE_SDK_SHA: ${{ inputs.candidate_sdk_sha }}
+      CANDIDATE_SDK_SHA: ${{ inputs.candidate_sdk_sha || '5a308752dcacb44c2154b11d7408ec0773044e4d' }}
     steps:
       - name: Fetch benchmark tools into owned localdev directory
         timeout-minutes: 10
