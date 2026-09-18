@@ -1,5 +1,5 @@
-name: Isolated Chromium WASM compatibility (partial)
-# Consumes the authenticated, already-built A/B archive; never rebuilds WASM.
+name: Corrected candidate isolated Chromium WASM compatibility (partial)
+# Consumes the authenticated corrected candidate archive; historical A remains failed.
 on:
   push:
     branches: [codex/perf-qualification-20260918]
@@ -46,7 +46,7 @@ jobs:
           set -euo pipefail
           python3 "$TASK_ROOT/workflow/Scripts/wasm-browser/fetch-ci-inputs.py" --root "$TASK_ROOT/inputs"
           echo "$TASK_ROOT/inputs/node-v20.18.0-linux-x64/bin" >> "$GITHUB_PATH"
-      - name: Run original browser cases and supplemental real OPFS fixtures
+      - name: Run unchanged original23, six audit regressions and real OPFS fixtures
         timeout-minutes: 21
         shell: bash
         run: |
@@ -54,7 +54,7 @@ jobs:
           python3 "$TASK_ROOT/workflow/Scripts/wasm-browser/run-browser.py" \
             --root "$TASK_ROOT/runtime" \
             --js-source "$TASK_ROOT/inputs/LatticeJS" \
-            --wasm-artifact "$TASK_ROOT/inputs/artifact-10544642780.zip"
+            --wasm-artifact "$TASK_ROOT/inputs/candidate-artifact.zip"
       - name: Retain exact original outcomes and bounded raw evidence even on failure
         if: always() && env.TASK_ROOT != ''
         timeout-minutes: 5
@@ -64,7 +64,7 @@ jobs:
           path: |
             ${{ env.TASK_ROOT }}/bootstrap-receipts
             ${{ env.TASK_ROOT }}/inputs/receipts
-            ${{ env.TASK_ROOT }}/inputs/artifact-10544642780.zip
+            ${{ env.TASK_ROOT }}/inputs/candidate-artifact.zip
             ${{ env.TASK_ROOT }}/runtime/receipts
           include-hidden-files: true
           if-no-files-found: error

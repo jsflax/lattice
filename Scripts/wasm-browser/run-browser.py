@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Isolated Chromium A/B WASM qualification; never connects to an existing browser/server."""
+"""Isolated corrected-candidate Chromium WASM qualification; never connects to an existing browser/server."""
 import argparse,hashlib,importlib.util,json,os,shutil,signal,subprocess,sys,tarfile,time,zipfile
 from pathlib import Path
 P=Path(__file__).resolve().parent
+from input_contract import validate_config, verify_artifact
 
 def main():
     parser=argparse.ArgumentParser()
@@ -12,6 +13,9 @@ def main():
     args=parser.parse_args()
     if sys.platform!='linux':raise ValueError('This preparation requires Linux /proc process-identity proof')
     config=json.loads((P/'config.json').read_text())
+    inputs=json.loads((P/'ci-inputs.json').read_text());validate_config(config,inputs)
+    historical=P/config['historicalBaseline']['receipt']
+    if hashlib.sha256(historical.read_bytes()).hexdigest()!=config['historicalBaseline']['receiptSHA256']:raise ValueError('Historical baseline receipt changed')
     if hashlib.sha256((P/'package-lock.json').read_bytes()).hexdigest()!=config['playwrightLockSHA256']:raise ValueError('Playwright lock bytes changed')
     if hashlib.sha256((P/'guarded_runner.py').read_bytes()).hexdigest()!=config['supervisorSHA256']:
         raise ValueError('Supervisor bytes changed')
@@ -26,7 +30,7 @@ def main():
         XDG_CACHE_HOME=str(root/'xdg-cache'),XDG_CONFIG_HOME=str(root/'xdg-config'),XDG_DATA_HOME=str(root/'xdg-data'),
         PYTHONDONTWRITEBYTECODE='1',PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD='1')
     result={'schemaVersion':1,'success':False,'browserCompatibility':False,'remoteSyncQualified':False,
-        'fullBrowserMatrixQualified':False,'errors':[],'detachedGroupCleanup':[],'config':config}
+        'fullBrowserMatrixQualified':False,'releaseGraphAccepted':False,'browserCandidateQualified':False,'fullABCompatibility':False,'baselineQualified':False,'baselineRerun':False,'historicalBaseline':config['historicalBaseline'],'scope':'corrected candidate only; historical baseline remains failed','errors':[],'detachedGroupCleanup':[],'config':config}
     def process_identity(pid):
         try:
             raw=Path('/proc',str(pid),'stat').read_text()
@@ -39,7 +43,8 @@ def main():
             current=process_identity(recorded['pid'])
             if current==recorded and current['processGroup']==row['pid'] and current['session']==row['pid']:return True
         return False
-    primary=None
+    primary=None;input_manifest={}
+    shutil.copyfile(historical,receipts/historical.name)
     with guard.Interrupts() as interrupts:
         runner=guard.GuardedRunner(root,receipts,env,interrupts,free_floor=config['freeFloorBytes'],
             packet_ceiling=config['packetCeilingBytes'],log_ceiling=128*1024*1024,
@@ -48,15 +53,17 @@ def main():
         try:
             source=args.js_source.resolve(strict=True); artifact=args.wasm_artifact.resolve(strict=True)
             if guard.digest(artifact)!=config['artifactSHA256']:raise ValueError('Archived WASM CI artifact mismatch')
+            with zipfile.ZipFile(artifact) as archive:result['buildProvenance']=verify_artifact(archive,config,inputs)
             head=command('source-head',['git','rev-parse','HEAD'],source).read_text().strip()
             status=command('source-status',['git','status','--porcelain=v1','--untracked-files=all'],source).read_text()
             if head!=config['jsCommit'] or status:raise ValueError('Read-only JS source must match clean exact commit')
+            if command('source-tree',['git','rev-parse','HEAD^{tree}'],source).read_text().strip()!=config['jsTree']:raise ValueError('Candidate JS tree mismatch')
             for name,expected in config['jsSourceHashes'].items():
                 if guard.digest(source/name)!=expected:raise ValueError('Source inventory mismatch: '+name)
             archive=root/'original-js.tar'
             command('source-archive',['git','archive','--format=tar','--output',str(archive),config['jsCommit']],source)
             input_manifest={}
-            for arm in ['A','B']:
+            for arm in ['B']:
                 target=root/arm;target.mkdir()
                 with tarfile.open(archive) as tar:
                     members=tar.getmembers()
@@ -85,23 +92,29 @@ def main():
             result.update(node=node,npm=npm,playwrightLockSHA256=guard.digest(P/'package-lock.json'),artifactSHA256=guard.digest(artifact))
             command('tooling-ci',['npm','ci','--ignore-scripts','--no-audit','--no-fund','--fetch-retries=0','--fetch-timeout=15000'],root/'tooling',timeout=180)
             # Preserve JS's own complete lock and dependency graph, without upgrades.
-            command('source-ci',['npm','ci','--no-audit','--no-fund','--fetch-retries=0','--fetch-timeout=15000'],root/'A',timeout=240)
-            (root/'B/node_modules').symlink_to(root/'A/node_modules',target_is_directory=True)
+            command('source-ci',['npm','ci','--no-audit','--no-fund','--fetch-retries=0','--fetch-timeout=15000'],root/'B',timeout=240)
             command('install-owned-chromium',['node',str(root/'tooling/node_modules/playwright/cli.js'),'install','chromium'],root/'tooling',timeout=240)
             # A whole separate process owns Vite and the new browser, never attaches to other surfaces.
             command('browser-driver',['node',str(root/'tooling/driver.mjs'),str(root),str(root/'config.json')],root/'tooling',timeout=720,require_full_timeout=True)
             browser=json.loads((receipts/'BROWSER-RESULT.json').read_text())
             if not browser['success']:raise ValueError('Browser report failed or incomplete')
-            for arm in ['A','B']:
+            for arm in ['B']:
                 for name,expected in input_manifest[arm].items():
                     if guard.digest(root/arm/name)!=expected:raise ValueError('Original source changed: '+arm+'/'+name)
             if command('source-final-head',['git','rev-parse','HEAD'],source).read_text().strip()!=head:raise ValueError('Read-only original checkout changed')
             if command('source-final-status',['git','status','--porcelain=v1','--untracked-files=all'],source).read_text()!=status:raise ValueError('Read-only original source dirtied')
-            result.update(success=True,localChromiumCasesQualified=True)
+            result.update(success=True,browserCandidateQualified=True,localChromiumCasesQualified=True)
         except BaseException as error:
             primary=error;result['errors'].append(guard.error_record(error))
         finally:
             with interrupts.hold():
+                # Preserve source custody even when runtime assertions fail.
+                try:
+                    if set(input_manifest) != {'B'}:raise ValueError('Candidate source manifest incomplete')
+                    for name,expected in input_manifest['B'].items():
+                        if guard.digest(root/'B'/name)!=expected:raise ValueError('Candidate source changed: '+name)
+                    result['stagedSourceVerifiedAtExit']=True
+                except BaseException as error:result['errors'].append(guard.error_record(error))
                 # Playwright can create a detached browser session. Its audited
                 # spawn registry is the authority; never signal a guessed/foreign group.
                 owned_file=receipts/'owned-spawns.json'
@@ -151,6 +164,7 @@ def main():
                 result['success']=result['success'] and not result['errors'] and not interrupts.received and all(c['success'] for c in runner.records)
                 result['browserCompatibility']=False
                 result['localChromiumCasesQualified']=result['success']
+                result['browserCandidateQualified']=result['success']
                 guard.save_json(receipts/'RESULT.json',result)
     if not result['success']:
         if primary:raise primary

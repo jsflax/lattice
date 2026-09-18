@@ -58,7 +58,7 @@ if (process.version !== `v${config.nodeVersion}`) throw new Error('Exact qualifi
 if (!fs.realpathSync(process.env.PLAYWRIGHT_BROWSERS_PATH || '/missing').startsWith(root + path.sep)) throw new Error('Browser binaries must belong to this owned run');
 for (const name of ['TMPDIR', 'TMP', 'TEMP']) if (!path.resolve(process.env[name] || '/missing').startsWith(root + path.sep)) throw new Error('Owned temporary paths required');
 const result = { schemaVersion: 1, success: false, remoteSyncQualified: false,
-    fullBrowserMatrixQualified: false, engine: config.browserEngine, arms: {}, errors: [], cleanup: [] };
+    fullBrowserMatrixQualified: false, releaseGraphAccepted: false, browserCandidateQualified: false, fullABCompatibility: false, baselineQualified: false, baselineRerun: false, historicalBaseline: config.historicalBaseline, scope: 'corrected candidate only; historical baseline remains failed', engine: config.browserEngine, arms: {}, errors: [], cleanup: [] };
 let interrupted = null, browserServer, browser, vite;
 const ownedSpawns = [];
 save('owned-spawns.json', ownedSpawns);
@@ -124,7 +124,7 @@ const require = createRequire(import.meta.url);
 const pwPackage = require('playwright/package.json');
 if (pwPackage.version !== config.playwrightVersion) throw new Error('Playwright version mismatch');
 const { chromium } = await import('playwright');
-const sourceRequire = createRequire(path.join(root, 'A', 'package.json'));
+const sourceRequire = createRequire(path.join(root, 'B', 'package.json'));
 const vitePackagePath = sourceRequire.resolve('vite/package.json');
 const vitePackage = JSON.parse(fs.readFileSync(vitePackagePath, 'utf8'));
 const viteImportEntry = vitePackage.exports?.['.']?.import?.default;
@@ -175,12 +175,22 @@ async function newContext(origin, report, noWorkers = false) {
         const expectedHash = response.headers()['x-lattice-artifact-sha256'];
         if (!expectedHash) return;
         report.assetResponseAttempts++;
+        const request = response.request();
+        const resourceType = request.resourceType();
+        const resourceURL = new URL(response.url());
+        const kind = resourceURL.pathname.endsWith('.wasm') ? 'wasm' : 'js';
+        const bodyRequired = kind === 'wasm' || resourceType === 'script';
+        if (report.assetResponseMetadata.length < 32) report.assetResponseMetadata.push({ kind,
+            method: request.method(), resourceType, path: (resourceURL.pathname + resourceURL.search).slice(0, 512),
+            status: response.status(), bodyRequired,
+            reason: bodyRequired ? 'consumed module/WASM response' : 'non-module JS fetch; not used as a module-byte proof' });
         if (report.assetResponseAttempts > 32 || pendingBodies.size >= 32) { assetError(report, 'Asset response admission cap exceeded'); return; }
+        if (expectedHash !== config.assets[report.arm][kind].sha256) { assetError(report, 'Artifact response header mismatch'); return; }
+        if (!bodyRequired) return; // Metadata only; never counts as a received-byte hash proof.
         let task;
         task = (async () => {
             const body = await response.body();
             if (report.assetResponses.length >= 32) throw new Error('Asset response receipt cap exceeded');
-            const kind = new URL(response.url()).pathname.endsWith('.wasm') ? 'wasm' : 'js';
             const actual = sha(body);
             report.assetResponses.push({ kind, bytes: body.length, sha256: actual, status: response.status() });
             if (actual !== config.assets[report.arm][kind].sha256 || expectedHash !== actual) throw new Error('Browser received different artifact bytes');
@@ -225,12 +235,50 @@ async function originalSuite(origin, report) {
     } catch (error) { output.captureError = String(error); }
     // Preserve original outcomes before any supplemental fixture executes. No correction/retry.
     save(`${report.arm}-original-23-precleanup.json`, output);
-    await finishBodies();
-    await bounded(context.close(), 10000, 'original context close');
-    output.success = output.success && output.pageErrors.length === 0;
+    try { await finishBodies(); }
+    catch (error) { assetError(report, error); output.assetCaptureError = String(error); }
+    try { await bounded(context.close(), 10000, 'original context close'); }
+    catch (error) { output.cleanupError = String(error); }
+    output.success = output.success && output.pageErrors.length === 0 && !output.assetCaptureError && !output.cleanupError;
     save(`${report.arm}-original-23.json`, output);
     return output;
 }
+async function auditRegressions(origin, report) {
+    const context = await newContext(origin, report);
+    const page = await context.newPage();
+    const output = { namesExpected: config.regressionCaseNames, cases: [], pageErrors: [], success: false,
+        timeLimitMs: config.regressionSuiteTimeoutMs };
+    page.on('pageerror', error => { if (output.pageErrors.length < 32) output.pageErrors.push(String(error).slice(0, 8192)); });
+    try {
+        await page.goto(origin + '/test/browser/audit-observation-regressions.html', { waitUntil: 'load', timeout: 30000 });
+        await page.waitForFunction(() => window.auditObservationRegressions?.complete === true,
+            null, { timeout: config.regressionSuiteTimeoutMs });
+        checkSignal();
+        const observed = await bounded(page.evaluate(() => {
+            const receipt = window.auditObservationRegressions;
+            if (!receipt || !Array.isArray(receipt.results)) throw new Error('Malformed regression receipt');
+            return { complete: receipt.complete, count: receipt.results.length,
+                cases: receipt.results.slice(0, 7).map(row => ({ name: String(row.name).slice(0, 256),
+                    status: row.status, error: row.error == null ? null : String(row.error).slice(0, 8192) })) };
+        }), 10000, 'audit regression capture');
+        output.cases = observed.cases;
+        output.instantiation = await page.evaluate(() => globalThis.__qualificationInstantiation);
+        output.success = observed.complete === true && observed.count === config.regressionCaseNames.length
+            && output.cases.every((row, index) => row.name === config.regressionCaseNames[index] && row.status === 'pass' && row.error === null)
+            && output.instantiation.instantiate + output.instantiation.streaming > 0 && output.pageErrors.length === 0;
+    } catch (error) { output.error = String(error); }
+    finally {
+        save(`${report.arm}-audit-regressions-precleanup.json`, output);
+        try { await finishBodies(); }
+        catch (error) { assetError(report, error); output.assetCaptureError = String(error); }
+        try { await bounded(context.close(), 10000, 'audit regression context close'); }
+        catch (error) { output.cleanupError = String(error); }
+        output.success = output.success && !output.error && !output.assetCaptureError && !output.cleanupError && output.pageErrors.length === 0;
+        save(`${report.arm}-audit-regressions.json`, output);
+    }
+    return output;
+}
+
 async function persistence(origin, report, noWorkers) {
     const context = await newContext(origin, report, noWorkers);
     const page = await context.newPage();
@@ -260,7 +308,8 @@ async function persistence(origin, report, noWorkers) {
         output.success = output.steps.length === 3 && output.errors.length === 0;
     } catch (error) { output.errors.push(String(error)); }
     finally {
-        await finishBodies();
+        try { await finishBodies(); }
+        catch (error) { assetError(report, error); output.errors.push(String(error)); }
         try { await bounded(context.close(), 10000, 'fixture context close'); }
         catch (error) { output.errors.push(String(error)); output.success = false; }
         output.success = output.success && output.errors.length === 0;
@@ -280,10 +329,10 @@ try {
     const actualExecutable = fs.realpathSync(launchedBrowser.spawnfile);
     if (!actualExecutable.startsWith(path.join(root, 'browser-cache') + path.sep)) throw new Error('Browser executable escaped this owned run');
     result.browserExecutable = { path: actualExecutable, sha256: sha(fs.readFileSync(actualExecutable)), pid: launchedBrowser.pid };
-    for (const arm of ['A', 'B']) {
+    for (const arm of ['B']) {
         checkSignal();
         const source = path.join(root, arm);
-        const report = { arm, success: false, blockedRequests: 0, blockedWebSockets: 0, assetResponses: [], assetErrors: [], assetErrorsDropped: 0, assetResponseAttempts: 0 };
+        const report = { arm, success: false, blockedRequests: 0, blockedWebSockets: 0, assetResponses: [], assetResponseMetadata: [], assetErrors: [], assetErrorsDropped: 0, assetResponseAttempts: 0 };
         result.arms[arm] = report;
         const assets = Object.fromEntries(['js', 'wasm'].map(ext => [ext, fs.readFileSync(path.join(source, 'wasm/build/lattice.' + ext))]));
         for (const ext of ['js', 'wasm']) if (sha(assets[ext]) !== config.assets[arm][ext].sha256) throw new Error('Staged artifact mismatch');
@@ -294,7 +343,7 @@ try {
                 server.middlewares.use((request, response, next) => {
                     const url = new URL(request.url, 'http://127.0.0.1');
                     const ext = url.pathname === '/wasm/build/lattice.js' ? 'js' : url.pathname === '/wasm/build/lattice.wasm' ? 'wasm' : null;
-                    if (!ext || url.searchParams.has('url') || url.searchParams.has('import')) return next();
+                    if (!ext || url.searchParams.has('url')) return next();
                     response.setHeader('Content-Type', ext === 'wasm' ? 'application/wasm' : 'application/javascript');
                     response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
                     response.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
@@ -308,15 +357,16 @@ try {
         if (!address || typeof address === 'string' || address.address !== '127.0.0.1') throw new Error('Server failed owned loopback binding');
         const origin = `http://127.0.0.1:${address.port}`;
         report.original = await originalSuite(origin, report);
+        report.regressions = await auditRegressions(origin, report);
         report.opfs = await persistence(origin, report, false);
         report.noWorkers = await persistence(origin, report, true);
-        await finishBodies();
+        try { await finishBodies(); } catch (error) { assetError(report, error); }
         for (const ext of ['js', 'wasm']) if (!report.assetResponses.some(row => row.kind === ext && row.sha256 === config.assets[arm][ext].sha256)) assetError(report, 'missing browser response hash proof: ' + ext);
-        report.success = report.original.success && report.opfs.success && report.noWorkers.success && !report.assetErrors.length;
+        report.success = report.original.success && report.regressions.success && report.opfs.success && report.noWorkers.success && !report.assetErrors.length;
         save(`${arm}-RESULT.json`, report);
         await bounded(vite.close(), 10000, 'Vite close'); vite = null;
     }
-    result.success = Object.keys(result.arms).length === 2 && Object.values(result.arms).every(arm => arm.success);
+    result.success = Object.keys(result.arms).length === 1 && Object.hasOwn(result.arms, 'B') && Object.values(result.arms).every(arm => arm.success);
 } catch (error) { result.errors.push(String(error)); }
 finally {
     if (vite) { try { await bounded(vite.close(), 10000, 'final Vite close'); result.cleanup.push('Vite closed'); } catch (error) { result.errors.push(String(error)); } }
@@ -327,6 +377,7 @@ finally {
     }
     result.interrupted = interrupted;
     result.success = result.success && !result.errors.length && !interrupted;
+    result.browserCandidateQualified = result.success;
     save('BROWSER-RESULT.json', result);
 }
 process.exitCode = result.success ? 0 : 1;

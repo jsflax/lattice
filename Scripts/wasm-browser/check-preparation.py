@@ -1,58 +1,35 @@
-#!/usr/bin/env python3
-"""Offline preparation checks only: no dependency install, browser, server or WASM execution."""
-import argparse,ast,hashlib,json,re,subprocess,zipfile
-from datetime import datetime,timezone
+"""Small source checks only: no dependencies, browser, server or WASM execution."""
+import ast,hashlib,json,sys
 from pathlib import Path
-P=Path(__file__).resolve().parent
-
-def sha(raw):return hashlib.sha256(raw).hexdigest()
-def main():
-    parser=argparse.ArgumentParser()
-    parser.add_argument('--js-source',type=Path,required=True)
-    parser.add_argument('--engram-source',type=Path,required=True)
-    parser.add_argument('--wasm-artifact',type=Path,required=True)
-    args=parser.parse_args()
-    config=json.loads((P/'config.json').read_text())
-    result={'createdUTC':datetime.now(timezone.utc).isoformat(),'success':False,'browserLaunched':False,
-        'wasmExecuted':False,'typescriptCompiled':False,'checks':[]}
-    def checked(name,condition):
-        if not condition:raise ValueError(name)
-        result['checks'].append(name)
-    for name in ['run-browser.py','check-preparation.py','guarded_runner.py']:
-        ast.parse((P/name).read_text(),filename=name);result['checks'].append(name+' Python AST')
-    subprocess.run(['node','--check',str(P/'driver.mjs')],check=True,capture_output=True)
-    result['checks'].append('driver.mjs Node syntax only')
-    source=args.js_source.resolve()
-    head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=source,text=True).strip()
-    status=subprocess.check_output(['git','status','--porcelain=v1','--untracked-files=all'],cwd=source,text=True)
-    checked('Exact clean readonly JS source',head==config['jsCommit'] and not status)
-    for name,expected in config['jsSourceHashes'].items():checked('JS hash '+name,sha((source/name).read_bytes())==expected)
-    names=re.findall(r"await test\('([^']+)'",(source/'test/browser/tests.ts').read_text())
-    checked('Exact 23 original ordered case names',names==config['originalCaseNames'] and len(names)==23)
-    checked('Frozen supervisor hash',sha((P/'guarded_runner.py').read_bytes())==config['supervisorSHA256'])
-    checked('Frozen dedicated npm lock hash',sha((P/'package-lock.json').read_bytes())==config['playwrightLockSHA256'])
-    package=json.loads((P/'package.json').read_text());lock=json.loads((P/'package-lock.json').read_text())
-    checked('Exact Playwright package pin',package['devDependencies']['playwright']==config['playwrightVersion'])
-    previous=json.loads(subprocess.check_output(['git','show','cf9810a:app/package-lock.json'],cwd=args.engram_source))
-    for name in ['playwright','playwright-core']:
-        row=lock['packages']['node_modules/'+name];older=previous['packages']['node_modules/'+name]
-        checked(name+' version/url/integrity join',all(row[key]==older[key] for key in ['version','resolved','integrity']) and row['version']==config['playwrightVersion'])
-    result['lockProvenance']={'engramCommit':subprocess.check_output(['git','rev-parse','cf9810a'],cwd=args.engram_source,text=True).strip(),
-        'path':'app/package-lock.json','sourceLockSHA256':sha(subprocess.check_output(['git','show','cf9810a:app/package-lock.json'],cwd=args.engram_source)),
-        'generatedLockSHA256':config['playwrightLockSHA256'],'generation':'npm install --package-lock-only --ignore-scripts --no-audit --no-fund; dedicated owned prefix/cache; no node_modules/browser installed'}
-    checked('Untouched archived WASM artifact hash',sha(args.wasm_artifact.read_bytes())==config['artifactSHA256'])
-    assets=[]
-    with zipfile.ZipFile(args.wasm_artifact) as archive:
-        for arm in ['A','B']:
-            for kind in ['js','wasm']:
-                expected=config['assets'][arm][kind];raw=archive.read(expected['zipMember'])
-                checked(arm+' '+kind+' archived exact bytes',len(raw)==expected['bytes'] and sha(raw)==expected['sha256'])
-                assets.append({'arm':arm,'kind':kind,**expected})
-    result['assets']=assets
-    mapping=json.loads((P/'NODE-SKIP-BROWSER-MAPPING.json').read_text())
-    checked('Six skipped Node names mapped to real original browser cases',len(mapping['cases'])==6 and len(set(row['nodeCase'] for row in mapping['cases']))==6 and all(row['browserCases'] and all(name in names for name in row['browserCases']) for row in mapping['cases']))
-    checked('No local node_modules or installed browser cache in preparation',not (P/'node_modules').exists() and not (P/'browser-cache').exists())
-    result.update(success=True,preparationOnly=True,localChromiumCasesQualified=False,remoteSyncQualified=False,fullBrowserMatrixQualified=False)
-    (P/'OFFLINE-CHECKS.json').write_text(json.dumps(result,indent=2)+'\n')
-    print(json.dumps({'success':True,'checks':len(result['checks']),'browserLaunched':False}))
-if __name__=='__main__':main()
+P=Path(__file__).parent
+sys.dont_write_bytecode=True
+from input_contract import validate_config
+checks=[]
+for file in sorted(P.glob('*.py')):
+    ast.parse(file.read_text());checks.append('AST '+file.name)
+config=json.loads((P/'config.json').read_text());inputs=json.loads((P/'ci-inputs.json').read_text())
+assert config['executedArms']==['B']
+assert len(config['originalCaseNames'])==23 and len(set(config['originalCaseNames']))==23
+assert config['jsSourceHashes']['test/browser/tests.ts']=='15bc899a8cff25a93181a163fb277dce44f19c5f372b71374ef636bd12725e0e'
+assert config['regressionCaseNames']==['audit_fields_memory_transaction','audit_fields_persistent_transaction','audit_link_rows_once_persistent','audit_unsubscribe_queued_and_idempotent','audit_unsubscribe_inside_callback','audit_close_suppresses_queued_callback']
+checks.append('Only B; original23 bytes frozen; six exact names')
+historical=(P/config['historicalBaseline']['receipt']).read_bytes()
+assert hashlib.sha256(historical).hexdigest()==config['historicalBaseline']['receiptSHA256']
+cases=json.loads(historical)['cases']
+assert {s:sum(c['status']==s for c in cases)for s in ['pass','fail','skip']}=={'pass':21,'fail':2,'skip':0}
+checks.append('Historical baseline remains21pass2fail0skip')
+seal_bytes=(P/'PREPARATION-RESULT.json').read_bytes()
+assert hashlib.sha256(seal_bytes).hexdigest()==inputs['runtimePacketSealSHA256']
+for name,expected in json.loads(seal_bytes)['files'].items():
+    data=(P/name).read_bytes();assert len(data)==expected['bytes'] and hashlib.sha256(data).hexdigest()==expected['sha256']
+checks.append('Every runtime input matches its source seal')
+if config['artifactInputReady']:
+    validate_config(config,inputs);checks.append('Actual artifact fields complete; runtime reauthenticates archive')
+else:
+    try:validate_config(config,inputs)
+    except ValueError as error:assert 'has not been built' in str(error)
+    else:raise AssertionError('Unbuilt candidate artifact was accepted')
+    checks.append('Pending artifact rejected before runtime setup')
+result={'sourceChecksPassed':True,'checks':checks,'readyForRuntime':config['artifactInputReady'],'browserLaunched':False,'buildExecuted':False,'browserCandidateQualified':False,'fullABCompatibility':False,'baselineQualified':False,'releaseGraphAccepted':False}
+(P/'OFFLINE-CHECKS.json').write_text(json.dumps(result,indent=2)+'\n')
+print(json.dumps({'sourceChecks':len(checks),'readyForRuntime':config['artifactInputReady']}))

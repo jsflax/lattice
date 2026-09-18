@@ -1,83 +1,56 @@
 {
-  "schemaVersion": 1,
-  "createdUTC": "2026-09-18T11:58:13.963637+00:00",
-  "preparationReadyForReview": true,
-  "executedBrowser": false,
-  "executedWASM": false,
-  "localChromiumCasesQualified": false,
-  "remoteSyncQualified": false,
-  "fullBrowserMatrixQualified": false,
-  "checks": 32,
-  "sourceReview": "SOURCE-REVIEW.md",
-  "originalBrowserCasesPerArm": 23,
-  "additionalFixturesPerArm": 2,
-  "fixtureActionsPerFixture": 3,
-  "nodeSkipsMapped": 6,
+  "schemaVersion": 2,
+  "scope": "corrected candidate runtime source only; historical baseline failed",
+  "browserLaunched": false,
+  "qualificationClaim": false,
   "files": {
-    "NODE-SKIP-BROWSER-MAPPING.json": {
-      "sha256": "ffd0dcb058f3fa9c09dc526ce91515cf9b6d3e5c37be994762a131bf0d2006f5",
-      "bytes": 2677
-    },
-    "OFFLINE-CHECKS.json": {
-      "sha256": "fde8197725af3a428d1fcb4750d4cf3881209be38516f61241192b050d1569c5",
-      "bytes": 2835
-    },
-    "README.md": {
-      "sha256": "a3523e28604062a96ae58ee7ae04f45851afb399872391312296fb9fbe14d540",
-      "bytes": 8900
-    },
-    "SOURCE-REVIEW.md": {
-      "sha256": "a3c879086b81aea41538a7790b423fbed8408e5123dfe355f8967641cf162f3b",
-      "bytes": 2391
-    },
-    "check-preparation.py": {
-      "sha256": "0667d20d9d6100a3ab50578b2adbd06c59848f1093fa2bb03a9e3a69d53d0038",
-      "bytes": 4736
-    },
-    "config.json": {
-      "sha256": "4302d62957da488e7a5759a82ecb1a6cb51a6a7c7c5430998c38caff848c925e",
-      "bytes": 3787
-    },
     "driver.mjs": {
-      "sha256": "2e139b47f3f33f958fcb4ad0b002483a217807095a685631e54186bf4ff67786",
-      "bytes": 21418
-    },
-    "fixture.html": {
-      "sha256": "a2b7e9b60a5dfc931ed97d32c302028b3026d2122a72306ed30a5f0c5557be03",
-      "bytes": 151
-    },
-    "fixture.ts": {
-      "sha256": "ea823098c146de7e729b855b5582647b65b1d66df3c78fb5cf8cb2caef68b6f9",
-      "bytes": 4297
-    },
-    "guarded_runner.py": {
-      "sha256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
-      "bytes": 29477
-    },
-    "package-lock.json": {
-      "sha256": "588b777799547077d3ba093ab6d18a61740321deefb80c7cdfdaea338ebafad8",
-      "bytes": 1849
-    },
-    "package.json": {
-      "sha256": "66baadc31e00a14d04e48908feec693aa35da425b179add0cb210c37ad0353da",
-      "bytes": 206
+      "bytes": 25567,
+      "sha256": "fd6a105c18dfc06ea8ce250ccb363ab5566b41a03ad395369d95bfc71203330f"
     },
     "run-browser.py": {
-      "sha256": "2ea134b8a760c9eb7c305cf24169d7bfdb1465498fa5805067b9f636cd5f04da",
-      "bytes": 12726
+      "bytes": 14277,
+      "sha256": "ca66b9abccf4e11edd8e6d5102bcd1f415b10a710d37645819f0ae4749f50ce2"
+    },
+    "fetch-ci-inputs.py": {
+      "bytes": 8244,
+      "sha256": "8606c9273be9ec7a4aed6d8fdc3bd55b5a373a0fd97f2183a247009e22b9df1a"
+    },
+    "input_contract.py": {
+      "bytes": 5623,
+      "sha256": "08dd51d5b12a4a19ed8c15509d9ce73bb0e89a0fe77416eb321a66c6dfc17ec8"
+    },
+    "fixture.ts": {
+      "bytes": 4297,
+      "sha256": "ea823098c146de7e729b855b5582647b65b1d66df3c78fb5cf8cb2caef68b6f9"
+    },
+    "fixture.html": {
+      "bytes": 151,
+      "sha256": "a2b7e9b60a5dfc931ed97d32c302028b3026d2122a72306ed30a5f0c5557be03"
+    },
+    "guarded_runner.py": {
+      "bytes": 29477,
+      "sha256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71"
+    },
+    "config.json": {
+      "bytes": 6139,
+      "sha256": "4a251232e8c2a07bb73be3650c3c6499457d26ccdf667b49caa863de0c67283b"
+    },
+    "package.json": {
+      "bytes": 206,
+      "sha256": "66baadc31e00a14d04e48908feec693aa35da425b179add0cb210c37ad0353da"
+    },
+    "package-lock.json": {
+      "bytes": 1849,
+      "sha256": "588b777799547077d3ba093ab6d18a61740321deefb80c7cdfdaea338ebafad8"
+    },
+    "historical-A-original-23.json": {
+      "bytes": 16567,
+      "sha256": "6119895d8dadacf3f09dcbc80219a8ff434866adc9c0845aba4aa8ee63d96028"
+    },
+    "node-v20.18.0-SHASUMS256.txt": {
+      "bytes": 3777,
+      "sha256": "3a4d58219ce6ed145d8b9b69ff64a099b9e62f59d7b55cc4093fbae219518758"
     }
-  },
-  "npmCache": "Generated package metadata only; excluded from installable inputs; no node_modules or browser binary installed.",
-  "previousSealSHA256": "3cbb129599ef31e3329a71d3181ff8c86db46a290e01a0cfcac7b7fe82403690",
-  "correctedUTC": "2026-09-18T12:11:20.550239+00:00",
-  "correction": {
-    "failedRun": 35342731705,
-    "scope": "Resolve exact locked Vite published ESM entry; validate createServer before launch",
-    "driverSHA256": "2e139b47f3f33f958fcb4ad0b002483a217807095a685631e54186bf4ff67786",
-    "sourceReview": "SourceSwift six-line hunk source review: no concrete blocker",
-    "importOnlySmokeSHA256": "5110a06900197bde4b65805310d570bca855f928f9847e6cf230d9a50e4b5f63",
-    "importOnlySmokeNode": "v25.8.0 local; remote Node20.18.0 remains unchanged",
-    "exactRegistryViteFilesVerified": 31,
-    "serverOrBrowserLaunchedLocally": false
   }
 }

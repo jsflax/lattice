@@ -3,11 +3,12 @@
 import argparse,hashlib,importlib.util,json,os,platform,shutil,tarfile,time,zipfile
 from pathlib import Path
 P=Path(__file__).resolve().parent
+from input_contract import validate_config, verify_artifact
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--root',type=Path,required=True);args=parser.parse_args()
     if platform.system()!='Linux' or platform.machine()!='x86_64':raise ValueError('Pinned Linux x64 toolchain required')
-    config=json.loads((P/'config.json').read_text());inputs=json.loads((P/'ci-inputs.json').read_text())
+    config=json.loads((P/'config.json').read_text());inputs=json.loads((P/'ci-inputs.json').read_text());validate_config(config,inputs)
     seal_bytes=(P/'PREPARATION-RESULT.json').read_bytes()
     if hashlib.sha256(seal_bytes).hexdigest()!=inputs['runtimePacketSealSHA256']:raise ValueError('Runtime preparation seal mismatch')
     for name,expected in json.loads(seal_bytes)['files'].items():
@@ -47,10 +48,11 @@ def main():
             if metadata.get('id')!=inputs['artifactID'] or metadata.get('expired') is not False or metadata.get('size_in_bytes')!=inputs['artifactBytes'] or metadata.get('digest')!='sha256:'+inputs['artifactSHA256'] or run.get('id')!=inputs['artifactRunID'] or run.get('head_sha')!=inputs['artifactRunHeadSHA']:raise ValueError('Artifact API metadata/source join failed')
             raw=command('artifact-download',['gh','api',f"repos/{inputs['repository']}/actions/artifacts/{inputs['artifactID']}/zip"])
             if raw.stat().st_size!=inputs['artifactBytes'] or guard.digest(raw)!=inputs['artifactSHA256']:raise ValueError('Downloaded archive size/hash mismatch')
-            artifact=root/'artifact-10544642780.zip';shutil.copyfile(raw,artifact)
+            artifact=root/'candidate-artifact.zip';shutil.copyfile(raw,artifact)
             asset_proof={}
             with zipfile.ZipFile(artifact) as archive:
-                for arm in ['A','B']:
+                result['buildProvenance']=verify_artifact(archive,config,inputs)
+                for arm in ['B']:
                     for kind in ['js','wasm']:
                         expected=config['assets'][arm][kind];info=archive.getinfo(expected['zipMember'])
                         if info.file_size!=expected['bytes'] or info.file_size>4*1024*1024:raise ValueError('Asset member size mismatch')
@@ -60,7 +62,7 @@ def main():
             command('js-fetch',['git','fetch','--depth=1',inputs['jsRepository'],inputs['jsCommit']],source,timeout=180)
             command('js-checkout',['git','checkout','--detach',inputs['jsCommit']],source)
             identity=command('js-identity',['git','show','--no-patch','--format=%H %T','HEAD'],source).read_text().strip().split()
-            if identity[0]!=inputs['jsCommit']:raise ValueError('Exact JS head mismatch')
+            if identity!=[inputs['jsCommit'],inputs['jsTree']]:raise ValueError('Exact JS head/tree mismatch')
             if command('js-status',['git','status','--porcelain=v1','--untracked-files=all'],source).read_text():raise ValueError('Fetched source is dirty')
             for name,expected in config['jsSourceHashes'].items():
                 if guard.digest(source/name)!=expected:raise ValueError('Source inventory mismatch: '+name)

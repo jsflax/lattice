@@ -1,13 +1,13 @@
 {
-  "schemaVersion": 1,
-  "jsCommit": "ea5379bdffbf60a76f939d74ff1a2d7aa38f7b36",
+  "schemaVersion": 2,
+  "jsCommit": "cfe12e6a928270418b133f2a080c02a9c4531966",
   "jsSourceHashes": {
     ".github/workflows/ci.yml": "b54ac370bfd8c8f458882ccb5d4a5c9c4c8f3860ff19742aced3e497570a61be",
     "package.json": "21aa4172a3a71534ff39316d08ac7518615037fd9e4d46cc835771d926b1a4a1",
     "package-lock.json": "672216d1513fc0db2ab9ffdaafc72897b97a3f2574c4f8dee7955cbee3595129",
     "wasm/CMakeLists.txt": "62e07b765b5a923698d5efa7ae2d4109bc5a2e0d70e39783a3f1a94be1e652d9",
     "wasm/build.sh": "2ce9b2cb5734e367954c3a00d636281b66553a620f0351d91c3067d3a8785661",
-    "wasm/bindings.cpp": "45cdb2ec87ce5e66f22be732a6ba03881441f46ffc08899cdccc3d75481b10fc",
+    "wasm/bindings.cpp": "a0072b12e12e12d565d509cc7f3646063e32295bff6b04f78d3a8cff7caa3926",
     "vite.config.ts": "1dfd0502fdb406421c8a488dd1a490c770948e6600728054ba56bb4ce94d2fd4",
     "vitest.config.ts": "3d8344d53409c0803aea0e97cd425391d079a7aca98e843915a24a1c5bbde87e",
     "test/browser/tests.ts": "15bc899a8cff25a93181a163fb277dce44f19c5f372b71374ef636bd12725e0e",
@@ -15,7 +15,9 @@
     "test/browser/index.html": "dacb51d1c023b46fb07e1606419f8d2d4450bed617a505c9caf5c2f5afa6efa1",
     "test/no-shared-worker.test.ts": "9da5fc569c7c8854c5b9ae679c215727f5dc70c967ab926c97d9001e04bfdd4b",
     "test/sync-socket.test.ts": "3ce33954033acf50b108016c8a6833bf5b5f676b81782c27b00932eeb1287669",
-    "test/pending-drain.test.ts": "7f6e8564c33930e548f573c30def552c07dcca157553c26dfb267f7e7186a710"
+    "test/pending-drain.test.ts": "7f6e8564c33930e548f573c30def552c07dcca157553c26dfb267f7e7186a710",
+    "test/browser/audit-observation-regressions.html": "f047428f5337f5815c1b4a196c090d33abb137cd90c2ff37b8f683eab0b5295e",
+    "test/browser/audit-observation-regressions.ts": "315dbe37446586404712c1e6993924abdaede8161f6984634861295d1d3b53a2"
   },
   "originalCaseNames": [
     "buildSchemas creates correct schema",
@@ -42,35 +44,22 @@
     "test_EnumValue",
     "test_RealServerSync"
   ],
-  "coreA": "36b828864cbb1543e945898be31589f9c04d6384",
-  "coreB": "cbf360d14d696c84b40f5a58a966eed0271035ae",
-  "coreBTree": "cfa80cca9a05fbb2ee92f6db7ed5b9e2cbf41e03",
-  "wasmCI": 35340302120,
-  "artifactID": 10544642780,
-  "artifactSHA256": "8c88e372b2a962ffaf06d60a62077e39fa2dd254598c45004f6d652a7bd6d145",
+  "coreB": "e578f3336438855f5c3bbdbfb864feac8ca079e8",
+  "coreBTree": "a70de9eaf75ea36aef9961b0a876775bf2126b3f",
+  "wasmCI": 35350431481,
+  "artifactID": 10549593528,
+  "artifactSHA256": "6099add81011a848b7ae6256dfd1946bd814bd18f2ea4379b4654fcf7c2aa733",
   "assets": {
-    "A": {
-      "js": {
-        "zipMember": "A-lattice.js",
-        "sha256": "944c62508a53166a4a6948eaf7246a854abb89b1001f1e6e460c541e11798f5c",
-        "bytes": 142630
-      },
-      "wasm": {
-        "zipMember": "A-lattice.wasm",
-        "sha256": "f7ba4249e452c93cd060c8363d28b9e588e5c510e6fad26800d8966803a7c56d",
-        "bytes": 2967288
-      }
-    },
     "B": {
       "js": {
-        "zipMember": "B-lattice.js",
-        "sha256": "ec4beb6991050935c215b5c92e3a8b55bab8b989876214d18c8b8efc4d6e0d6d",
-        "bytes": 142630
+        "bytes": 142838,
+        "sha256": "d02e2d6d4c84663eb554c8d5095dbf4bf354bc28ca30638f7a93cab6c2324ed3",
+        "zipMember": "B-lattice.js"
       },
       "wasm": {
-        "zipMember": "B-lattice.wasm",
-        "sha256": "d686024a248e3e1ed2e6479c22f73ffb9616a4cad1a288b78b18906d841cdc34",
-        "bytes": 3019123
+        "bytes": 3027192,
+        "sha256": "072678dcc2fbd5145653340acb6cb30a1f9cd77ff7147932199a54658b981816",
+        "zipMember": "B-lattice.wasm"
       }
     }
   },
@@ -87,5 +76,79 @@
   "packetCeilingBytes": 2147483648,
   "supervisorSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
   "platform": "linux",
-  "playwrightLockSHA256": "588b777799547077d3ba093ab6d18a61740321deefb80c7cdfdaea338ebafad8"
+  "playwrightLockSHA256": "588b777799547077d3ba093ab6d18a61740321deefb80c7cdfdaea338ebafad8",
+  "jsTree": "b04a622635afed6980bcbbd48b7824695f4bc4b3",
+  "executedArms": [
+    "B"
+  ],
+  "artifactInputReady": true,
+  "regressionSuiteTimeoutMs": 120000,
+  "historicalBaseline": {
+    "executedInThisRun": false,
+    "jsCommit": "ea5379bdffbf60a76f939d74ff1a2d7aa38f7b36",
+    "coreCommit": "36b828864cbb1543e945898be31589f9c04d6384",
+    "browserRunID": 35343411536,
+    "browserArtifactID": 10546381179,
+    "receipt": "historical-A-original-23.json",
+    "receiptSHA256": "6119895d8dadacf3f09dcbc80219a8ff434866adc9c0845aba4aa8ee63d96028",
+    "originalCases": {
+      "passed": 21,
+      "failed": 2,
+      "skipped": 0
+    },
+    "failedNames": [
+      "test_Observation",
+      "test_RealServerSync"
+    ],
+    "jsResponseByteProofComplete": false,
+    "wasmResponseSHA256": "f7ba4249e452c93cd060c8363d28b9e588e5c510e6fad26800d8966803a7c56d",
+    "baselineQualified": false,
+    "fullABCompatibility": false,
+    "originalBuildArtifact": {
+      "runID": 35340302120,
+      "artifactID": 10544642780,
+      "archiveSHA256": "8c88e372b2a962ffaf06d60a62077e39fa2dd254598c45004f6d652a7bd6d145",
+      "assets": {
+        "js": {
+          "zipMember": "A-lattice.js",
+          "sha256": "944c62508a53166a4a6948eaf7246a854abb89b1001f1e6e460c541e11798f5c",
+          "bytes": 142630
+        },
+        "wasm": {
+          "zipMember": "A-lattice.wasm",
+          "sha256": "f7ba4249e452c93cd060c8363d28b9e588e5c510e6fad26800d8966803a7c56d",
+          "bytes": 2967288
+        }
+      }
+    }
+  },
+  "regressionCaseNames": [
+    "audit_fields_memory_transaction",
+    "audit_fields_persistent_transaction",
+    "audit_link_rows_once_persistent",
+    "audit_unsubscribe_queued_and_idempotent",
+    "audit_unsubscribe_inside_callback",
+    "audit_close_suppresses_queued_callback"
+  ],
+  "supersededCandidate": {
+    "executedInThisRun": false,
+    "jsCommit": "ea5379bdffbf60a76f939d74ff1a2d7aa38f7b36",
+    "coreCommit": "cbf360d14d696c84b40f5a58a966eed0271035ae",
+    "coreTree": "cfa80cca9a05fbb2ee92f6db7ed5b9e2cbf41e03",
+    "originalBuildArtifactID": 10544642780,
+    "assets": {
+      "js": {
+        "zipMember": "B-lattice.js",
+        "sha256": "ec4beb6991050935c215b5c92e3a8b55bab8b989876214d18c8b8efc4d6e0d6d",
+        "bytes": 142630
+      },
+      "wasm": {
+        "zipMember": "B-lattice.wasm",
+        "sha256": "d686024a248e3e1ed2e6479c22f73ffb9616a4cad1a288b78b18906d841cdc34",
+        "bytes": 3019123
+      }
+    },
+    "browserStartedInOriginalRun": false,
+    "browserCandidateQualified": false
+  }
 }
