@@ -72,20 +72,26 @@ def retention_candidate(data, *, executable, pid, launch_begin, exit_end, scan_e
             'decodedPathTruncated':isinstance(path,str) and len(path)>1024}
 
 
-def parse(data, *, executable, pid, launch_begin, exit_end, scan_end):
+def parse(data, *, executable, pid, launch_begin, exit_end, scan_end, binary_uuid):
     require(type(pid) is int and pid > 0, 'invalid owned PID')
     require(0 < launch_begin <= exit_end <= scan_end and scan_end-launch_begin <= 240, 'invalid control time window')
     body = decode_body(data)
-    require(body.get('procPath') == executable, 'exact owned executable path differs')
+    require(isinstance(binary_uuid, str) and re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', binary_uuid), 'missing independently captured binary UUID')
+    require(Path(executable).name == 'CrashControl' and executable.startswith('/Users/') and '/localdev/' in executable,
+            'unexpected owned control path')
+    reported_path = body.get('procPath')
+    # This is one literal observed representation, NOT a glob/prefix matcher.
+    require(reported_path in (executable, '/Users/USER/*/CrashControl'), 'unrecognized control path representation')
+    path_mode = 'exact-owned-path' if reported_path == executable else 'observed-literal-redaction-plus-owned-UUID'
+    require(body.get('procName') == 'CrashControl', 'owned process name differs')
     require(type(body.get('pid')) is int and body['pid'] == pid, 'owned PID differs')
     captured = epoch(body.get('captureTime'))
     # Reports may serialize timestamps at whole-second precision. Floor/ceil
     # bound only that representation, not a broad age window or stale-PID retry.
     require(math.floor(launch_begin) <= captured <= math.ceil(scan_end), 'capture outside launch/scan window')
-    if 'procLaunch' in body:
-        launched = epoch(body['procLaunch'])
-        require(math.floor(launch_begin) <= launched <= math.ceil(exit_end), 'process launch outside control window')
-        require(launched <= captured, 'report capture predates process launch')
+    launched = epoch(body.get('procLaunch'))
+    require(math.floor(launch_begin) <= launched <= math.ceil(exit_end), 'process launch outside control window')
+    require(launched <= captured, 'report capture predates process launch')
     exception = body.get('exception')
     require(isinstance(exception, dict) and exception.get('signal') == 'SIGSEGV' and
             exception.get('type') in ('EXC_BAD_ACCESS', 'EXC_CRASH'), 'report is not the signal-11 crash')
@@ -106,11 +112,13 @@ def parse(data, *, executable, pid, launch_begin, exit_end, scan_end):
         image_index = frame.get('imageIndex')
         require(type(image_index) is int and 0 <= image_index < len(images), 'control frame lacks valid image')
         image = images[image_index]
-        require(isinstance(image, dict) and image.get('path') == executable, 'control frame is from another image')
+        require(isinstance(image, dict) and image.get('path') == reported_path, 'control frame is from another image')
         uuid = image.get('uuid')
         require(isinstance(uuid, str) and re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', uuid), 'missing control image UUID')
+        require(uuid.lower() == binary_uuid, 'control image UUID differs from owned executable')
         matches.append({'frameIndex':index, 'symbol':symbol, 'imageIndex':image_index, 'imageUUID':uuid})
     require(matches, 'no symbolized named control frame on crashed thread')
-    return {'format':'Apple ips JSON', 'procPath':executable, 'pid':pid, 'captureEpoch':captured,
+    return {'format':'Apple ips JSON', 'procPath':reported_path, 'ownedExecutable':executable, 'pathIdentityMode':path_mode,
+            'ownedBinaryUUID':binary_uuid, 'pid':pid, 'launchEpoch':launched, 'captureEpoch':captured,
             'faultingThread':fault, 'signal':'SIGSEGV', 'controlFrames':matches,
             'symbolicationPerformed':False}

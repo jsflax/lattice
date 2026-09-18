@@ -1,12 +1,14 @@
 {
   "files": {
     "CrashControl.swift": "f577fccf09e9c2e4192f3e76ae04e4559efbc6c9e9bbcb91b5b16e96f1feded4",
-    "README.md": "09501e830bab4e46255bbb2afe133738d18837406e6ccd1461d1d8b2981a30b8",
-    "control_probe.py": "bf32d6ed066c5946ba5bc16131e4f3e4d4b198bdc30c3ca46aeccaabc347e4ca",
+    "README.md": "e6c96be25f863e225c7ff719c2398c782e7654f13c305ecef09b68bba39ad993",
+    "SDK-CONTRACT.json": "f4694ffe718d206222625d436792398e2617289bf599322a6e29fe4c571e846f",
+    "control_probe.py": "967839d078a53781d5dc1053dca9c632787c6ff6c549392bd97ccb8a494124c1",
     "control_reports.py": "7bd15ffe320a79ed65646e0c8447bb992ff4fa11d7753ad75d9ac920a79fa001",
     "development_supervisor.py": "368ba9664acfa8453f5fa6752de94297c6402b1e33502bc12fc2aed1c2a4fb28",
-    "parse_report.py": "73a88683fba06c91d263e8e782d4f92fdae0cfe3ebabcbd8cf595e4f64c8f77b",
-    "test_control.py": "ddb5d2e88b3ffe214d034b11b380b357c6c1fe5d07a11950cb115f016218a2ac"
+    "macho_identity.py": "d7fd3fcc7ea0d4257d3a19217ff50b0045635c3989f67df495890eef6996e4b1",
+    "parse_report.py": "d414773fdbc9461f0fed112c61bdb6baf132b87bd37e5aaaac6e494f6cac294f",
+    "test_control.py": "de58bec099c1fc7fcdad1c8840801c057d7fe7b4460eed2c2770ba3ae27a956c"
   },
   "scope": "SDK46 OS-report control only"
 }

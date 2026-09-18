@@ -10,9 +10,13 @@ from unittest.mock import patch
 import control_probe
 import control_reports
 import parse_report
+import macho_identity
+import struct
+import uuid
 
 P = Path(__file__).parent
 EXE = '/Users/runner/localdev/owned/control/CrashControl'
+UUID = '12345678-1234-1234-1234-123456789abc'
 ARGS = dict(executable=EXE,pid=123,launch_begin=1000.25,exit_end=1001.25,scan_end=1061.25)
 
 
@@ -28,13 +32,13 @@ def encode(value): return json.dumps(value).encode()
 
 class Parser(unittest.TestCase):
     def valid(self,value=None,args=None):
-        return parse_report.parse(encode(body() if value is None else value),**(ARGS if args is None else args))
+        return parse_report.parse(encode(body() if value is None else value),binary_uuid=UUID,**(ARGS if args is None else args))
     def reject(self,key,value):
         data=body();data[key]=value
         with self.assertRaises(ValueError): self.valid(data)
     def test_single_body(self): self.assertEqual(self.valid()['pid'],123)
     def test_header_and_body(self):
-        self.assertEqual(parse_report.parse(b'{"bug_type":"309"}\n'+encode(body()),**ARGS)['faultingThread'],0)
+        self.assertEqual(parse_report.parse(b'{"bug_type":"309"}\n'+encode(body()),binary_uuid=UUID,**ARGS)['faultingThread'],0)
     def test_wrong_pid(self): self.reject('pid',124)
     def test_bool_pid(self): self.reject('pid',True)
     def test_wrong_path(self): self.reject('procPath',EXE+'other')
@@ -57,13 +61,13 @@ class Parser(unittest.TestCase):
         with self.assertRaises(ValueError): self.valid(data)
     def test_missing_image_uuid(self): self.reject('usedImages',[{'path':EXE}])
     def test_ambiguous_document(self):
-        with self.assertRaises(ValueError): parse_report.parse(encode(body())+encode(body()),**ARGS)
+        with self.assertRaises(ValueError): parse_report.parse(encode(body())+encode(body()),binary_uuid=UUID,**ARGS)
     def test_third_document(self):
-        with self.assertRaises(ValueError): parse_report.parse(b'{}\n{}\n{}',**ARGS)
+        with self.assertRaises(ValueError): parse_report.parse(b'{}\n{}\n{}',binary_uuid=UUID,**ARGS)
     def test_runtime_warning_is_not_report(self):
-        with self.assertRaises(ValueError): parse_report.parse(b'swift runtime: backtrace-on-crash is not supported for privileged executables.\n',**ARGS)
+        with self.assertRaises(ValueError): parse_report.parse(b'swift runtime: backtrace-on-crash is not supported for privileged executables.\n',binary_uuid=UUID,**ARGS)
     def test_legacy_text_requires_explicit_future_parser(self):
-        with self.assertRaises(ValueError): parse_report.parse(b'Process: CrashControl [123]\nPath: '+EXE.encode(),**ARGS)
+        with self.assertRaises(ValueError): parse_report.parse(b'Process: CrashControl [123]\nPath: '+EXE.encode(),binary_uuid=UUID,**ARGS)
     def test_module_qualified_symbol(self):
         data=body();data['threads'][0]['frames'][0]['symbol']='SDK46CrashControl.latticeSDK46DiagnosticCrashControl() -> ()'
         self.assertTrue(self.valid(data)['controlFrames'])
@@ -71,12 +75,12 @@ class Parser(unittest.TestCase):
         data=body();data['threads'][0]['frames'][0]['symbol']='not_latticeSDK46DiagnosticCrashControl()'
         with self.assertRaises(ValueError): self.valid(data)
     def test_report_bound(self):
-        with self.assertRaises(ValueError): parse_report.parse(b' '*(parse_report.MAX_REPORT+1),**ARGS)
+        with self.assertRaises(ValueError): parse_report.parse(b' '*(parse_report.MAX_REPORT+1),binary_uuid=UUID,**ARGS)
     def test_escaped_slashes_decode_before_matching(self):
         data=encode(body()).replace(b'/',b'\\/')
         self.assertNotIn(EXE.encode(),data)
         self.assertTrue(parse_report.retention_candidate(data,**ARGS)['decodedPathExact'])
-        self.assertEqual(parse_report.parse(data,**ARGS)['procPath'],EXE)
+        self.assertEqual(parse_report.parse(data,binary_uuid=UUID,**ARGS)['procPath'],EXE)
     def test_redacted_path_retained_not_admitted(self):
         data=body();data['procPath']='/Users/USER/localdev/redacted/CrashControl'
         proof=parse_report.retention_candidate(encode(data),**ARGS)
@@ -104,11 +108,90 @@ class Parser(unittest.TestCase):
     def test_duplicate_identity_key_rejected(self):
         data=encode(body()).replace(b'"pid": 123',b'"pid": 124, "pid": 123')
         with self.assertRaises(ValueError): parse_report.retention_candidate(data,**ARGS)
-        with self.assertRaises(ValueError): parse_report.parse(data,**ARGS)
+        with self.assertRaises(ValueError): parse_report.parse(data,binary_uuid=UUID,**ARGS)
     def test_fractional_report_time_with_separated_numeric_zone(self):
         data=body();data['procLaunch']='1970-01-01 00:16:40.3000 +0000';data['captureTime']='1970-01-01 00:16:41.0000 +0000'
         self.assertEqual(parse_report.retention_candidate(encode(data),**ARGS)['captureEpoch'],1001)
         self.assertEqual(self.valid(data)['captureEpoch'],1001)
+
+
+    def test_observed_redaction_with_owned_uuid(self):
+        data=body();data['procPath']='/Users/USER/*/CrashControl';data['usedImages'][0]['path']=data['procPath']
+        proof=self.valid(data)
+        self.assertEqual(proof['ownedExecutable'],EXE)
+        self.assertEqual(proof['procPath'],data['procPath'])
+        self.assertEqual(proof['pathIdentityMode'],'observed-literal-redaction-plus-owned-UUID')
+    def test_redaction_is_not_wildcard_acceptance(self):
+        for path in ['/Users/USER/anything/CrashControl','/Users/OTHER/*/CrashControl','/Users/USER/*/CrashControlExtra','/Users/USER/*/*/CrashControl']:
+            data=body();data['procPath']=path;data['usedImages'][0]['path']=path
+            with self.subTest(path=path), self.assertRaises(ValueError):self.valid(data)
+    def test_uuid_mismatch_rejects_exact_and_redacted(self):
+        for path in [EXE,'/Users/USER/*/CrashControl']:
+            data=body();data['procPath']=path;data['usedImages'][0]['path']=path
+            data['usedImages'][0]['uuid']='12345678-1234-1234-1234-123456789abd'
+            with self.subTest(path=path), self.assertRaises(ValueError):self.valid(data)
+    def test_malformed_or_missing_independent_uuid(self):
+        for value in [None,'','wrong','12345678-1234-1234-1234-123456789abz']:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                parse_report.parse(encode(body()),binary_uuid=value,**ARGS)
+    def test_mixed_redacted_exact_image_rejects(self):
+        data=body();data['procPath']='/Users/USER/*/CrashControl'
+        with self.assertRaises(ValueError):self.valid(data)
+    def test_full_admission_requires_process_name(self):self.reject('procName','other')
+    def test_full_admission_requires_launch(self):
+        data=body();del data['procLaunch']
+        with self.assertRaises(ValueError):self.valid(data)
+    def test_uuid_case_representation(self):
+        data=body();data['usedImages'][0]['uuid']=UUID.upper()
+        self.assertEqual(self.valid(data)['ownedBinaryUUID'],UUID)
+
+
+def macho(commands=None, **fields):
+    if commands is None:commands=struct.pack('<2I',0x1b,24)+uuid.UUID(UUID).bytes
+    header={'magic':0xfeedfacf,'cpu':0x0100000c,'subtype':0,'kind':2,'count':1,'size':len(commands),'flags':0,'reserved':0}
+    header.update(fields)
+    return struct.pack('<8I',*header.values())+commands
+
+
+class MachO(unittest.TestCase):
+    def test_valid_uuid_hash(self):
+        data=macho();proof=macho_identity.parse(data)
+        self.assertEqual(proof['uuid'],UUID);self.assertEqual(proof['sha256'],hashlib.sha256(data).hexdigest())
+    def test_wrong_magic_fat_and_endian_reject(self):
+        for value in [0xcafebabe,0xcffaedfe,0xfeedface]:
+            with self.subTest(value=value),self.assertRaises(ValueError):macho_identity.parse(macho(magic=value))
+    def test_non_arm64_or_non_executable(self):
+        for field,value in [('cpu',0x01000007),('kind',6)]:
+            with self.subTest(field=field),self.assertRaises(ValueError):macho_identity.parse(macho(**{field:value}))
+    def test_command_count_and_bytes_bounded(self):
+        for fields in [{'count':0},{'count':257},{'size':65537},{'count':4}]:
+            with self.subTest(fields=fields),self.assertRaises(ValueError):macho_identity.parse(macho(**fields))
+    def test_truncation(self):
+        for data in [b'',macho()[:31],macho()[:-1],macho(size=32)]:
+            with self.assertRaises(ValueError):macho_identity.parse(data)
+    def test_duplicate_uuid(self):
+        command=struct.pack('<2I',0x1b,24)+uuid.UUID(UUID).bytes
+        with self.assertRaises(ValueError):macho_identity.parse(macho(command*2,count=2))
+    def test_missing_or_nil_uuid(self):
+        for commands in [struct.pack('<2I',0,8),struct.pack('<2I',0x1b,24)+bytes(16)]:
+            with self.assertRaises(ValueError):macho_identity.parse(macho(commands))
+    def test_command_extent_and_alignment(self):
+        for commands in [struct.pack('<2I',0x1b,0)+bytes(16),struct.pack('<2I',0x1b,23)+bytes(16),struct.pack('<2I',0x1b,32)+bytes(24),struct.pack('<2I',0x1b,24)+uuid.UUID(UUID).bytes+bytes(8)]:
+            with self.assertRaises(ValueError):macho_identity.parse(macho(commands))
+    def test_additional_command(self):
+        data=macho(struct.pack('<2I',0,8)+struct.pack('<2I',0x1b,24)+uuid.UUID(UUID).bytes,count=2)
+        self.assertEqual(macho_identity.parse(data)['loadCommands'],2)
+    def test_binary_byte_limit(self):
+        with self.assertRaises(ValueError):macho_identity.parse(bytes(macho_identity.MAX_BINARY+1))
+    def test_owned_file_and_changed_identity(self):
+        temp=P/'tmp';temp.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=temp) as td:
+            path=Path(td)/'control';path.write_bytes(macho());before=macho_identity.inspect(path)
+            self.assertEqual(before['uuid'],UUID)
+            path.write_bytes(macho()+b'changed')
+            self.assertNotEqual(macho_identity.inspect(path),before)
+            link=Path(td)/'link';link.symlink_to(path)
+            with self.assertRaises(OSError):macho_identity.inspect(link)
 
 
 class Custody(unittest.TestCase):
@@ -138,7 +221,7 @@ class Custody(unittest.TestCase):
             entry=snapshot['files'][0]
             self.assertFalse(entry['candidateIdentity']['decodedPathExact'])
             self.assertEqual((root/'out'/entry['name']).read_bytes(),raw)
-            with self.assertRaises(ValueError): parse_report.parse(raw,**dict(ARGS,executable=str(exe)))
+            with self.assertRaises(ValueError): parse_report.parse(raw,binary_uuid=UUID,**dict(ARGS,executable=str(exe)))
             self.assertEqual(collector.snapshot()['bytes'],len(raw))
     def test_retained_hash_replacement_rejects(self):
         temp=P/'tmp';temp.mkdir(exist_ok=True)

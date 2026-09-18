@@ -14,6 +14,7 @@ import sys
 import time
 import control_reports
 import parse_report
+import macho_identity
 import development_supervisor as guard
 
 P = Path(__file__).resolve().parent
@@ -81,7 +82,7 @@ def main():
     source_path = root/'control/CrashControl.swift'
     # Fresh owned path + PID + time is the identity gate; no old report is reused.
     binary = root/'control/CrashControl'
-    admitted_source = admitted_binary = None
+    admitted_source = admitted_binary = admitted_macho = None
     with guard.Interrupts() as interrupts:
         runner = guard.GuardedRunner(root,rec,env,interrupts,overall_seconds=240,reserve=30)
         try:
@@ -94,7 +95,10 @@ def main():
             runner.run('control-compile',['swiftc','-Onone','-g','-module-name','SDK46CrashControl',str(source_path),'-o',str(binary)],cwd=root,timeout=60,require_full_timeout=True)
             admitted_source, admitted_binary = guard.digest(source_path), guard.digest(binary)
             assert admitted_source == seal['files']['CrashControl.swift'], 'compiled control source differs'
-            result.update(controlSourceSHA256=admitted_source,controlBinarySHA256=admitted_binary)
+            admitted_macho = macho_identity.inspect(binary)
+            assert admitted_macho['sha256'] == admitted_binary, 'Mach-O identity/hash differs'
+            result.update(controlSourceSHA256=admitted_source,controlBinarySHA256=admitted_binary,controlMachO=admitted_macho)
+            guard.save_json(rec/'CONTROL-BINARY-IDENTITY.json',admitted_macho)
             launch_begin = time.time()
             try:
                 runner.run('control-signal',[str(binary)],cwd=root,timeout=10,require_full_timeout=True)
@@ -117,9 +121,9 @@ def main():
                 report_path = rec/'crash-reports'/entry['name']
                 try:
                     proof = parse_report.parse(retained_report(report_path,entry['sha256']),executable=str(binary),pid=pid,
-                                               launch_begin=launch_begin,exit_end=exit_end,scan_end=scan_end)
+                                               launch_begin=launch_begin,exit_end=exit_end,scan_end=scan_end,binary_uuid=admitted_macho['uuid'])
                     admission = {'proof':proof,'reportName':entry['name'],'reportSHA256':entry['sha256'],
-                                 'sourceSHA256':admitted_source,'binarySHA256':admitted_binary,
+                                 'sourceSHA256':admitted_source,'binarySHA256':admitted_binary,'binaryMachO':admitted_macho,
                                  'launchBeginEpoch':launch_begin,'exitEndEpoch':exit_end,'scanEndEpoch':scan_end}
                     break
                 except (ValueError,UnicodeError,RecursionError) as error:
@@ -141,11 +145,14 @@ def main():
                 def final_checks():
                     if admitted_source is not None:
                         assert guard.digest(source_path) == admitted_source and guard.digest(binary) == admitted_binary
+                    if admitted_macho is not None:
+                        assert macho_identity.inspect(binary) == admitted_macho
+                        assert json.loads((rec/'CONTROL-BINARY-IDENTITY.json').read_text()) == admitted_macho
                     if admission is not None:
                         report_path = rec/'crash-reports'/admission['reportName']
                         assert guard.digest(report_path) == admission['reportSHA256']
                         assert parse_report.parse(retained_report(report_path,admission['reportSHA256']),executable=str(binary),pid=result['ownedPID'],
-                            launch_begin=admission['launchBeginEpoch'],exit_end=admission['exitEndEpoch'],scan_end=admission['scanEndEpoch']) == admission['proof']
+                            launch_begin=admission['launchBeginEpoch'],exit_end=admission['exitEndEpoch'],scan_end=admission['scanEndEpoch'],binary_uuid=admitted_macho['uuid']) == admission['proof']
                     for item in runner.records:
                         row = json.loads((rec/(item['label']+'.json')).read_text())
                         if item['label'] == 'control-signal': expected_signal(row)
