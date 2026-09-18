@@ -194,6 +194,7 @@ struct ProjectionReadExecutorTests {
             }
         }
         try await waitUntil { entered.withLock { $0 } }
+        let before = executor.snapshot
         let deadline = DispatchTime.now().uptimeNanoseconds + 200_000_000
         let queued = Task {
             try await executor.submit(deadline: deadline) {
@@ -201,8 +202,13 @@ struct ProjectionReadExecutorTests {
                 return 2
             }
         }
-        try await waitUntil { executor.snapshot.pending == 1 }
         expectFailure(await queued.result, .deadlineExceeded)
+        // A cooperative continuation may miss the entire 200ms pending window.
+        // Retained transition counts prove actual queued expiry, rather than
+        // accepting an already-expired admission or sampling transient state.
+        let after = executor.snapshot
+        #expect(after.queuedAdmissions &- before.queuedAdmissions == 1)
+        #expect(after.queuedDeadlineExpirations &- before.queuedDeadlineExpirations == 1)
         #expect(executor.snapshot.running == 1)
         #expect(executor.snapshot.pending == 0)
         #expect(queuedRuns.withLock { $0 } == 0)

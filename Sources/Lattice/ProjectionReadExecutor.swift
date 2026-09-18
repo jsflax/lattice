@@ -71,6 +71,8 @@ internal final class ProjectionReadExecutor: @unchecked Sendable {
         let liveWorkers: Int
         let verifiedWorkers: Int
         let isShutdown: Bool
+        let queuedAdmissions: UInt64
+        let queuedDeadlineExpirations: UInt64
     }
 
     var snapshot: Snapshot { state.snapshot }
@@ -151,6 +153,8 @@ private final class ProjectionExecutorState: @unchecked Sendable {
     private var queue: [ProjectionExecutorAnyJob] = []
     private var active: [UUID: ProjectionExecutorAnyJob] = [:]
     private var stopping = false
+    private var queuedAdmissions: UInt64 = 0
+    private var queuedDeadlineExpirations: UInt64 = 0
     private var liveWorkers: Int
     private var verifiedWorkers = 0
     private var shutdownWaiters: [CheckedContinuation<Void, Never>] = []
@@ -196,7 +200,8 @@ private final class ProjectionExecutorState: @unchecked Sendable {
         condition.lock()
         defer { condition.unlock() }
         return .init(pending: queue.count, running: active.count - queue.count,
-                     liveWorkers: liveWorkers, verifiedWorkers: verifiedWorkers, isShutdown: stopping)
+                     liveWorkers: liveWorkers, verifiedWorkers: verifiedWorkers, isShutdown: stopping,
+                     queuedAdmissions: queuedAdmissions, queuedDeadlineExpirations: queuedDeadlineExpirations)
     }
 
     func enqueue<Value: Sendable>(_ job: ProjectionExecutorJob<Value>,
@@ -218,6 +223,7 @@ private final class ProjectionExecutorState: @unchecked Sendable {
             actions.append(job.rejection(ProjectionReadExecutorError.queueFull))
         } else {
             job.phase = .queued
+            queuedAdmissions &+= 1
             queue.append(job)
             active[job.id] = job
             rescheduleTimerLocked()
@@ -289,6 +295,7 @@ private final class ProjectionExecutorState: @unchecked Sendable {
         case .created:
             return [] // Cancellation may precede continuation installation.
         case .queued:
+            if case .deadline = reason { queuedDeadlineExpirations &+= 1 }
             queue.removeAll { $0 === job }
             active.removeValue(forKey: job.id)
             job.phase = .finished
