@@ -18,7 +18,7 @@ import Combine
 // mounts over one file share one watcher and one observer. Each watch
 // socket owns a monotone Int64 AuditLog-pk cursor and a serial pump that
 // re-runs the existing catch-up machinery — `eventsAfter(id:)` → page →
-// `ServerSentEvent.auditLog` → awaited `ws.send` — advancing the cursor as it
+// `ServerSentEvent.auditLog` → socket send completion — advancing the cursor as it
 // goes. Push IS incremental catch-up, triggered by a change notification
 // instead of a client redial.
 //
@@ -34,8 +34,8 @@ import Combine
 // Cursor semantics give ordering by construction: no gaps (parked
 // registration precedes the catch-up snapshot; activation installs the
 // snapshot boundary), no dupes (`WHERE id > cursor ORDER BY id ASC`; the
-// cursor only advances after a successful awaited send), in order (at most
-// one pump task per subscription). Pushed frames are byte-shape identical to
+// cursor only advances after a successful send completion), in order (at most
+// one pump per subscription). Pushed frames are byte-shape identical to
 // catch-up frames, which the client engine already applies unconditionally —
 // zero client changes. No kick-signaling: push carries only real sync frames.
 // ============================================================================
@@ -112,6 +112,11 @@ struct ObserverSendBoundaryProbe: Sendable {
     func capture(page: [AuditLog], route: Route, pipelinePage: UInt64? = nil) -> UInt64? {
         // Preserve every entry in order, including coalesced IDs and nil IDs.
         let ids = page.map { $0.globalId }
+        return capture(ids: ids, route: route, pipelinePage: pipelinePage)
+    }
+
+    @discardableResult
+    func capture(ids: [UUID?], route: Route, pipelinePage: UInt64? = nil) -> UInt64? {
         let uptime = DispatchTime.now().uptimeNanoseconds
         record(route, ids, uptime)
         if let pipelinePage {
@@ -186,11 +191,10 @@ struct MountPushContext: @unchecked Sendable {
 
 // MARK: - WatcherRef
 
-/// A pump's own strong reference to the watcher `Lattice`, held for the
-/// pump task's whole lifetime. Created ON the manager actor (where the
-/// group's box is still guaranteed populated) and released when the pump
-/// task ends — always in a detached-task context, never inline on the actor
-/// or an event loop. This is what makes last-subscriber teardown safe: the
+/// A pump's own strong reference to the watcher `Lattice`, held for that
+/// pump generation. Created ON the manager actor (where the group's box is
+/// still guaranteed populated) and released when that generation ends. The pump owns this through a box cleared on the IO pool,
+/// never inline on the control actor or an event loop. This is what makes last-subscriber teardown safe: the
 /// group's box can be cleared while a pump is mid-pass and the pump keeps a
 /// valid instance, exiting cleanly on its next inactive/closed check instead
 /// of trapping on a cleared box.
@@ -205,7 +209,7 @@ private final class WatcherRef: @unchecked Sendable {
 ///
 /// `cursor`/`dirty`/`pumping`/`active` are confined to the owning
 /// `FileWatchManager` actor (every mutation happens in an actor-isolated
-/// method); the pump's detached task only touches them through actor hops.
+/// method); native IO work only reads immutable fields and the stop flag.
 /// `socket` and `revocation` are thread-safe by their own contracts and are
 /// read directly between pages.
 final class PushSubscription: @unchecked Sendable {
@@ -215,6 +219,9 @@ final class PushSubscription: @unchecked Sendable {
     /// immediately, even if its transport lingers because the peer never
     /// answers the close frame (same authority as the apply path).
     let revocation: RevocationFlag
+    /// Separate from authorization: unsubscribe closes native-page admission
+    /// even while the transport is still open. Cursor state stays actor-owned.
+    let nativePagesStopped = RevocationFlag()
     /// Canonical channel-file path — the watch-group key.
     let key: String
     /// AuditLog entries per pushed frame, from the subscribing MOUNT's
@@ -230,11 +237,11 @@ final class PushSubscription: @unchecked Sendable {
     let diagnosticGroupID: UInt64?
     /// `nil` = parked (connect-time catch-up in flight). Installed once by
     /// `activate(_:cursor:)` with the catch-up boundary, then only advanced
-    /// by the pump after a successful awaited send.
+    /// by the pump after a successful send completion.
     var cursor: Int64?
     /// A nudge arrived while parked or while a pump pass was running.
     var dirty = false
-    /// At most one pump task per subscription (serialization: per-socket
+    /// At most one pump generation per subscription (serialization: per-socket
     /// frames are strictly ordered because only one pump advances the
     /// cursor).
     var pumping = false
@@ -271,8 +278,9 @@ private final class FileWatchGroup {
     let watcher: UnsafeSendableBox<Lattice>
     /// `watcher.observeCommits { nudge }` registration.
     var token: AnyCancellable?
+    let signal = RelayCoalescedSignal()
     /// Optional reconcile tick (see `SyncObserverPush.reconcileInterval`).
-    var reconcile: Task<Void, Never>?
+    var reconcile: RelayReconcileTimer?
     var subscribers: [PushSubscription] = []
 
     // Only the FIRST creator's already channel-selected probe reaches the
@@ -290,6 +298,50 @@ private final class FileWatchGroup {
     }
 }
 
+/// A prepared page owns bytes and fixed metadata, never managed row handles.
+private enum PreparedPushPage: Sendable {
+    case empty, stopped, encodingFailed
+    case encoded(data: Data, count: Int, last: Int64, ids: [UUID?], trace: UInt64?)
+}
+
+/// One generation of a subscription's pump. Native ownership is reachable
+/// only through its IO-owned box, which is emptied exactly once off control.
+@RelayControlActor private final class ActivePushPump {
+    enum Phase { case starting, reading, sending, finished }
+    let sub: PushSubscription
+    let watcher: UnsafeSendableBox<WatcherRef>
+    let pipelinePump: UInt64?
+    var trace: UInt64?
+    var pass: UInt64?
+    var cursor: Int64 = 0
+    var phase = Phase.starting
+    init(sub: PushSubscription, watcher: UnsafeSendableBox<WatcherRef>, pipelinePump: UInt64?) {
+        self.sub = sub; self.watcher = watcher; self.pipelinePump = pipelinePump
+    }
+    func releaseWatcher() {
+        guard phase != .finished else { return }
+        phase = .finished
+        let box = watcher
+        RelayExecutionPool.io.submitRequired(for: sub.key) { box.clear() }
+    }
+}
+
+@RelayControlActor private final class PendingWatchOpen {
+    struct Waiter {
+        let context: MountPushContext
+        let socket: WebSocket
+        let revocation: RevocationFlag
+        let probe: ObserverSendBoundaryProbe?
+        let diagnostic: ACKPathConnection?
+        let continuation: CheckedContinuation<PushSubscription?, Never>
+    }
+    var waiters: [Waiter] = []
+    func fail() {
+        let pending = waiters; waiters = []
+        for waiter in pending { waiter.continuation.resume(returning: nil) }
+    }
+}
+
 // MARK: - FileWatchManager
 
 /// ONE per relay process (the design's invariant), owning every per-file
@@ -304,19 +356,21 @@ private final class FileWatchGroup {
 /// Legacy (non-push) mounts never subscribe, so they add no group here;
 /// their commits reach a shared file's watcher through the core's
 /// same-process instance registry.
-actor FileWatchManager {
+@RelayControlActor final class FileWatchManager {
     /// The process-wide instance every push-enabled mount shares.
-    static let shared = FileWatchManager()
+    nonisolated static let shared = FileWatchManager()
+    nonisolated init() {}
 
     /// Keyed by canonical channel-file path.
     private var groups: [String: FileWatchGroup] = [:]
 
-    /// In-flight watcher opens, keyed the same way. Every subscriber that
-    /// arrives for a key while its open is running awaits THIS task instead
-    /// of starting a second open (dedupe), and the task itself installs the
-    /// group before it completes — so `groups[key]` is authoritative the
-    /// moment any waiter resumes.
-    private var creating: [String: Task<Bool, Never>] = [:]
+    /// One pending watcher open per key. Subscribers join its waiter list;
+    /// its control completion installs the observer/group, then publishes all
+    /// parked subscriptions before resuming any external waiter.
+    private var creating: [String: PendingWatchOpen] = [:]
+    /// Identity of each pump is its generation; stale completion callbacks
+    /// can never mutate a replacement pump for the same subscription.
+    private var pumps: [ObjectIdentifier: ActivePushPump] = [:]
 
     /// Watcher opens STARTED for each live group's key — teardown clears the
     /// entry with the group, so this is bounded by live groups, never by
@@ -373,7 +427,7 @@ actor FileWatchManager {
     /// fall between snapshot and watch.
     ///
     /// The first subscriber for a file pays for the watcher open. That open
-    /// runs OFF this actor (see `resolveGroup`): it is a full SQLite open —
+    /// runs OFF this actor (see `startOpen`): it is a full SQLite open —
     /// schema ensure, epoch migrations, WAL recovery on a cold file — and
     /// this actor is PROCESS-WIDE, so running it inline stalled every other
     /// file's pumps, nudges and teardowns behind one channel's first
@@ -392,11 +446,42 @@ actor FileWatchManager {
         actorDiagnostics.phase(canonicalScope, .canonicalization)
         let key = Self.canonicalKey(for: fileURL)
         actorDiagnostics.end(canonicalScope)
-        guard let group = await resolveGroup(key: key, fileURL: fileURL, context: context,
-                                            sendBoundaryProbe: sendBoundaryProbe,
-                                            setupDiagnostic: setupDiagnostic) else {
-            return nil
+        // Only external waiters suspend. Open/install/publication itself is
+        // driven by explicit control-actor completions, independent of a
+        // generic-executor continuation hop. A cancelled waiter does not
+        // cancel an open shared with other subscribing connections.
+        return await withCheckedContinuation { continuation in
+            let waiter = PendingWatchOpen.Waiter(context: context, socket: socket,
+                                                revocation: revocation, probe: sendBoundaryProbe,
+                                                diagnostic: setupDiagnostic, continuation: continuation)
+            let scope = actorDiagnostics.begin(.resolveGroupSetup, group: groups[key]?.diagnosticGroupID)
+            if let group = groups[key] {
+                actorDiagnostics.end(scope)
+                continuation.resume(returning: publish(waiter, key: key, group: group))
+            } else if let pending = creating[key] {
+                pending.waiters.append(waiter)
+                actorDiagnostics.end(scope)
+            } else {
+                let pending = PendingWatchOpen()
+                pending.waiters.append(waiter)
+                creating[key] = pending
+                opensStarted[key, default: 0] += 1
+                setupDiagnostic?.record(.watchOpenScheduled)
+                actorDiagnostics.end(scope)
+                Task { @RelayControlActor [weak self] in
+                    setupDiagnostic?.record(.watchOpenTaskStarted)
+                    guard let self else { pending.fail(); return }
+                    self.startOpen(pending, key: key, fileURL: fileURL, context: context,
+                                   probe: sendBoundaryProbe, diagnostic: setupDiagnostic)
+                }
+            }
         }
+    }
+
+    private func publish(_ waiter: PendingWatchOpen.Waiter, key: String,
+                         group: FileWatchGroup) -> PushSubscription {
+        let context = waiter.context, socket = waiter.socket, revocation = waiter.revocation
+        let sendBoundaryProbe = waiter.probe, setupDiagnostic = waiter.diagnostic
         let scope = actorDiagnostics.begin(.subscribePublish, group: group.diagnosticGroupID)
         defer { actorDiagnostics.end(scope) }
         let pipeline = sendBoundaryProbe?.pipeline
@@ -445,18 +530,20 @@ actor FileWatchManager {
     /// `maybePump`) and exits cleanly on its next inactive/closed/revoked
     /// check, so clearing the box here can never trap or dangle a pump —
     /// the underlying Lattice is destroyed only when the last holder
-    /// (this detached clear or the final pump task) lets go, always in a
-    /// detached-task context.
+    /// (the group or pump box) is cleared on the dedicated IO pool.
     func unsubscribe(_ sub: PushSubscription) {
         let scope = actorDiagnostics.begin(.unsubscribe, group: sub.diagnosticGroupID)
         defer { actorDiagnostics.end(scope) }
         sub.active = false
+        sub.nativePagesStopped.revoke()
+        if let pump = pumps[ObjectIdentifier(sub)] { stopPump(pump) }
         guard let group = groups[sub.key] else { return }
         group.subscribers.removeAll { $0 === sub }
         if group.subscribers.isEmpty {
             groups[sub.key] = nil
             opensStarted[sub.key] = nil
             actorDiagnostics.phase(scope, .observerRemoval, group: group.diagnosticGroupID)
+            group.signal.cancel()
             group.token?.cancel()
             actorDiagnostics.phase(scope, .tokenRelease)
             group.token = nil
@@ -466,7 +553,7 @@ actor FileWatchManager {
             group.reconcile = nil
             actorDiagnostics.phase(scope, .watcherReleaseHandoff)
             let box = group.watcher
-            Task.detached { box.clear() }
+            RelayExecutionPool.io.submitRequired(for: sub.key) { box.clear() }
             actorDiagnostics.phase(scope, .actorBody)
         }
     }
@@ -505,104 +592,141 @@ actor FileWatchManager {
               let lattice = group.watcher.valueIfPresent else { return }
         sub.pumping = true
         // The pump's OWN strong reference, taken on the actor while the
-        // group is provably alive and held for the pump task's lifetime —
+        // group is provably alive and held for the pump generation —
         // last-subscriber teardown can clear the group's box mid-pass
         // without invalidating this pump; it finishes its pass (or exits on
         // its next closed/revoked/inactive check) against a live instance,
         // and the Lattice is finally released off-actor when the last
-        // holder (the teardown task or this pump task) drops it.
-        let watcher = WatcherRef(lattice)
-        let pageSize = sub.pageSize
+        // holder's IO-owned box is cleared.
+        let watcher = UnsafeSendableBox(WatcherRef(lattice))
         let pumpTrace = sub.sendBoundaryProbe?.pipeline?.capture(
             .pumpScheduled, parent: sub.pipelineSubscription, related: pipelineTrigger,
             cursor: sub.cursor, active: sub.active, dirty: sub.dirty, pumping: sub.pumping)
-        // Detached: page queries + JSON encoding never run on this actor or
-        // on any socket's event loop (the B3.2 lesson). One task per
-        // subscription; every other subscription pumps independently, so a
-        // slow socket lags only itself.
+        let pump = ActivePushPump(sub: sub, watcher: watcher, pipelinePump: pumpTrace)
+        pumps[ObjectIdentifier(sub)] = pump
         sub.setupDiagnostic?.record(.pushPumpScheduled, span: sub.diagnosticGroupID ?? 0)
-        Task.detached { [weak self] in
+        Task { @RelayControlActor [weak self] in
             sub.setupDiagnostic?.record(.pushPumpTaskStarted, span: sub.diagnosticGroupID ?? 0)
             let started = sub.sendBoundaryProbe?.pipeline?.capture(.pumpTaskStarted, parent: pumpTrace)
-            await self?.pump(sub, watcher: watcher, pageSize: pageSize,
-                             pipelinePump: pumpTrace, pipelineTask: started)
+            guard let self else { pump.releaseWatcher(); return }
+            guard self.isCurrent(pump) else { self.stopPump(pump); return }
+            pump.trace = sub.sendBoundaryProbe?.pipeline?.capture(.pumpEntry, parent: pumpTrace, related: started)
+            self.startPass(pump)
         }
     }
 
-    /// The pump loop. Runs off-actor; per-page state transitions hop back in.
-    /// Never holds any write transaction — it reads committed state on the
-    /// watcher's read connection, and the nudge itself fired from the
-    /// writer's post-commit WAL hook, so "don't hold the apply/write
-    /// transaction while fanning" is satisfied by construction.
-    private nonisolated func pump(_ sub: PushSubscription, watcher: WatcherRef, pageSize: Int,
-                                 pipelinePump: UInt64?, pipelineTask: UInt64?) async {
-        let pipeline = sub.sendBoundaryProbe?.pipeline
-        let pumpTrace = pipeline?.capture(.pumpEntry, parent: pipelinePump, related: pipelineTask)
-        while true {
-            let request = pipeline?.capture(.beginPassRequested, parent: pumpTrace)
-            guard var cursor = await beginPass(sub, pipelineRequest: request) else { return }
-            let pass = pipeline?.capture(.beginPassReturned, parent: request, cursor: cursor)
-            while true {
-                // Same authority as the apply path: revocation (and a dead
-                // transport) stops the stream before the next page.
-                if sub.revocation.isRevoked || sub.socket.isClosed {
-                    await unsubscribe(sub)
-                    await clearPumping(sub)
-                    return
-                }
-                // Late-bind @NoHistory columns: this page is serialized in
-                // Swift, so core's upload-side fill never sees it.
-                sub.setupDiagnostic?.record(.pushPageBegin, span: sub.diagnosticGroupID ?? 0)
-                let pageRead = pipeline?.capture(.pageReadBegin, parent: pass, cursor: cursor)
-                let page = watcher.lattice.lateBindNoHistory(
-                    watcher.lattice.eventsAfter(id: cursor).snapshot(limit: Int64(pageSize)))
-                // Includes the existing query, snapshot and late-binding work.
-                // The send boundary later links its already-computed IDs here.
-                let pageReadEnd = pipeline?.capture(.pageReadEnd, parent: pageRead,
-                                                    cursor: cursor, count: page.count)
-                sub.setupDiagnostic?.record(.pushPageEnd, span: sub.diagnosticGroupID ?? 0, count: page.count)
-                guard !page.isEmpty, let last = page.last?.primaryKey else { break }
-                let encoding = pipeline?.capture(.encodeBegin, parent: pageReadEnd,
-                                                 cursor: cursor, count: page.count, lastPK: last)
-                guard let encoded = try? JSONEncoder().encode(ServerSentEvent.auditLog(page)) else {
-                    pipeline?.capture(.encodeFailed, parent: encoding)
-                    log.error("observer-push: failed to encode page after id \(cursor); dropping subscriber")
-                    await unsubscribe(sub)
-                    await clearPumping(sub)
-                    return
-                }
-                pipeline?.capture(.encodeEnd, parent: encoding, count: encoded.count)
-                let sendReturned: UInt64?
-                do {
-                    // AWAIT the write promise — flow control. The pump
-                    // self-throttles to THIS socket's drain rate instead of
-                    // stuffing the unbounded outbound buffer; memory bound is
-                    // one page in flight per socket.
-                    let send = sub.sendBoundaryProbe?.capture(page: page, route: .push, pipelinePage: pageReadEnd)
-                    sub.setupDiagnostic?.record(.pushSendBegin, span: sub.diagnosticGroupID ?? 0,
-                                                bytes: encoded.count, count: page.count)
-                    try await sub.socket.send(raw: encoded, opcode: .binary)
-                    sub.setupDiagnostic?.record(.pushSendReturn, span: sub.diagnosticGroupID ?? 0)
-                    // Includes both socket promise completion and task resumption;
-                    // it is not an event-loop-only write-completion timestamp.
-                    sendReturned = pipeline?.capture(.sendAwaitReturned, parent: send)
-                } catch {
-                    await unsubscribe(sub)
-                    await clearPumping(sub)
-                    return
-                }
-                // Batch-level logging ONLY (never per row — per-entry logging
-                // at fan-out multiplicity is the 11-20s apply-log incident
-                // class, multiplied).
-                log.debug("observer-push: sent \(page.count) entries (\(cursor + 1)...\(last))")
-                cursor = last
-                let advanceRequest = pipeline?.capture(.advanceRequested, parent: sendReturned, cursor: last,
-                                                       actorGroupID: sub.diagnosticGroupID)
-                await advance(sub, to: last, pipelineRequest: advanceRequest)
-                pipeline?.capture(.advanceReturned, parent: advanceRequest, cursor: last)
-            }
-            if await finishPass(sub, pipelinePass: pass) == false { return }
+    private func isCurrent(_ pump: ActivePushPump) -> Bool {
+        pump.phase != .finished && pump.sub.active && pumps[ObjectIdentifier(pump.sub)] === pump
+    }
+
+    private func stopPump(_ pump: ActivePushPump) {
+        if pumps[ObjectIdentifier(pump.sub)] === pump {
+            pumps[ObjectIdentifier(pump.sub)] = nil
+            pump.sub.pumping = false
         }
+        pump.releaseWatcher()
+    }
+
+    private func startPass(_ pump: ActivePushPump) {
+        guard isCurrent(pump) else { stopPump(pump); return }
+        let sub = pump.sub, pipeline = sub.sendBoundaryProbe?.pipeline
+        let request = pipeline?.capture(.beginPassRequested, parent: pump.trace)
+        guard let cursor = beginPass(sub, pipelineRequest: request) else { stopPump(pump); return }
+        pump.cursor = cursor
+        pump.pass = pipeline?.capture(.beginPassReturned, parent: request, cursor: cursor)
+        readNextPage(pump)
+    }
+
+    private func readNextPage(_ pump: ActivePushPump) {
+        guard isCurrent(pump) else { stopPump(pump); return }
+        let sub = pump.sub
+        guard !sub.revocation.isRevoked, !sub.socket.isClosed else { unsubscribe(sub); return }
+        pump.phase = .reading
+        let box = pump.watcher, cursor = pump.cursor, pass = pump.pass
+        RelayExecutionPool.io.submitRequired(for: sub.key) { [weak self] in
+            let prepared = Self.preparePage(sub, watcher: box, cursor: cursor, pageSize: sub.pageSize, pass: pass)
+            // A native completion goes directly to the explicit actor. It
+            // never resumes an intermediate nonisolated async function.
+            Task { @RelayControlActor [weak self] in
+                guard let self else { pump.releaseWatcher(); return }
+                self.pagePrepared(prepared, for: pump)
+            }
+        }
+    }
+
+    private func pagePrepared(_ prepared: PreparedPushPage, for pump: ActivePushPump) {
+        guard isCurrent(pump), pump.phase == .reading else { stopPump(pump); return }
+        let sub = pump.sub
+        guard !sub.revocation.isRevoked, !sub.socket.isClosed else { unsubscribe(sub); return }
+        switch prepared {
+        case .stopped:
+            unsubscribe(sub)
+        case .empty:
+            // Dirty check and pumping-slot release remain a single actor
+            // chunk. A nudge can neither fall between them nor start a rival.
+            if finishPass(sub, pipelinePass: pump.pass) { startPass(pump) }
+            else { stopPump(pump) }
+        case .encodingFailed:
+            log.error("observer-push: failed to encode page after id \(pump.cursor); dropping subscriber")
+            unsubscribe(sub)
+        case let .encoded(data, count, last, ids, pageTrace):
+            pump.phase = .sending
+            let send = sub.sendBoundaryProbe?.capture(ids: ids, route: .push, pipelinePage: pageTrace)
+            sub.setupDiagnostic?.record(.pushSendBegin, span: sub.diagnosticGroupID ?? 0,
+                                        bytes: data.count, count: count)
+            let promise = sub.socket.eventLoop.makePromise(of: Void.self)
+            promise.futureResult.whenComplete { [weak self] result in
+                Task { @RelayControlActor [weak self] in
+                    guard let self else { pump.releaseWatcher(); return }
+                    self.sendCompleted(result, for: pump, last: last, count: count, send: send)
+                }
+            }
+            // One page in flight. The next native read is admitted only from
+            // the successful promise completion, preserving socket flow control.
+            sub.socket.send(raw: data, opcode: .binary, promise: promise)
+        }
+    }
+
+    private func sendCompleted(_ result: Result<Void, Error>, for pump: ActivePushPump,
+                               last: Int64, count: Int, send: UInt64?) {
+        guard isCurrent(pump), pump.phase == .sending else { stopPump(pump); return }
+        let sub = pump.sub
+        guard case .success = result else { unsubscribe(sub); return }
+        sub.setupDiagnostic?.record(.pushSendReturn, span: sub.diagnosticGroupID ?? 0)
+        // This remains a promise-completion-plus-control-admission marker,
+        // not an event-loop-only write completion timestamp.
+        let returned = sub.sendBoundaryProbe?.pipeline?.capture(.sendAwaitReturned, parent: send)
+        log.debug("observer-push: sent \(count) entries (\(pump.cursor + 1)...\(last))")
+        pump.cursor = last
+        let request = sub.sendBoundaryProbe?.pipeline?.capture(.advanceRequested, parent: returned,
+                                                               cursor: last, actorGroupID: sub.diagnosticGroupID)
+        advance(sub, to: last, pipelineRequest: request)
+        sub.sendBoundaryProbe?.pipeline?.capture(.advanceReturned, parent: request, cursor: last)
+        readNextPage(pump)
+    }
+
+    private nonisolated static func preparePage(_ sub: PushSubscription,
+                                               watcher box: UnsafeSendableBox<WatcherRef>,
+                                               cursor: Int64, pageSize: Int, pass: UInt64?) -> PreparedPushPage {
+        guard !sub.nativePagesStopped.isRevoked, !sub.revocation.isRevoked, !sub.socket.isClosed,
+              let watcher = box.valueIfPresent else { return .stopped }
+        let pipeline = sub.sendBoundaryProbe?.pipeline
+        sub.setupDiagnostic?.record(.pushPageBegin, span: sub.diagnosticGroupID ?? 0)
+        let pageRead = pipeline?.capture(.pageReadBegin, parent: pass, cursor: cursor)
+        let page = watcher.lattice.lateBindNoHistory(
+            watcher.lattice.eventsAfter(id: cursor).snapshot(limit: Int64(pageSize)))
+        let pageReadEnd = pipeline?.capture(.pageReadEnd, parent: pageRead, cursor: cursor, count: page.count)
+        sub.setupDiagnostic?.record(.pushPageEnd, span: sub.diagnosticGroupID ?? 0, count: page.count)
+        guard !page.isEmpty, let last = page.last?.primaryKey else { return .empty }
+        let encoding = pipeline?.capture(.encodeBegin, parent: pageReadEnd,
+                                         cursor: cursor, count: page.count, lastPK: last)
+        guard let encoded = try? JSONEncoder().encode(ServerSentEvent.auditLog(page)) else {
+            pipeline?.capture(.encodeFailed, parent: encoding)
+            return .encodingFailed
+        }
+        pipeline?.capture(.encodeEnd, parent: encoding, count: encoded.count)
+        let ids = sub.sendBoundaryProbe == nil ? [] : page.map { $0.globalId }
+        return .encoded(data: encoded, count: page.count, last: last, ids: ids, trace: pageReadEnd)
     }
 
     /// Start of a pump pass: consume the dirty flag and read the cursor.
@@ -622,7 +746,7 @@ actor FileWatchManager {
         return cursor
     }
 
-    /// The cursor only advances after a successful awaited send — every
+    /// The cursor only advances after a successful send completion — every
     /// frame is produced by `id > cursor ORDER BY id ASC`, so no dupes by
     /// construction.
     private func advance(_ sub: PushSubscription, to cursor: Int64, pipelineRequest: UInt64?) {
@@ -650,74 +774,50 @@ actor FileWatchManager {
         return false
     }
 
-    private func clearPumping(_ sub: PushSubscription) {
-        let scope = actorDiagnostics.begin(.clearPumping, group: sub.diagnosticGroupID)
-        defer { actorDiagnostics.end(scope) }
-        sub.pumping = false
-    }
-
     // MARK: group construction
 
-    /// The live group for `key`, opening the watcher OFF this actor.
-    ///
-    /// The open used to run inline in an actor-isolated `makeGroup`, so one
-    /// slow `Lattice(for:configuration:)` — schema ensure, epoch migration,
-    /// WAL recovery on a cold file — blocked the PROCESS-WIDE manager:
-    /// every other channel's pumps, nudges and teardowns queued behind one
-    /// channel's first subscriber. Now the open runs on a detached task and
-    /// this actor is SUSPENDED (not blocked) while it runs, so the rest of
-    /// the process keeps pumping.
-    ///
-    /// Concurrent subscribers for one key dedupe onto that single in-flight
-    /// task, so "one watcher `Lattice` + one commit observer per file"
-    /// survives the added suspension point: the second subscriber cannot
-    /// observe the empty `groups[key]` window and start a rival open.
-    /// Failure is shared too — every waiter on a failed open returns nil
-    /// rather than retrying in turn (the retry is the NEXT subscriber join).
-    private func resolveGroup(key: String, fileURL: URL,
-                              context: MountPushContext,
-                              sendBoundaryProbe: ObserverSendBoundaryProbe?,
-                              setupDiagnostic: ACKPathConnection?) async -> FileWatchGroup? {
-        let scope = actorDiagnostics.begin(.resolveGroupSetup, group: groups[key]?.diagnosticGroupID)
-        if let live = groups[key] {
-            actorDiagnostics.end(scope)
-            return live
-        }
-        let creation: Task<Bool, Never>
-        if let inFlight = creating[key] {
-            creation = inFlight
-        } else {
-            opensStarted[key, default: 0] += 1
-            setupDiagnostic?.record(.watchOpenScheduled)
-            creation = Task.detached { [weak self] in
-                setupDiagnostic?.record(.watchOpenTaskStarted)
-                setupDiagnostic?.record(.watchOpenBegin)
-                let opened = Self.openWatcher(fileURL: fileURL, context: context)
-                setupDiagnostic?.record(.watchOpenEnd, result: opened != nil)
+    /// One pending open per key. Installation and waiter publication happen
+    /// together in its explicit actor completion; one waiter's cancellation
+    /// never cancels another waiter's shared native open.
+    private func startOpen(_ pending: PendingWatchOpen, key: String, fileURL: URL,
+                           context: MountPushContext, probe: ObserverSendBoundaryProbe?,
+                           diagnostic: ACKPathConnection?) {
+        RelayExecutionPool.io.submitRequired(for: key) { [weak self] in
+            diagnostic?.record(.watchOpenBegin)
+            let opened = Self.openWatcher(fileURL: fileURL, context: context)
+            diagnostic?.record(.watchOpenEnd, result: opened != nil)
+            diagnostic?.record(.watchInstallRequested)
+            Task { @RelayControlActor [weak self] in
                 guard let self else {
-                    // The manager is a process-wide singleton, so this is
-                    // unreachable in production — but a watcher that has
-                    // nowhere to live is released here rather than leaked,
-                    // and off-actor as ~lattice_db requires.
-                    opened?.clear()
-                    return false
+                    pending.fail()
+                    RelayExecutionPool.io.submitRequired(for: key) { opened?.clear() }
+                    return
                 }
-                setupDiagnostic?.record(.watchInstallRequested)
-                return await self.installGroup(key: key, watcher: opened, context: context,
-                                               sendBoundaryProbe: sendBoundaryProbe,
-                                               setupDiagnostic: setupDiagnostic)
+                guard self.creating[key] === pending else {
+                    pending.fail()
+                    RelayExecutionPool.io.submitRequired(for: key) { opened?.clear() }
+                    return
+                }
+                let installed = self.installGroup(key: key, watcher: opened, context: context,
+                                                  sendBoundaryProbe: probe, setupDiagnostic: diagnostic)
+                let scope = self.actorDiagnostics.begin(.resolveGroupReturn,
+                                                         group: self.groups[key]?.diagnosticGroupID)
+                guard installed, let group = self.groups[key] else {
+                    self.actorDiagnostics.end(scope)
+                    pending.fail()
+                    return
+                }
+                let waiters = pending.waiters
+                pending.waiters = []
+                self.actorDiagnostics.end(scope)
+                let publications = waiters.map { waiter in
+                    (waiter.continuation, self.publish(waiter, key: key, group: group))
+                }
+                for (continuation, subscription) in publications {
+                    continuation.resume(returning: subscription)
+                }
             }
-            creating[key] = creation
         }
-        // Suspends this actor rather than blocking it. The task installs the
-        // group (and clears `creating`) before it completes, so the lookup
-        // below is authoritative for every waiter, whichever order they
-        // resume in.
-        actorDiagnostics.end(scope)
-        _ = await creation.value
-        let returned = actorDiagnostics.begin(.resolveGroupReturn, group: groups[key]?.diagnosticGroupID)
-        defer { actorDiagnostics.end(returned) }
-        return groups[key]
     }
 
     /// Hop back onto the actor with the opened watcher: register the
@@ -752,29 +852,28 @@ actor FileWatchManager {
         // insert, so it stays on the actor: the observer is live before
         // `subscribe` returns, which is what closes the
         // snapshot-versus-watch gap.
+        let signal = group.signal
+        signal.install { @RelayControlActor [weak self, weak signal] in
+            guard let self, let signal else { return }
+            defer { signal.finish() }
+            guard let callback = signal.take() else { return }
+            let started = pipeline?.capture(.nudgeTaskStarted, parent: callback)
+            self.nudge(key: key, pipeline: pipeline,
+                       pipelineCallback: callback, pipelineTask: started)
+        }
         if !context.options._suppressCommitObserverForTesting {
             actorDiagnostics.phase(scope, .observerRegistration)
-            group.token = watcher.observeCommits { [weak self] in
+            group.token = watcher.observeCommits {
                 let callback = pipeline?.capture(.commitCallback, parent: groupTrace)
-                guard let self else { return }
-                Task {
-                    let started = pipeline?.capture(.nudgeTaskStarted, parent: callback)
-                    await self.nudge(key: key, pipeline: pipeline,
-                                     pipelineCallback: callback, pipelineTask: started)
-                }
+                signal.signal(callback: callback)
             }
             actorDiagnostics.phase(scope, .actorBody)
             pipeline?.capture(.observerRegistered, parent: groupTrace)
             setupDiagnostic?.record(.watchObserverRegistered, span: diagnosticGroupID ?? 0)
         }
         if let interval = context.options.reconcileInterval {
-            group.reconcile = Task { [weak self] in
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: interval)
-                    guard !Task.isCancelled else { return }
-                    await self?.nudge(key: key)
-                }
-            }
+            let parts = interval.components
+            group.reconcile = RelayReconcileTimer(seconds: parts.seconds, attoseconds: parts.attoseconds, signal: signal)
         }
         groups[key] = group
         return true
@@ -789,7 +888,7 @@ actor FileWatchManager {
     /// so the watcher never joins sync channels or mints spurious entries.
     /// The group is created from the FIRST subscriber's mount context; later
     /// subscribers from other mounts over the same file share it as-is.
-    private static func openWatcher(fileURL: URL,
+    private nonisolated static func openWatcher(fileURL: URL,
                                     context: MountPushContext) -> UnsafeSendableBox<Lattice>? {
         // Same bounded busy budget as the relay's per-connection open: the
         // core's instance cache does not key on `busyTimeoutMs`, so whichever
@@ -810,7 +909,7 @@ actor FileWatchManager {
 
     /// Canonical channel-file key: channels shared across mounts (writer +
     /// watch over one file) resolve to ONE group.
-    static func canonicalKey(for fileURL: URL) -> String {
+    nonisolated static func canonicalKey(for fileURL: URL) -> String {
         fileURL.resolvingSymlinksInPath().standardizedFileURL.path
     }
 }
