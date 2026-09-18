@@ -1,0 +1,17 @@
+{
+  "scope": "Synthetic Python oracle/source checks only; no Swift/Core compile, native test, network, or child process",
+  "success": true,
+  "testsRun": 15,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "elapsedSeconds": 3.650078541977564,
+  "sourceSHA256": {
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "test_analysis.py": "165a2069dad3aa263d589b47d82f3efa9bb1d0875a2cd2433027da77e32d214f",
+    "build_proof.py": "e2be02f4a21d07847dcbbb6ab9de0a5547a2ea3af59d0863b8fc5535e7722777",
+    "qualify.py": "e0531fc64733a54f46211f00102f1fbf402e497a8af9a6e1cb1188d766d1ad01",
+    "analyze.py": "b42bb22a757669451c51bae17013eeab7877201278679b5757c945e898b8d640"
+  },
+  "logSHA256": "ff37c89e37b7957a2bc9fe62fbc72f5d86681592824ef69c64e2b010033c69c8"
+}

@@ -1,0 +1,234 @@
+"""Synthetic oracle checks only; never invokes Swift, Core, git or the network."""
+from pathlib import Path
+from copy import deepcopy
+import ast
+import json
+import sqlite3
+import tempfile
+import unittest
+import analyze as a
+import build_proof as b
+import guarded_runner as guard
+import qualify
+
+P = Path(__file__).resolve().parent
+
+def record(code=0):
+    return dict(started=True, exitCode=code, success=code == 0,
+        primaryError=None, evidenceErrors=[], receivedSignals=[], stopReason=None,
+        cleanup=dict(leaderReaped=True, groupGone=True, signals=[], errors=[]))
+
+def framework(arm):
+    failure = '<failure message="ATTACHED_DISPLAY_ORACLE">invariant</failure>' if arm == 'original' else ''
+    xml = '<testsuites><testsuite>' + ''.join(
+        f'<testcase classname="LatticeTests.AttachedBaselineCorrectnessTests" name="{name}()">'
+        + (failure if name == a.DISPLAY else '') + '</testcase>' for name in a.NAMES) + '</testsuite></testsuites>'
+    log = ('recorded an issue\nTest run with 2 tests failed after 1 seconds with 1 issue.\n'
+        if arm == 'original' else 'Test run with 2 tests passed after 1 seconds.\n')
+    return xml, log
+
+def fixtures(root, arm, physical=False):
+    for name in a.NAMES:
+        directory = root / name; directory.mkdir()
+        files = {}
+        for parity, kind in enumerate(('main', 'attached')):
+            for master in (True, False):
+                path = directory / (('master-' if master else '') + kind + '.sqlite')
+                if physical:
+                    db = sqlite3.connect(path)
+                    db.execute('CREATE TABLE PerfRefinementMemory(id INTEGER, globalId TEXT, rank INTEGER, title TEXT, body TEXT, accessCount INTEGER, lastAccessed REAL, pinned INTEGER)')
+                    rows = []
+                    for index in range(5000):
+                        rank = index * 2 + parity; v = a.values(rank)
+                        if arm == 'corrected' and name == a.DISPLAY and not master:
+                            if rank in (4000, 4001):
+                                v['accessCount'] += 1; v['lastAccessedSeconds'] = 1_800_000_000 + rank - 4000
+                            if rank == 4001: v['title'] = 'outside-owner-04001'
+                        rows.append((index + 1, a.uuid(rank).upper(), rank, v['title'], v['body'],
+                            v['accessCount'], v['lastAccessedSeconds'], int(v['pinned'])))
+                    db.executemany('INSERT INTO PerfRefinementMemory VALUES(?,?,?,?,?,?,?,?)', rows)
+                    db.commit(); db.close()
+                else: path.write_bytes(b'fixed synthetic seed')
+            files['master-' + kind + '.sqlite'] = a.digest(directory / ('master-' + kind + '.sqlite'))
+            files[kind + '.sqlite'] = files['master-' + kind + '.sqlite']
+        data = dict(caseName=name, complete=True, phase='complete', failure=None, files=files,
+            counts=dict(physicalRowsPerStore=5000), sql={})
+        if name == a.PRIME:
+            data['counts']['primedRows'] = 100
+            data['sql'].update(rawCollection=1, priming100=100, sixLiveFields=600)
+        else:
+            ranks = [rank - rank % 2 for rank in range(4000, 4100)] if arm == 'original' else list(range(4000, 4100))
+            data.update(returned=[a.values(r) for r in ranks], returnedUUIDs=[a.uuid(r) for r in ranks],
+                localIDs=[r // 2 + 1 for r in range(4000, 4100)])
+            data['counts'].update(distinctObjects=50 if arm == 'original' else 100, distinctLocalIDs=50,
+                coldOffsetFills=1, coldKeysetFills=0, coldAnchors=1)
+            data['sql'].update(sixLiveFields=600, warmLookup=0, warmSixLiveFields=600)
+            if arm == 'original':
+                data.update(complete=False, phase='display_oracle', failure='invariant("ATTACHED_DISPLAY_ORACLE")')
+        (directory / 'RESULT.json').write_text(json.dumps(data))
+
+class Oracle(unittest.TestCase):
+    def test_final_custody_clears_acceptance_but_retains_observations(self):
+        original = dict(success=True, primaryError=None, evidenceErrors=[], receivedSignals=[],
+            experimentCompleted=True, correctedFocusedAccepted=True, reproductionConfirmed=True,
+            originalSafetyAccepted=False, arms={'original': {'expectedRedConfirmed': True}, 'corrected': {'actual': {'passed': 2}}})
+        control = deepcopy(original); qualify.finalize_acceptance(control); self.assertEqual(control, original)
+        for key, value in [('success', False), ('primaryError', {'message': 'primary'}),
+                ('evidenceErrors', [{'message': 'final custody/deadline/receipt failure'}]), ('receivedSignals', [15])]:
+            changed = deepcopy(original); changed[key] = value; qualify.finalize_acceptance(changed)
+            self.assertFalse(changed['success']); self.assertFalse(changed['experimentCompleted'])
+            self.assertFalse(changed['correctedFocusedAccepted']); self.assertFalse(changed['originalSafetyAccepted'])
+            self.assertTrue(changed['reproductionConfirmed']); self.assertEqual(changed['arms'], original['arms'])
+
+    def temporary(self):
+        parent = P / 'python-checks'; parent.mkdir(exist_ok=True)
+        item = tempfile.TemporaryDirectory(dir=parent)
+        self.addCleanup(item.cleanup)
+        return Path(item.name)
+
+    def test_normal_exit_controls(self):
+        a.command(record()); a.command(record(1), 1)
+
+    def test_signals_timeouts_and_cleanup_fail_closed(self):
+        for key, value in [('exitCode', -13), ('primaryError', {'message': 'failed'}),
+                ('receivedSignals', [15]), ('stopReason', 'command timeout'), ('started', False),
+                ('evidenceErrors', ['missing receipt'])]:
+            with self.subTest(key=key):
+                r = record(1); r[key] = value
+                with self.assertRaises(AssertionError): a.command(r, 1)
+        for key, value in [('groupGone', False), ('leaderReaped', False), ('signals', ['TERM']), ('errors', ['EPERM'])]:
+            with self.subTest(cleanup=key):
+                r = record(1); r['cleanup'][key] = value
+                with self.assertRaises(AssertionError): a.command(r, 1)
+
+    def test_exact_discovery(self):
+        expected = json.loads((P / 'expected-tests.json').read_text())
+        text = '\n'.join(expected['caseIdentifiers'])
+        a.discover(text, expected)
+        for changed in (text.splitlines()[0], text + '\n' + text.splitlines()[0], text.replace(a.PRIME, 'another')):
+            with self.assertRaises(AssertionError): a.discover(changed, expected)
+
+    def test_framework_controls(self):
+        for arm in ('original', 'corrected'): a.framework(*framework(arm), arm)
+
+    def test_framework_wrong_case_or_issue_rejected(self):
+        xml, log = framework('original')
+        for changed in (xml.replace('ATTACHED_DISPLAY_ORACLE', 'unrelated'), xml.replace(a.DISPLAY, 'unexpected'),
+                xml.replace('<failure ', '<failure/><failure '), xml.replace('</testsuite>', '<failure>global</failure></testsuite>')):
+            with self.assertRaises(AssertionError): a.framework(changed, log, 'original')
+
+    def test_global_error_or_skip_rejected(self):
+        xml, log = framework('corrected')
+        for node in ('<error>setup</error>', '<skipped/>'):
+            with self.assertRaises(AssertionError): a.framework(xml.replace('</testsuites>', node + '</testsuites>'), log, 'corrected')
+
+    def test_missing_case_and_signal_log_rejected(self):
+        xml, log = framework('corrected')
+        with self.assertRaises(AssertionError): a.framework(xml.replace(a.PRIME, a.DISPLAY), log, 'corrected')
+        with self.assertRaises(AssertionError): a.framework(xml, log + 'Exited with unexpected signal 13', 'corrected')
+
+    def test_case_controls_and_original_pattern(self):
+        for arm in ('original', 'corrected'):
+            root = self.temporary(); fixtures(root, arm); a.case_receipts(root, arm)
+        file = root / a.DISPLAY / 'RESULT.json'
+        original = json.loads(file.read_text())
+        for category, key, value in [('sql', 'sixLiveFields', 599), ('sql', 'warmLookup', 1), ('counts', 'distinctObjects', 50)]:
+            changed = deepcopy(original); changed[category][key] = value; file.write_text(json.dumps(changed))
+            with self.assertRaises(AssertionError): a.case_receipts(root, 'corrected')
+
+    def test_original_wrong_row_signature_rejected(self):
+        root = self.temporary(); fixtures(root, 'original')
+        file = root / a.DISPLAY / 'RESULT.json'; changed = json.loads(file.read_text())
+        changed['returned'][1] = a.values(4001); file.write_text(json.dumps(changed))
+        with self.assertRaises(AssertionError): a.case_receipts(root, 'original')
+
+    def test_seed_hash_and_extra_fixture_rejected(self):
+        root = self.temporary(); fixtures(root, 'corrected')
+        (root / a.PRIME / 'master-main.sqlite').write_bytes(b'changed')
+        with self.assertRaises(AssertionError): a.case_receipts(root, 'corrected')
+        root = self.temporary(); fixtures(root, 'corrected'); (root / 'extra').mkdir()
+        with self.assertRaises(AssertionError): a.case_receipts(root, 'corrected')
+
+    def test_full_independent_physical_read_and_wrong_route(self):
+        for arm in ('original', 'corrected'):
+            root = self.temporary(); fixtures(root, arm, physical=True)
+            self.assertEqual(a.physical_postimages(root, arm)['independentReadRows'], 40000)
+        db = sqlite3.connect(root / a.DISPLAY / 'main.sqlite')
+        db.execute('UPDATE PerfRefinementMemory SET title=? WHERE rank=4000', ('outside-owner-04001',))
+        db.commit(); db.close()
+        with self.assertRaises(AssertionError): a.physical_postimages(root, 'corrected')
+
+    def compile_fixture(self):
+        root = self.temporary(); sdk = root / 'sdk'; core = root / 'core'; scratch = root / 'scratch'
+        def put(path, value='synthetic'):
+            path.parent.mkdir(parents=True, exist_ok=True); path.write_text(value); return path
+        lines = []; objects = []
+        for module in ('LatticeCore', 'LatticeSwiftCppBridge'):
+            source = put(core / 'Sources' / module / 'src/unit.cpp')
+            obj = put(scratch / (module + '.o')); objects.append(obj)
+            lines.append(f'/usr/bin/clang++ -O3 -c {source} -o {obj}')
+        overlay = 'Tests/LatticeTests/AttachedBaselineCorrectnessTests.swift'
+        for module, path in [('Lattice', 'Sources/Lattice/One.swift'), ('LatticeTests', overlay)]:
+            source = put(sdk / path); obj = put(scratch / (module + '.o')); objects.append(obj)
+            mapping = put(scratch / (module + '.map'), json.dumps({str(source): {'object': str(obj)}}))
+            lines.append(f'builtin-SwiftDriver -- /usr/bin/swiftc -module-name {module} -O -enable-testing -output-file-map {mapping}')
+        object_list = put(scratch / 'partial.LinkFileList', '\n'.join(str(x) for x in objects))
+        partial = put(scratch / 'partial.o')
+        lines.append(f'/usr/bin/clang -r -filelist {object_list} -o {partial}')
+        binary = put(scratch / 'LatticeTests.xctest/Contents/MacOS/LatticeTests')
+        final_list = put(scratch / 'LatticeTests.LinkFileList', str(partial))
+        lines.append(f'/usr/bin/swiftc @{final_list} -o {binary}')
+        log = put(root / 'build.log', '\n'.join(lines))
+        return log, sdk, core, scratch, overlay
+
+    def test_compiler_transitive_link_control(self):
+        args = self.compile_fixture(); proof = b.make(*args); b.verify(proof)
+        self.assertEqual(len(proof['nativeObjects']), 2)
+        self.assertEqual(len(proof['linkGraph']), 2)
+
+    def test_compiler_missing_input_or_release_flag_rejected(self):
+        for transform in (lambda t: '\n'.join(t.splitlines()[1:]), lambda t: t.replace('-O3', '-O0')):
+            args = self.compile_fixture(); args[0].write_text(transform(args[0].read_text()))
+            with self.assertRaises((AssertionError, ValueError)): b.make(*args)
+
+    def test_compiler_unlinked_object_rejected(self):
+        args = self.compile_fixture(); path = args[3] / 'partial.LinkFileList'
+        path.write_text('\n'.join(path.read_text().splitlines()[1:]))
+        with self.assertRaises(AssertionError): b.make(*args)
+
+    def test_compiler_mutated_object_map_or_binary_rejected(self):
+        for relative in ('Lattice.o', 'Lattice.map', 'LatticeTests.xctest/Contents/MacOS/LatticeTests'):
+            args = self.compile_fixture(); proof = b.make(*args)
+            (args[3] / relative).write_text('changed')
+            with self.assertRaises(AssertionError): b.verify(proof)
+
+    def build_identity_fixture(self):
+        args = self.compile_fixture(); proof = b.make(*args); receipts = args[0].parent / 'receipts'; receipts.mkdir()
+        def save(name, value):
+            path = receipts / ('original-' + name + '.json'); path.write_text(json.dumps(value)); return a.digest(path)
+        identity = dict(success=True, sourceProofSHA256=save('source-proof', {'source': 'fixed'}),
+            compilerProofSHA256=save('compiler-proof', proof), commandReceiptSHA256=save('release-build', record()),
+            binarySHA256=proof['binarySHA256'], packetSealSHA256='synthetic fixed seal')
+        save('build-result', identity)
+        tree = ast.parse((P / 'qualify.py').read_text())
+        functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == 'verify_build']
+        self.assertEqual(len(functions), 1)
+        namespace = dict(receipts=receipts, load=lambda p: json.loads(p.read_text()), guard=guard, analyze=a, build_proof=b)
+        exec(compile(ast.Module(body=functions, type_ignores=[]), 'exact qualify.py verify_build', 'exec'), namespace)
+        return namespace['verify_build'], dict(arm='original', buildIdentity=identity, compilerProof=proof), receipts
+
+    def test_exact_outer_build_identity_control(self):
+        verify, context, _ = self.build_identity_fixture(); verify(context)
+
+    def test_outer_build_failure_or_receipt_drift_rejected(self):
+        for suffix in ('source-proof', 'compiler-proof', 'release-build', 'build-result'):
+            verify, context, receipts = self.build_identity_fixture()
+            (receipts / ('original-' + suffix + '.json')).write_text('{}')
+            with self.assertRaises(AssertionError): verify(context)
+        verify, context, receipts = self.build_identity_fixture()
+        path = receipts / 'original-release-build.json'; failed = record(1); path.write_text(json.dumps(failed))
+        context['buildIdentity']['commandReceiptSHA256'] = a.digest(path)
+        (receipts / 'original-build-result.json').write_text(json.dumps(context['buildIdentity']))
+        with self.assertRaises(AssertionError): verify(context)
+
+if __name__ == '__main__': unittest.main(verbosity=2)

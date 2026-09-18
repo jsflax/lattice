@@ -1,0 +1,20 @@
+test_case_controls_and_original_pattern (test_analysis.Oracle.test_case_controls_and_original_pattern) ... ok
+test_compiler_missing_input_or_release_flag_rejected (test_analysis.Oracle.test_compiler_missing_input_or_release_flag_rejected) ... ok
+test_compiler_mutated_object_map_or_binary_rejected (test_analysis.Oracle.test_compiler_mutated_object_map_or_binary_rejected) ... ok
+test_compiler_transitive_link_control (test_analysis.Oracle.test_compiler_transitive_link_control) ... ok
+test_compiler_unlinked_object_rejected (test_analysis.Oracle.test_compiler_unlinked_object_rejected) ... ok
+test_exact_discovery (test_analysis.Oracle.test_exact_discovery) ... ok
+test_framework_controls (test_analysis.Oracle.test_framework_controls) ... ok
+test_framework_wrong_case_or_issue_rejected (test_analysis.Oracle.test_framework_wrong_case_or_issue_rejected) ... ok
+test_full_independent_physical_read_and_wrong_route (test_analysis.Oracle.test_full_independent_physical_read_and_wrong_route) ... ok
+test_global_error_or_skip_rejected (test_analysis.Oracle.test_global_error_or_skip_rejected) ... ok
+test_missing_case_and_signal_log_rejected (test_analysis.Oracle.test_missing_case_and_signal_log_rejected) ... ok
+test_normal_exit_controls (test_analysis.Oracle.test_normal_exit_controls) ... ok
+test_original_wrong_row_signature_rejected (test_analysis.Oracle.test_original_wrong_row_signature_rejected) ... ok
+test_seed_hash_and_extra_fixture_rejected (test_analysis.Oracle.test_seed_hash_and_extra_fixture_rejected) ... ok
+test_signals_timeouts_and_cleanup_fail_closed (test_analysis.Oracle.test_signals_timeouts_and_cleanup_fail_closed) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 3.588s
+
+OK

@@ -1,0 +1,18 @@
+{
+  "scope": "Synthetic Python oracle and exact extracted build-identity helper checks only; no Swift/Core, native test, network, or child launch",
+  "success": true,
+  "testsRun": 17,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "elapsedSeconds": 2.289978709013667,
+  "sourceSHA256": {
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "test_analysis.py": "50027c82070a7fa065b35489e22945083107e0b03f11a0adf3627545700c7e3a",
+    "build_proof.py": "e2be02f4a21d07847dcbbb6ab9de0a5547a2ea3af59d0863b8fc5535e7722777",
+    "qualify.py": "00841e944fdee31a7a92633bc0b9d04c1f4284dc7680391417cf92676595dd08",
+    "analyze.py": "b42bb22a757669451c51bae17013eeab7877201278679b5757c945e898b8d640"
+  },
+  "logSHA256": "795ea5748308594754cd52697f057aea6971a19e4f9c4da1366db44e70ec6701",
+  "priorChecksPreserved": "PYTHON-CHECKS.json; source changes add exact outer build identity checks"
+}
