@@ -18,7 +18,22 @@ import Combine
 struct RecoveryRefreshTests {
     private func database() throws -> (Lattice, URL) {
         let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
-        let directory = URL(fileURLWithPath: home).appendingPathComponent("localdev/lattice-recovery-sdk-tests")
+        let directory: URL
+        if let requested = ProcessInfo.processInfo.environment["LATTICE_RECOVERY_QUALIFICATION_DIRECTORY"] {
+            guard let root = ProcessInfo.processInfo.environment["LATTICE_QUALIFICATION_ROOT"],
+                  home.hasPrefix("/"), root.hasPrefix("/"), requested.hasPrefix("/") else {
+                throw LatticeError.transactionError("Owned recovery fixture environment is required")
+            }
+            let owned = URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath()
+            let allowed = URL(fileURLWithPath: home).appendingPathComponent("localdev").standardizedFileURL.resolvingSymlinksInPath()
+            directory = URL(fileURLWithPath: requested).standardizedFileURL.resolvingSymlinksInPath()
+            guard owned.path.hasPrefix(allowed.path + "/"),
+                  directory.path == owned.appendingPathComponent("tmp/recovery-fixtures").path else {
+                throw LatticeError.transactionError("Recovery fixture must remain in the owned qualification root")
+            }
+        } else {
+            directory = URL(fileURLWithPath: home).appendingPathComponent("localdev/lattice-recovery-sdk-tests")
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent("\(UUID().uuidString).sqlite")
         var config = Lattice.Configuration(fileURL: url, busyTimeoutMs: 100)

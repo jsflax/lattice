@@ -179,6 +179,28 @@ final class LockedBox<T>: @unchecked Sendable {
 
 class BaseTest {
     private static let logFile: UnsafeMutablePointer<FILE>? = {
+        let environment = ProcessInfo.processInfo.environment
+        if let root = environment["LATTICE_QUALIFICATION_ROOT"] {
+            guard let path = environment["LATTICE_TEST_LOG_PATH"],
+                  let directory = environment["LATTICE_QUALIFICATION_LOG_DIRECTORY"],
+                  let home = environment["HOME"],
+                  [root, path, directory, home].allSatisfy({ $0.hasPrefix("/") }) else {
+                preconditionFailure("Owned qualification log environment is required")
+            }
+            let owned = URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath()
+            let allowed = URL(fileURLWithPath: home).appendingPathComponent("localdev").standardizedFileURL.resolvingSymlinksInPath()
+            let logURL = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+            let directoryURL = URL(fileURLWithPath: directory).standardizedFileURL.resolvingSymlinksInPath()
+            guard owned.path.hasPrefix(allowed.path + "/"),
+                  directoryURL.path == owned.appendingPathComponent("test-logs").path,
+                  logURL.deletingLastPathComponent().path == directoryURL.path,
+                  ["native.log", "recovery-discovery.log", "recovery-tests.log"].contains(logURL.lastPathComponent),
+                  let f = fopen(logURL.path, "w") else {
+                preconditionFailure("Owned qualification log could not be opened")
+            }
+            Lattice.setLogFile(f)
+            return f
+        }
         let f = fopen("/tmp/lattice_swift_tests.log", "w")
         if let f {
             Lattice.setLogFile(f)
