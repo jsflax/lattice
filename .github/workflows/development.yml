@@ -6,6 +6,12 @@ on:
   push:
     branches: [codex/perf-refinement-20260918]
   workflow_dispatch:
+    inputs:
+      test_scope:
+        description: 'Full suite, isolated admission fixtures, or relay IO diagnostics'
+        type: choice
+        options: [full, relay-admission, relay-io]
+        default: full
 
 permissions:
   contents: read
@@ -32,6 +38,7 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       DEVELOPMENT_LEG: ${{ matrix.leg }}
       TEST_TIMEOUT: ${{ matrix.testTimeout }}
+      TEST_SCOPE: ${{ inputs.test_scope || 'full' }}
     steps:
       - name: Install Linux prerequisites
         if: matrix.leg == 'linux'
@@ -58,7 +65,7 @@ jobs:
           set -euo pipefail
           CORE_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["coreCommit"])' "$TASK_ROOT/lattice/Scripts/development-core.json")"
           python3 "$TASK_ROOT/lattice/Scripts/run-development.py" \
-            --root "$TASK_ROOT" --core-sha "$CORE_SHA" --test-timeout "$TEST_TIMEOUT"
+            --root "$TASK_ROOT" --core-sha "$CORE_SHA" --test-timeout "$TEST_TIMEOUT" --test-scope "$TEST_SCOPE"
 
       - name: Retain development graph evidence, including failures
         timeout-minutes: 10
