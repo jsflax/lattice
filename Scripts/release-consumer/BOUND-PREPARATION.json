@@ -1,0 +1,10 @@
+{
+  "predecessor": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/clean-consumer-core205-001",
+  "predecessorSourceReadySHA256": "f8b8fe693bce55ca46f33f744660288b93a92369a81c641178d88ed472eefa19",
+  "predecessorSealSHA256": "c9083c92a5422537a15d4037bf61321cb6cf771e857bddec88defa21fa8774ec",
+  "independentSourceReviewSHA256": "7f0800639b62c75d8cecd83a4f532772c35e81b7259bd568a6467a1a6ea4ea5f",
+  "publicationAssessmentSHA256": "31bd4e562bae47fcb8c31510ed5bf19113e911ad944ca323fe6982638bcff42f",
+  "parentAcceptedPublication": true,
+  "parentAuthorizedOnePushAfterFinalReview": true,
+  "nativeOrBrowserExecuted": false
+}

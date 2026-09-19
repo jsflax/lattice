@@ -1,0 +1,120 @@
+{
+  "accepted": true,
+  "published": true,
+  "repository": "jsflax/LatticeCore",
+  "version": "2.0.5",
+  "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.0.5",
+  "releaseID": 391900194,
+  "publishedAt": "2026-09-19T03:30:06Z",
+  "sourceCommit": "559c496d7997677d06cc6d1f7a7a87abc440c210",
+  "sourceTree": "0ab83c94e7a95fb53ba907025f76263b3e78e353",
+  "treeMatchesQualifiedCorrection": "4e381f416bb6527da6211c956d7f2f79c962cc17",
+  "tag": "2.0.5",
+  "tagObjectType": "commit",
+  "hostedRun": 35418473072,
+  "hostedRunURL": "https://github.com/jsflax/LatticeCore/actions/runs/35418473072",
+  "runAttempt": 1,
+  "allSixJobsAndStepsSuccessful": true,
+  "actualCheckouts": [
+    {
+      "job": "preflight",
+      "path": "logs/preflight/2_Run actions_checkout@v4.txt",
+      "sha256": "dad2d8bbd35a0c719d7372a11a64254d9b2e43b621b79714d528f49d96b9a91f"
+    },
+    {
+      "job": "test-capi / capi-linux",
+      "path": "logs/test-capi _ capi-linux/3_Run actions_checkout@v4.txt",
+      "sha256": "b43453db58717ccb31b28a70d7c1a55ef0eb4ad4866a0837bc11b02c615ba92e"
+    },
+    {
+      "job": "test-macos / build-and-test",
+      "path": "logs/test-macos _ build-and-test/2_Run actions_checkout@v4.txt",
+      "sha256": "fa05ae7bd014a7e253299ee9a7d0ead1f4d362a4e5d2c56b1934b96e7c8350aa"
+    },
+    {
+      "job": "test-linux / build-and-test",
+      "path": "logs/test-linux _ build-and-test/3_Run actions_checkout@v4.txt",
+      "sha256": "aa32f9cf53144fd2501307177caa7233c83de42008be66cba6307b3ecd1b3011"
+    },
+    {
+      "job": "test-capi / capi-macos",
+      "path": "logs/test-capi _ capi-macos/2_Run actions_checkout@v4.txt",
+      "sha256": "2f6f13704d73ebefa3402557a815c6d1e217e981bc51b54b7b2130dfff822123"
+    },
+    {
+      "job": "release",
+      "path": "logs/release/2_Run actions_checkout@v4.txt",
+      "sha256": "6266be2bedb6db3a3f5d4e8e2c7bfd319051e2511f62219f020c646a2131e99d"
+    }
+  ],
+  "testLegs": [
+    {
+      "job": "test-capi / capi-linux",
+      "kind": "SwiftPM C ABI",
+      "tests": 33,
+      "suites": 16,
+      "path": "logs/test-capi _ capi-linux/6_swift run LatticeCAPITests (SwiftPM leg).txt",
+      "sha256": "94c234c692eeb3b14d239fc77242b517d88ef9e48c999a397628a07316183144"
+    },
+    {
+      "job": "test-capi / capi-linux",
+      "kind": "shared CMake C ABI",
+      "tests": 33,
+      "suites": 16,
+      "path": "logs/test-capi _ capi-linux/9_Run LatticeCAPITests (against the shared library).txt",
+      "sha256": "7ecae00f77ab56f22c401430629e718ec0f78d5c1dacb5f18723abb71b21e873"
+    },
+    {
+      "job": "test-macos / build-and-test",
+      "kind": "full C++",
+      "tests": 413,
+      "suites": 44,
+      "path": "logs/test-macos _ build-and-test/3_Build and run C++ tests.txt",
+      "sha256": "4462b4a295024dc54fa72700f3fcc13711ebcae8d04607e65cfab32b9e7640c2"
+    },
+    {
+      "job": "test-linux / build-and-test",
+      "kind": "full C++",
+      "tests": 366,
+      "suites": 38,
+      "path": "logs/test-linux _ build-and-test/5_Build and run C++ tests.txt",
+      "sha256": "4d6df9c2648e866187ef9ce179a45d6338e008a46bc3b5ce945a0e9ef438666a"
+    },
+    {
+      "job": "test-capi / capi-macos",
+      "kind": "SwiftPM C ABI",
+      "tests": 33,
+      "suites": 16,
+      "path": "logs/test-capi _ capi-macos/3_swift run LatticeCAPITests (SwiftPM leg).txt",
+      "sha256": "8e6c3d907e6f7316ced01c5adea415ae306e6b96ccf955009f52fc199e11566c"
+    },
+    {
+      "job": "test-capi / capi-macos",
+      "kind": "shared CMake C ABI",
+      "tests": 33,
+      "suites": 16,
+      "path": "logs/test-capi _ capi-macos/6_Run LatticeCAPITests (against the shared library).txt",
+      "sha256": "f6b18af4a164b4c06f62400b227a44012a9ec47b4d431289dc08d81073edcb13"
+    }
+  ],
+  "newFallbackTestPassBothFullPlatforms": true,
+  "symbolFreezePassBothPlatforms": true,
+  "pureC11PassBothPlatforms": true,
+  "linuxAllTargetsSwiftBuild": true,
+  "failedOrSkippedTests": false,
+  "releaseReceipt": {
+    "path": "/Users/jason/localdev/lattice-perf-refinement-20260917/dependency-release/receipts/core-2.0.5-release-559c496/release-receipt.json",
+    "sha256": "bfae15978f822780145886385aefcde39d6c1f44f501b8ad3354b2f33c6f29fa",
+    "bytes": 384,
+    "assetID": 573985826,
+    "githubDigest": "sha256:bfae15978f822780145886385aefcde39d6c1f44f501b8ad3354b2f33c6f29fa",
+    "candidateDigest": "a077f4c55494417970ebee49882d6b998c9800c047022e814f0d784ac6c74bfa",
+    "candidateDigestRecomputedFromPostTestLog": true,
+    "receiptCanonicalDigestMatchedLog": true
+  },
+  "actionsArtifacts": 0,
+  "releaseBinaryArtifacts": 0,
+  "sourceReleaseOnly": true,
+  "collectionSHA256": "ceb8fa2dc64947b31d8b8f1806f5cc4e73e852deafeea8c6ea64499159d10aa8",
+  "limits": "Read-only publication verification; no consumer dispatch, native build, browser runtime, remote pairing, SDK compatibility or performance claim. Consumer admission remains root-owned."
+}

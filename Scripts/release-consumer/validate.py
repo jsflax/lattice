@@ -1,4 +1,5 @@
 """Fixed release-consumer checks; no processes, network or database access."""
+import copy
 import hashlib
 import json
 import re
@@ -8,7 +9,8 @@ SHA = re.compile(r'[0-9a-f]{40}\Z')
 HASH = re.compile(r'[0-9a-f]{64}\Z')
 REPOS = {'sdk': 'https://github.com/jsflax/lattice.git',
          'core': 'https://github.com/jsflax/LatticeCore.git'}
-TAGS = {'sdk': '2.0.0', 'core': '2.0.4'}
+TAGS = {'sdk': '2.0.0', 'core': '2.0.5'}
+SDK_CORE_STATE = {'revision': '99e4bc89389d14072e6ab9b658db49a49a3573f5', 'version': '2.0.4'}
 ACCEPTANCE = ('success', 'publicationAuthenticated', 'graphAccepted', 'consumerBuildPassed',
               'writerPassed', 'reopenPassed', 'consumerAccepted')
 
@@ -100,7 +102,16 @@ def publication(inputs, root):
     require(HASH.fullmatch(sdk.get('bindingReceiptSHA256') or '') and digest(binding) == sdk['bindingReceiptSHA256'],
             'combined upstream binding receipt hash differs')
     require(expected['latticecore']['location'] == REPOS['core']
-            and expected['latticecore']['state'] == {'revision': core['commit'], 'version': TAGS['core']}, 'SDK Core pin differs')
+            and expected['latticecore']['state'] == SDK_CORE_STATE, 'immutable SDK Core pin differs')
+    return expected
+
+def consumer_expected_pins(sdk_expected, inputs):
+    # Preserve the immutable SDK lock. Only the root consumer's explicit exact
+    # Core constraint advances within SDK2.0.0's public from2.0.4 requirement.
+    require(sdk_expected['latticecore']['state'] == SDK_CORE_STATE, 'immutable SDK Core pin differs')
+    require(inputs['core']['tag'] == TAGS['core'] and SHA.fullmatch(inputs['core']['commit']), 'unbound consumer Core identity')
+    expected = copy.deepcopy(sdk_expected)
+    expected['latticecore']['state'] = {'revision': inputs['core']['commit'], 'version': TAGS['core']}
     return expected
 
 def sdk_pin(inputs):
@@ -108,6 +119,7 @@ def sdk_pin(inputs):
             'state': {'revision': inputs['sdk']['commit'], 'version': TAGS['sdk']}}
 
 def consumer_pins(lock, expected, inputs):
+    require(expected['latticecore']['state'] == {'revision': inputs['core']['commit'], 'version': TAGS['core']}, 'consumer Core expectation differs')
     actual = pins(lock)
     require(HASH.fullmatch(lock.get('originHash') or ''), 'missing generated consumer originHash')
     require({'lattice', 'latticecore'} <= set(actual), 'SDK/Core missing from actual consumer graph')

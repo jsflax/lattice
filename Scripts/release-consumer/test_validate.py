@@ -23,10 +23,11 @@ class ValidationTests(unittest.TestCase):
         self.expected = v.pins({'version': 3, 'pins': v.load(P / 'OBSERVED-SDK-PINS.json')['pins']})
         self.inputs['sdk']['commit'] = 'a' * 40
         self.inputs['core']['commit'] = 'c' * 40
-        self.expected['latticecore']['state'] = {'revision': 'c' * 40, 'version': '2.0.4'}
+        self.expected['latticecore']['state'] = copy.deepcopy(v.SDK_CORE_STATE)
+        self.consumer_expected = v.consumer_expected_pins(self.expected, self.inputs)
 
     def lock(self, subset=False):
-        selected = [self.expected['latticecore']] if subset else list(self.expected.values())
+        selected = [self.consumer_expected['latticecore']] if subset else list(self.consumer_expected.values())
         return {'version': 3, 'originHash': 'd' * 64, 'pins': [*copy.deepcopy(selected), v.sdk_pin(self.inputs)]}
 
     def write(self, name, body):
@@ -67,27 +68,27 @@ class ValidationTests(unittest.TestCase):
 
     def test_synthetic_bound_publication_and_complete_graph(self):
         self.assertEqual(v.publication(self.bound(), self.root), self.expected)
-        actual, omitted = v.consumer_pins(self.lock(), self.expected, self.inputs)
+        actual, omitted = v.consumer_pins(self.lock(), self.consumer_expected, self.inputs)
         self.assertEqual(len(actual), 35); self.assertEqual(omitted, [])
 
     def test_product_subset_reports_all_omissions(self):
-        actual, omitted = v.consumer_pins(self.lock(True), self.expected, self.inputs)
+        actual, omitted = v.consumer_pins(self.lock(True), self.consumer_expected, self.inputs)
         self.assertEqual(set(actual), {'lattice', 'latticecore'})
         self.assertEqual(omitted, sorted(set(self.expected) - {'latticecore'}))
 
     def test_missing_originhash_and_duplicate_pins_rejected(self):
         x = self.lock(); x.pop('originHash')
-        with self.assertRaisesRegex(ValueError, 'originHash'): v.consumer_pins(x, self.expected, self.inputs)
+        with self.assertRaisesRegex(ValueError, 'originHash'): v.consumer_pins(x, self.consumer_expected, self.inputs)
         x = self.lock(); x['pins'].append(x['pins'][0])
-        with self.assertRaisesRegex(ValueError, 'duplicate'): v.consumer_pins(x, self.expected, self.inputs)
+        with self.assertRaisesRegex(ValueError, 'duplicate'): v.consumer_pins(x, self.consumer_expected, self.inputs)
 
     def test_revision_version_repository_and_kind_drift_rejected(self):
         for field in ('revision', 'version', 'location', 'kind'):
             with self.subTest(field=field):
                 x = self.lock(); pin = next(p for p in x['pins'] if p['identity'] == 'latticecore')
-                if field in ('revision', 'version'): pin['state'][field] = 'f' * 40 if field == 'revision' else '2.0.5'
+                if field in ('revision', 'version'): pin['state'][field] = 'f' * 40 if field == 'revision' else '2.0.4'
                 else: pin[field] = 'unexpected'
-                with self.assertRaises(ValueError): v.consumer_pins(x, self.expected, self.inputs)
+                with self.assertRaises(ValueError): v.consumer_pins(x, self.consumer_expected, self.inputs)
 
     def test_unknown_identity_branch_and_missing_core_rejected(self):
         for mutation in ('unknown', 'branch', 'missing'):
@@ -97,7 +98,28 @@ class ValidationTests(unittest.TestCase):
                     pin = copy.deepcopy(x['pins'][0]); pin['identity'] = 'unreviewed'; x['pins'].append(pin)
                 elif mutation == 'branch': x['pins'][0]['state']['branch'] = 'main'
                 else: x['pins'] = [pin for pin in x['pins'] if pin['identity'] != 'latticecore']
-                with self.assertRaises(ValueError): v.consumer_pins(x, self.expected, self.inputs)
+                with self.assertRaises(ValueError): v.consumer_pins(x, self.consumer_expected, self.inputs)
+
+    def test_only_consumer_core_pin_advances_without_mutating_sdk(self):
+        before = copy.deepcopy(self.expected)
+        derived = v.consumer_expected_pins(self.expected, self.inputs)
+        self.assertEqual(self.expected, before)
+        self.assertEqual({k: x for k, x in derived.items() if k != 'latticecore'},
+                         {k: x for k, x in before.items() if k != 'latticecore'})
+        self.assertEqual(derived['latticecore']['state'], {'revision': 'c' * 40, 'version': '2.0.5'})
+        derived['latticecore']['state']['revision'] = 'f' * 40
+        self.assertEqual(self.expected, before)
+
+    def test_old_core_consumer_pin_is_rejected(self):
+        x = self.lock()
+        next(p for p in x['pins'] if p['identity'] == 'latticecore')['state'] = copy.deepcopy(v.SDK_CORE_STATE)
+        with self.assertRaises(ValueError): v.consumer_pins(x, self.consumer_expected, self.inputs)
+
+    def test_rewritten_sdk_lock_is_rejected(self):
+        x = self.bound()
+        next(p for p in x['sdkExpectedCompletePins'] if p['identity'] == 'latticecore')['state'] = {'revision': 'c' * 40, 'version': '2.0.5'}
+        with self.assertRaisesRegex(ValueError, 'immutable SDK Core'): v.publication(x, self.root)
+        with self.assertRaisesRegex(ValueError, 'immutable SDK Core'): v.consumer_expected_pins(v.pins({'version':3,'pins':x['sdkExpectedCompletePins']}),x)
 
     def test_release_bytes_drift_rejected(self):
         x = self.bound(); (self.root / x['sdk']['releaseObjectFile']).write_text('{}')

@@ -1,10 +1,10 @@
 {
   "artifacts": {},
-  "candidateDigest": "4b808d25e89072ee962a71454721c026c1d6fe97dfecced38e95cedef19609cb",
-  "createdAt": "2026-09-18T21:41:47.914880+00:00",
+  "candidateDigest": "a077f4c55494417970ebee49882d6b998c9800c047022e814f0d784ac6c74bfa",
+  "createdAt": "2026-09-19T03:30:03.725009+00:00",
   "runAttempt": "1",
   "schemaVersion": 1,
-  "sourceSha": "99e4bc89389d14072e6ab9b658db49a49a3573f5",
+  "sourceSha": "559c496d7997677d06cc6d1f7a7a87abc440c210",
   "state": "validated-and-packaged",
-  "workflowRun": "https://github.com/jsflax/LatticeCore/actions/runs/35397616267"
+  "workflowRun": "https://github.com/jsflax/LatticeCore/actions/runs/35418473072"
 }

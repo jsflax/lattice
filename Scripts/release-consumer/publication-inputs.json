@@ -20,13 +20,13 @@
   },
   "core": {
     "repository": "https://github.com/jsflax/LatticeCore.git",
-    "tag": "2.0.4",
-    "commit": "99e4bc89389d14072e6ab9b658db49a49a3573f5",
-    "tree": "cbe72711a69fe71451b2398253b5895ebad5bda4",
-    "releaseObjectSHA256": "e79cb3379945156dbaf000c2b06857651859babb11562686cf2af873f700b69e",
-    "releaseEvidenceSHA256": "31310adb9b9796b89e37ab56672bb374278603d5827a29cc72514f05dd407586",
-    "releaseWorkflowRun": 35397616267,
-    "releaseReceiptSHA256": "562e9f67d748b7182d290c41ea34da3f7e05fbf24167c74f8eba8e53aa4ddefc",
+    "tag": "2.0.5",
+    "commit": "559c496d7997677d06cc6d1f7a7a87abc440c210",
+    "tree": "0ab83c94e7a95fb53ba907025f76263b3e78e353",
+    "releaseObjectSHA256": "39c08a01084b744ce88149ca067abd2468690d06e4fcafbbbef0cded5f7a5c9d",
+    "releaseEvidenceSHA256": "e423e42f278a0f780d443593c9ff4fabdd3c03f7567d9f1cbb45993a87e5043a",
+    "releaseWorkflowRun": 35418473072,
+    "releaseReceiptSHA256": "bfae15978f822780145886385aefcde39d6c1f44f501b8ad3354b2f33c6f29fa",
     "releaseObjectFile": "publication/core-release.json",
     "releaseEvidenceFile": "publication/core-release-run.json",
     "releaseWorkflowAttempt": 1,
@@ -341,5 +341,5 @@
       }
     }
   ],
-  "publicationNote": "Actual published SDK2.0.0/Core2.0.4 source and release evidence bound after completed parent publication authentication. This admits the consumer experiment after packet review; no external consumer build/runtime or downstream installation has yet been qualified."
+  "publicationNote": "Actual stable Core2.0.5 tag559c496/tree0ab83c and release run35418473072 bound after parent accepted publication assessment31bd4e56. SDK2.0.0 immutable34-pin lock and upstream binding remain unchanged at Core2.0.4; only the external consumer exactCore constraint advances to2.0.5. No consumer build/runtime has yet executed."
 }

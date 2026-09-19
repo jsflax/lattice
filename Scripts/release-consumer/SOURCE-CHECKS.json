@@ -1,0 +1,31 @@
+{
+  "passed": true,
+  "pureTestsPassed": 21,
+  "prior18MethodsRetained": true,
+  "noNativeNetworkOrDispatch": true,
+  "unchangedGuard": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+  "unchangedResourceConfig": "f2631711f5fa08b58a652fa9741e63de4e0c9a4d7ba8b0e8414a53676440da52",
+  "originalConsumerBodiesUnchanged": true,
+  "sdkPinsByteEqualAccepted": true,
+  "unboundRefusesBeforeWork": true,
+  "sdkCommittedCore": "2.0.4/99e4bc89389d14072e6ab9b658db49a49a3573f5",
+  "consumerExactCore": "2.0.5/559c496d7997677d06cc6d1f7a7a87abc440c210",
+  "workflowBranchIsolated": "codex/release-consumer-core205-20260919",
+  "unittestLogSHA256": "47ad1804837301ad69aa390f0e63d374ee16c1d93825a1eb54166904be4fe1a3",
+  "boundPublicationAcceptedByValidator": true,
+  "exactTagCommitTreeAndAssetDigestVerified": true,
+  "immutableSDKPinMapPreserved": true,
+  "onlyConsumerCorePinChanges": true,
+  "runtimeFilesByteIdenticalReviewed001": {
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "config.json": "f2631711f5fa08b58a652fa9741e63de4e0c9a4d7ba8b0e8414a53676440da52",
+    "qualify.py": "fac698cf64a009d0f36a8f7456c5f82f14a31657b9b5fa9ff2d7d24dacf883e0",
+    "validate.py": "b9823f1fbcf77ffaeb189e1012abbbce2faa9f95b11683a30888f9ec31432fff",
+    "test_validate.py": "795139b5de622adc56467286a3c178acdea83cafd4ba1f0d02a473e7ac66cf4b",
+    "OBSERVED-SDK-PINS.json": "351f0670dc38dfbe4911f2b0ebd01e25193a66d9a989ab3f8e51861c63c0e177",
+    "consumer/Package.swift": "6b6164b8f259b3c209080691d28c1c6d89abd1ce6d99e6831ff828b4207841ce",
+    "consumer/Sources/ReleaseConsumer/Models.swift": "64729289a09af0d0fa9931851bab2afd7d542e53b2b7cef35cd2f34be9751b6f",
+    "consumer/Sources/ReleaseConsumer/Consumer.swift": "33a5a4ca6e7f83991e5f23dec80a2b1d57ee10c114317e805e0a94ec5f6c1c9e"
+  },
+  "publicationAssessmentSHA256": "31bd4e562bae47fcb8c31510ed5bf19113e911ad944ca323fe6982638bcff42f"
+}

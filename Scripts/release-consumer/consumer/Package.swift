@@ -8,7 +8,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/jsflax/lattice.git", exact: "2.0.0"),
         // Constrain the exact released pair; no target imports Core directly.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", exact: "2.0.4"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", exact: "2.0.5"),
     ],
     targets: [
         .executableTarget(

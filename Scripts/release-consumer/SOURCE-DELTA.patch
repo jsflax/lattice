@@ -1,0 +1,212 @@
+--- a/consumer/Package.swift
++++ b/consumer/Package.swift
+@@ -8,7 +8,7 @@
+     dependencies: [
+         .package(url: "https://github.com/jsflax/lattice.git", exact: "2.0.0"),
+         // Constrain the exact released pair; no target imports Core directly.
+-        .package(url: "https://github.com/jsflax/LatticeCore.git", exact: "2.0.4"),
++        .package(url: "https://github.com/jsflax/LatticeCore.git", exact: "2.0.5"),
+     ],
+     targets: [
+         .executableTarget(
+--- a/qualify.py
++++ b/qualify.py
+@@ -172,15 +172,16 @@
+             check.require(check.load(expectations)['releaseEvidence']['receiptSHA256'] == binding['sdk']['bindingReceiptSHA256'], 'SDK combined upstream receipt does not match bound evidence')
+             command('published-sdk-bindings', ['python3', '-B', str(sdk / 'Scripts/verify-wrapper-bindings.py'), '--expected', str(expectations), '--resolved', str(sdk_lock)])
+             result['publicationAuthenticated'] = True
+-            seed = {'version': 3, 'pins': [*expected.values(), check.sdk_pin(binding)]}
++            consumer_expected = check.consumer_expected_pins(expected, binding)
++            seed = {'version': 3, 'pins': [*consumer_expected.values(), check.sdk_pin(binding)]}
+             guard.save_json(receipts / 'consumer-seed-lock.json', seed)
+             guard.save_json(consumer / 'Package.resolved', seed)
+             command('consumer-resolve', [swift, 'package', *common, 'resolve'], timeout=config['resolveSeconds'])
+             lock = check.load(consumer / 'Package.resolved')
+-            actual, omitted = check.consumer_pins(lock, expected, binding)
++            actual, omitted = check.consumer_pins(lock, consumer_expected, binding)
+             lock_hash = guard.digest(consumer / 'Package.resolved')
+             shutil.copyfile(consumer / 'Package.resolved', receipts / 'consumer-generated-lock.json')
+-            result.update(sdkCompletePins=list(expected.values()), consumerCompletePins=list(actual.values()),
++            result.update(sdkCompletePins=list(expected.values()), consumerExpectedPins=list(consumer_expected.values()), consumerCompletePins=list(actual.values()),
+                 sdkPinsNotInConsumerGraph=omitted, generatedConsumerOriginHash=lock['originHash'], consumerLockSHA256=lock_hash)
+             graph_before = graph('before', actual)
+             result['graphAccepted'] = True
+--- a/validate.py
++++ b/validate.py
+@@ -1,4 +1,5 @@
+ """Fixed release-consumer checks; no processes, network or database access."""
++import copy
+ import hashlib
+ import json
+ import re
+@@ -8,7 +9,8 @@
+ HASH = re.compile(r'[0-9a-f]{64}\Z')
+ REPOS = {'sdk': 'https://github.com/jsflax/lattice.git',
+          'core': 'https://github.com/jsflax/LatticeCore.git'}
+-TAGS = {'sdk': '2.0.0', 'core': '2.0.4'}
++TAGS = {'sdk': '2.0.0', 'core': '2.0.5'}
++SDK_CORE_STATE = {'revision': '99e4bc89389d14072e6ab9b658db49a49a3573f5', 'version': '2.0.4'}
+ ACCEPTANCE = ('success', 'publicationAuthenticated', 'graphAccepted', 'consumerBuildPassed',
+               'writerPassed', 'reopenPassed', 'consumerAccepted')
+ 
+@@ -100,7 +102,16 @@
+     require(HASH.fullmatch(sdk.get('bindingReceiptSHA256') or '') and digest(binding) == sdk['bindingReceiptSHA256'],
+             'combined upstream binding receipt hash differs')
+     require(expected['latticecore']['location'] == REPOS['core']
+-            and expected['latticecore']['state'] == {'revision': core['commit'], 'version': TAGS['core']}, 'SDK Core pin differs')
++            and expected['latticecore']['state'] == SDK_CORE_STATE, 'immutable SDK Core pin differs')
++    return expected
++
++def consumer_expected_pins(sdk_expected, inputs):
++    # Preserve the immutable SDK lock. Only the root consumer's explicit exact
++    # Core constraint advances within SDK2.0.0's public from2.0.4 requirement.
++    require(sdk_expected['latticecore']['state'] == SDK_CORE_STATE, 'immutable SDK Core pin differs')
++    require(inputs['core']['tag'] == TAGS['core'] and SHA.fullmatch(inputs['core']['commit']), 'unbound consumer Core identity')
++    expected = copy.deepcopy(sdk_expected)
++    expected['latticecore']['state'] = {'revision': inputs['core']['commit'], 'version': TAGS['core']}
+     return expected
+ 
+ def sdk_pin(inputs):
+@@ -108,6 +119,7 @@
+             'state': {'revision': inputs['sdk']['commit'], 'version': TAGS['sdk']}}
+ 
+ def consumer_pins(lock, expected, inputs):
++    require(expected['latticecore']['state'] == {'revision': inputs['core']['commit'], 'version': TAGS['core']}, 'consumer Core expectation differs')
+     actual = pins(lock)
+     require(HASH.fullmatch(lock.get('originHash') or ''), 'missing generated consumer originHash')
+     require({'lattice', 'latticecore'} <= set(actual), 'SDK/Core missing from actual consumer graph')
+--- a/test_validate.py
++++ b/test_validate.py
+@@ -23,10 +23,11 @@
+         self.expected = v.pins({'version': 3, 'pins': v.load(P / 'OBSERVED-SDK-PINS.json')['pins']})
+         self.inputs['sdk']['commit'] = 'a' * 40
+         self.inputs['core']['commit'] = 'c' * 40
+-        self.expected['latticecore']['state'] = {'revision': 'c' * 40, 'version': '2.0.4'}
++        self.expected['latticecore']['state'] = copy.deepcopy(v.SDK_CORE_STATE)
++        self.consumer_expected = v.consumer_expected_pins(self.expected, self.inputs)
+ 
+     def lock(self, subset=False):
+-        selected = [self.expected['latticecore']] if subset else list(self.expected.values())
++        selected = [self.consumer_expected['latticecore']] if subset else list(self.consumer_expected.values())
+         return {'version': 3, 'originHash': 'd' * 64, 'pins': [*copy.deepcopy(selected), v.sdk_pin(self.inputs)]}
+ 
+     def write(self, name, body):
+@@ -67,27 +68,27 @@
+ 
+     def test_synthetic_bound_publication_and_complete_graph(self):
+         self.assertEqual(v.publication(self.bound(), self.root), self.expected)
+-        actual, omitted = v.consumer_pins(self.lock(), self.expected, self.inputs)
++        actual, omitted = v.consumer_pins(self.lock(), self.consumer_expected, self.inputs)
+         self.assertEqual(len(actual), 35); self.assertEqual(omitted, [])
+ 
+     def test_product_subset_reports_all_omissions(self):
+-        actual, omitted = v.consumer_pins(self.lock(True), self.expected, self.inputs)
++        actual, omitted = v.consumer_pins(self.lock(True), self.consumer_expected, self.inputs)
+         self.assertEqual(set(actual), {'lattice', 'latticecore'})
+         self.assertEqual(omitted, sorted(set(self.expected) - {'latticecore'}))
+ 
+     def test_missing_originhash_and_duplicate_pins_rejected(self):
+         x = self.lock(); x.pop('originHash')
+-        with self.assertRaisesRegex(ValueError, 'originHash'): v.consumer_pins(x, self.expected, self.inputs)
++        with self.assertRaisesRegex(ValueError, 'originHash'): v.consumer_pins(x, self.consumer_expected, self.inputs)
+         x = self.lock(); x['pins'].append(x['pins'][0])
+-        with self.assertRaisesRegex(ValueError, 'duplicate'): v.consumer_pins(x, self.expected, self.inputs)
++        with self.assertRaisesRegex(ValueError, 'duplicate'): v.consumer_pins(x, self.consumer_expected, self.inputs)
+ 
+     def test_revision_version_repository_and_kind_drift_rejected(self):
+         for field in ('revision', 'version', 'location', 'kind'):
+             with self.subTest(field=field):
+                 x = self.lock(); pin = next(p for p in x['pins'] if p['identity'] == 'latticecore')
+-                if field in ('revision', 'version'): pin['state'][field] = 'f' * 40 if field == 'revision' else '2.0.5'
++                if field in ('revision', 'version'): pin['state'][field] = 'f' * 40 if field == 'revision' else '2.0.4'
+                 else: pin[field] = 'unexpected'
+-                with self.assertRaises(ValueError): v.consumer_pins(x, self.expected, self.inputs)
++                with self.assertRaises(ValueError): v.consumer_pins(x, self.consumer_expected, self.inputs)
+ 
+     def test_unknown_identity_branch_and_missing_core_rejected(self):
+         for mutation in ('unknown', 'branch', 'missing'):
+@@ -97,7 +98,28 @@
+                     pin = copy.deepcopy(x['pins'][0]); pin['identity'] = 'unreviewed'; x['pins'].append(pin)
+                 elif mutation == 'branch': x['pins'][0]['state']['branch'] = 'main'
+                 else: x['pins'] = [pin for pin in x['pins'] if pin['identity'] != 'latticecore']
+-                with self.assertRaises(ValueError): v.consumer_pins(x, self.expected, self.inputs)
++                with self.assertRaises(ValueError): v.consumer_pins(x, self.consumer_expected, self.inputs)
++
++    def test_only_consumer_core_pin_advances_without_mutating_sdk(self):
++        before = copy.deepcopy(self.expected)
++        derived = v.consumer_expected_pins(self.expected, self.inputs)
++        self.assertEqual(self.expected, before)
++        self.assertEqual({k: x for k, x in derived.items() if k != 'latticecore'},
++                         {k: x for k, x in before.items() if k != 'latticecore'})
++        self.assertEqual(derived['latticecore']['state'], {'revision': 'c' * 40, 'version': '2.0.5'})
++        derived['latticecore']['state']['revision'] = 'f' * 40
++        self.assertEqual(self.expected, before)
++
++    def test_old_core_consumer_pin_is_rejected(self):
++        x = self.lock()
++        next(p for p in x['pins'] if p['identity'] == 'latticecore')['state'] = copy.deepcopy(v.SDK_CORE_STATE)
++        with self.assertRaises(ValueError): v.consumer_pins(x, self.consumer_expected, self.inputs)
++
++    def test_rewritten_sdk_lock_is_rejected(self):
++        x = self.bound()
++        next(p for p in x['sdkExpectedCompletePins'] if p['identity'] == 'latticecore')['state'] = {'revision': 'c' * 40, 'version': '2.0.5'}
++        with self.assertRaisesRegex(ValueError, 'immutable SDK Core'): v.publication(x, self.root)
++        with self.assertRaisesRegex(ValueError, 'immutable SDK Core'): v.consumer_expected_pins(v.pins({'version':3,'pins':x['sdkExpectedCompletePins']}),x)
+ 
+     def test_release_bytes_drift_rejected(self):
+         x = self.bound(); (self.root / x['sdk']['releaseObjectFile']).write_text('{}')
+--- a/publication-inputs.json
++++ b/publication-inputs.json
+@@ -1,7 +1,7 @@
+ {
+   "schema": "lattice.clean-consumer-publication-inputs/1",
+-  "publicationQualified": true,
+-  "dispatchReady": true,
++  "publicationQualified": false,
++  "dispatchReady": false,
+   "sdk": {
+     "repository": "https://github.com/jsflax/lattice.git",
+     "tag": "2.0.0",
+@@ -20,16 +20,16 @@
+   },
+   "core": {
+     "repository": "https://github.com/jsflax/LatticeCore.git",
+-    "tag": "2.0.4",
+-    "commit": "99e4bc89389d14072e6ab9b658db49a49a3573f5",
+-    "tree": "cbe72711a69fe71451b2398253b5895ebad5bda4",
+-    "releaseObjectSHA256": "e79cb3379945156dbaf000c2b06857651859babb11562686cf2af873f700b69e",
+-    "releaseEvidenceSHA256": "31310adb9b9796b89e37ab56672bb374278603d5827a29cc72514f05dd407586",
+-    "releaseWorkflowRun": 35397616267,
+-    "releaseReceiptSHA256": "562e9f67d748b7182d290c41ea34da3f7e05fbf24167c74f8eba8e53aa4ddefc",
++    "tag": "2.0.5",
++    "commit": "559c496d7997677d06cc6d1f7a7a87abc440c210",
++    "tree": "0ab83c94e7a95fb53ba907025f76263b3e78e353",
++    "releaseObjectSHA256": null,
++    "releaseEvidenceSHA256": null,
++    "releaseWorkflowRun": null,
++    "releaseReceiptSHA256": null,
+     "releaseObjectFile": "publication/core-release.json",
+     "releaseEvidenceFile": "publication/core-release-run.json",
+-    "releaseWorkflowAttempt": 1,
++    "releaseWorkflowAttempt": null,
+     "releaseReceiptFile": "publication/core-release-receipt.json"
+   },
+   "sdkExpectedPinCount": 34,
+@@ -341,5 +341,5 @@
+       }
+     }
+   ],
+-  "publicationNote": "Actual published SDK2.0.0/Core2.0.4 source and release evidence bound after completed parent publication authentication. This admits the consumer experiment after packet review; no external consumer build/runtime or downstream installation has yet been qualified."
++  "publicationNote": "Source prepared only. SDK2.0.0 immutable34-pin lock and upstream binding stay unchanged at Core2.0.4; external consumer constrains the compatible Core dependency to exact2.0.5. New Core release/tag/evidence must be authenticated and sealed before dispatch."
+ }
+--- a/release-consumer.yml
++++ b/release-consumer.yml
+@@ -1,7 +1,7 @@
+ name: Published SDK external consumer
+ on:
+   push:
+-    branches: [codex/perf-qualification-20260918]
++    branches: [codex/release-consumer-core205-20260919]
+     paths: ['.github/workflows/release-consumer.yml', 'Scripts/release-consumer/**']
+   workflow_dispatch:
+ permissions:

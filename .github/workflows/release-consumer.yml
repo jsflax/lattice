@@ -1,7 +1,7 @@
 name: Published SDK external consumer
 on:
   push:
-    branches: [codex/perf-qualification-20260918]
+    branches: [codex/release-consumer-core205-20260919]
     paths: ['.github/workflows/release-consumer.yml', 'Scripts/release-consumer/**']
   workflow_dispatch:
 permissions:
@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 130
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      PACKET_SEAL_SHA256: 3cbc8713e3b78f11d9c9b27a5da5993810da57e5af578574d89278f5060254e1
+      PACKET_SEAL_SHA256: 7116e7a7b7dc169caae38bf91c5829f9a116c6f2ea52481750dc16fc72852c1c
     steps:
       - name: Fetch exact tools beneath owned localdev root
         timeout-minutes: 5

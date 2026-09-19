@@ -1,0 +1,42 @@
+{
+  "state": "publication-bound-awaiting-independent-final-review",
+  "publicationAuthenticated": true,
+  "parentGOReceived": true,
+  "sourceOnly": true,
+  "repository": "jsflax/lattice",
+  "workflow": ".github/workflows/release-consumer.yml",
+  "canonicalReadOnlyCheckout": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/qualification-workflows",
+  "baseCommit": "b0db645b34a520e728f983b3ee6030d132319fc7",
+  "isolatedBranch": "codex/release-consumer-core205-20260919",
+  "isolatedWorktree": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/clean-consumer-core205-workflow-001",
+  "requiredSDK": "0461b210aa028f3c4bb6165fed895e0f4385b565",
+  "requiredCore": "559c496d7997677d06cc6d1f7a7a87abc440c210",
+  "requiredCoreTree": "0ab83c94e7a95fb53ba907025f76263b3e78e353",
+  "requiredBeforeBinding": [
+    "Core2.0.5 stable tag peels to exact559c496/tree0ab83c",
+    "Core2.0.5 published non-draft non-prerelease release object",
+    "Successful exact-source release.yml run and validated-and-packaged receipt",
+    "Parent accepts publication/tag authentication and exact successor input seal"
+  ],
+  "binding": [
+    "Completed: actual Core release object/run/receipt/tag/commit and parent-accepted publication assessment retained and authenticated",
+    "Completed: SDK fields and34-pin SDK lock unchanged; only newCore evidence and true publication/dispatch admission gates bound",
+    "Rerun21 pure checks, regenerate final packet/workflow/source-ready hashes, obtain final independent review before remote mutation"
+  ],
+  "installationCommandsAfterGO": [
+    "git -C /Users/jason/localdev/lattice-perf-refinement-20260917/execution/qualification-workflows worktree add -b codex/release-consumer-core205-20260919 /Users/jason/localdev/lattice-perf-refinement-20260917/execution/clean-consumer-core205-workflow-001 b0db645b34a520e728f983b3ee6030d132319fc7",
+    "Install final bound packet contents under Scripts/release-consumer and release-consumer.yml under .github/workflows in the isolated worktree only",
+    "Verify diff affects only Scripts/release-consumer/** and .github/workflows/release-consumer.yml; verify all bound hashes before commit",
+    "Commit the reviewed final bound packet; retain its exact commit/tree in dispatch receipt",
+    "git -C /Users/jason/localdev/lattice-perf-refinement-20260917/execution/clean-consumer-core205-workflow-001 push origin HEAD:refs/heads/codex/release-consumer-core205-20260919"
+  ],
+  "dispatchMechanism": "One path-filtered push on isolated branch triggers the existing workflow; do not also workflow_dispatch",
+  "postDispatch": [
+    "Authenticate run source commit/tree, workflow path, event push, attempt and runner",
+    "Download/authenticate complete command receipts, source/lock/workspace custody, writer/read results and physical SQLite snapshot; do not infer target success from job status"
+  ],
+  "unchangedExistingBranch": "codex/perf-qualification-20260918",
+  "nativeOrHostedExecuted": false,
+  "publicationAssessmentSHA256": "31bd4e562bae47fcb8c31510ed5bf19113e911ad944ca323fe6982638bcff42f",
+  "goScope": "Root authorized one isolated-branch push after final pure checks, final seal and independent review accept; no further permission required when gates pass"
+}

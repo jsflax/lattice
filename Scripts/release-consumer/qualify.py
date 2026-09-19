@@ -172,15 +172,16 @@ def main():
             check.require(check.load(expectations)['releaseEvidence']['receiptSHA256'] == binding['sdk']['bindingReceiptSHA256'], 'SDK combined upstream receipt does not match bound evidence')
             command('published-sdk-bindings', ['python3', '-B', str(sdk / 'Scripts/verify-wrapper-bindings.py'), '--expected', str(expectations), '--resolved', str(sdk_lock)])
             result['publicationAuthenticated'] = True
-            seed = {'version': 3, 'pins': [*expected.values(), check.sdk_pin(binding)]}
+            consumer_expected = check.consumer_expected_pins(expected, binding)
+            seed = {'version': 3, 'pins': [*consumer_expected.values(), check.sdk_pin(binding)]}
             guard.save_json(receipts / 'consumer-seed-lock.json', seed)
             guard.save_json(consumer / 'Package.resolved', seed)
             command('consumer-resolve', [swift, 'package', *common, 'resolve'], timeout=config['resolveSeconds'])
             lock = check.load(consumer / 'Package.resolved')
-            actual, omitted = check.consumer_pins(lock, expected, binding)
+            actual, omitted = check.consumer_pins(lock, consumer_expected, binding)
             lock_hash = guard.digest(consumer / 'Package.resolved')
             shutil.copyfile(consumer / 'Package.resolved', receipts / 'consumer-generated-lock.json')
-            result.update(sdkCompletePins=list(expected.values()), consumerCompletePins=list(actual.values()),
+            result.update(sdkCompletePins=list(expected.values()), consumerExpectedPins=list(consumer_expected.values()), consumerCompletePins=list(actual.values()),
                 sdkPinsNotInConsumerGraph=omitted, generatedConsumerOriginHash=lock['originHash'], consumerLockSHA256=lock_hash)
             graph_before = graph('before', actual)
             result['graphAccepted'] = True

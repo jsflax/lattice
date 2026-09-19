@@ -1,0 +1,18 @@
+{
+  "canonicalCheckout": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/qualification-workflows",
+  "canonicalCommit": "b0db645b34a520e728f983b3ee6030d132319fc7",
+  "canonicalClean": true,
+  "acceptedWorkflowCommit": "ec38b3d6f97045defea4b0b4c2d4788c2f872f7c",
+  "acceptedRun": 35404442280,
+  "acceptedAssessmentSHA256": "c54c7b93c1da5989f8e5839cabebc8fd7b11b35dd0ef9e9cea489af0fd1bf7c2",
+  "canonicalConsumerSubtreeEqualsAccepted": true,
+  "unchangedInputs": {
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "config.json": "f2631711f5fa08b58a652fa9741e63de4e0c9a4d7ba8b0e8414a53676440da52",
+    "consumer/Sources/ReleaseConsumer/Models.swift": "64729289a09af0d0fa9931851bab2afd7d542e53b2b7cef35cd2f34be9751b6f",
+    "consumer/Sources/ReleaseConsumer/Consumer.swift": "33a5a4ca6e7f83991e5f23dec80a2b1d57ee10c114317e805e0a94ec5f6c1c9e",
+    "OBSERVED-SDK-PINS.json": "351f0670dc38dfbe4911f2b0ebd01e25193a66d9a989ab3f8e51861c63c0e177"
+  },
+  "sdkRequirement": "exact published0461 Package.swift line53 uses from2.0.4, admitting consumer exact2.0.5; committed lock remains2.0.4",
+  "noLocalNativeOrNetwork": true
+}
