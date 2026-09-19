@@ -1,0 +1,9 @@
+{
+  "utc": "2026-09-19T13:45:29.510697+00:00",
+  "decision": "source protocol accepted with explicit limits; not runtime admission",
+  "packetSHA256": "50e9b3b644d458d0b4bff300d679dccd806521ea40fe27fdd7f71818ed242d56",
+  "reviewSHA256": "78568a11d851a6575db716fb56a591064867e7bac27fdeb77df1e25a5c05779c",
+  "checksSHA256": "073f872ce5b7764275dc9455fde662ebc11b8a9801c867bf3f352ec5b3028535",
+  "remainingSourceBlockers": [],
+  "nativeExecuted": false
+}

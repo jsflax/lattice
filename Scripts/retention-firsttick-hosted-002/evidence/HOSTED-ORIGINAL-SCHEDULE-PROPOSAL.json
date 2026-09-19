@@ -1,0 +1,50 @@
+{
+  "utc": "2026-09-19T13:41:28.474804+00:00",
+  "status": "Source-only proposal, no workflow or run admission",
+  "sources": {
+    "baseline": {
+      "source": "d5463886856cd93391cf7dd088910a59cfc3b2f1",
+      "tree": "1f8a2fd6dfb65f5fc81b2c7803f3a45fe107fe28",
+      "sourceMode": "baseline",
+      "files": 883,
+      "bytes": 11833574,
+      "manifestSHA256": "df0dd4e08369dcd9d163ceb1c308556c5b18f6372b16544a332d71ce17e1e6ee"
+    },
+    "bounded": {
+      "source": "beee2f94838ff196eaaedefcffa3c0fb5f70e6b6",
+      "tree": "e226c905e4da55fe81a0c5da78ed062f5f8284fa",
+      "sourceMode": "bounded",
+      "files": 883,
+      "bytes": 11866312,
+      "manifestSHA256": "4d60ded8b387a32dc826babd96a7c37c895c926cb0808971e8d2c8e507c09c65"
+    }
+  },
+  "schedule": [
+    "baseline prepare/build/run",
+    "bounded prepare/build/run"
+  ],
+  "host": "One ubuntu24.04 hosted allocation, sequential source order fixed before execution",
+  "perPacket": {
+    "bytes": 536870912,
+    "logBytes": 33554432,
+    "freeFloorBytes": 13421772800,
+    "compileSeconds": 1200,
+    "regularSampleOuterSeconds": 120,
+    "regularSampleSupervisorSeconds": 115,
+    "compileJobs": 1,
+    "prepareStageSeconds": 1500,
+    "buildStageSeconds": 1500,
+    "runStageSeconds": 3600
+  },
+  "proposedAggregate": {
+    "packetBytes": 1610612736,
+    "workflowMinutes": 240,
+    "sourceJobs": 1
+  },
+  "interpretation": [
+    "A1/A2/B within each source preserves original workload schedule",
+    "Sequential source ordering on one hosted allocation does not prove same physical idle host or remove time/order/thermal effects",
+    "Does not measure automatic worker pacing, trace lock occupancy, or original frozen2x workload",
+    "Source input manifests authenticated from exact local git objects; remote fetch remains required"
+  ]
+}

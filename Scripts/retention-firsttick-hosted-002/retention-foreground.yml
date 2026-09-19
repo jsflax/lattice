@@ -1,4 +1,4 @@
-name: Retention first-tick and manual-drain comparison
+name: Held retention first-tick and manual-drain comparison
 # Reuses the registered filename. No automatic push trigger or duplicate run.
 on:
   workflow_dispatch:
@@ -19,6 +19,7 @@ permissions:
   contents: read
 jobs:
   same-allocation:
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:

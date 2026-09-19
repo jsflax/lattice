@@ -1,0 +1,37 @@
+{
+  "packetSHA256": "50e9b3b644d458d0b4bff300d679dccd806521ea40fe27fdd7f71818ed242d56",
+  "reviewedFileCount": 13,
+  "allPacketPostimagesVerified": true,
+  "originalEightGitBlobsVerified": true,
+  "independentMathTests": 7,
+  "independentMathPassed": true,
+  "savedSyntheticReceipts": [
+    {
+      "path": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/retention-firsttick-drain-002/tests-output/attempt-1789825408234866000/baseline-valid/sample.json",
+      "sha256": "cd386f82ab4208fa9ef928dcf041e50464baed2a3a574948168635f4c02ad3cc",
+      "success": true,
+      "allDirectChildrenReaped": true
+    },
+    {
+      "path": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/retention-firsttick-drain-002/tests-output/attempt-1789825408234866000/bounded-corrupt/sample.json",
+      "sha256": "2552458040a71cef46aff5ece7f1dc76b40faf35761342189c6297b651fbad04",
+      "success": false,
+      "allDirectChildrenReaped": true
+    },
+    {
+      "path": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/retention-firsttick-drain-002/tests-output/attempt-1789825408234866000/bounded-valid/sample.json",
+      "sha256": "aeb713ba2d3176df614b2dc7dd0e860f93555be613a54bc958f8918002eea024",
+      "success": true,
+      "allDirectChildrenReaped": true
+    },
+    {
+      "path": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/retention-firsttick-drain-002/tests-output/attempt-1789825408234866000/bounded-valid-held/sample.json",
+      "sha256": "4fca4579b4d8a5364f5108b7227d60739b6b70538dd0698abb7d51120b4e586d",
+      "success": true,
+      "allDirectChildrenReaped": true
+    }
+  ],
+  "nativeRun": false,
+  "newSubprocessSmoke": false,
+  "logSHA256": "0e09caec3040d5066753f430a1e8c12ea27be30dccff32532dadea4a884c1ea4"
+}

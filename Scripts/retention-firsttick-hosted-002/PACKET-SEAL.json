@@ -1,0 +1,135 @@
+{
+  "executionAdmitted": false,
+  "files": {
+    "CONFIG.json": {
+      "bytes": 1133,
+      "sha256": "5072d10032210f25dbf38c3b78ce3ae43bb9c09a9f36868b1b408f3a47ee87c3"
+    },
+    "PRESERVATION.json": {
+      "bytes": 1430,
+      "sha256": "39a732f40bd917615ebfa69fbfadf6e196ffc3177092c15bb53a0db55bb83554"
+    },
+    "README.md": {
+      "bytes": 7115,
+      "sha256": "21c80bee4dfe82c8fd561c4934afeda8f486ee2b44c395cb8800ef7d6809c2fe"
+    },
+    "RUN-ADAPTATION.diff": {
+      "bytes": 917,
+      "sha256": "7ae14eb92f2a533c065c259db7a9a3ed2cd37e3628b13fce9218748c26122234"
+    },
+    "SOURCE-READY.json": {
+      "bytes": 971,
+      "sha256": "e2939ce4b20c85bbeb5a2912c62fe3e34de8f02f5e02d79077c399cb9f445dc8"
+    },
+    "evidence/DRAFT-PACKET.json": {
+      "bytes": 3444,
+      "sha256": "50e9b3b644d458d0b4bff300d679dccd806521ea40fe27fdd7f71818ed242d56"
+    },
+    "evidence/HOSTED-ORIGINAL-README.md": {
+      "bytes": 1765,
+      "sha256": "a3d53ed5c8991a869de3813ba332980619d72eec74734c8c00474c06d5b17c15"
+    },
+    "evidence/HOSTED-ORIGINAL-REMOTE-SOURCES.json": {
+      "bytes": 377,
+      "sha256": "ec2f491072c018d0182020820b2d614c47e642b8facb86c2440bccbf268d030a"
+    },
+    "evidence/HOSTED-ORIGINAL-SCHEDULE-PROPOSAL.json": {
+      "bytes": 1811,
+      "sha256": "bb2c760831c716a7e7e2c40317b3b2e7ddb5eb08287ebfdd8bdf6d8534b73a20"
+    },
+    "evidence/INDEPENDENT-CHECKS.json": {
+      "bytes": 1833,
+      "sha256": "073f872ce5b7764275dc9455fde662ebc11b8a9801c867bf3f352ec5b3028535"
+    },
+    "evidence/INDEPENDENT-REVIEW.json": {
+      "bytes": 452,
+      "sha256": "ccc91a3635387d84c734db6851bb33fd36b4afe5970a58ff3116f27632314d2d"
+    },
+    "evidence/INDEPENDENT-REVIEW.md": {
+      "bytes": 5399,
+      "sha256": "78568a11d851a6575db716fb56a591064867e7bac27fdeb77df1e25a5c05779c"
+    },
+    "evidence/ORIGINAL-FILES.json": {
+      "bytes": 997,
+      "sha256": "fea298c95e8b6661593ac40e8b7d1f090e6922a2d603418751c1feaf758d356f"
+    },
+    "evidence/PARENT-SOURCE-REVIEW.json": {
+      "bytes": 1518,
+      "sha256": "2c0efb881312b48ac32b753484b53fb8cd4dbc0cb9b91ccdcdd6ff2d3bc1f787"
+    },
+    "evidence/protocol-README.md": {
+      "bytes": 2449,
+      "sha256": "475730ed9bde0da740c2af2aaaffe52048c7e8806f93b25d2574357332e9d50c"
+    },
+    "evidence/protocol-run.py": {
+      "bytes": 7910,
+      "sha256": "769074805462d95197d6bed8e934758e3e7125b1c9091f15669aedad823007d4"
+    },
+    "harness/CMakeLists.txt": {
+      "bytes": 783,
+      "sha256": "32cd1d8653d70f88f003d5a5a69afc97b85b148f3a75830ef74f9c9ea7c8e678"
+    },
+    "harness/README.md": {
+      "bytes": 2449,
+      "sha256": "475730ed9bde0da740c2af2aaaffe52048c7e8806f93b25d2574357332e9d50c"
+    },
+    "harness/guarded_runner.py": {
+      "bytes": 29477,
+      "sha256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71"
+    },
+    "harness/hosted_guard.py": {
+      "bytes": 13637,
+      "sha256": "01ee57d2b07f86b560681f0233a9e5a9e089adcc789084c1f6c5be4da3f8b681"
+    },
+    "harness/prepare.py": {
+      "bytes": 3832,
+      "sha256": "695f8dd1a5649118985ef9fc45d036395ccfe314e2997fd6a202e5d626da2f4e"
+    },
+    "harness/probe.cpp": {
+      "bytes": 18429,
+      "sha256": "5f53a6db301aaccef34b41b67762ca1bc7927b50fc521d69f7e5623bdf161fe4"
+    },
+    "harness/run.py": {
+      "bytes": 8050,
+      "sha256": "4456df9661382cd1a641958adb618374a10916502efd04d70744f39381b7e2ee"
+    },
+    "harness/supervise.py": {
+      "bytes": 13164,
+      "sha256": "4a90d7950f19125094dbb9eb8fb55506b055d2193452ae38022ef81098002e23"
+    },
+    "harness/validate.py": {
+      "bytes": 12793,
+      "sha256": "65baebee8441eae72eab3a4d08d4e376b79ba5166a563fc4154b9fe6c1c303f6"
+    },
+    "hosted.py": {
+      "bytes": 6290,
+      "sha256": "6d7f0ef6628b50de4c04063ddacbad2e3b26949605a032d82ab524f91927f3a9"
+    },
+    "retention-foreground.yml": {
+      "bytes": 5906,
+      "sha256": "2dd18f06d21865e77ddfffec94ed1b108f54c13f1da71e7969bfe2f4f293cc60"
+    },
+    "sources/baseline/SOURCE-CONFIG.json": {
+      "bytes": 141,
+      "sha256": "75b0510f38b39aeb01af2545c51cf41a344f30ed82e0f31a52f6be71d90b4ce4"
+    },
+    "sources/baseline/SOURCE-MANIFEST.json": {
+      "bytes": 158392,
+      "sha256": "df0dd4e08369dcd9d163ceb1c308556c5b18f6372b16544a332d71ce17e1e6ee"
+    },
+    "sources/bounded/SOURCE-CONFIG.json": {
+      "bytes": 140,
+      "sha256": "22a0f8bb31b1a29051523b04d5164a03b803e316241171d3a7f320423428ec93"
+    },
+    "sources/bounded/SOURCE-MANIFEST.json": {
+      "bytes": 158392,
+      "sha256": "4d60ded8b387a32dc826babd96a7c37c895c926cb0808971e8d2c8e507c09c65"
+    },
+    "test_hosted.py": {
+      "bytes": 13347,
+      "sha256": "2b577eaa7295b88279af1ec544f62dc04ce6e8f3a5547f9331aca42ff409a63c"
+    }
+  },
+  "schemaVersion": 1,
+  "sourceOnly": true
+}

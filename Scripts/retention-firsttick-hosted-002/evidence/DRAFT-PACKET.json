@@ -1,0 +1,94 @@
+{
+  "utc": "2026-09-19T13:43:42.336843+00:00",
+  "status": "Draft source prepared for independent review; not executable/admitted/sealed",
+  "files": {
+    "SOURCE-CONFIG.json": {
+      "bytes": 247,
+      "sha256": "211c032fa94c196f9f1b74ef637850b27a973fb98609e55baf451d36757c5d2e"
+    },
+    "test_protocol.py": {
+      "bytes": 5921,
+      "sha256": "8377b1b646eabcf30e4ebb2499352db72e99852b65c3532d35e3eefe4ab0a84c"
+    },
+    "SUCCESSOR.patch": {
+      "bytes": 31418,
+      "sha256": "2f33bb9b276b14287c21aef73dd2adfb8d155017cd0682526ad4722a62b76500"
+    },
+    "ORIGINAL-FILES.json": {
+      "bytes": 997,
+      "sha256": "fea298c95e8b6661593ac40e8b7d1f090e6922a2d603418751c1feaf758d356f"
+    },
+    "fake_probe.py": {
+      "bytes": 2084,
+      "sha256": "9c08649bfa7001b46b856bb93a82ebcb308ce05796b323dca0a5c70a93d33f7f"
+    },
+    "harness/run.py": {
+      "bytes": 7910,
+      "sha256": "769074805462d95197d6bed8e934758e3e7125b1c9091f15669aedad823007d4"
+    },
+    "harness/CMakeLists.txt": {
+      "bytes": 783,
+      "sha256": "32cd1d8653d70f88f003d5a5a69afc97b85b148f3a75830ef74f9c9ea7c8e678"
+    },
+    "harness/probe.cpp": {
+      "bytes": 18429,
+      "sha256": "5f53a6db301aaccef34b41b67762ca1bc7927b50fc521d69f7e5623bdf161fe4"
+    },
+    "harness/guarded_runner.py": {
+      "bytes": 29477,
+      "sha256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71"
+    },
+    "harness/README.md": {
+      "bytes": 2449,
+      "sha256": "475730ed9bde0da740c2af2aaaffe52048c7e8806f93b25d2574357332e9d50c"
+    },
+    "harness/validate.py": {
+      "bytes": 12793,
+      "sha256": "65baebee8441eae72eab3a4d08d4e376b79ba5166a563fc4154b9fe6c1c303f6"
+    },
+    "harness/supervise.py": {
+      "bytes": 13164,
+      "sha256": "4a90d7950f19125094dbb9eb8fb55506b055d2193452ae38022ef81098002e23"
+    },
+    "harness/prepare.py": {
+      "bytes": 3832,
+      "sha256": "695f8dd1a5649118985ef9fc45d036395ccfe314e2997fd6a202e5d626da2f4e"
+    }
+  },
+  "pureTests": {
+    "count": 11,
+    "passed": 11,
+    "elapsedSeconds": 0.854,
+    "scope": "Python synthetic math+pipe lifecycle only, no native/SQLite",
+    "priorRunsRetained": true,
+    "outputDirectory": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/retention-firsttick-drain-002/tests-output/attempt-1789825408234866000"
+  },
+  "source": "beee2f94838ff196eaaedefcffa3c0fb5f70e6b6",
+  "baseline": "d5463886856cd93391cf7dd088910a59cfc3b2f1",
+  "productChanges": false,
+  "nativeRun": false,
+  "pending": [
+    "independent/root review",
+    "separate baseline config/install and manifests",
+    "fixed aggregate host/source schedule with existing per-source limits",
+    "hosted integration and fresh one-shot admission"
+  ],
+  "preserved": [
+    "original fixture/writer and final validation",
+    "original predecessor harness and failures",
+    "regular120/115s sample budgets",
+    "uniformO3 and compiler source proof",
+    "held reader through full extension"
+  ],
+  "changed": [
+    "manual residual/continuation protocol after writer fully reaped",
+    "versioned residual/path/time analyzer",
+    "new performance lane excludes obsolete in-SQL claim rendezvous"
+  ],
+  "automaticSchedulerMeasured": false,
+  "reviewCorrections": [
+    "Null for every empty file-sample window",
+    "Supervisor-only observed file envelopes, no mixed clock epochs",
+    "Held-reader continuation and deliberately disjoint-epoch synthetic cases"
+  ]
+}

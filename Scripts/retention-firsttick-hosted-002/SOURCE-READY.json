@@ -1,0 +1,25 @@
+{
+  "executionAdmitted": false,
+  "nativeCompilerSQLiteNetworkPushDispatch": false,
+  "perPacketLimitsPreserved": true,
+  "protocolParentReviewSHA256": "2c0efb881312b48ac32b753484b53fb8cd4dbc0cb9b91ccdcdd6ff2d3bc1f787",
+  "sharedEnvelopeEnforcedBy": "Per-stage in-process AggregateRunner plus absolute bootstrap clock; no outer runner around session-spawning supervisors",
+  "sources": {
+    "baseline": {
+      "source": "d5463886856cd93391cf7dd088910a59cfc3b2f1",
+      "sourceMode": "baseline",
+      "tree": "1f8a2fd6dfb65f5fc81b2c7803f3a45fe107fe28"
+    },
+    "bounded": {
+      "source": "beee2f94838ff196eaaedefcffa3c0fb5f70e6b6",
+      "sourceMode": "bounded",
+      "tree": "e226c905e4da55fe81a0c5da78ed062f5f8284fa"
+    }
+  },
+  "status": "HELD source-only packaging; independent/root review and separate execution admission required",
+  "workflow": "retention-foreground.yml",
+  "workflowEnabled": false,
+  "workflowTriggers": [
+    "workflow_dispatch"
+  ]
+}

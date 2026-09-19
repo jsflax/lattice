@@ -1,0 +1,17 @@
+{
+  "utc": "2026-09-19T13:49:25.008142+00:00",
+  "checks": [
+    {
+      "sourceMode": "baseline",
+      "source": "d5463886856cd93391cf7dd088910a59cfc3b2f1",
+      "remoteObjectKnown": true
+    },
+    {
+      "sourceMode": "bounded",
+      "source": "beee2f94838ff196eaaedefcffa3c0fb5f70e6b6",
+      "remoteObjectKnown": false
+    }
+  ],
+  "push": false,
+  "runtime": false
+}

@@ -1,0 +1,23 @@
+--- protocol/harness/run.py
++++ hosted/harness/run.py
+@@ -2,7 +2,8 @@
+ """Explicit reviewed stages only. Authoring this driver is not run authorization."""
+ import argparse, json, os, shutil, sys
+ from pathlib import Path
+-from guarded_runner import GuardedRunner, Interrupts
++from guarded_runner import Interrupts
++from hosted_guard import AggregateRunner as GuardedRunner, Stage
+ from prepare import PACKET, SHA, TREE, SOURCE_MODE, digest, verify_harness
+ from supervise import bundle
+ from validate import verify_source, save
+@@ -18,6 +19,10 @@
+     parser.add_argument('--sqlite-include'); parser.add_argument('--sqlite-library')
+     parser.add_argument('--sdk')
+     args=parser.parse_args()
++    with Stage(PACKET.name+'-'+args.stage):
++        run_stage(args)
++
++def run_stage(args):
+     verify_harness()
+     assert '/localdev/' in str(PACKET)
+     receipts=PACKET/'receipts'; receipts.mkdir(exist_ok=True)

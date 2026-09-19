@@ -1,0 +1,41 @@
+{
+  "aggregate": {
+    "artifactReserveSeconds": 300,
+    "bytes": 1610612736,
+    "cleanupReserveSeconds": 30,
+    "seconds": 14400
+  },
+  "executionAdmitted": false,
+  "host": "ubuntu-24.04/x86_64",
+  "perPacket": {
+    "buildStageSeconds": 1500,
+    "bytes": 536870912,
+    "compileJobs": 1,
+    "compileSeconds": 1200,
+    "freeFloorBytes": 13421772800,
+    "logBytes": 33554432,
+    "prepareStageSeconds": 1500,
+    "regularSampleOuterSeconds": 120,
+    "regularSampleSupervisorSeconds": 115,
+    "runStageSeconds": 3600
+  },
+  "protocolParentReviewSHA256": "2c0efb881312b48ac32b753484b53fb8cd4dbc0cb9b91ccdcdd6ff2d3bc1f787",
+  "schemaVersion": 1,
+  "sourceOrder": [
+    "baseline",
+    "bounded"
+  ],
+  "sourceURL": "https://github.com/jsflax/LatticeCore.git",
+  "sources": {
+    "baseline": {
+      "source": "d5463886856cd93391cf7dd088910a59cfc3b2f1",
+      "sourceMode": "baseline",
+      "tree": "1f8a2fd6dfb65f5fc81b2c7803f3a45fe107fe28"
+    },
+    "bounded": {
+      "source": "beee2f94838ff196eaaedefcffa3c0fb5f70e6b6",
+      "sourceMode": "bounded",
+      "tree": "e226c905e4da55fe81a0c5da78ed062f5f8284fa"
+    }
+  }
+}

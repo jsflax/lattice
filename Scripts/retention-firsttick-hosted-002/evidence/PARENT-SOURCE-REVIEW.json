@@ -1,0 +1,28 @@
+{
+  "utc": "2026-09-19T13:50:05.904025+00:00",
+  "accepted": true,
+  "scope": "Version2 first-tick/manual-drain measurement protocol source only",
+  "draftSHA256": "50e9b3b644d458d0b4bff300d679dccd806521ea40fe27fdd7f71818ed242d56",
+  "independentReviewSHA256": "ccc91a3635387d84c734db6851bb33fd36b4afe5970a58ff3116f27632314d2d",
+  "filesRehashed": 13,
+  "pureTests": 11,
+  "testScope": "Synthetic mathematical validation and actual Python pipe/reap protocol, no native/SQLite",
+  "productSourceChanged": false,
+  "nativeRun": false,
+  "launchAdmitted": false,
+  "preserved": [
+    "10000old audit IDs,1000foregroundupdates,600sretention,5000msbusy",
+    "First tick timing and all individual writes",
+    "Full final data/sequence/syncflag and heldreader/checkpoint oracles",
+    "Historical unchanged single-tick and claim-barrier failures remain separate"
+  ],
+  "measurementBoundaries": [
+    "Maintenance waits for writer EOF/reap before any residual query or continuation",
+    "First bounded tick7952 then5904/3856/1808/0; baseline0; recentclaimcontrols10000",
+    "Each public call and total first-entry through final observation separate",
+    "Native duration/overlap arithmetic stays native; file envelopes supervisor-only with explicit pipe/receipt overhead",
+    "No samples meansnull, notzero",
+    "No automatic scheduler100ms or hard lock-duration inference"
+  ],
+  "nextGate": "Explicit two-source hosted installer/aggregate guards/schedule/source manifests and separate reviewed one-shot admission"
+}
