@@ -365,58 +365,67 @@ final class GenerationCoordinator: @unchecked Sendable {
         // writes whose core payload carries no fields, the thread-local
         // single-column annotation set by the bracket this callback fires
         // inside) drive the §2.3 v1.1 disjointness skip.
-        let fieldAware = tuning.fieldAwareInvalidation
         let token = backend.addInvalidationHookWithFields { [weak self] changes, reason in
-            guard let self else { return }
-            switch reason {
-            case .commit:
-                // Epoch bump is table-agnostic (every settled commit — §2.3,
-                // keeper retirement depends on it); the changed-table payload
-                // only refines which shapes drop caches. An EMPTY payload is
-                // a bookkeeping-only commit: bump, keep every cache.
-                guard fieldAware else {
-                    self.noteWrite(tables: changes.map(\.table))
-                    return
-                }
-                self.noteWrite(changes: changes.map { change in
-                    if !change.changedFields.isEmpty {
-                        // Core-classified UPDATE-only batch (sync-applied
-                        // chunks, upserts resolved to UPDATE): the payload
-                        // is the deduped comma-joined field union.
-                        return WriteBatchTableChange(
-                            table: change.table,
-                            changedFields: Self.parseFieldList(change.changedFields))
-                    }
-                    if let annotation = LocalWriteFieldAnnotation.consume(matchingTable: change.table) {
-                        // Local single-column setter write: the payload
-                        // carries no changedFieldsNames, but this callback
-                        // fires inside the setter's annotation bracket on
-                        // the writer's thread. CONSUMED on application: the
-                        // flush drain can deliver FURTHER same-table batches
-                        // inside the same bracket (an inline observer's
-                        // write, a cross-thread commit buffered mid-flush)
-                        // — those are not the bracketed UPDATE and take the
-                        // conservative fields-unknown rule below.
-                        return WriteBatchTableChange(
-                            table: change.table,
-                            changedFields: [annotation.column.lowercased()])
-                    }
-                    return WriteBatchTableChange(table: change.table, changedFields: nil)
-                })
-            case .rollback:
-                // No change batch is delivered for a rollback by design —
-                // any capture that raced the transaction may be poisoned
-                // (§4.1 dirty-read belt), so every shape re-captures.
-                self.noteWrite(tables: nil)
-            case .advance:
-                // §3.3/§3.4: content did not change — facades re-pin at the
-                // next access (fresh keeper behind the truncated log);
-                // epoch-keyed caches survive (floors untouched).
-                self.noteWrite(tables: [])
-            }
+            self?.receiveInvalidation(changes: changes, reason: reason)
         }
         lock.withLockUnchecked { state in
             state.hookToken = token
+        }
+    }
+
+    /// Apply the backend's invalidation classification using leaf-lock state
+    /// changes only. Recovery has no disjoint-field or empty-table proof.
+    func receiveInvalidation(changes: [InvalidationTableChange], reason: InvalidationReason) {
+        let fieldAware = tuning.fieldAwareInvalidation
+        switch reason {
+        case .commit:
+            // Epoch bump is table-agnostic (every settled commit — §2.3,
+            // keeper retirement depends on it); the changed-table payload
+            // only refines which shapes drop caches. An EMPTY payload is
+            // a bookkeeping-only commit: bump, keep every cache.
+            guard fieldAware else {
+                self.noteWrite(tables: changes.map(\.table))
+                return
+            }
+            self.noteWrite(changes: changes.map { change in
+                if !change.changedFields.isEmpty {
+                    // Core-classified UPDATE-only batch (sync-applied
+                    // chunks, upserts resolved to UPDATE): the payload
+                    // is the deduped comma-joined field union.
+                    return WriteBatchTableChange(
+                        table: change.table,
+                        changedFields: Self.parseFieldList(change.changedFields))
+                }
+                if let annotation = LocalWriteFieldAnnotation.consume(matchingTable: change.table) {
+                    // Local single-column setter write: the payload
+                    // carries no changedFieldsNames, but this callback
+                    // fires inside the setter's annotation bracket on
+                    // the writer's thread. CONSUMED on application: the
+                    // flush drain can deliver FURTHER same-table batches
+                    // inside the same bracket (an inline observer's
+                    // write, a cross-thread commit buffered mid-flush)
+                    // — those are not the bracketed UPDATE and take the
+                    // conservative fields-unknown rule below.
+                    return WriteBatchTableChange(
+                        table: change.table,
+                        changedFields: [annotation.column.lowercased()])
+                }
+                return WriteBatchTableChange(table: change.table, changedFields: nil)
+            })
+        case .rollback:
+            // No change batch is delivered for a rollback by design —
+            // any capture that raced the transaction may be poisoned
+            // (§4.1 dirty-read belt), so every shape re-captures.
+            self.noteWrite(tables: nil)
+        case .recovery:
+            // Recovery carries no complete row/table change history.
+            // Invalidate every shape even with field-aware skipping enabled.
+            self.noteWrite(tables: nil)
+        case .advance:
+            // §3.3/§3.4: content did not change — facades re-pin at the
+            // next access (fresh keeper behind the truncated log);
+            // epoch-keyed caches survive (floors untouched).
+            self.noteWrite(tables: [])
         }
     }
 

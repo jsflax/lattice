@@ -74,6 +74,15 @@ public enum InvalidationReason: Int32, Sendable, Equatable {
     /// A generation-advance request (§3.3/§3.4): content did not change;
     /// facades re-pin at the next access so the WAL can rewind/truncate.
     case advance = 2
+    /// A verified recovery changed the store without a per-table audit batch.
+    /// Every cached query shape must recapture at its next access.
+    case recovery = 3
+
+    /// Newer cores may add reasons whose table payload is also unavailable.
+    /// Unknown content cannot safely retain caches as an empty commit would.
+    init(coreRawValue: Int32) {
+        self = Self(rawValue: coreRawValue) ?? .recovery
+    }
 }
 
 /// One table's slice of a synchronous-invalidation payload, in the detailed

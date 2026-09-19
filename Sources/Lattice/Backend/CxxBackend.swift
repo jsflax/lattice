@@ -665,7 +665,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
                         if let t = tables[i] { names.append(String(cString: t)) }
                     }
                 }
-                box.fn(names, InvalidationReason(rawValue: Int32(reason)) ?? .commit)
+                box.fn(names, InvalidationReason(coreRawValue: Int32(reason)))
             },
             { ctx in
                 guard let ctx else { return }
@@ -711,7 +711,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
                                                                changedFields: f))
                     }
                 }
-                box.fn(changes, InvalidationReason(rawValue: Int32(reason)) ?? .commit)
+                box.fn(changes, InvalidationReason(coreRawValue: Int32(reason)))
             },
             { ctx in
                 guard let ctx else { return }

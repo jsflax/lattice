@@ -333,6 +333,65 @@ class LiveResultsChangedFieldsTests: BaseTest {
 
     // MARK: Long-soak equivalence — flag on vs flag off
 
+    @Test(arguments: [true, false])
+    func recoverySignalRecapturesWarmShapesWithNoTableHistory(fieldAware: Bool) throws {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "recovery_shapes_\(String.random(length: 12)).sqlite")
+        var config = Lattice.Configuration(fileURL: url)
+        config.resultsTuning.fieldAwareInvalidation = fieldAware
+        config.resultsTuning.crossProcessBeltIntervalMs = nil
+        let lattice = try Lattice(CFItem.self, configuration: config)
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        let item = CFItem()
+        item.name = "alpha"
+        item.rank = 20
+        item.note = "seed"
+        try lattice.add(item)
+
+        let byName = lattice.objects(CFItem.self).where { $0.rank > 10 }.sortedBy(\.name)
+        let byRank = lattice.objects(CFItem.self).where { $0.rank < 100 }.sortedBy(\.rank)
+        #expect(byName.count == 1)
+        #expect(byRank.count == 1)
+        #expect(byName[0].name == "alpha")
+        #expect(byRank[0].rank == 20)
+        let nameShape = byName._shapeState
+        let rankShape = byRank._shapeState
+        let coordinator = GenerationCoordinatorRegistry.coordinator(
+            for: lattice.backend, tuning: config.resultsTuning)
+        func fills() -> Int {
+            let name = nameShape.fillCounts
+            let rank = rankShape.fillCounts
+            return name.keyset + name.offset + rank.keyset + rank.offset
+        }
+
+        // Empty ordinary commits and a generation-only advance keep content
+        // caches. These controls distinguish recovery from epoch bumps alone.
+        let warm = fills()
+        for raw in [Int32(0), Int32(2)] {
+            coordinator.receiveInvalidation(changes: [], reason: .init(coreRawValue: raw))
+            #expect(byName[0].name == "alpha")
+            #expect(byRank[0].rank == 20)
+            #expect(fills() == warm)
+        }
+        for raw in [Int32(3), Int32.max] {
+            let before = fills()
+            let unrelatedFloor = coordinator.currentFloor(table: "OtherRecoveryTable")
+            // First exercise the payload-free recovery signal. A future
+            // unknown signal with a disjoint-looking payload is conservative
+            // too; its table/field classification is not known to this SDK.
+            let changes: [InvalidationTableChange] = raw == 3 ? [] : [
+                .init(table: "CFItem", changedFields: "note")
+            ]
+            coordinator.receiveInvalidation(changes: changes, reason: .init(coreRawValue: raw))
+            #expect(coordinator.currentFloor(table: "OtherRecoveryTable") > unrelatedFloor)
+            #expect(byName.count == 1)
+            #expect(byRank.count == 1)
+            #expect(byName[0].name == "alpha")
+            #expect(byRank[0].rank == 20)
+            #expect(fills() > before)
+        }
+    }
+
     /// Deterministic seeded generator (identical scripts on both stores).
     private struct SplitMix: Sendable {
         var state: UInt64
