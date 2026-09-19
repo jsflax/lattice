@@ -35,7 +35,17 @@ struct ExternalWriteLockTests {
 
     @Test func normalReleaseRequiresCommitMarkerEOFAndNormalReap() async throws {
         try await withFixture { lock in
-            try #require(await lock.waitUntilHeld(timeout: 5))
+            let acquisitionDeadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
+            let acquired = await lock.waitUntilHeld(deadlineNS: acquisitionDeadline)
+            let resumed = DispatchTime.now().uptimeNanoseconds
+            try #require(acquired,
+                         Comment(rawValue: "acquisition deadlineNS=\(acquisitionDeadline) resumedNS=\(resumed) snapshotAfterWait=\(lock.timingSnapshot)"))
+            // Decide using the recorded event even with an expired wait budget.
+            #expect(await lock.waitUntilHeld(timeout: 0))
+            let held = try #require(lock.timingSnapshot.heldObservedNS)
+            #expect(await lock.waitUntilHeld(deadlineNS: held))
+            #expect(!(await lock.waitUntilHeld(deadlineNS: held - 1)),
+                    "readiness recorded after the cutoff must still fail")
             let result = await lock.release()
             #expect(result.success && result.cleanupComplete)
             #expect(result.timing.exitedNormally && result.timing.exitStatus == 0)

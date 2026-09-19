@@ -275,14 +275,23 @@ final class ExternalWriteLock: @unchecked Sendable {
 
     func waitUntilHeld(timeout: TimeInterval) async -> Bool {
         let end = DispatchTime.now().uptimeNanoseconds + UInt64(timeout * 1e9)
-        while DispatchTime.now().uptimeNanoseconds < end {
-            let state = snapshot.withLock { $0 }
-            if state.failed || !state.ownedUnreaped { return false }
-            if state.timing.heldObservedNS != nil { return true }
+        return await waitUntilHeld(deadlineNS: end)
+    }
+
+    func waitUntilHeld(deadlineNS: UInt64) async -> Bool {
+        while true {
+            // Marker publication and this decision share the snapshot lock.
+            // Judge when readiness was recorded, even if the waiter resumes
+            // after its deadline; a marker recorded after it still fails.
+            let decision: Bool? = snapshot.withLock { state in
+                if state.failed || !state.ownedUnreaped { return false }
+                if let held = state.timing.heldObservedNS { return held <= deadlineNS }
+                return DispatchTime.now().uptimeNanoseconds >= deadlineNS ? false : nil
+            }
+            if let decision { return decision }
             do { try await Task.sleep(for: .milliseconds(10)) }
             catch { return false }
         }
-        return false
     }
 
     /// Caller cancellation cannot abandon child disposal or create another owner.
@@ -362,8 +371,8 @@ final class ExternalWriteLock: @unchecked Sendable {
             for byte in buffer.prefix(count) {
                 if byte == 10 {
                     let line = String(decoding: outputLine, as: UTF8.self)
-                    let now = DispatchTime.now().uptimeNanoseconds
                     snapshot.withLock {
+                        let now = DispatchTime.now().uptimeNanoseconds
                         if line == "LOCKHELD", $0.timing.heldObservedNS == nil { $0.timing.heldObservedNS = now }
                         if line == "LOCKRELEASED", $0.timing.releaseObservedNS == nil { $0.timing.releaseObservedNS = now }
                     }
