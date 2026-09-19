@@ -1,0 +1,17 @@
+[
+  {
+    "afterSHA256": "49019d81968ec0269040378ae67ac3b28db9b898874b82803141888c749a72df",
+    "beforeSHA256": "d35fb0d2a9456e04d6f210b30d7762d99144042d46b31dc97c697e89ef3d59ee",
+    "path": "Sources/Lattice/Model.swift"
+  },
+  {
+    "afterSHA256": "7e32ef91eed69a5016a3cac1f0fbab81fe30a09ed96b0ed2a3cc1078259b8424",
+    "beforeSHA256": "a06884121bdda68cd193ff5054587cf03514c37c9d8d665888a1e98d323cb304",
+    "path": "Tests/LatticeTests/NotificationCoalescingTests.swift"
+  },
+  {
+    "afterSHA256": "921f0a2fe2610a617a08b3d5fd142989022ef78806420996d3fc6d595afc1f62",
+    "beforeSHA256": "5ae8f5006ac64bf4fede33a97b4c28b0783cc5ef400c240f9195e87e7f86d2ea",
+    "path": "Tests/LatticeTests/ChangeStreamLifecycleTests.swift"
+  }
+]

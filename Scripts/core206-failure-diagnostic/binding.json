@@ -1,0 +1,12 @@
+{
+  "coreCommit": "db6bf8b97d7af22db4c1224f17bbdea80a43cc57",
+  "coreTree": "781cf09659a06475d88c1f33122c2130142e93c1",
+  "coreVersion": "2.0.6",
+  "schema": 1,
+  "sdkBindingsSHA256": "f957586c36b54349dbc856441043f922d536e1535499954258b99f9639c44295",
+  "sdkCommit": "0461b210aa028f3c4bb6165fed895e0f4385b565",
+  "sdkLockSHA256": "ec35ffb1f50fc8e3edb038d2c068facee1fd1b39dd228e4f0506e073120d3b4c",
+  "sdkManifestSHA256": "9fa8de4fcb349692e1afd4bc2b57fc3c88b772d97906c1ed67f302e6a3f50f44",
+  "sdkTree": "a1faa2850ebf2bf7dca152feffa461a24755a154",
+  "sdkVersion": "2.0.0"
+}
