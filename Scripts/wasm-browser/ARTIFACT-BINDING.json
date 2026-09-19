@@ -1,0 +1,69 @@
+{
+  "metadataSHA256": "e945290a84f5c0a3618cad2b3261e256cba54de4c27988025c186fb3989663e5",
+  "archiveSHA256": "87f91bdb5457e9e3e152ade1289aebfcafccb21eb560bf04e8f8724097f6d87f",
+  "artifactID": 10577102456,
+  "runID": 35420419786,
+  "workflowCommit": "f17071b6dbcbb6d7ab4e8126c9f78b71054f148e",
+  "proof": {
+    "buildArtifactsReady": true,
+    "jsCommit": "831cac6790504ab6d9eddcd525ead81ce2a971b9",
+    "coreCommit": "a09e622e4da3f603698d9f1069d6118e79397b2e",
+    "nodeAllNamedCasesPassed": false,
+    "nodeTestCounts": {
+      "passed": 109,
+      "skipped": 6
+    },
+    "nodeNonPassing": [
+      {
+        "name": " Decorators list() creates list properties (requires WASM)",
+        "status": "skipped"
+      },
+      {
+        "name": " Integration Tests (Browser Required) test_SimpleExample",
+        "status": "skipped"
+      },
+      {
+        "name": " Integration Tests (Browser Required) test_ResultsQuery",
+        "status": "skipped"
+      },
+      {
+        "name": " Integration Tests (Browser Required) test_Link",
+        "status": "skipped"
+      },
+      {
+        "name": " Integration Tests (Browser Required) test_LinkList",
+        "status": "skipped"
+      },
+      {
+        "name": " Integration Tests (Browser Required) test_BulkInsert",
+        "status": "skipped"
+      }
+    ],
+    "nativeLifecycle": {
+      "passed": 16,
+      "failed": 0,
+      "allResourceCountersZero": true,
+      "harnessSHA256": "1af95fe65a44cb47a1c6f2e4827d54373e633b133f4342068b21f81ae0103487",
+      "fixtureWebSocketOnly": true
+    },
+    "typeScript": {
+      "counts": {
+        "passed": 109,
+        "skipped": 6
+      },
+      "skippedNames": [
+        "Decorators list() creates list properties (requires WASM)",
+        "Integration Tests (Browser Required) test_BulkInsert",
+        "Integration Tests (Browser Required) test_Link",
+        "Integration Tests (Browser Required) test_LinkList",
+        "Integration Tests (Browser Required) test_ResultsQuery",
+        "Integration Tests (Browser Required) test_SimpleExample"
+      ],
+      "allNamedCasesPassed": false,
+      "note": "Six existing browser-required skips remain skips; they are not native passes."
+    },
+    "fullABCompatibility": false
+  },
+  "runtimePacketSealSHA256": "62d164409c46bbb2cb22b08098c5d31280e50ce2c147cfb8f5919ee7453ca8d1",
+  "browserLaunched": false
+}

@@ -72,11 +72,22 @@
   ],
   "coreB": "a09e622e4da3f603698d9f1069d6118e79397b2e",
   "coreBTree": "b77b51371ff107a81a05a4d5c259683f65120f4b",
-  "wasmCI": null,
-  "artifactID": null,
-  "artifactSHA256": null,
+  "wasmCI": 35420419786,
+  "artifactID": 10577102456,
+  "artifactSHA256": "87f91bdb5457e9e3e152ade1289aebfcafccb21eb560bf04e8f8724097f6d87f",
   "assets": {
-    "B": {}
+    "B": {
+      "js": {
+        "bytes": 138518,
+        "sha256": "2f8d6bf2af3750e7cb5e9a776aa11880f2cd9ba908b3601bf6740501ae9272eb",
+        "zipMember": "B-lattice.js"
+      },
+      "wasm": {
+        "bytes": 3089271,
+        "sha256": "44fbf35fff82ae9d8605c3614bf05af55a8fb168110ecc4721cf5577fb31edcb",
+        "zipMember": "B-lattice.wasm"
+      }
+    }
   },
   "playwrightVersion": "1.58.2",
   "nodeVersion": "20.18.0",
@@ -96,7 +107,7 @@
   "executedArms": [
     "B"
   ],
-  "artifactInputReady": false,
+  "artifactInputReady": true,
   "regressionSuiteTimeoutMs": 120000,
   "historicalBaseline": {
     "executedInThisRun": false,

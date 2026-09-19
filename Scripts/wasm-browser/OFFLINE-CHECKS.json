@@ -12,9 +12,9 @@
     "Only B; original23 bytes frozen; six exact names",
     "Historical baseline remains21pass2fail0skip",
     "Every runtime input matches its source seal",
-    "Pending artifact rejected before runtime setup"
+    "Actual artifact fields complete; runtime reauthenticates archive"
   ],
-  "readyForRuntime": false,
+  "readyForRuntime": true,
   "browserLaunched": false,
   "buildExecuted": false,
   "browserCandidateQualified": false,
