@@ -44,21 +44,21 @@
     "test_EnumValue",
     "test_RealServerSync"
   ],
-  "coreB": "234afb4ad4f74174bd875035e6bb47b1a878ac56",
-  "coreBTree": "06cacd09ecaf80a460418dad52c352abade58654",
-  "wasmCI": 35408504554,
-  "artifactID": 10573503412,
-  "artifactSHA256": "aabff7caa91ffae5df81253586c2ea95a2a25daeb1350d682898202e359e6c31",
+  "coreB": "4b0a292196047fc1ed0d9b6d961b2c0d22594c59",
+  "coreBTree": "4cfdb665ee3da6cc36cb3f3a64cb33af8718259e",
+  "wasmCI": 35413682106,
+  "artifactID": 10574777230,
+  "artifactSHA256": "6da704e6dbffc229f47d688c98d479d025268f8bce5b10d785284b4720570505",
   "assets": {
     "B": {
       "js": {
         "bytes": 142862,
-        "sha256": "1e929958d8127f346cd97cfdda42652473ad80d027babc195e73a7c68259640f",
+        "sha256": "ff580f4fb11ce481e841d68cb33c7c4146404ef5f404ee40ce55d49ecb24e6a9",
         "zipMember": "B-lattice.js"
       },
       "wasm": {
-        "bytes": 3067533,
-        "sha256": "d060127dd83d757cf28b39fb6e38d697ebc28686d5a40a1b20ddc894e1ddaa59",
+        "bytes": 3067678,
+        "sha256": "243fbc43aa9cdc9ed8934b30de59d682bf3cce2c3d604dc714fb64a3394d52c1",
         "zipMember": "B-lattice.wasm"
       }
     }
