@@ -1,0 +1,52 @@
+{
+  "baselineCore": "f8f72e97ae94d1e40b2a9663cb7d15df62c8ac2a",
+  "baselineCoreTree": "38ba9b586ff9944a49173c25de578b23f3b72263",
+  "baselineCorrectnessOverlay": {
+    "patchSHA256": "2b4827d6db82a3d935aad91749323fe7995423a8d0ee301a3405a4109ed89eb2",
+    "path": "Sources/Lattice/Results/TableResults.swift",
+    "postimageSHA256": "9cd72274cc1e59629796b89b2e2e025d2dfae74107180ff4bc6061f425c63e6b",
+    "preimageSHA256": "f4e43207951a971feeabcd191d05472739d669da2f484efa3698decb3266c78b"
+  },
+  "baselineFocusedAssessmentSHA256": "baca4a6fd9fac4bc461873307b99edf93ed1f668283eedf13f3c4e2bde63660e",
+  "baselineLegacyAssessmentSHA256": "cc80bc991a9ad50f3b2f0ea55ae60cd723c819d3a400fd8cd3411778a3a289eb",
+  "baselineOverlayPath": "Tests/LatticeTests/PerfRefinementBenchmarks.swift",
+  "baselineProductPatchesAllowed": false,
+  "baselineSDK": "d18f80408a0cb992cdc98ce616c9b28813e99bf7",
+  "baselineSDKTree": "995487abb0b9b0ef7446bc2780bb5a1b8a99c16e",
+  "buildTimeoutSeconds": 5400,
+  "candidateCore": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+  "candidateCoreTree": "5280333ecc94b8e7339010c9c8e70a30019f86b9",
+  "candidateSDK": "96a5bf0256f81691a92d98cb8fe24b54e00de811",
+  "candidateSDKTree": "466e724abeea3e01f0af8c5d7adde729628e4115",
+  "candidateSwiftDefine": "LATTICE_PERF_SELECTED_BATCH",
+  "finalizationReserveSeconds": 600,
+  "freeFloorBytes": 12884901888,
+  "frozenFiles": {
+    "BENCHMARK-CONTRACT.md": "2f36711b52b150d203764c0869024af86214a4cd35288ba4ce6e7a6b42fbd910",
+    "PerfRefinementBenchmarks.swift": "993d3a6f384958185c9ee5817e6ba1f125a037f722a074a3a719ef71226455e2",
+    "build_proof.py": "d527ba9d57fcae5bf91eae35bbb993e9d185fe13cfbb2aae8db34ebf34857720",
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "perf_refinement_report.py": "aeb1d5994149d28badc6ddfa01d51c60ebed4ffb941f85d885d2d06c8669714f"
+  },
+  "measuredSamples": 100,
+  "measurementTimeoutSeconds": 1200,
+  "originalExpectedRedRun": 35394332578,
+  "originalInvalidAttachedRun": 35352719982,
+  "overallSeconds": 18000,
+  "packetCeilingBytes": 32212254720,
+  "schemaVersion": 2,
+  "scope": "Fresh same hosted VM allocation corrected-baseline A/A2/B; physical-host gate unverified",
+  "settlingSeconds": 60,
+  "validationHarnessRevision": {
+    "baselineProductChanged": true,
+    "harnessSHA256": "993d3a6f384958185c9ee5817e6ba1f125a037f722a074a3a719ef71226455e2",
+    "id": "frozen993-local-and-attached",
+    "reason": "Qualified attached correctness-only registry bypass; no timing-body change.",
+    "timedWorkloadUnchanged": true
+  },
+  "variants": [
+    "local",
+    "attached"
+  ],
+  "warmups": 5
+}

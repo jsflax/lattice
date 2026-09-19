@@ -1,0 +1,27 @@
+{
+  "executionAdmitted": false,
+  "files": {
+    "BENCHMARK-CONTRACT.md": "2f36711b52b150d203764c0869024af86214a4cd35288ba4ce6e7a6b42fbd910",
+    "PerfRefinementBenchmarks.swift": "993d3a6f384958185c9ee5817e6ba1f125a037f722a074a3a719ef71226455e2",
+    "README.md": "03c6ceecbd092b38925ed9afdca82789e2a6424e48f92976bf851cce7806d2a1",
+    "TableResults.corrected.swift": "9cd72274cc1e59629796b89b2e2e025d2dfae74107180ff4bc6061f425c63e6b",
+    "baseline-focused-assessment.json": "baca4a6fd9fac4bc461873307b99edf93ed1f668283eedf13f3c4e2bde63660e",
+    "baseline-legacy-assessment.json": "cc80bc991a9ad50f3b2f0ea55ae60cd723c819d3a400fd8cd3411778a3a289eb",
+    "baseline-product.patch": "2b4827d6db82a3d935aad91749323fe7995423a8d0ee301a3405a4109ed89eb2",
+    "benchmark-sources.json": "3e6afd29bd46ff59af5e873ab9f15f5052630f8513a7ccd0f0b08a84d9da04c0",
+    "binding.py": "3ce4e5ee92739b6a62f48d6fd19cab4d998cc21671019766007a17aa778b2a2f",
+    "build_proof.py": "d527ba9d57fcae5bf91eae35bbb993e9d185fe13cfbb2aae8db34ebf34857720",
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "manifests/baseline-core.json": "fe09bb8c7e9b929f7cb37470148c53b53145bb05ad53d8cc22302469930d8961",
+    "manifests/baseline-sdk-effective.json": "a584403cf8b5d3a3bb4ff071be049215604c6db5766628863b475dac64d62b97",
+    "manifests/baseline-sdk-pristine.json": "160693cfd3cb8d55c7f099e82d7cad5d619ab16180990c9b4f233d948fb846b1",
+    "manifests/candidate-core.json": "9139ec7129a97e7d7365b183167635cc8c82094e758f31492eecb587bce65afd",
+    "manifests/candidate-sdk.json": "70f222f32487b878a736e2257e54216c4185d104b36c38637443e864011a5447",
+    "manifests/dependency-pins.json": "edbd3d75cc0c01ddb45f8f222633922c09aca78f9a34ac37d7da6aa750755c19",
+    "perf_refinement_report.py": "aeb1d5994149d28badc6ddfa01d51c60ebed4ffb941f85d885d2d06c8669714f",
+    "run-release-benchmark.py": "37ff538db1e3cfddf4f966e2be88c5007ea842beba486c9223df7bbdd8e1432b",
+    "test_binding.py": "2eb70dada0b0fb9703da31645b1f32b5393684600d9078f3fed4bd007cf21d56"
+  },
+  "schemaVersion": 1,
+  "scope": "Executable source preparation only; manual hash-bound root admission required after exact candidate CI passes"
+}

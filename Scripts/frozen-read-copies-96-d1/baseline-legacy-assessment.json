@@ -1,0 +1,57 @@
+{
+  "run": 35406715239,
+  "qualificationHead": "c1c4ce1248fd4596c92b00f959e486ecf527629b",
+  "scope": "Four unchanged corrected historical attached baseline regression prerequisites, with actual hosted Swift6.3.3 selector proof",
+  "accepted": true,
+  "archiveSHA256": "06966261eb58175fec1ce90ff19c802d30ab9285578cf2c68652e4a129c8affc",
+  "commandCount": 264,
+  "allCommandLogsAndCleanGroupExitVerified": true,
+  "selectorActualCaseCounts": [
+    3,
+    0,
+    1
+  ],
+  "sdkCommit": "d18f80408a0cb992cdc98ce616c9b28813e99bf7",
+  "coreCommit": "f8f72e97ae94d1e40b2a9663cb7d15df62c8ac2a",
+  "sourceProofMatchesPriorAuthenticated007Exactly": true,
+  "sdkSourceCount": 201,
+  "coreSourceCount": 870,
+  "all34PinsAcrossThreePhasesVerified": true,
+  "nativeCompileInputs": 15,
+  "swiftReleaseModules": [
+    "Lattice",
+    "LatticeTests"
+  ],
+  "buildSeconds": 1444.7416708330002,
+  "tests": [
+    {
+      "classname": "LatticeTests.LiveResultsKeysetTests",
+      "name": "deepScroll_jumpPaysOneOffsetStatement_thenKeyset()",
+      "time": "0.224541292"
+    },
+    {
+      "classname": "LatticeTests.AttachTests",
+      "name": "attach_updateInSynced_throughQueryLattice()",
+      "time": "0.062422542"
+    },
+    {
+      "classname": "LatticeTests.LiveResultsIdentityTests",
+      "name": "t7_forEachDiff_noDeleteInsertForSurvivors_fileDB()",
+      "time": "0.0561305"
+    },
+    {
+      "classname": "LatticeTests.LiveResultsIdentityTests",
+      "name": "t7_reuse_liveWeakRefIsSameObject_deadRefHydratesFresh()",
+      "time": "0.016771125"
+    }
+  ],
+  "binarySHA256": "3a16c9a8fccc9f191247e5dfde911a94d800c979cffc65e36d2f8e75c1031015",
+  "binaryCustodyScope": "Hosted build/test custody recorded; executable not uploaded. Canonical driver/object/link proofs retained; temporary derived-child list bytes are not independently verified.",
+  "sourceProofSHA256": "8219877691f1e12005ccc46f481522638319d4ce566ea1806d951acdd9bfec8d",
+  "compilerProofSHA256": "c1cdf552c6f51d9136ffb163b946d703dcfd334e36a6423a11f96ee04a0632f3",
+  "resultSHA256": "13d85aaf239366d3ff734946a76a7e1a00d27074f81877f2b866b3e4fc2bdb29",
+  "benchmarkAdmissionAccepted": false,
+  "fullHistoricalSuiteQualified": false,
+  "performanceQualified": false,
+  "nextStep": "Prepare corrected baseline A/A timing on its unchanged frozen workload; full candidate comparison remains separately required."
+}

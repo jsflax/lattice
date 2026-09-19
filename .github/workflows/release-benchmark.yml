@@ -1,4 +1,4 @@
-name: Corrected baseline and public candidate Release benchmark
+name: Frozen read copies Release benchmark
 # Manual only: exact candidate CI and root packet review precede admission.
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TASK_ROOT="$HOME/localdev/lattice-public-benchmark-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TASK_ROOT="$HOME/localdev/lattice-read-copies-96-benchmark-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           test ! -e "$TASK_ROOT"
           mkdir -p "$TASK_ROOT/tmp"
           echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
@@ -59,9 +59,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -B "$TASK_ROOT/tools/Scripts/frozen-public-candidate-632/run-release-benchmark.py" \
+          python3 -B "$TASK_ROOT/tools/Scripts/frozen-read-copies-96-d1/run-release-benchmark.py" \
             --root "$TASK_ROOT" \
-            --candidate-sdk-sha 632e3a4feccf45e7f4f0ba095a108a01a8effa2b \
+            --candidate-sdk-sha 96a5bf0256f81691a92d98cb8fe24b54e00de811 \
             --seal-sha256 "$PACKET_SEAL_SHA256" \
             --admission-json "$TASK_ROOT/ADMISSION.json" \
             --admission-sha256 "$ROOT_ADMISSION_SHA256"
@@ -70,13 +70,13 @@ jobs:
         timeout-minutes: 15
         uses: actions/upload-artifact@v4
         with:
-          name: corrected-public-candidate-benchmark-attempt-${{ github.run_attempt }}
+          name: frozen-read-copies-96-benchmark-attempt-${{ github.run_attempt }}
           path: |
             ${{ env.TASK_ROOT }}/receipts
             ${{ env.TASK_ROOT }}/runs
             ${{ env.TASK_ROOT }}/test-logs
             ${{ env.TASK_ROOT }}/ADMISSION.json
-            ${{ env.TASK_ROOT }}/tools/Scripts/frozen-public-candidate-632
+            ${{ env.TASK_ROOT }}/tools/Scripts/frozen-read-copies-96-d1
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 30

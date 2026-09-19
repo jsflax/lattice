@@ -1,0 +1,15 @@
+diff --git a/Sources/Lattice/Results/TableResults.swift b/Sources/Lattice/Results/TableResults.swift
+--- a/Sources/Lattice/Results/TableResults.swift
++++ b/Sources/Lattice/Results/TableResults.swift
+@@ -191,7 +191,10 @@
+     /// of instances the app already holds.
+     private func _reuseOrHydrate(_ row: any ObjectBackend) -> Element {
+         let primaryKey = _primedPrimaryKey(of: row)
+-        if primaryKey > 0,
++        // Attached physical stores can share a local primary key. The registry
++        // does not distinguish their source, so keep the fetched physical route
++        // and hydrate it after the same per-row priming performed above.
++        if primaryKey > 0, _lattice.attachedSchemas.isEmpty,
+            let reused = ModelInstanceRegistry.shared.lookup(databasePath: _dbPath,
+                                                             tableName: Element.entityName,
+                                                             primaryKey: primaryKey,
