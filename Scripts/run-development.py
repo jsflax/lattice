@@ -417,8 +417,11 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--core-sha', required=True)
     parser.add_argument('--test-timeout', type=int, choices=(1800, 5400), required=True)
-    parser.add_argument('--sync-probe-qualification', action='store_true',
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--sync-probe-qualification', action='store_true',
                         help='Instrumented Core probe and SDK visibility fixtures only; not full suite or performance')
+    modes.add_argument('--sync-full-calibration', action='store_true',
+                       help='Qualify the existing full loaded and quiet-only workloads in separate processes; not a performance experiment')
     args = parser.parse_args()
     root = args.root.resolve(strict=True)
     allowed = (Path.home() / 'localdev').resolve(strict=True)
@@ -449,8 +452,11 @@ def main():
               'primaryError': None, 'evidenceErrors': [], 'releaseGraphAccepted': False,
               'overallSeconds': OVERALL_SECONDS, 'finalizationReserveSeconds': FINALIZATION_RESERVE}
     result['syncProbeQualification'] = args.sync_probe_qualification
+    result['syncFullCalibration'] = args.sync_full_calibration
     if args.sync_probe_qualification:
         result['scope'] = 'opt-in native origin / Swift importer / public visibility qualification only; no full-suite or performance acceptance'
+    elif args.sync_full_calibration:
+        result['scope'] = 'opt-in full workload calibration only; no A/A2/B, full-suite, performance or release acceptance'
     original = sdk_inputs = core_inputs = None
     primary = None
     test_started_at = None
@@ -490,7 +496,7 @@ def main():
             graph = runner.run('effective-graph-before', ['swift', 'package', *common, 'show-dependencies', '--format', 'json'], cwd=sdk)
             verify_graph(runner, 'graph-before', read_graph(graph), original, core, args.core_sha, root / 'scratch')
             probe_flags = []
-            if args.sync_probe_qualification:
+            if args.sync_probe_qualification or args.sync_full_calibration:
                 import sync_probe_qualification
                 probe_flags = sync_probe_qualification.FLAGS
                 test_started_at = time.time()
@@ -506,6 +512,9 @@ def main():
                            timeout=300, require_full_timeout=True)
                 sync_probe_qualification.qualify_sdk_log(sdk_probe_log, receipts)
                 sync_probe_qualification.qualify_public_receipts(root, receipts)
+            elif args.sync_full_calibration:
+                import sync_full_calibration
+                sync_full_calibration.run(runner, sdk, root, common, sdk_inputs, core_inputs)
             else:
                 runner.run('full-test', ['swift', 'test', *common, '--force-resolved-versions', '--skip-build'], cwd=sdk,
                            timeout=args.test_timeout, require_full_timeout=True)
