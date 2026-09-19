@@ -1,15 +1,18 @@
-name: Exploratory Release benchmark
-# Development evidence only. Existing release/consumer workflows are unchanged.
+name: Corrected baseline and public candidate Release benchmark
+# Manual only: exact candidate CI and root packet review precede admission.
 on:
-  push:
-    branches: [codex/perf-qualification-20260918]
-    paths:
-      - "Scripts/remote-benchmark/**"
-      - ".github/workflows/release-benchmark.yml"
   workflow_dispatch:
     inputs:
-      candidate_sdk_sha:
-        description: Exact reviewed SDK commit; must contain the frozen harness
+      packet_seal_sha256:
+        description: Reviewed exact runtime packet seal
+        required: true
+        type: string
+      admission_json:
+        description: Root receipt binding accepted exact SDK and Core qualification
+        required: true
+        type: string
+      admission_sha256:
+        description: SHA256 of admission_json encoded as UTF-8 with no added newline
         required: true
         type: string
 permissions:
@@ -20,14 +23,16 @@ jobs:
     timeout-minutes: 360
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      CANDIDATE_SDK_SHA: ${{ inputs.candidate_sdk_sha || 'da396f7715584bbf6ddec2b1d78bc0c69b07e294' }}
+      PACKET_SEAL_SHA256: ${{ inputs.packet_seal_sha256 }}
+      ROOT_ADMISSION_JSON: ${{ inputs.admission_json }}
+      ROOT_ADMISSION_SHA256: ${{ inputs.admission_sha256 }}
     steps:
-      - name: Fetch benchmark tools into owned localdev directory
+      - name: Fetch exact tools into owned localdev directory
         timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
-          TASK_ROOT="$HOME/localdev/lattice-benchmark-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TASK_ROOT="$HOME/localdev/lattice-public-benchmark-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           test ! -e "$TASK_ROOT"
           mkdir -p "$TASK_ROOT/tmp"
           echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
@@ -36,22 +41,42 @@ jobs:
           git -C "$TASK_ROOT/tools" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
           git -C "$TASK_ROOT/tools" checkout --detach "$GITHUB_SHA"
           test "$(git -C "$TASK_ROOT/tools" rev-parse HEAD)" = "$GITHUB_SHA"
-      - name: Build Release and measure original A/A then candidate B
+      - name: Bind root admission receipt without shell interpretation
         shell: bash
         run: |
           set -euo pipefail
-          python3 "$TASK_ROOT/tools/Scripts/remote-benchmark/run-release-benchmark.py" \
-            --root "$TASK_ROOT" --candidate-sdk-sha "$CANDIDATE_SDK_SHA"
-      - name: Preserve raw measurements, fixtures, and failed-run evidence
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          raw = os.environ['ROOT_ADMISSION_JSON'].encode('utf-8')
+          assert len(raw) <= 32768
+          assert hashlib.sha256(raw).hexdigest() == os.environ['ROOT_ADMISSION_SHA256']
+          json.loads(raw)
+          with (Path(os.environ['TASK_ROOT']) / 'ADMISSION.json').open('xb') as output:
+              output.write(raw)
+          PY
+      - name: Build both Release images then measure corrected A A2 and candidate B
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$TASK_ROOT/tools/Scripts/frozen-public-candidate-632/run-release-benchmark.py" \
+            --root "$TASK_ROOT" \
+            --candidate-sdk-sha 632e3a4feccf45e7f4f0ba095a108a01a8effa2b \
+            --seal-sha256 "$PACKET_SEAL_SHA256" \
+            --admission-json "$TASK_ROOT/ADMISSION.json" \
+            --admission-sha256 "$ROOT_ADMISSION_SHA256"
+      - name: Retain raw measurements fixtures source proofs and failed evidence
         if: always() && env.TASK_ROOT != ''
         timeout-minutes: 15
         uses: actions/upload-artifact@v4
         with:
-          name: exploratory-release-benchmark-attempt-${{ github.run_attempt }}
+          name: corrected-public-candidate-benchmark-attempt-${{ github.run_attempt }}
           path: |
             ${{ env.TASK_ROOT }}/receipts
             ${{ env.TASK_ROOT }}/runs
             ${{ env.TASK_ROOT }}/test-logs
+            ${{ env.TASK_ROOT }}/ADMISSION.json
+            ${{ env.TASK_ROOT }}/tools/Scripts/frozen-public-candidate-632
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
