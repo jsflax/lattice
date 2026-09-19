@@ -1,0 +1,29 @@
+{
+  "corePublicationVerification": "core-2.0.4-release-99e4bc8/PUBLICATION-AUTHENTICATION.json",
+  "corePublicationVerificationSHA256": "415774485feb3d8fc619d26f50fcd099771f56316770183e7c3cc20fd2c26b2e",
+  "coreReleaseReceiptSHA256": "562e9f67d748b7182d290c41ea34da3f7e05fbf24167c74f8eba8e53aa4ddefc",
+  "privateResolutionLockSHA256": "ec35ffb1f50fc8e3edb038d2c068facee1fd1b39dd228e4f0506e073120d3b4c",
+  "privateResolutionVerification": "../preparation/CORE-2.0.4-RESOLUTION-002/PARENT-ASSESSMENT.json",
+  "privateResolutionVerificationSHA256": "41ec9d59ab4ed604041cd07bd2b93a9048fa24a7526fd0006c4779dbc8f0995d",
+  "recordedAt": "2026-09-18T21:49:09.983834+00:00",
+  "releases": [
+    {
+      "commit": "99e4bc89389d14072e6ab9b658db49a49a3573f5",
+      "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.0.4",
+      "repository": "https://github.com/jsflax/LatticeCore",
+      "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.0.4"
+    },
+    {
+      "commit": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
+      "releaseURL": "https://github.com/jsflax/swift-sdk/releases/tag/0.13.0",
+      "repository": "https://github.com/jsflax/swift-sdk",
+      "tagURL": "https://github.com/jsflax/swift-sdk/tree/0.13.0"
+    }
+  ],
+  "schema": "lattice.wrapper-upstream-release-joins/1",
+  "scope": "upstream-release-source-joins-only",
+  "unchangedSDKPriorCombinedReceiptSHA256": "14dc376b2a450c277c9de85fbb89a1974804f10c172335d65f4bb8bd4d2ac8f0",
+  "wrapperGraphAccepted": false,
+  "unchangedMCPCurrentTagSHA256": "1c89b20f910239614f86f92b031b676c9ff8e510fac1ffed11780cfb9c4fbb16",
+  "unchangedMCPCurrentReleaseSHA256": "c737c6136feea1e809df51d86d4b6bfa57868c8c31419d761677df536886a991"
+}

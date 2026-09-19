@@ -1,0 +1,19 @@
+{
+  "buildSeconds": 5400,
+  "developerDirectory": "/Applications/Xcode.app/Contents/Developer",
+  "freeFloorBytes": 12884901888,
+  "iosBuildSeconds": 1800,
+  "iosOverallSeconds": 3600,
+  "iosResolveSeconds": 600,
+  "jobs": 2,
+  "logCeilingBytes": 536870912,
+  "overallSeconds": 7200,
+  "packetCeilingBytes": 32212254720,
+  "reserveSeconds": 600,
+  "resolveSeconds": 600,
+  "reviewedCoreTree": "781cf09659a06475d88c1f33122c2130142e93c1",
+  "runtimeLogCeilingBytes": 1048576,
+  "runtimeSeconds": 30,
+  "sdkManifestSHA256": "9fa8de4fcb349692e1afd4bc2b57fc3c88b772d97906c1ed67f302e6a3f50f44",
+  "swift": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift"
+}

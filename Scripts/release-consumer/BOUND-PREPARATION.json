@@ -1,0 +1,17 @@
+{
+  "state": "publication-bound-runtime-not-executed-awaiting-binding-review",
+  "predecessorSourceSealSHA256": "845fde7344301dd13b2fa431f60eb34c1f6056a4c8e7c8011778e0b2845b194b",
+  "predecessorRuntimeSealSHA256": "292fbdee139b14133d5e7b65e89b931ddf5067a41e474b2eaf6ff976576934d1",
+  "historicalEvidenceDirectory": "../evidence/predecessor-002",
+  "publicationQualified": true,
+  "dispatchReady": true,
+  "parentAcceptedPublication": true,
+  "parentAuthorizedDispatch": false,
+  "coreTag": "2.0.6",
+  "corePublicCommit": "9918baf3f464cb03deb4df36dd7faf43cf0d7a91",
+  "reviewedCoreTree": "781cf09659a06475d88c1f33122c2130142e93c1",
+  "sdkCommit": "0461b210aa028f3c4bb6165fed895e0f4385b565",
+  "metadataCorrectionOnly": false,
+  "runtimeLaunched": false,
+  "publicationAssessmentSHA256": "377d86d2ee1f2e21abefbf179e68b7955528505ba767fa78d1e1755e7b9731a2"
+}

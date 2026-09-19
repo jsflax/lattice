@@ -1,0 +1,32 @@
+{
+  "state": "publication-bound-awaiting-final-binding-review-and-exact-install-admission",
+  "sourceOnly": true,
+  "publicationAuthenticated": true,
+  "dispatchAdmitted": false,
+  "repository": "jsflax/lattice",
+  "workflow": ".github/workflows/release-consumer.yml",
+  "workflowTrigger": "workflow_dispatch only; no automatic push trigger",
+  "requiredSDK": "0461b210aa028f3c4bb6165fed895e0f4385b565",
+  "requiredCoreTag": "2.0.6",
+  "requiredCorePublicCommit": "9918baf3f464cb03deb4df36dd7faf43cf0d7a91",
+  "requiredCoreTree": "781cf09659a06475d88c1f33122c2130142e93c1",
+  "installation": {
+    "baseCommit": null,
+    "branch": null,
+    "commit": null,
+    "tree": null,
+    "packetDestination": "Scripts/release-consumer",
+    "workflowDestination": ".github/workflows/release-consumer.yml"
+  },
+  "requiredBeforeDispatch": [
+    "Regenerate packet/source seals, set workflow seal from actual bound packet, and obtain independent/root review.",
+    "Root selects an isolated localdev-backed qualification checkout/ref, verifies exact installed bytes/commit/tree, and separately admits one manual dispatch. No historical authorization is reusable."
+  ],
+  "postDispatch": [
+    "Retain first failures and authenticate both actual platform jobs/source/effective dependency graphs/compiler or runtime oracles/command and cleanup evidence.",
+    "Require root acceptance of public consumer and iOS compile gates; keep separate WASM gate and inherited limitations explicit."
+  ],
+  "noDuplicateBuildOrRetryAuthorized": true,
+  "runtimeLaunched": false,
+  "publicationAssessmentSHA256": "377d86d2ee1f2e21abefbf179e68b7955528505ba767fa78d1e1755e7b9731a2"
+}
