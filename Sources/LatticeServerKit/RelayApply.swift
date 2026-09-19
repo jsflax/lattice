@@ -201,6 +201,12 @@ struct RelayFrame {
     /// one) — i.e. it claims to be an upload.
     var claimsUpload: Bool { root?["auditLog"] != nil }
 
+    /// Match Core's `server_sent_event::from_json` precedence: an auditLog
+    /// array wins, then an ack array, then replayRequest. The `kind` label
+    /// is not authoritative. Unknown/malformed frames retain their existing
+    /// relay behavior; only a positively identified ACK is local bookkeeping.
+    var isAcknowledgment: Bool { rawEntries == nil && root?["ack"] is [Any] }
+
     init(_ data: Data) {
         byteCount = data.count
         json = try? JSONSerialization.jsonObject(with: data)
@@ -378,6 +384,7 @@ struct RelayAppliedFrame: Sendable {
     let requestedIds: [UUID]
     let malformed: Bool
     let claimsUpload: Bool
+    let isAcknowledgment: Bool
     let span: UInt64
     let partialFanOut: Data?
 }
@@ -416,5 +423,6 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
     } else { partial = nil }
     return .applied(.init(outcome: outcome, byteCount: frame.byteCount,
                          requestedIds: frame.requestedIds, malformed: frame.root == nil,
-                         claimsUpload: frame.claimsUpload, span: span, partialFanOut: partial))
+                         claimsUpload: frame.claimsUpload, isAcknowledgment: frame.isAcknowledgment,
+                         span: span, partialFanOut: partial))
 }

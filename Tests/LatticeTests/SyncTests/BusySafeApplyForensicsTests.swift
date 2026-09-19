@@ -47,6 +47,7 @@ private final class ForensicClient: @unchecked Sendable {
     /// Reproduce the client engine's per-page ack (the server-side write burst).
     let autoAck: Bool
     let label: String
+    private let captureFrames: Bool
 
     private var ackedIds: Set<UUID> = []
     private var ackFrameCount = 0
@@ -57,10 +58,12 @@ private final class ForensicClient: @unchecked Sendable {
     private var nackArrival: [UUID: DispatchTime] = [:]
     private var nackReasons: [String] = []
     private var rejections: [String] = []
+    private var capturedFrames: [Data] = []
 
-    init(label: String, autoAck: Bool) {
+    init(label: String, autoAck: Bool, captureFrames: Bool = false) {
         self.label = label
         self.autoAck = autoAck
+        self.captureFrames = captureFrames
     }
 
     func attach(_ ws: WebSocket, ackPath: ACKPathConnection? = nil) {
@@ -70,6 +73,7 @@ private final class ForensicClient: @unchecked Sendable {
             ackPath?.record(.clientBinaryEntered, bytes: bb.readableBytes)
             let now = DispatchTime.now()
             let data = Data(buffer: bb)
+            if self.captureFrames { self.lock.withLock { self.capturedFrames.append(data) } }
             guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                   let kind = root["kind"] as? String else {
                 ackPath?.record(.clientDecodeError)
@@ -134,6 +138,7 @@ private final class ForensicClient: @unchecked Sendable {
     var ackFrames: Int { lock.withLock { ackFrameCount } }
     var rejected: [String] { lock.withLock { rejections } }
     var nacks: [String] { lock.withLock { nackReasons } }
+    var receivedFrames: [Data] { lock.withLock { capturedFrames } }
 }
 
 private extension NSLock {
@@ -333,6 +338,114 @@ private func rowCount(inChannelFile url: URL) throws -> (rows: Int, audit: Int) 
 
 @Suite("BusySafeApplyForensics", .serialized, .timeLimit(.minutes(10)))
 final class BusySafeApplyForensicsTests: BaseTest {
+
+    /// These shapes follow Core's actual decoder precedence, not `kind`.
+    /// In particular an audit array (even empty) wins over an ack array;
+    /// a non-array auditLog does not win in a mount without write policy.
+    @Test(arguments: [
+        (#"{"kind":"ack","ack":[]}"#, true),
+        (#"{"kind":"auditLog","ack":[]}"#, true),
+        (#"{"ack":["id",7,null]}"#, true),
+        (#"{"ack":[],"replayRequest":true}"#, true),
+        (#"{"auditLog":null,"ack":[]}"#, true),
+        (#"{"auditLog":{},"ack":[]}"#, true),
+        (#"{"auditLog":[],"ack":[]}"#, false),
+        (#"{"kind":"ack","auditLog":[{}],"ack":[]}"#, false),
+        (#"{"kind":"ack","ack":"id"}"#, false),
+        (#"{"replayRequest":true}"#, false),
+        (#"{"kind":"ack"}"#, false),
+        (#"{"unknown":true}"#, false),
+        (#"[]"#, false),
+        (#"{"#, false)
+    ])
+    func acknowledgmentClassificationPreservesCoreDecoderPrecedence(_ json: String, _ expected: Bool) {
+        #expect(RelayFrame(Data(json.utf8)).isAcknowledgment == expected)
+    }
+
+    /// A later upload on the same sender is an ordered witness: its arrival
+    /// on the peer's socket follows every earlier possible ACK fanout. The
+    /// negative assertion does not depend on sleeping for an absent message.
+    @Test(.timeLimit(.minutes(1)))
+    func downloadAcknowledgmentsStayLocalWithoutChangingUploadOrReplayFanout() async throws {
+        let setupCount = LockedBox(0)
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
+                                         didFinishAsyncSetup: { setupCount.withLock { $0 += 1 } })
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
+            channelId: "ack-local-\(String.random(length: 8))", ingressHooks: hooks)
+        let sender = ForensicClient(label: "ack-sender", autoAck: false)
+        let peer = ForensicClient(label: "ack-peer", autoAck: false, captureFrames: true)
+        do {
+            let seeded = try seedSummary(harness.channelFileURL, count: 1)
+            let seedID = try #require(seeded.tail)
+            try await harness.connect(sender)
+            try await harness.connect(peer)
+            try #require(await poll(timeout: 5, {
+                setupCount.withLock { $0 == 2 }
+                    && sender.downloaded.contains(seedID) && peer.downloaded.contains(seedID)
+            }))
+            do {
+                let before = try Lattice(for: [SimpleSyncObject.self],
+                                         configuration: .init(fileURL: harness.channelFileURL))
+                let seed = try #require(before.objects(AuditLog.self)
+                    .where { $0.globalId == seedID }.snapshot(limit: 1).first)
+                #expect(!seed.isSynchronized, "the fixture must need real ACK bookkeeping")
+            }
+            let prior = peer.receivedFrames.count
+            // All of these are ACKs to Core. `kind`, non-string ACK values,
+            // malformed auditLog fields and replayRequest do not change that.
+            let acknowledgmentObjects: [[String: Any]] = [
+                ["kind": "ack", "ack": [seedID.uuidString]],
+                ["kind": "auditLog", "ack": [seedID.uuidString]],
+                ["ack": [seedID.uuidString, 7, NSNull()]],
+                ["ack": [], "replayRequest": true],
+                ["auditLog": NSNull(), "ack": [seedID.uuidString]],
+                ["auditLog": [:], "ack": [seedID.uuidString]]
+            ]
+            for object in acknowledgmentObjects {
+                let bytes = try JSONSerialization.data(withJSONObject: object)
+                try await sender.socket!.send(Array(bytes))
+            }
+            // Unknown/replay behavior is deliberately unchanged, and an empty
+            // auditLog array still takes precedence over the ack field.
+            let forwarded = [
+                Data(#"{"kind":"unknown","unknown":true}"#.utf8),
+                Data(#"{"kind":"replayRequest","replayRequest":true}"#.utf8),
+                Data(#"{"kind":"ack","auditLog":[],"ack":[]}"#.utf8)
+            ]
+            for bytes in forwarded { try await sender.socket!.send(Array(bytes)) }
+
+            let entries = try makeUploadEntries(
+                donorPath: "donor-ack-marker-\(String.random(length: 8)).sqlite", value: 901)
+            let markerID = try #require(entries.first?.globalId)
+            var marker = try #require(JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(ServerSentEvent.auditLog(entries))) as? [String: Any])
+            marker["kind"] = "ack" // Core must still apply the auditLog array.
+            marker["ack"] = [seedID.uuidString]
+            let markerBytes = try JSONSerialization.data(withJSONObject: marker)
+            try await sender.socket!.send(Array(markerBytes))
+            try #require(await poll(timeout: 5, {
+                peer.receivedFrames.contains(markerBytes) && sender.ackTime(for: markerID) != nil
+            }))
+            #expect(Array(peer.receivedFrames.dropFirst(prior)) == forwarded + [markerBytes],
+                    "ACK-only frames stay local; other healthy frames keep their exact bytes/order")
+            #expect(sender.ackTime(for: markerID) != nil, "the mixed frame is a real applied upload")
+
+            await harness.shutdown_keepingStorage()
+            let stored = try Lattice(for: [SimpleSyncObject.self],
+                                     configuration: .init(fileURL: harness.channelFileURL))
+            let seededAudit = try #require(stored.objects(AuditLog.self)
+                .where { $0.globalId == seedID }.snapshot(limit: 1).first)
+            #expect(seededAudit.isSynchronized, "the ACK still performs native receive bookkeeping")
+            #expect(stored.objects(SimpleSyncObject.self).count == 2)
+        } catch {
+            await harness.shutdown_keepingStorage()
+            RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+            throw error
+        }
+        RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+        // Existing IO teardown may still own a final native reference; keep
+        // the fixture directory until process exit, like the adjacent tests.
+    }
 
     // MARK: - (1) The bounded busy budget
 

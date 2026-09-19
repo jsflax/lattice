@@ -1163,9 +1163,9 @@ extension Lattice {
                                 }
                             }
 
-                            // Legacy same-channel fan-out — unchanged on mounts without
-                            // observer push (writer mounts keep verbatim fan-out
-                            // byte-for-byte on the healthy path). On push-enabled mounts
+                            // Legacy same-channel audit-data fan-out: writer mounts
+                            // keep healthy uploads byte-for-byte, and local-only ACK
+                            // bookkeeping is excluded below. On push-enabled mounts
                             // it is skipped entirely: delivery is the pump's job
                             // (commit-ordered, cursor-deduped), uploads are policy-refused
                             // anyway, and fanning every frame would echo each observer's
@@ -1179,7 +1179,13 @@ extension Lattice {
                             // live observers and the channel of record (program-plan
                             // sync-M7, reproduced during this incident). A PARTIAL apply
                             // fans the applied subset; a total failure fans nothing.
-                            guard watchManager == nil else { return }
+                            // Download ACKs have already updated this relay's
+                            // synchronization bookkeeping in receive. Forwarding
+                            // them to every peer adds no audit data and makes a
+                            // room's acknowledgment traffic grow quadratically.
+                            // Preserve upload/unknown/replay forwarding, including
+                            // Core's auditLog-before-ack decoder precedence.
+                            guard watchManager == nil, !frame.isAcknowledgment else { return }
                             let fanOut: ByteBuffer?
                             if outcome.isComplete {
                                 fanOut = bb
