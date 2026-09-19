@@ -52,6 +52,7 @@ private final class ForensicClient: @unchecked Sendable {
     private var ackFrameCount = 0
     private var catchUpPages = 0
     private var catchUpEntries = 0
+    private var downloadedIds: Set<UUID> = []
     private var ackArrival: [UUID: DispatchTime] = [:]
     private var nackArrival: [UUID: DispatchTime] = [:]
     private var nackReasons: [String] = []
@@ -103,6 +104,7 @@ private final class ForensicClient: @unchecked Sendable {
                 self.lock.lock()
                 self.catchUpPages += 1
                 self.catchUpEntries += logs.count
+                self.downloadedIds.formUnion(ids)
                 self.lock.unlock()
                 // The write burst: the real client acks every applied page,
                 // and the relay turns each ack into a write transaction on
@@ -128,6 +130,7 @@ private final class ForensicClient: @unchecked Sendable {
     func nackTime(for id: UUID) -> DispatchTime? { lock.withLock { nackArrival[id] } }
     var pages: Int { lock.withLock { catchUpPages } }
     var entries: Int { lock.withLock { catchUpEntries } }
+    var downloaded: Set<UUID> { lock.withLock { downloadedIds } }
     var ackFrames: Int { lock.withLock { ackFrameCount } }
     var rejected: [String] { lock.withLock { rejections } }
     var nacks: [String] { lock.withLock { nackReasons } }
@@ -148,6 +151,8 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
     let channelId: String
     let channelFileName: String
     private let ackPathRecorder: ACKPathRecorder?
+    private let applyAdmission: RelayApplyAdmission?
+    private let ingressHooks: RelayIngressTestHooks?
 
     var channelFileURL: URL { storageURL.appending(path: channelFileName) }
 
@@ -155,8 +160,13 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
     /// fault (`_applyFaultForTesting`): suites run in parallel, so a fault must
     /// only fire for its own channel.
     init(schema: [any Lattice.Model.Type], channelId: String = "forensics",
-         ackPathRecorder: ACKPathRecorder? = nil) async throws {
+         ackPathRecorder: ACKPathRecorder? = nil,
+         applyAdmission: RelayApplyAdmission? = nil,
+         ingressHooks: RelayIngressTestHooks? = nil,
+         observerPush: SyncObserverPush? = nil) async throws {
         self.ackPathRecorder = ackPathRecorder
+        self.applyAdmission = applyAdmission
+        self.ingressHooks = ingressHooks
         self.channelId = channelId
         self.channelFileName = "\(channelId).sqlite"
         storageURL = FileManager.default.temporaryDirectory
@@ -171,13 +181,22 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
         let diagnosticMount = storageURL
         var mountInitialized = false
         if let ackPathRecorder { ACKPathDiagnostics.install(ackPathRecorder, for: diagnosticMount) }
+        if let applyAdmission { RelayApplyAdmissionTesting.install(applyAdmission, for: diagnosticMount) }
+        if let ingressHooks { RelayIngressTesting.install(ingressHooks, for: diagnosticMount) }
         defer {
             if !mountInitialized, let ackPathRecorder {
                 ACKPathDiagnostics.remove(ackPathRecorder, for: diagnosticMount)
             }
+            if !mountInitialized, let applyAdmission {
+                RelayApplyAdmissionTesting.remove(applyAdmission, for: diagnosticMount)
+            }
+            if !mountInitialized, let ingressHooks {
+                RelayIngressTesting.remove(ingressHooks, for: diagnosticMount)
+            }
         }
         Lattice.configureSyncRelay(
             on: app.routes, path: ["sync"], for: schema, storageURL: storageURL,
+            observerPush: observerPush,
             channelExtractor: { req in
                 guard let raw = req.headers.first(name: "X-Test-User"),
                       let uid = UUID(uuidString: raw) else { throw Abort(.unauthorized) }
@@ -227,13 +246,20 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
     }
 
     func shutdown() async {
+        removeAdmissionHooks()
         try? await app.asyncShutdown()
         try? FileManager.default.removeItem(at: storageURL)
     }
 
     /// Shuts the relay down but leaves the channel file for inspection.
     func shutdown_keepingStorage() async {
+        removeAdmissionHooks()
         try? await app.asyncShutdown()
+    }
+
+    private func removeAdmissionHooks() {
+        if let applyAdmission { RelayApplyAdmissionTesting.remove(applyAdmission, for: storageURL) }
+        if let ingressHooks { RelayIngressTesting.remove(ingressHooks, for: storageURL) }
     }
 }
 
@@ -890,44 +916,194 @@ final class BusySafeApplyForensicsTests: BaseTest {
 
     // MARK: - (6) Per-file serialization
 
+    @Test(.timeLimit(.minutes(1)))
+    func blockedApplyLeavesIndependentWatchSocketAndControlActorProgressing() async throws {
+        // Use the actual process IO pool so the watcher's native page shares
+        // precisely the same two workers as the blocked apply.
+        let pool = RelayExecutionPool.io
+        let gate = DispatchSemaphore(value: 0)
+        let entered = LockedBox(false), gateExpired = LockedBox(false), actorProgress = LockedBox(false)
+        let setupCount = LockedBox(0)
+        let service = RelayApplyAdmission(pool: pool, beforeOperationForTesting: {
+            #expect(pool.isCurrentWorker)
+            entered.withLock { $0 = true }
+            let expired = gate.wait(timeout: .now() + 5) != .success
+            gateExpired.withLock { $0 = expired }
+        })
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
+                                         didFinishAsyncSetup: { setupCount.withLock { $0 += 1 } })
+        let blocked = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
+            channelId: "blocked-\(String.random(length: 8))", applyAdmission: service, ingressHooks: hooks)
+        let watched = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
+            channelId: "watch-\(String.random(length: 8))", ingressHooks: hooks,
+            observerPush: SyncObserverPush(reconcileInterval: nil))
+        let uploader = ForensicClient(label: "blocked", autoAck: false)
+        let observer = ForensicClient(label: "independent-watch", autoAck: false)
+        do {
+            try await blocked.connect(uploader)
+            try await watched.connect(observer)
+            try #require(await poll(timeout: 5, { setupCount.withLock { $0 == 2 } }))
+            let entries = try makeUploadEntries(donorPath: "donor-blocked-\(String.random(length: 8)).sqlite", value: 501)
+            let uploadID = try #require(entries.first?.globalId)
+            try await uploader.socket!.send(Array(buffer: try frame(entries)))
+            try #require(await poll(timeout: 5, { entered.withLock { $0 } }))
+            await Task { @RelayControlActor in actorProgress.withLock { $0 = true } }.value
+            #expect(actorProgress.withLock { $0 })
+            let written = LockedBox<Result<UUID, any Error>?>(nil)
+            let watchURL = watched.channelFileURL
+            pool.submitRequired(for: FileWatchManager.canonicalKey(for: watchURL)) {
+                let result = Result { () throws -> UUID in
+                    #expect(pool.isCurrentWorker)
+                    let lattice = try Lattice(for: [SimpleSyncObject.self],
+                        configuration: SyncRelayApplyPolicy.configuration(fileURL: watchURL, storeConfiguration: nil))
+                    try lattice.add(SimpleSyncObject(value: 502, floatValue: 502))
+                    return try #require(Array(lattice.eventsAfter(globalId: nil)).last?.globalId)
+                }
+                written.withLock { $0 = result }
+            }
+            try #require(await poll(timeout: 5, { written.withLock { $0 != nil } }))
+            let watchID = try #require(written.withLock { $0 }).get()
+            try #require(await poll(timeout: 5, { observer.downloaded.contains(watchID) }))
+            #expect(service.snapshot.running == 1, "watch delivery must precede blocked apply release")
+            #expect(pool.snapshot.startedWorkers == 2)
+            #expect(!gateExpired.withLock { $0 })
+            gate.signal()
+            try #require(await poll(timeout: 5, { uploader.ackTime(for: uploadID) != nil }))
+            await service.closeAdmissionAndDrain()
+            await blocked.shutdown_keepingStorage()
+            await watched.shutdown_keepingStorage()
+        } catch {
+            gate.signal()
+            await service.closeAdmissionAndDrain()
+            await blocked.shutdown_keepingStorage()
+            await watched.shutdown_keepingStorage()
+            RelayCheckpointGovernor.shared.unregister(storePath: blocked.channelFileURL.path)
+            RelayCheckpointGovernor.shared.unregister(storePath: watched.channelFileURL.path)
+            throw error
+        }
+        // Never stop the process pool: unrelated mounts/watch groups own it.
+        RelayCheckpointGovernor.shared.unregister(storePath: blocked.channelFileURL.path)
+        RelayCheckpointGovernor.shared.unregister(storePath: watched.channelFileURL.path)
+        // Existing watcher teardown owns final native release; retain these
+        // fixture directories until process exit rather than unlinking mid-close.
+    }
+
+    /// Actual mounted relay: a bounded service refuses a second frame before
+    /// receive while the first owns its file. Cancelling that running request
+    /// uses the task-cancellation state transition and preserves its real ACK,
+    /// stored row and peer fan-out. Unit tests also cancel the real Swift task.
+    @Test(.timeLimit(.minutes(1)))
+    func nativeAdmissionOverloadAndRunningCancellationPreserveActualRelayResults() async throws {
+        let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.actual-admission")
+        let entered = LockedBox(false), workerVerified = LockedBox(false), gateExpired = LockedBox(false)
+        let release = DispatchSemaphore(value: 0)
+        let cancellation = LockedBox<RelayApplyTestCancellation?>(nil)
+        let setupCount = LockedBox(0)
+        let service = RelayApplyAdmission(pool: pool, maxRequests: 1, maxInputBytes: 1 << 20,
+            beforeOperationForTesting: {
+                workerVerified.withLock { $0 = pool.isCurrentWorker }
+                entered.withLock { $0 = true }
+                let expired = release.wait(timeout: .now() + 5) != .success
+                gateExpired.withLock { $0 = expired }
+            }, didReserveForTesting: { handle in cancellation.withLock { $0 = handle } })
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
+                                         didFinishAsyncSetup: { setupCount.withLock { $0 += 1 } })
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
+            channelId: "admission-\(String.random(length: 8))", applyAdmission: service, ingressHooks: hooks)
+        let first = ForensicClient(label: "admitted", autoAck: false)
+        let rejected = ForensicClient(label: "overloaded", autoAck: false)
+        let peer = ForensicClient(label: "peer", autoAck: false)
+        do {
+            try await harness.connect(first)
+            try await harness.connect(rejected)
+            try await harness.connect(peer)
+            try #require(await poll(timeout: 5, { setupCount.withLock { $0 == 3 } }))
+            let acceptedEntries = try makeUploadEntries(
+                donorPath: "donor-admitted-\(String.random(length: 8)).sqlite", value: 401)
+            let rejectedEntries = try makeUploadEntries(
+                donorPath: "donor-refused-\(String.random(length: 8)).sqlite", value: 402)
+            let acceptedID = try #require(acceptedEntries.first?.globalId)
+            let rejectedID = try #require(rejectedEntries.first?.globalId)
+            try await first.socket!.send(Array(buffer: try frame(acceptedEntries)))
+            try #require(await poll(timeout: 5, { entered.withLock { $0 } }))
+            #expect(workerVerified.withLock { $0 })
+            #expect(service.snapshot.running == 1)
+            try #require(cancellation.withLock { $0 }).cancel()
+            try await rejected.socket!.send(Array(buffer: try frame(rejectedEntries)))
+            try #require(await poll(timeout: 5, { rejected.socket?.isClosed == true }))
+            #expect(rejected.ackTime(for: rejectedID) == nil)
+            #expect(rejected.nackTime(for: rejectedID) == nil)
+            #expect(!peer.downloaded.contains(rejectedID))
+            #expect(service.snapshot.requests == 1)
+            release.signal()
+            try #require(await poll(timeout: 5, { first.ackTime(for: acceptedID) != nil }))
+            try #require(await poll(timeout: 5, { peer.downloaded.contains(acceptedID) }))
+            #expect(first.nackTime(for: acceptedID) == nil)
+            #expect(!peer.downloaded.contains(rejectedID))
+            #expect(!gateExpired.withLock { $0 })
+            await service.closeAdmissionAndDrain()
+            #expect(service.snapshot.requests == 0 && service.snapshot.inputBytes == 0)
+            await harness.shutdown_keepingStorage()
+            await pool.shutdown()
+            let counts = try rowCount(inChannelFile: harness.channelFileURL)
+            #expect(counts.rows == 1, "only the admitted upload may reach receive")
+        } catch {
+            release.signal()
+            await service.closeAdmissionAndDrain()
+            await harness.shutdown_keepingStorage()
+            await pool.shutdown()
+            RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+            try? FileManager.default.removeItem(at: harness.storageURL)
+            throw error
+        }
+        cancellation.withLock { $0 = nil }
+        RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+        try? FileManager.default.removeItem(at: harness.storageURL)
+    }
+
     /// The gate itself: one key admits one holder at a time (FIFO), and two
     /// keys make progress concurrently — the property that keeps a busy
     /// channel from stalling every other channel in the process.
     @Test func fileApplyGateSerializesPerKeyAndKeepsKeysIndependent() async throws {
-        let key = "/tmp/forensics-gate-\(String.random(length: 8)).sqlite"
+        let key = "forensics-gate-\(String.random(length: 8))"
+        let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.apply-fifo")
+        let service = RelayApplyAdmission(pool: pool)
         let inside = LockedBox(0)
         let peak = LockedBox(0)
-        await withTaskGroup(of: Void.self) { group in
+        try await withThrowingTaskGroup(of: Void.self) { group in
             for _ in 0..<16 {
                 group.addTask {
-                    await withApplyLock(key) {
+                    try await service.withAdmission(for: key, buffer: ByteBuffer(), operation: { _ in
                         let now = inside.withLock { $0 += 1; return $0 }
                         peak.withLock { $0 = max($0, now) }
                         Thread.sleep(forTimeInterval: 0.005)
                         inside.withLock { $0 -= 1 }
-                    }
+                    }, completion: { _ in })
                 }
             }
+            try await group.waitForAll()
         }
         #expect(peak.withLock { $0 } == 1, "one apply slot per channel file")
         #expect(inside.withLock { $0 } == 0)
-        #expect(await FileApplyGate.shared.isHeld(key) == false, "the slot must be released")
-        #expect(await FileApplyGate.shared.queueDepth(forKey: key) == 0)
+        #expect(service.snapshot.requests == 0, "the slot must be released")
+        #expect(service.snapshot.queued == 0)
 
-        // Independence: A holds key1 and waits for B to enter key2. If
-        // different files shared a queue, B could never signal.
         let otherKey = key + ".other"
         let bEntered = LockedBox(false)
-        async let a: Void = withApplyLock(key) {
+        async let a: Void = service.withAdmission(for: key, buffer: ByteBuffer(), operation: { _ in
             let deadline = Date().addingTimeInterval(3)
             while Date() < deadline && !bEntered.withLock({ $0 }) {
                 Thread.sleep(forTimeInterval: 0.01)
             }
-        }
+        }, completion: { _ in })
         try await Task.sleep(nanoseconds: 50_000_000)
-        await withApplyLock(otherKey) { bEntered.withLock { $0 = true } }
-        await a
+        try await service.withAdmission(for: otherKey, buffer: ByteBuffer(), operation: { _ in
+            bEntered.withLock { $0 = true }
+        }, completion: { _ in })
+        try await a
         #expect(bEntered.withLock { $0 }, "two channel files must apply concurrently")
+        await service.closeAdmissionAndDrain()
+        await pool.shutdown()
     }
 
     /// End to end: many connections uploading at once on ONE channel file all
