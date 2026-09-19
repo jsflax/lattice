@@ -1,0 +1,22 @@
+# Fragment for the existing guarded focused CMake build, not a new runner.
+# Configure a separate fresh tree per arm; never mix ON and OFF Core TUs.
+cmake_minimum_required(VERSION 3.16)
+project(ColdKeeperDiagnostic LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+option(LATTICE_COLD_KEEPER_TIMING "Private fixed-record diagnostic" OFF)
+if(NOT DEFINED LATTICE_CORE_SOURCE)
+ message(FATAL_ERROR "Exact reviewed isolated Core source required")
+endif()
+if(LATTICE_COLD_KEEPER_TIMING)
+ add_compile_definitions(LATTICE_COLD_KEEPER_TIMING=1)
+endif()
+add_subdirectory("${LATTICE_CORE_SOURCE}" core EXCLUDE_FROM_ALL)
+add_executable(ColdKeeperProbe probe.cpp)
+target_link_libraries(ColdKeeperProbe PRIVATE LatticeCore)
+
+if(NOT APPLE)
+ message(FATAL_ERROR "This diagnostic packet requires hosted macOS")
+endif()
+target_link_options(ColdKeeperProbe PRIVATE "LINKER:-map,${CMAKE_BINARY_DIR}/probe.map")

@@ -1,0 +1,65 @@
+{
+  "actualNativeOrNetworkExecution": false,
+  "claimsExcluded": [
+    "Native syntax/build success",
+    "Runtime phase/count/guard success",
+    "Frozen Swift benchmark or speedup",
+    "p95/2x qualification",
+    "Cross-graph/runtime latency comparison",
+    "Product cache/reader/vector policy change",
+    "Release benefit"
+  ],
+  "diagnosticPatchSHA256": "bef0b7795c73ddac33fb72dcede2cde373f4a66d53a0e0f72fc9393b315cb0c8",
+  "executionAdmitted": true,
+  "expectedActualTUsPerArm": 14,
+  "expectedCppSQL": {
+    "cold": 7,
+    "warm": 3
+  },
+  "expectedRecords": {
+    "capacity": 27,
+    "cold": 27,
+    "warm": 15
+  },
+  "freshO3BuildArms": [
+    "off",
+    "on"
+  ],
+  "inputsSHA256": "7a0389edc5a13000acedf9b9ff62aeed0ff6d715d064970c806b58d1d48aeff4",
+  "packetInstallationPath": "Scripts/cold-settings-diagnostic",
+  "parserChecksSHA256": "ac5ab2ed1537fc584e8e726d538368393dadd62496303908b4b3c556b483835a",
+  "priorDiagnosticAssessmentSHA256": "ab59f7cdf765dea8446ad9bbf3867df3c7b3131e46abab9adbcad563a6d73b7c",
+  "priorQualificationCommit": "5139f6249bed39723fd6de6b7e9db8f9f5b490c3",
+  "readmeSHA256": "ff4ac936401cadf563444079225a0d553545ee0f82dff2c4c9b2ba18dd68acea",
+  "resourceBounds": {
+    "compileLogCapBytes": 67108864,
+    "eachCompileChildSeconds": 1200,
+    "eachCompileOuterSeconds": 1355,
+    "entireTaskRootCapBytes": 536870912,
+    "freeFloorBytes": 13421772800,
+    "runOuterSeconds": 335,
+    "sampleCommandSeconds": 30,
+    "sampleLogCapBytes": 65536,
+    "sharedSampleWindowSeconds": 180
+  },
+  "rootReview": "Root exact source review accepted; six source and eight parser checks pass. One separately admitted hosted diagnostic, no local native workload.",
+  "sampleSchedule": [
+    "off",
+    "on",
+    "off",
+    "on",
+    "off",
+    "on"
+  ],
+  "source": "743c1c20bea3fcb966f640e22348916571c83034",
+  "sourceAuditSHA256": "93d2839864d40fad758556b548dcfb5e1d2170085f1afe579b8a47c7722ecfe3",
+  "sourceChecksSHA256": "1f6a667a224c200f89a8d8637ed05792e10e13d4f47771cce10262e6aab18b78",
+  "sourceManifestSHA256": "418cbdf2c933e0883257c99370dfb012047d36ab76a18ee927f351ee87b373ce",
+  "state": "root-reviewed one-shot hosted settings attribution",
+  "tree": "85dbc9548b5ad6e2f8932c002b1f9f75a7c28f6c",
+  "workflowInstallationPath": ".github/workflows/cold-keeper-diagnostic.yml",
+  "workflowSHA256": "aaaa8f6735b5b4eb4a6faf8d638054fbde22e6ec3ddc58b111b386f53c320c17",
+  "workflowTriggers": [
+    "workflow_dispatch"
+  ]
+}
