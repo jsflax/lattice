@@ -42,8 +42,8 @@ final class RelayApplyAdmission: Sendable {
          beforeOperationForTesting: (@Sendable () -> Void)? = nil,
          didReserveForTesting: (@Sendable (RelayApplyTestCancellation) -> Void)? = nil,
          afterResumeForTesting: (@Sendable () -> Void)? = nil) {
-        precondition(maxRequests > 0 && maxRequests <= defaultMaxRequests)
-        precondition(maxInputBytes >= 0 && maxInputBytes <= defaultMaxInputBytes)
+        precondition(maxRequests > 0 && maxRequests <= RelayApplyAdmission.defaultMaxRequests)
+        precondition(maxInputBytes >= 0 && maxInputBytes <= RelayApplyAdmission.defaultMaxInputBytes)
         state = RelayApplyAdmissionState(pool: pool, maxRequests: maxRequests,
                                          maxInputBytes: maxInputBytes, afterResumeForTesting: afterResumeForTesting)
         self.beforeCopyForTesting = beforeCopyForTesting
