@@ -375,33 +375,64 @@ public struct ResultsChangePublisher: Publisher {
     public typealias Failure = Never
 
     private let _subscribe: (@escaping (CollectionChange) -> Void) -> AnyCancellable
+    private let _subscribeRefresh: ((@escaping () -> Void) -> AnyCancellable)?
 
-    init(subscribe: @escaping (@escaping (CollectionChange) -> Void) -> AnyCancellable) {
+    init(subscribeRefresh: ((@escaping () -> Void) -> AnyCancellable)? = nil,
+         subscribe: @escaping (@escaping (CollectionChange) -> Void) -> AnyCancellable) {
         self._subscribe = subscribe
+        self._subscribeRefresh = subscribeRefresh
     }
 
     public func receive<S: Subscriber>(subscriber: S) where S.Input == Void, S.Failure == Never {
-        let subscription = Subscription(subscriber: subscriber, subscribe: _subscribe)
+        let subscription = Subscription(subscriber: subscriber)
         subscriber.receive(subscription: subscription)
+        subscription.start(subscribe: _subscribe, refresh: _subscribeRefresh)
     }
 
     private final class Subscription<S: Subscriber>: Combine.Subscription where S.Input == Void, S.Failure == Never {
+        private let lock = NSLock()
         private var subscriber: S?
         private var token: AnyCancellable?
+        private var refreshToken: AnyCancellable?
 
-        init(subscriber: S, subscribe: (@escaping (CollectionChange) -> Void) -> AnyCancellable) {
-            self.subscriber = subscriber
-            self.token = subscribe { [weak self] _ in
-                _ = self?.subscriber?.receive(())
-            }
+        init(subscriber: S) { self.subscriber = subscriber }
+
+        func start(subscribe: (@escaping (CollectionChange) -> Void) -> AnyCancellable,
+                   refresh: ((@escaping () -> Void) -> AnyCancellable)?) {
+            lock.lock()
+            let cancelled = subscriber == nil
+            lock.unlock()
+            guard !cancelled else { return }
+            let ordinary = subscribe { [weak self] _ in self?.emit() }
+            let recovery = refresh? { [weak self] in self?.emit() }
+            lock.lock()
+            let keep = subscriber != nil
+            if keep { token = ordinary; refreshToken = recovery }
+            lock.unlock()
+            if !keep { ordinary.cancel(); recovery?.cancel() }
+        }
+
+        // Ordinary and recovery callbacks use the same worker/actor lane.
+        // Cancellation may be concurrent; admitted delivery retains its own
+        // subscriber and finishes outside the leaf lock.
+        private func emit() {
+            lock.lock()
+            let recipient = subscriber
+            lock.unlock()
+            _ = recipient?.receive(())
         }
 
         func request(_ demand: Subscribers.Demand) {}
 
         func cancel() {
-            token?.cancel()
-            token = nil
-            subscriber = nil
+            lock.lock()
+            let ordinary = token, recovery = refreshToken, retired = subscriber
+            token = nil; refreshToken = nil; subscriber = nil
+            lock.unlock()
+            withExtendedLifetime(retired) {
+                ordinary?.cancel()
+                recovery?.cancel()
+            }
         }
     }
 }

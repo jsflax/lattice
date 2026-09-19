@@ -1085,7 +1085,10 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
     #if canImport(Combine)
     public var objectWillChange: ResultsChangePublisher {
-        ResultsChangePublisher { [weak self] callback in
+        ResultsChangePublisher(subscribeRefresh: { [weak self] callback in
+            guard let self else { return AnyCancellable {} }
+            return self._lattice._observeRecoveryForResults(callback)
+        }) { [weak self] callback in
             guard let self else { return AnyCancellable {} }
             return self.observe { change in callback(change) }
         }

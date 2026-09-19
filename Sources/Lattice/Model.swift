@@ -70,6 +70,7 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         guard let latticeBackend = model._dynamicObject._ref.lattice else { return }
         // Cross-process object observation uses the C++ object-observer API.
         guard let latticeRef = latticeBackend.asCxxLatticeRef else { return }
+        (latticeBackend as? CxxBackend)?.ensureRecoveryRefresh()
         let dbPath = String(latticeRef.path())
         let key = InstanceKey(databasePath: dbPath, tableName: tableName, primaryKey: primaryKey)
         var ref = WeakModelRef(model)

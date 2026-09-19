@@ -371,6 +371,8 @@ final class GenerationCoordinator: @unchecked Sendable {
         lock.withLockUnchecked { state in
             state.hookToken = token
         }
+        // The worker must see this invalidation hook before its initial wake.
+        (backend as? CxxBackend)?.ensureRecoveryRefresh()
     }
 
     /// Apply the backend's invalidation classification using leaf-lock state

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Combine)
+import Combine
+#endif
 import LatticeSwiftCppBridge
 import LatticeSwiftModule
 import CxxStdlib
@@ -278,6 +281,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     // and fans out here. Guarded because queries run on many threads.
     private let onQueryErrorLock = NSLock()
     private var onQueryErrorHandler: (@Sendable (String) -> Void)?
+    private let recoveryActivation = UnfairLock<_RecoveryActivationState>(initialState: .init())
 
     init(_ ref: lattice.swift_lattice_ref) { self.ref = ref }
 
@@ -464,7 +468,42 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         ref.rollback()
         reportQueryFailureIfAny()
     }
-    func close() { ref.close() }
+    func close() {
+        let retired = recoveryActivation.withLockUnchecked { state in
+            state.closed = true
+            let old = state.lease
+            state.lease = nil
+            return old
+        }
+        // Release the subscription outside the leaf lock.
+        withExtendedLifetime(retired) { ref.close() }
+    }
+
+    /// One shared activation per physical owner, retained only by wrappers
+    /// that actually use live results or held-model observation.
+    func ensureRecoveryRefresh() {
+        guard !GenerationCoordinator.pathIsMemory(path) else { return }
+        let needed = recoveryActivation.withLockUnchecked { !$0.closed && $0.lease == nil }
+        guard needed, let fresh = _RecoveryActivationRegistry.acquire(ref) else { return }
+        recoveryActivation.withLockUnchecked { state in
+            if !state.closed && state.lease == nil { state.lease = fresh }
+        }
+        // A raced loser releases fresh after the lock has been dropped.
+    }
+
+    func observeRecoveryRefresh(_ callback: @escaping @Sendable () -> Void) -> AnyCancellable {
+        let ptr = Unmanaged.passRetained(_CxxClosureBox(callback)).toOpaque()
+        let id = ref.add_recovery_refresh_observer(ptr, { ctx in
+            guard let ctx else { return }
+            Unmanaged<_CxxClosureBox<@Sendable () -> Void>>.fromOpaque(ctx).takeUnretainedValue().fn()
+        }, { ctx in
+            guard let ctx else { return }
+            Unmanaged<_CxxClosureBox<@Sendable () -> Void>>.fromOpaque(ctx).release()
+        })
+        // The bridge consumes context on success AND refusal (id == 0).
+        let retainedRef = ref
+        return AnyCancellable { if id != 0 { retainedRef.remove_recovery_refresh_observer(id) } }
+    }
 
     // Sync status
     func isSyncAgent() -> Bool { ref.is_sync_agent() }
@@ -910,4 +949,59 @@ func _makeCxxSyncFilter(_ entries: [(String, String?)]) -> lattice.SyncFilterVec
         vec.push_back(entry)
     }
     return vec
+}
+
+
+private struct _RecoveryActivationState {
+    var closed = false
+    var lease: _RecoveryActivationLease?
+}
+
+/// The registry retains weak entries only; a lease never retains a Swift
+/// backend/coordinator. Keeping the portable core ref makes final removal safe.
+private final class _RecoveryActivationLease: @unchecked Sendable {
+    let identity: Int64
+    let nonce = UUID()
+    let ref: lattice.swift_lattice_ref
+    let token: UInt64
+    init?(_ ref: lattice.swift_lattice_ref) {
+        self.ref = ref
+        self.identity = Int64(ref.hash_value())
+        self.token = ref.add_recovery_refresh_observer(nil, { _ in }, nil)
+        guard token != 0 else { return nil }
+    }
+    deinit {
+        ref.remove_recovery_refresh_observer(token)
+        _RecoveryActivationRegistry.retire(identity: identity, nonce: nonce)
+    }
+}
+
+private enum _RecoveryActivationRegistry {
+    private struct Entry {
+        weak var lease: _RecoveryActivationLease?
+        let nonce: UUID
+    }
+    private static let lock = NSLock()
+    private nonisolated(unsafe) static var entries: [Int64: Entry] = [:]
+
+    static func acquire(_ ref: lattice.swift_lattice_ref) -> _RecoveryActivationLease? {
+        let identity = Int64(ref.hash_value())
+        lock.lock()
+        let existing = entries[identity]?.lease
+        lock.unlock()
+        if let existing { return existing }
+        // Neither bridge registration nor cancellation runs under this lock.
+        guard let fresh = _RecoveryActivationLease(ref) else { return nil }
+        lock.lock()
+        let raced = entries[identity]?.lease
+        if raced == nil { entries[identity] = Entry(lease: fresh, nonce: fresh.nonce) }
+        lock.unlock()
+        return raced ?? fresh
+    }
+
+    static func retire(identity: Int64, nonce: UUID) {
+        lock.lock()
+        if entries[identity]?.nonce == nonce { entries.removeValue(forKey: identity) }
+        lock.unlock()
+    }
 }

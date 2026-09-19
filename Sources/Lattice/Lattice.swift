@@ -2023,6 +2023,39 @@ public struct Lattice {
         }
     }
 
+    /// Coalescible refresh after a durable recovery changes this file store.
+    /// Re-query current state; this signal carries no individual row events.
+    /// It runs on the owner's notification scheduler. Keep the callback cheap
+    /// and schedule expensive work separately. File stores retry missed wakes
+    /// periodically; this is not a complete history of recovery installations.
+    public func observeRecovery(_ block: @escaping @Sendable () -> Void) -> AnyCancellable {
+        guard let backend = backend as? CxxBackend else { return AnyCancellable {} }
+        return backend.observeRecoveryRefresh(block)
+    }
+
+    /// Repaint signals share the ordinary collection delivery lane, including
+    /// the handle's actor mailbox. Recovery never synthesizes a row event.
+    func _observeRecoveryForResults(_ block: @escaping () -> Void) -> AnyCancellable {
+        let actorDelivery = self.observerActorDelivery
+        let identity = backend.identityHash
+        let callback = UncheckedSendable(block)
+        let active = UnfairLock<Bool>(initialState: true)
+        let token = observeRecovery {
+            ObserverDeliveryWorker.shared.enqueue(kind: .collection, table: "", storeIdentity: identity, batchID: nil) {
+                let deliver: @Sendable () -> Void = {
+                    guard active.withLockUnchecked({ $0 }) else { return }
+                    callback.value()
+                }
+                if let actorDelivery { actorDelivery.enqueue(deliver) }
+                else { deliver() }
+            }
+        }
+        return AnyCancellable {
+            active.withLockUnchecked { $0 = false }
+            token.cancel()
+        }
+    }
+
     /// `changeStream` delivery state. The table observer registers
     /// synchronously at stream creation (a leaf-lock map insert — no SQL) so
     /// no commit between "stream created" and "query handle ready" can be
