@@ -11,7 +11,8 @@ public struct ModelStorage: @unchecked Sendable {
     @inlinable public init(_ref: any ObjectBackend) { self._ref = _ref }
 
     public static func _default<M: Model>(_ type: M.Type) -> ModelStorage {
-        ModelStorage(_ref: CxxObjectBackend(_requireRef(CxxDynamicObjectRef.wrap(_defaultCxxLatticeObject(type)))))
+        ModelStorage(_ref: CxxObjectBackend(_requireRef(CxxDynamicObjectRef.createUnmanaged(
+            table: std.string(M.entityName), properties: M.cxxPropertyDescriptor()))))
     }
 }
 
