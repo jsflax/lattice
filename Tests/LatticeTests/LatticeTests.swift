@@ -160,10 +160,44 @@ struct Embedded: EmbeddedModel {
 }
 
 
+/// Qualification stores must use the runner-owned directory explicitly:
+/// Foundation's temporaryDirectory may ignore TMPDIR on macOS.
+func latticeTestTemporaryDirectory() throws -> URL {
+    let environment = ProcessInfo.processInfo.environment
+    guard let root = environment["LATTICE_QUALIFICATION_ROOT"] else {
+        guard !environment.keys.contains(where: {
+            $0.hasPrefix("LATTICE_QUALIFICATION_") || $0 == "LATTICE_RECOVERY_QUALIFICATION_DIRECTORY"
+        }) else {
+            throw LatticeError.transactionError("Qualification temporary directory requires its owned root")
+        }
+        return FileManager.default.temporaryDirectory
+    }
+    guard let home = environment["HOME"],
+          [root, home].allSatisfy({ $0.hasPrefix("/") && !$0.contains("\0") }) else {
+        throw LatticeError.transactionError("Qualification temporary directory requires absolute root and HOME")
+    }
+    let owned = URL(fileURLWithPath: root).standardizedFileURL.resolvingSymlinksInPath()
+    let allowed = URL(fileURLWithPath: home).appendingPathComponent("localdev")
+        .standardizedFileURL.resolvingSymlinksInPath()
+    let expected = owned.appendingPathComponent("tmp", isDirectory: true)
+    let directory = expected.standardizedFileURL.resolvingSymlinksInPath()
+    var rootIsDirectory: ObjCBool = false
+    var temporaryIsDirectory: ObjCBool = false
+    guard owned.path.hasPrefix(allowed.path + "/"),
+          directory.path == expected.path,
+          FileManager.default.fileExists(atPath: owned.path, isDirectory: &rootIsDirectory),
+          rootIsDirectory.boolValue,
+          FileManager.default.fileExists(atPath: directory.path, isDirectory: &temporaryIsDirectory),
+          temporaryIsDirectory.boolValue else {
+        throw LatticeError.transactionError("Qualification temporary directory must be the existing owned root/tmp")
+    }
+    return directory
+}
+
 func testLattice(isolation: isolated (any Actor)? = #isolation,
                  path: String,
                  _ types: any Model.Type...) throws -> Lattice {
-    try Lattice(for: types, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
+    try Lattice(for: types, configuration: .init(fileURL: latticeTestTemporaryDirectory().appending(path: path)))
 }
 
 /// Minimal mutex box for test observers that fire on background threads.
@@ -223,7 +257,7 @@ class BaseTest {
                                     path: String? = nil,
                                     _ types: repeat (each M).Type,
                                     migration: [Int: Migration]? = nil) throws -> Lattice {
-        let path = FileManager.default.temporaryDirectory.appending(path: path ?? "\(String.random(length: 32)).sqlite")
+        let path = try latticeTestTemporaryDirectory().appending(path: path ?? "\(String.random(length: 32)).sqlite")
         paths.append(path)
         print("Lattice path: \(path)")
         return try Lattice(repeat each types, configuration: .init(fileURL: path, migration: migration))

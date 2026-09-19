@@ -20,7 +20,8 @@ def reports(identities):
     lines = ['◇ Test ' + name + ' started.' for name in names]
     lines += ['◇ Test case passing 1 argument fieldAware → ' + value + ' to ' + q.PARAMETERIZED + ' started.'
               for value in ('true', 'false')]
-    lines += ['✔ Test ' + name + ' passed after 0.001 seconds.' for name in names]
+    lines += ['✔ Test ' + name + (' with 2 test cases' if name == q.PARAMETERIZED else '')
+              + ' passed after 0.001 seconds.' for name in names]
     lines += ['✔ Test run with ' + str(len(names)) + ' tests in 2 suites passed after 0.1 seconds.']
     return xml, '\n'.join(lines)
 
@@ -109,6 +110,65 @@ class RecoveryQualification(unittest.TestCase):
                 q.framework(xml, log + suffix, identities)
         with self.assertRaises(ValueError):
             q.framework(xml, log.replace('19 tests', '0 tests'), identities)
+
+    def retained_reports(self, platform):
+        directory = Path(__file__).parent / 'fixtures/recovery-refresh-first-run'
+        receipt = json.loads((directory / 'SOURCE.json').read_text())
+        self.assertEqual(receipt['run_id'], 35470935513)
+        item = next(row for row in receipt['platforms'] if row['platform'] == platform)
+        for file in item['files']:
+            self.assertEqual(q.digest(directory / file['file']), file['sha256'])
+        tag = item['artifact_platform']
+        return ((directory / (tag + '.xml')).read_text(),
+                (directory / (tag + '.log')).read_text())
+
+    def test_exact_first_run_macos_and_linux_framework_reports(self):
+        for platform, count in (('Darwin', 21), ('Linux', 19)):
+            with self.subTest(platform=platform):
+                xml, log = self.retained_reports(platform)
+                result = q.framework(xml, log, q.expected(platform))
+                self.assertEqual(result['functionCount'], count)
+                self.assertEqual(sorted(result['parameterizedArguments']), ['false', 'true'])
+                self.assertEqual(log.count(' with 2 test cases passed after '), 1)
+
+    def test_parameterized_aggregate_count_requires_exactly_two(self):
+        xml, log = self.retained_reports('Darwin')
+        for suffix in ('', ' with 0 test cases', ' with 1 test cases', ' with 3 test cases',
+                       ' with 02 test cases', ' with -2 test cases', ' with 2.0 test cases'):
+            with self.subTest(suffix=suffix), self.assertRaisesRegex(ValueError, 'aggregate case count'):
+                q.framework(xml, log.replace(' with 2 test cases', suffix), q.expected('Darwin'))
+
+    def test_ordinary_function_cannot_claim_aggregate_cases(self):
+        xml, log = self.retained_reports('Linux')
+        ordinary = '✔ Test ' + q.FIELDS[0] + ' passed after '
+        self.assertEqual(log.count(ordinary), 1)
+        for count in ('1', '2', '3'):
+            with self.subTest(count=count), self.assertRaisesRegex(ValueError, 'aggregate case count'):
+                q.framework(xml, log.replace(ordinary, '✔ Test ' + q.FIELDS[0]
+                            + ' with ' + count + ' test cases passed after '), q.expected('Linux'))
+
+    def test_aggregate_pass_cannot_be_missing_duplicate_or_for_another_function(self):
+        xml, log = self.retained_reports('Darwin')
+        aggregate = next(line for line in log.splitlines() if ' with 2 test cases passed after ' in line)
+        mutations = [log.replace(aggregate + '\n', ''), log + aggregate + '\n',
+                     log.replace(aggregate, aggregate.replace(q.PARAMETERIZED, q.FIELDS[0])),
+                     log.replace(aggregate, aggregate.replace(q.PARAMETERIZED, 'unknownFunction()'))]
+        for index, mutated in enumerate(mutations):
+            with self.subTest(index=index), self.assertRaisesRegex(ValueError, 'affirmative'):
+                q.framework(xml, mutated, q.expected('Darwin'))
+
+    def test_real_report_keeps_boolean_starts_and_exact_function_starts_required(self):
+        xml, log = self.retained_reports('Linux')
+        false_start = next(line for line in log.splitlines() if 'fieldAware → false' in line)
+        for mutation in (log.replace(false_start + '\n', ''), log + false_start + '\n',
+                         log.replace('fieldAware → false', 'fieldAware → true')):
+            with self.assertRaisesRegex(ValueError, 'Boolean'):
+                q.framework(xml, mutation, q.expected('Linux'))
+        start = '◇ Test ' + q.PARAMETERIZED + ' started.'
+        for mutation in (log.replace(start + '\n', ''), log + start + '\n',
+                         log.replace(start, '◇ Test unknownFunction() started.')):
+            with self.assertRaisesRegex(ValueError, 'affirmative'):
+                q.framework(xml, mutation, q.expected('Linux'))
 
     def test_image_requires_one_owned_regular_target_and_detects_changes(self):
         scratch = self.root / 'scratch'

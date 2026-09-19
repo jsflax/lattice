@@ -1,0 +1,54 @@
+{
+  "run_id": 35470935513,
+  "attempt": 1,
+  "run_url": "https://github.com/jsflax/lattice/actions/runs/35470935513",
+  "sdk_commit": "9c401a64eee68e26387c9fd23dd590c48481457a",
+  "purpose": "Byte-identical framework report parser regression fixtures. Original qualification failed; these copies do not repair its location or verdict.",
+  "platforms": [
+    {
+      "platform": "Darwin",
+      "artifact_platform": "macos",
+      "files": [
+        {
+          "file": "macos.log",
+          "sha256": "ab6c8be54a23029e272667ada6e3c49fef8454b05182525b7f1c7313b8e79673",
+          "bytes": 4589,
+          "source_artifact_path": "receipts/recovery-refresh-tests.log"
+        },
+        {
+          "file": "macos.xml",
+          "sha256": "5a10eaaaa32e3d51287ceca19a33c890d98d5ca9c23051aed31cae785de5ae49",
+          "bytes": 3254,
+          "source_artifact_path": "receipts/recovery-refresh.xml"
+        }
+      ],
+      "command_receipt_sha256": "21d1aff50b23d332051830994ba4cfbaee1aacf7896fad925511b17508ab1b43",
+      "command_exit_code": 0,
+      "group_gone": true,
+      "leader_reaped": true
+    },
+    {
+      "platform": "Linux",
+      "artifact_platform": "linux",
+      "files": [
+        {
+          "file": "linux.log",
+          "sha256": "03ac26ec26195a151dd521360687454d13a060e3500ea87f74aadecd22915e8a",
+          "bytes": 4335,
+          "source_artifact_path": "receipts/recovery-refresh-tests.log"
+        },
+        {
+          "file": "linux.xml",
+          "sha256": "b8e901b8f652b4dd10d8e784b8994a9d7ee4d3edfcaffe770182fb4cea0b94d2",
+          "bytes": 2953,
+          "source_artifact_path": "receipts/recovery-refresh.xml"
+        }
+      ],
+      "command_receipt_sha256": "49b5c80b772796aa2f436fc553539dfdc367f9ba6f1c4800a9c036a6ec68ba09",
+      "command_exit_code": 0,
+      "group_gone": true,
+      "leader_reaped": true
+    }
+  ],
+  "sdk_tree": "e70000af1bf871d5565c76164a8611730a89c1ec"
+}

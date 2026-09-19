@@ -1,0 +1,57 @@
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Recovery refresh consumers" started.
+◇ Suite "Live Results ChangedFields Skip Tests (item A Commit 8)" started.
+◇ Test recoverySignalRecapturesWarmShapesWithNoTableHistory(fieldAware:) started.
+◇ Test extractor_plainPredicate() started.
+◇ Test flagOff_unrelatedColumnUpdateInvalidates() started.
+◇ Test extractor_quotedAndQualifiedIdentifiers() started.
+◇ Test extractor_dualUseOperatorKeywordsAreBookedAsColumns() started.
+◇ Test memberRowUnrelatedColumnUpdate_noShapeRebuild_memoryFamily() started.
+◇ Test predicateColumnUpdate_rebuildsAtNextAccess() started.
+◇ Test extractor_functionsOverColumnsAreReferenced() started.
+◇ Test withFieldsHook_deliversPerTablePayloadInline() started.
+◇ Test sortColumnUpdate_rebuildsAtNextAccess() started.
+◇ Test syntheticFieldsPayload_skipsDisjointShapes_invalidatesIntersecting() started.
+◇ Test extractor_conservativeFallbacks() started.
+◇ Test extractor_shapeDependencyIncludesImplicitID() started.
+◇ Test longSoakEquivalence_flagOnVsFlagOff() started.
+◇ Test memberRowUnrelatedColumnUpdate_noShapeRebuild_fileDB() started.
+◇ Test case passing 1 argument fieldAware → false to recoverySignalRecapturesWarmShapesWithNoTableHistory(fieldAware:) started.
+◇ Test case passing 1 argument fieldAware → true to recoverySignalRecapturesWarmShapesWithNoTableHistory(fieldAware:) started.
+Lattice path: file:///var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/atzE_yv1WgCWmdEo-FNxZ_eTekoKC2Hs.sqlite
+◇ Test payloadFreeWakeRefreshesWithoutAnAuditEventAndCancellationStopsNewWakes() started.
+Lattice path: file:///var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/Yb6cjhiExyhOMZZs_yfIsmdckg5wqFyf.sqlite
+Lattice path: file:///var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/hvo4h8eUQXS-th7j6tebUTXJksN6CvfB.sqlite
+Lattice path: file:///var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/7NpsDWt-s-KnmYq-a-T_rEG_bdkUxN49.sqlite
+Lattice path: file:///var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/h5GK-iSGO6MD-YOohJWI6jxvX4O2pbzP.sqlite
+✔ Test extractor_plainPredicate() passed after 0.046 seconds.
+✔ Test recoverySignalRecapturesWarmShapesWithNoTableHistory(fieldAware:) with 2 test cases passed after 0.047 seconds.
+✔ Test flagOff_unrelatedColumnUpdateInvalidates() passed after 0.047 seconds.
+✔ Test extractor_dualUseOperatorKeywordsAreBookedAsColumns() passed after 0.047 seconds.
+✔ Test extractor_quotedAndQualifiedIdentifiers() passed after 0.047 seconds.
+✔ Test extractor_functionsOverColumnsAreReferenced() passed after 0.047 seconds.
+✔ Test memberRowUnrelatedColumnUpdate_noShapeRebuild_memoryFamily() passed after 0.052 seconds.
+✔ Test withFieldsHook_deliversPerTablePayloadInline() passed after 0.052 seconds.
+✔ Test predicateColumnUpdate_rebuildsAtNextAccess() passed after 0.052 seconds.
+✔ Test extractor_conservativeFallbacks() passed after 0.052 seconds.
+✔ Test extractor_shapeDependencyIncludesImplicitID() passed after 0.052 seconds.
+✔ Test sortColumnUpdate_rebuildsAtNextAccess() passed after 0.055 seconds.
+✔ Test syntheticFieldsPayload_skipsDisjointShapes_invalidatesIntersecting() passed after 0.055 seconds.
+✔ Test memberRowUnrelatedColumnUpdate_noShapeRebuild_fileDB() passed after 0.056 seconds.
+✔ Test longSoakEquivalence_flagOnVsFlagOff() passed after 0.375 seconds.
+✔ Suite "Live Results ChangedFields Skip Tests (item A Commit 8)" passed after 0.376 seconds.
+✔ Test payloadFreeWakeRefreshesWithoutAnAuditEventAndCancellationStopsNewWakes() passed after 2.635 seconds.
+◇ Test cachedCountRefreshesWithBeltDisabledAndNoExplicitListener() started.
+✔ Test cachedCountRefreshesWithBeltDisabledAndNoExplicitListener() passed after 1.119 seconds.
+◇ Test heldModelOnlyGetsFreshPropertyWithBeltDisabled() started.
+✔ Test heldModelOnlyGetsFreshPropertyWithBeltDisabled() passed after 1.157 seconds.
+◇ Test rejectedOrCancelledSwiftCallbackReleasesItsContext() started.
+✔ Test rejectedOrCancelledSwiftCallbackReleasesItsContext() passed after 0.006 seconds.
+◇ Test resultsRecoveryUsesTheOrdinaryDeliveryQueueAndCancelFencesQueuedWake() started.
+✔ Test resultsRecoveryUsesTheOrdinaryDeliveryQueueAndCancelFencesQueuedWake() passed after 1.335 seconds.
+◇ Test cancellationDuringRegistrationCancelsReturnedTokens() started.
+✔ Test cancellationDuringRegistrationCancelsReturnedTokens() passed after 0.001 seconds.
+✔ Suite "Recovery refresh consumers" passed after 6.291 seconds.
+✔ Test run with 21 tests in 2 suites passed after 6.291 seconds.

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="TestResults" errors="0" tests="19" failures="0" skipped="0" time="4.144262036">
+    <testcase classname="LatticeTests.RecoveryRefreshTests" name="heldModelOnlyGetsFreshPropertyWithBeltDisabled()" time="1.017508049" />
+    <testcase classname="LatticeTests.RecoveryRefreshTests" name="rejectedOrCancelledSwiftCallbackReleasesItsContext()" time="0.002019868" />
+    <testcase classname="LatticeTests.RecoveryRefreshTests" name="payloadFreeWakeRefreshesWithoutAnAuditEventAndCancellationStopsNewWakes()" time="2.073042739" />
+    <testcase classname="LatticeTests.RecoveryRefreshTests" name="cachedCountRefreshesWithBeltDisabledAndNoExplicitListener()" time="1.018000502" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="extractor_dualUseOperatorKeywordsAreBookedAsColumns()" time="0.059372097" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="extractor_conservativeFallbacks()" time="0.065141293" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="flagOff_unrelatedColumnUpdateInvalidates()" time="0.065519058" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="memberRowUnrelatedColumnUpdate_noShapeRebuild_memoryFamily()" time="0.062687325" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="syntheticFieldsPayload_skipsDisjointShapes_invalidatesIntersecting()" time="0.063079294" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="memberRowUnrelatedColumnUpdate_noShapeRebuild_fileDB()" time="0.065493048" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="extractor_quotedAndQualifiedIdentifiers()" time="0.06277547" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="extractor_functionsOverColumnsAreReferenced()" time="0.062392282" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="predicateColumnUpdate_rebuildsAtNextAccess()" time="0.065776164" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="longSoakEquivalence_flagOnVsFlagOff()" time="1.10656954" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="extractor_plainPredicate()" time="0.060003224" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="extractor_shapeDependencyIncludesImplicitID()" time="0.062391011" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="recoverySignalRecapturesWarmShapesWithNoTableHistory(fieldAware:)" time="0.062811736" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="withFieldsHook_deliversPerTablePayloadInline()" time="0.062799381" />
+    <testcase classname="LatticeTests.LiveResultsChangedFieldsTests" name="sortColumnUpdate_rebuildsAtNextAccess()" time="0.081710455" />
+  </testsuite>
+</testsuites>

@@ -114,9 +114,14 @@ def framework(xml, log, identities):
         raise ValueError('nonpassing selected framework status')
     names = [name.split('/', 1)[1] for name in identities]
     starts = re.findall(r'^◇ Test (\w+\([^\n]*\)) started\.$', plain, re.M)
-    passed = re.findall(r'^[✔✓] Test (\w+\([^\n]*\)) passed after [0-9.]+ seconds?\.$', plain, re.M)
+    passed_events = re.findall(r'^[✔✓] Test (\w+\([^\n]*\))([^\n]*) passed after [0-9.]+ seconds?\.$', plain, re.M)
+    passed = [name for name, _ in passed_events]
     if sorted(starts) != sorted(names) or sorted(passed) != sorted(names):
         raise ValueError('missing, duplicate or unexpected affirmative function events')
+    for name, suffix in passed_events:
+        required = ' with 2 test cases' if name == PARAMETERIZED else ''
+        if suffix != required:
+            raise ValueError('aggregate case count must be exactly two only for the reviewed parameterized function')
     arguments = re.findall(r'^◇ Test case passing 1 argument fieldAware → (true|false) to '
                            + re.escape(PARAMETERIZED) + r' started\.$', plain, re.M)
     if sorted(arguments) != ['false', 'true']:
