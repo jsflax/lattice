@@ -39,7 +39,7 @@ import NIOConcurrencyHelpers
 //      make it, so the client can release them from in-flight and resend
 //      immediately instead of waiting out its ack timeout.
 //   D. PER-FILE SERIALIZATION — every apply on a channel FILE queues on
-//      `FileApplyGate`, keyed by the same canonical path key the observer-push
+//      `RelayApplyAdmission`, keyed by the same canonical path key the observer-push
 //      watch groups use (`FileWatchManager.canonicalKey(for:)`). Connections
 //      on one channel share ONE cached `swift_lattice` and ONE serialized
 //      SQLite connection, so concurrent applies previously collided inside
@@ -201,6 +201,12 @@ struct RelayFrame {
     /// one) — i.e. it claims to be an upload.
     var claimsUpload: Bool { root?["auditLog"] != nil }
 
+    /// Match Core's `server_sent_event::from_json` precedence: an auditLog
+    /// array wins, then an ack array, then replayRequest. The `kind` label
+    /// is not authoritative. Unknown/malformed frames retain their existing
+    /// relay behavior; only a positively identified ACK is local bookkeeping.
+    var isAcknowledgment: Bool { rawEntries == nil && root?["ack"] is [Any] }
+
     init(_ data: Data) {
         byteCount = data.count
         json = try? JSONSerialization.jsonObject(with: data)
@@ -282,8 +288,8 @@ let _applyFaultForTesting = NIOLockedValueBox<(@Sendable (String, Int) throws ->
 /// and mints nothing. Slicing the frame down to the missing ids would instead
 /// require re-encoding entries the relay only half-understands.
 ///
-/// Synchronous by design — it runs on the connection's detached apply consumer
-/// (never an event loop), inside the per-file gate.
+/// Synchronous by design: runs on the admitted file's dedicated IO worker,
+/// never the connection's cooperative task or an event loop.
 func applyWithRetry(
     lattice: Lattice,
     data: Data,
@@ -363,71 +369,60 @@ func applyWithRetry(
             missing=\(missing.count) elapsedMs=\(Int(outcome.elapsedMs)) \
             backoffMs=\(delayMs)\(thrown.map { " error=\($0)" } ?? "")
             """)
-        // Deliberately a THREAD sleep, not `Task.sleep`: this runs inside the
-        // per-file gate, holding the file's apply slot. Suspending would let a
-        // queued frame for the same file jump in mid-backoff and re-contend
-        // with whatever we are waiting out.
+        // The synchronous retry runs on the dedicated IO worker. The admission
+        // service owns this file until the native body returns; suspension does
+        // not itself release a logical lease. Retry timing is unchanged here.
         Thread.sleep(forTimeInterval: Double(delayMs) / 1000.0)
     }
 }
 
-// MARK: - Per-file apply gate
+// MARK: - Worker-local frame processing
 
-/// Process-wide FIFO serialization of applies, keyed by canonical channel-file
-/// path — the key `FileWatchManager` already uses for watch groups
-/// (`FileWatchManager.canonicalKey(for:)` is the single definition; this gate
-/// never invents its own path normalization).
-///
-/// Why a separate actor from `FileWatchManager`: that actor is the
-/// observer-push registry, reached only by push-enabled mounts, and its job is
-/// to stay instantly responsive for nudges, pumps and teardown. The apply gate
-/// must serve EVERY mount (legacy relays have no watch group at all) and its
-/// waiters are parked for the duration of a database write. Same key space,
-/// separate queues.
-///
-/// The gate never blocks the actor: `acquire` either takes the slot or parks a
-/// continuation, and the apply itself runs in the caller's task, off-actor.
-actor FileApplyGate {
-    static let shared = FileApplyGate()
-
-    private var held: Set<String> = []
-    private var waiters: [String: [CheckedContinuation<Void, Never>]] = [:]
-
-    /// Waiters currently queued for a key (test observability).
-    func queueDepth(forKey key: String) -> Int { waiters[key]?.count ?? 0 }
-
-    /// Whether a key's slot is currently taken (test observability).
-    func isHeld(_ key: String) -> Bool { held.contains(key) }
-
-    fileprivate func acquire(_ key: String) async {
-        if held.insert(key).inserted { return }
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            waiters[key, default: []].append(continuation)
-        }
-    }
-
-    fileprivate func release(_ key: String) {
-        guard var queued = waiters[key], !queued.isEmpty else {
-            waiters[key] = nil
-            held.remove(key)
-            return
-        }
-        let next = queued.removeFirst()
-        waiters[key] = queued.isEmpty ? nil : queued
-        // Ownership passes straight to the next waiter: `held` stays set, so
-        // no third party can slip between release and resume.
-        next.resume()
-    }
+struct RelayAppliedFrame: Sendable {
+    let outcome: RelayApplyOutcome
+    let byteCount: Int
+    let requestedIds: [UUID]
+    let malformed: Bool
+    let claimsUpload: Bool
+    let isAcknowledgment: Bool
+    let span: UInt64
+    let partialFanOut: Data?
 }
 
-/// Runs `body` with exclusive access to `key`'s apply slot.
-///
-/// `body` is synchronous on purpose: the whole point is that ONE apply touches
-/// a channel file at a time, and a suspension inside the critical section
-/// would reopen the window this closes.
-func withApplyLock<T>(_ key: String, _ body: () -> T) async -> T {
-    await FileApplyGate.shared.acquire(key)
-    let result = body()
-    await FileApplyGate.shared.release(key)
-    return result
+enum RelayProcessedFrame: Sendable {
+    case revoked
+    case refused(String)
+    case applied(RelayAppliedFrame)
+}
+
+/// The Foundation parse tree never crosses the IO boundary. The caller receives
+/// immutable values; complete legacy fan-out uses its original upstream buffer.
+func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChannel,
+                              policy: SyncWritePolicy?, revocation: RevocationFlag,
+                              diagnostic: ACKPathConnection?, needsFanOut: Bool) -> RelayProcessedFrame {
+    guard !revocation.isRevoked else { return .revoked }
+    let frame = RelayFrame(data)
+    let span = diagnostic?.record(frame.root == nil ? .frameMalformed : .frameParsed,
+                                  bytes: frame.byteCount, count: frame.requestedIds.count,
+                                  matching: frame.requestedIds) ?? 0
+    if let policy, let reason = policy.violation(inFrame: frame) {
+        diagnostic?.record(.policyRefused, span: span, matching: frame.requestedIds)
+        return .refused(reason)
+    }
+    diagnostic?.record(.applyRequested, span: span, count: frame.requestedIds.count,
+                       matching: frame.requestedIds)
+    diagnostic?.record(.applyBodyEntered, span: span, matching: frame.requestedIds)
+    let outcome = applyWithRetry(lattice: lattice, data: data, frame: frame,
+                                 channelId: channel.id, userId: channel.userId)
+    diagnostic?.record(.applyBodyReturned, span: span, count: frame.requestedIds.count,
+                       applied: outcome.applied.count, missing: outcome.unapplied.count,
+                       attempts: outcome.attempts, matching: outcome.applied)
+    let partial: Data?
+    if needsFanOut, !outcome.isComplete, !outcome.applied.isEmpty {
+        partial = frame.reencoded(keeping: Set(outcome.applied))
+    } else { partial = nil }
+    return .applied(.init(outcome: outcome, byteCount: frame.byteCount,
+                         requestedIds: frame.requestedIds, malformed: frame.root == nil,
+                         claimsUpload: frame.claimsUpload, isAcknowledgment: frame.isAcknowledgment,
+                         span: span, partialFanOut: partial))
 }

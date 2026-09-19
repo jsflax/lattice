@@ -1,5 +1,5 @@
 {
   "scope": "Prepublication development graph only; published Core 2.0.5 is the baseline, not the provider of broad APIs or a release-qualified graph",
-  "coreCommit": "eca8a58d06bdbf19d4cc0ab4ab794b8d88039b93",
-  "coreTree": "5782f672c2684f852f6ad6247767c38017f03898"
+  "coreCommit": "743c1c20bea3fcb966f640e22348916571c83034",
+  "coreTree": "85dbc9548b5ad6e2f8932c002b1f9f75a7c28f6c"
 }
