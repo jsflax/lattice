@@ -1,10 +1,115 @@
 import Testing
 import Foundation
-import Lattice
+@testable import Lattice
 import XCTest
 #if canImport(SQLite3)
 import SQLite3
 #endif
+
+// Fixed scalar diagnostics for one test invocation. No event payloads, SQL,
+// new tasks/awaits, readiness gate, or changed notification semantics.
+private final class CrossProcessObservationDiagnostic: @unchecked Sendable {
+    enum Stage: String, CaseIterable, Codable {
+        case observer_registration_begin, observer_registration_returned
+        case child_launch_begin, child_launch_returned, child_exited
+        case consumer_wait_begin, insert_callback, update_callback, delete_callback, consumer_received, consumer_wait_returned
+        case callback_entry
+        case enqueue_boundary, job_started, collection_resolution_skipped
+        case collection_resolution_nil, collection_decisions_started, collection_decisions_completed
+        case collection_actor_hop, collection_actor_delivery_started
+        case collection_emission_started, collection_emission_returned
+        case cancel_call_begin, cancel_call_returned, cancel_requested, cancel_returned
+    }
+    enum ChildStage: String, CaseIterable, Codable {
+        case open_begin, open_returned, owner_found, write_begin, write_returned
+        case list_append_begin, list_append_returned
+    }
+    struct Point: Codable { let stage: Stage; var firstNS: UInt64; var lastNS: UInt64; var count: UInt64 }
+    struct ChildPoint: Codable { let stage: ChildStage; let uptimeNS: UInt64? }
+    struct Snapshot: Codable {
+        let cutoffNS: UInt64
+        let observer: String
+        let points: [Point]
+        let childPoints: [ChildPoint]
+        let childExitStatus: Int32?
+        let childExitReason: Int?
+        let childStillRunning: Bool?
+    }
+    let directory: URL
+    let observer: String
+    private let lock = NSLock()
+    private var points: [Stage: Point] = [:]
+    private var exitStatus: Int32?
+    private var exitReason: Int?
+    private var closed = false
+
+    init?(observer: String = "crossProcessObservation") {
+        self.observer = observer
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        directory = packageRoot.appendingPathComponent(".build/xproc-stage-fixtures")
+            .appendingPathComponent(UUID().uuidString)
+        do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        catch { return nil }
+    }
+    func record(_ stage: Stage, at time: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed else { return }
+        if var old = points[stage] {
+            old.lastNS = time
+            if old.count < UInt64.max { old.count += 1 }
+            points[stage] = old
+        } else {
+            points[stage] = Point(stage: stage, firstNS: time, lastNS: time, count: 1)
+        }
+    }
+    var probe: PayloadObserverDiagnostic {
+        PayloadObserverDiagnostic(observer: observer) { [self] event in
+            if let stage = Stage(rawValue: event.stage) { record(stage, at: event.uptime) }
+        }
+    }
+    func childExited(_ process: Process) {
+        let status = process.terminationStatus
+        let reason = process.terminationReason.rawValue
+        record(.child_exited)
+        lock.lock(); defer { lock.unlock() }
+        guard !closed else { return }
+        exitStatus = status
+        exitReason = reason
+    }
+    static func childPoint(_ stage: ChildStage) {
+        guard let root = ProcessInfo.processInfo.environment["LATTICE_XPROC_DIAGNOSTIC_DIRECTORY"] else { return }
+        let time = String(DispatchTime.now().uptimeNanoseconds)
+        // Seven fixed files of at most20 ASCII bytes. Atomic replacement lets
+        // the parent distinguish a complete point from unavailable evidence.
+        try? Data(time.utf8).write(to: URL(fileURLWithPath: root).appendingPathComponent(stage.rawValue), options: .atomic)
+    }
+    func finish(failed: Bool, childStillRunning: Bool?) {
+        lock.lock()
+        guard !closed else { lock.unlock(); return }
+        closed = true
+        let copy = Array(points.values)
+        let status = exitStatus, reason = exitReason
+        let cutoff = DispatchTime.now().uptimeNanoseconds
+        lock.unlock()
+        guard failed else { return }
+        let childPoints = ChildStage.allCases.map { stage -> ChildPoint in
+            let path = directory.appendingPathComponent(stage.rawValue)
+            // No unbounded reads, even when the child never reached setup.
+            let handle = try? FileHandle(forReadingFrom: path)
+            defer { try? handle?.close() }
+            let data = try? handle?.read(upToCount: 21)
+            let time = data.flatMap { $0.count <= 20 ? UInt64(String(decoding: $0, as: UTF8.self)) : nil }
+            return ChildPoint(stage: stage, uptimeNS: time.flatMap { $0 <= cutoff ? $0 : nil })
+        }
+        let snapshot = Snapshot(cutoffNS: cutoff, observer: observer, points: copy.sorted { $0.firstNS < $1.firstNS },
+                                childPoints: childPoints, childExitStatus: status,
+                                childExitReason: reason, childStillRunning: childStillRunning)
+        guard let data = try? JSONEncoder().encode(snapshot), data.count <= 16 * 1024 else { return }
+        print("DIAGNOSTIC CrossProcessObservation: \(String(decoding: data, as: UTF8.self))")
+    }
+    func removeFixture() { try? FileManager.default.removeItem(at: directory) }
+}
 
 /// XCTest wrapper so `xctest -XCTest` can target the child path.
 /// (`xctest -XCTest` only filters XCTest tests, not Swift Testing @Test.)
@@ -16,10 +121,12 @@ class CrossProcessChildRunner: XCTestCase {
 
         switch op {
         case "update", "insert":
+            CrossProcessObservationDiagnostic.childPoint(.open_begin)
             let lattice = try Lattice(
                 for: [Person.self, Dog.self],
                 configuration: .init(fileURL: fileURL)
             )
+            CrossProcessObservationDiagnostic.childPoint(.open_returned)
             if op == "update" {
                 if let person = lattice.objects(Person.self).where({ $0.name == "ExistingPerson" }).first {
                     person.age = 99
@@ -28,7 +135,9 @@ class CrossProcessChildRunner: XCTestCase {
                 let p = Person()
                 p.name = "FromOtherProcess"
                 p.age = 42
+                CrossProcessObservationDiagnostic.childPoint(.write_begin)
                 try lattice.add(p)
+                CrossProcessObservationDiagnostic.childPoint(.write_returned)
             }
         case "update_audit":
             var db: OpaquePointer?
@@ -48,16 +157,23 @@ class CrossProcessChildRunner: XCTestCase {
                 owner.dogs.append(dog)
             }
         case "append_to_virtual_list":
+            CrossProcessObservationDiagnostic.childPoint(.open_begin)
             let lattice = try Lattice(
                 for: [TestDog.self, TestCat.self, TestPersonWithPets.self],
                 configuration: .init(fileURL: fileURL)
             )
+            CrossProcessObservationDiagnostic.childPoint(.open_returned)
             if let owner = lattice.objects(TestPersonWithPets.self).where({ $0.label == "PetOwner" }).first {
+                CrossProcessObservationDiagnostic.childPoint(.owner_found)
                 let dog = TestDog()
                 dog.name = "Buddy"
                 dog.breed = "Lab"
+                CrossProcessObservationDiagnostic.childPoint(.write_begin)
                 try lattice.add(dog)
+                CrossProcessObservationDiagnostic.childPoint(.write_returned)
+                CrossProcessObservationDiagnostic.childPoint(.list_append_begin)
                 owner.pets.append(dog as any Animal)
+                CrossProcessObservationDiagnostic.childPoint(.list_append_returned)
             }
         case "multi_row_transaction":
             let lattice = try Lattice(
@@ -144,7 +260,9 @@ private func childProcessConfig(filter: String = "crossProcessObservation") -> (
 }
 
 /// Spawns a child process (fire-and-forget from the caller's perspective).
-private func spawnChild(execURL: URL, args: [String], dbPath: String, op: String) {
+@discardableResult
+private func spawnChild(execURL: URL, args: [String], dbPath: String, op: String,
+                        diagnostic: CrossProcessObservationDiagnostic? = nil) -> Process {
     let child = Process()
     child.executableURL = execURL
     var env = ProcessInfo.processInfo.environment
@@ -153,12 +271,18 @@ private func spawnChild(execURL: URL, args: [String], dbPath: String, op: String
     for key in env.keys where key.hasPrefix("XCTest") {
         env.removeValue(forKey: key)
     }
+    if let diagnostic { env["LATTICE_XPROC_DIAGNOSTIC_DIRECTORY"] = diagnostic.directory.path }
     child.environment = env
     child.arguments = args
     child.standardOutput = FileHandle.nullDevice
     child.standardError = FileHandle.nullDevice
-    child.terminationHandler = nil
+    if let diagnostic {
+        child.terminationHandler = { process in diagnostic.childExited(process) }
+    } else {
+        child.terminationHandler = nil
+    }
     try! child.run()
+    return child
 }
 
 @Suite("Cross-Process Observation Tests")
@@ -230,11 +354,13 @@ struct CrossProcessTests {
         // ── Child path ──────────────────────────────────────────────
         if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
             let fileURL = URL(fileURLWithPath: childDBPath)
+            CrossProcessObservationDiagnostic.childPoint(.open_begin)
             let lattice = try Lattice(
                 for: [Person.self, Dog.self],
                 configuration: .init(fileURL: fileURL)
             )
 
+            CrossProcessObservationDiagnostic.childPoint(.open_returned)
             let op = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_OP"] ?? "insert"
             switch op {
             case "update":
@@ -245,7 +371,9 @@ struct CrossProcessTests {
                 let p = Person()
                 p.name = "FromOtherProcess"
                 p.age = 42
+                CrossProcessObservationDiagnostic.childPoint(.write_begin)
                 try lattice.add(p)
+                CrossProcessObservationDiagnostic.childPoint(.write_returned)
             }
             return
         }
@@ -271,22 +399,54 @@ struct CrossProcessTests {
             return
         }
 
+        let diagnosticsEnabled = ProcessInfo.processInfo.environment["LATTICE_OBSERVER_WORKER_DIAGNOSTICS"] == "1"
+        let diagnostic = diagnosticsEnabled ? CrossProcessObservationDiagnostic() : nil
+        if diagnosticsEnabled && diagnostic == nil {
+            print("DIAGNOSTIC CrossProcessObservation: unavailable_fixture")
+        }
+        var child: Process?
+        defer {
+            diagnostic?.finish(failed: false, childStillRunning: child?.isRunning)
+            // Do not unlink a fixture while a still-running child might write.
+            // Process ownership is retained to this point; no child deadline,
+            // kill, await or existing test deadline is introduced or changed.
+            if child?.isRunning != true { diagnostic?.removeFixture() }
+            withExtendedLifetime(child) {}
+        }
         var cancellable: AnyCancellable?
         let changes = AsyncStream<Void> { stream in
-            cancellable = lattice.objects(Person.self).observe { change in
+            diagnostic?.record(.observer_registration_begin)
+            let results = lattice.objects(Person.self)
+            // TableResults.observe forwards this same handle, element type
+            // and whereStatement to _observeCollection. Retain construction
+            // and the actual predicate while adding only its diagnostic tap.
+            cancellable = lattice._observeCollection(Person.self, where: results.whereStatement,
+                                                      diagnostic: diagnostic?.probe) { change in
                 if case .insert = change {
+                    diagnostic?.record(.insert_callback)
                     stream.yield()
                     stream.finish()
                 }
             }
-            spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "insert")
+            diagnostic?.record(.observer_registration_returned)
+            diagnostic?.record(.child_launch_begin)
+            child = spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "insert", diagnostic: diagnostic)
+            diagnostic?.record(.child_launch_returned)
         }
 
         var fired = false
-        for await _ in changes { fired = true }
+        diagnostic?.record(.consumer_wait_begin)
+        for await _ in changes {
+            diagnostic?.record(.consumer_received)
+            fired = true
+        }
+        diagnostic?.record(.consumer_wait_returned)
+        diagnostic?.record(.cancel_call_begin)
         cancellable?.cancel()
+        diagnostic?.record(.cancel_call_returned)
 
         #expect(fired, "Cross-process observer did not fire")
+        diagnostic?.finish(failed: !fired, childStillRunning: child?.isRunning)
 
         let results = lattice.objects(Person.self).where { $0.name == "FromOtherProcess" }
         #expect(results.count == 1)
@@ -590,16 +750,23 @@ struct CrossProcessTests {
         // ── Child path ──────────────────────────────────────────────
         if let childDBPath = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] {
             let fileURL = URL(fileURLWithPath: childDBPath)
+            CrossProcessObservationDiagnostic.childPoint(.open_begin)
             let lattice = try Lattice(
                 for: [TestDog.self, TestCat.self, TestPersonWithPets.self],
                 configuration: .init(fileURL: fileURL)
             )
+            CrossProcessObservationDiagnostic.childPoint(.open_returned)
             if let owner = lattice.objects(TestPersonWithPets.self).where({ $0.label == "PetOwner" }).first {
+                CrossProcessObservationDiagnostic.childPoint(.owner_found)
                 let dog = TestDog()
                 dog.name = "Buddy"
                 dog.breed = "Lab"
+                CrossProcessObservationDiagnostic.childPoint(.write_begin)
                 try lattice.add(dog)
+                CrossProcessObservationDiagnostic.childPoint(.write_returned)
+                CrossProcessObservationDiagnostic.childPoint(.list_append_begin)
                 owner.pets.append(dog as any Animal)
+                CrossProcessObservationDiagnostic.childPoint(.list_append_returned)
             }
             return
         }
@@ -627,20 +794,52 @@ struct CrossProcessTests {
         // Observe the TestPersonWithPets collection for updates.
         // When the child appends to the VirtualList, the polymorphic link
         // table INSERT should be resolved to a TestPersonWithPets UPDATE.
+        let diagnosticsEnabled = ProcessInfo.processInfo.environment["LATTICE_OBSERVER_WORKER_DIAGNOSTICS"] == "1"
+        let diagnostic = diagnosticsEnabled ? CrossProcessObservationDiagnostic(observer: "crossProcessVirtualListAppend") : nil
+        if diagnosticsEnabled && diagnostic == nil {
+            print("DIAGNOSTIC CrossProcessObservation: observer=crossProcessVirtualListAppend unavailable_fixture")
+        }
+        var child: Process?
+        defer {
+            diagnostic?.finish(failed: false, childStillRunning: child?.isRunning)
+            // Preserve diagnostic files if the child might still write them.
+            // This records lifecycle; it does not add a child wait or deadline.
+            if child?.isRunning != true { diagnostic?.removeFixture() }
+            withExtendedLifetime(child) {}
+        }
         var cancellable: AnyCancellable?
         let changes = AsyncStream<Void> { stream in
-            cancellable = lattice.objects(TestPersonWithPets.self).observe { change in
+            diagnostic?.record(.observer_registration_begin)
+            let results = lattice.objects(TestPersonWithPets.self)
+            cancellable = lattice._observeCollection(TestPersonWithPets.self, where: results.whereStatement,
+                                                      diagnostic: diagnostic?.probe) { change in
+                switch change {
+                case .insert: diagnostic?.record(.insert_callback)
+                case .update: diagnostic?.record(.update_callback)
+                case .delete: diagnostic?.record(.delete_callback)
+                }
                 if case .update = change {
                     stream.yield()
                     stream.finish()
                 }
             }
-            spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "append_to_virtual_list")
+            diagnostic?.record(.observer_registration_returned)
+            diagnostic?.record(.child_launch_begin)
+            child = spawnChild(execURL: execURL, args: childArgs, dbPath: dbPath, op: "append_to_virtual_list", diagnostic: diagnostic)
+            diagnostic?.record(.child_launch_returned)
         }
 
         var fired = false
-        for await _ in changes { fired = true }
+        diagnostic?.record(.consumer_wait_begin)
+        for await _ in changes {
+            diagnostic?.record(.consumer_received)
+            fired = true
+        }
+        diagnostic?.record(.consumer_wait_returned)
+        diagnostic?.record(.cancel_call_begin)
         cancellable?.cancel()
+        diagnostic?.record(.cancel_call_returned)
+        diagnostic?.finish(failed: !fired, childStillRunning: child?.isRunning)
 
         #expect(fired, "Cross-process VirtualList append did not trigger parent observer — link table notification not resolved")
 

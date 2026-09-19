@@ -4,8 +4,8 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "865588bf2248327c9fc697dcd3fd68ba9255d3b3",
-      "version": "2.0.3"
+      "revision": "559c496d7997677d06cc6d1f7a7a87abc440c210",
+      "version": "2.0.5"
     },
     {
       "identity": "swift-sdk",
@@ -15,17 +15,17 @@
       "version": "0.13.0"
     }
   ],
-  "qualificationNote": "Qualified means the recorded Core and SDK release/source joins only. The strict consumer independently verifies a complete committed lock and drift; these expectations do not qualify the wrapper graph, compilation, tests or products.",
+  "qualificationNote": "Qualified means the recorded Core and SDK release/source joins only. The strict consumer independently verifies a complete committed lock and drift; these expectations do not qualify the wrapper graph, compilation, tests or products. Published Core 2.0.5 is the stable floor only; broad APIs require the exact unpublished development Core and a separately qualified graph.",
   "qualificationScope": "upstream-release-source-joins-only",
   "qualified": true,
   "releaseEvidence": {
-    "receiptSHA256": "14dc376b2a450c277c9de85fbb89a1974804f10c172335d65f4bb8bd4d2ac8f0",
+    "receiptSHA256": "9c3872a29f3db5ed0094feb450e15b6f577dde37cd4c8074a4f68e13533ed8d3",
     "releases": [
       {
-        "commit": "865588bf2248327c9fc697dcd3fd68ba9255d3b3",
-        "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.0.3",
+        "commit": "559c496d7997677d06cc6d1f7a7a87abc440c210",
+        "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.0.5",
         "repository": "https://github.com/jsflax/LatticeCore",
-        "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.0.3"
+        "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.0.5"
       },
       {
         "commit": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",

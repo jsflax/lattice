@@ -8,9 +8,17 @@ import Lattice
 
 private enum IngressWaitError: Error { case timedOut, ended, unconfirmedApply }
 
-/// One retained signal and one waiter. The timeout cancels AsyncStream.next;
-/// it never parks an event loop or a cooperative executor thread.
+/// One retained signal and one waiter. Already-delivered values do not need
+/// task-group admission. Pending or already-cancelled waits retain the original
+/// timeout race; no event loop or cooperative executor thread is parked.
 private final class IngressSignal<Value: Sendable>: Sendable {
+    private struct State {
+        var sent = false
+        var waited = false
+        var buffered: Value?
+    }
+    private enum Admission { case ready(Value), pending, ended }
+    private let state = NIOLockedValueBox(State())
     private let stream: AsyncStream<Value>
     private let continuation: AsyncStream<Value>.Continuation
 
@@ -21,12 +29,41 @@ private final class IngressSignal<Value: Sendable>: Sendable {
     }
 
     func send(_ value: Value) {
+        let first = state.withLockedValue { state in
+            guard !state.sent else { return false }
+            state.sent = true
+            if !state.waited { state.buffered = .some(value) }
+            return true
+        }
+        guard first else { return }
         continuation.yield(value)
         continuation.finish()
     }
 
-    func wait() async throws -> Value {
-        try await withThrowingTaskGroup(of: Value.self) { group in
+    // The optional callback is used only by the helper regressions below. It
+    // observes slow-path admission off-lock; the ingress fixture never sets it.
+    func wait(beforeSlowWait: (@Sendable () -> Void)? = nil) async throws -> Value {
+        let admission: Admission = state.withLockedValue { state in
+            guard !state.waited else { return .ended }
+            state.waited = true
+            if let value = state.buffered {
+                state.buffered = nil
+                return .ready(value)
+            }
+            return .pending
+        }
+        switch admission {
+        case .ready(let value) where !Task.isCancelled:
+            return value
+        case .ended:
+            throw IngressWaitError.ended
+        default:
+            break
+        }
+        // Keep cancellation compatible with the former stream/group path,
+        // including cleanup waits made after the test task was cancelled.
+        beforeSlowWait?()
+        return try await withThrowingTaskGroup(of: Value.self) { group in
             group.addTask { [stream] in
                 for await value in stream { return value }
                 throw IngressWaitError.ended
@@ -39,6 +76,67 @@ private final class IngressSignal<Value: Sendable>: Sendable {
             guard let value = try await group.next() else { throw IngressWaitError.ended }
             return value
         }
+    }
+}
+
+
+@Suite("Relay ingress signals", .timeLimit(.minutes(1)))
+struct RelayIngressSignalTests {
+    @Test func bufferedSignalSkipsTaskGroupAndIsConsumedOnce() async throws {
+        let signal = IngressSignal<Int?>()
+        let slowAdmissions = NIOLockedValueBox(0)
+        signal.send(nil)
+        signal.send(99) // The first value wins, including an optional nil.
+        let value = try await signal.wait {
+            slowAdmissions.withLockedValue { $0 += 1 }
+        }
+        #expect(value == nil)
+        #expect(slowAdmissions.withLockedValue { $0 } == 0)
+        do {
+            _ = try await signal.wait {
+                slowAdmissions.withLockedValue { $0 += 1 }
+            }
+            Issue.record("one-shot signal was consumed twice")
+        } catch IngressWaitError.ended {
+            // Expected: returning the buffered value consumed this signal.
+        }
+        #expect(slowAdmissions.withLockedValue { $0 } == 0)
+    }
+
+    @Test func pendingSignalKeepsOriginalRace() async throws {
+        let signal = IngressSignal<Int>()
+        let slowAdmissions = NIOLockedValueBox(0)
+        let value = try await signal.wait {
+            slowAdmissions.withLockedValue { $0 += 1 }
+            signal.send(23) // Publish after pending admission, before children run.
+        }
+        #expect(value == 23)
+        #expect(slowAdmissions.withLockedValue { $0 } == 1)
+    }
+
+    @Test func alreadyCancelledBufferedWaitUsesOriginalPath() async {
+        let signal = IngressSignal<Int>()
+        let slowAdmissions = NIOLockedValueBox(0)
+        signal.send(77)
+        let task = Task { () -> Bool in
+            withUnsafeCurrentTask { $0?.cancel() }
+            guard Task.isCancelled else { return false }
+            do {
+                let value = try await signal.wait {
+                    slowAdmissions.withLockedValue { $0 += 1 }
+                }
+                // The original group can race buffered delivery with cancellation.
+                return value == 77
+            } catch is CancellationError {
+                return true
+            } catch IngressWaitError.ended {
+                return true
+            } catch {
+                return false // A timeout or unrelated failure is not accepted.
+            }
+        }
+        #expect(await task.value)
+        #expect(slowAdmissions.withLockedValue { $0 } == 1)
     }
 }
 
