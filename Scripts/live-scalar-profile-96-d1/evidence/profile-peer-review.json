@@ -1,0 +1,76 @@
+{
+  "blockingSourceFindings": [],
+  "defaultOffTextRestoration": {
+    "disabledDiagnosticPreimagesExact": true,
+    "frozenHarnessSHA256": "993d3a6f384958185c9ee5817e6ba1f125a037f722a074a3a719ef71226455e2"
+  },
+  "explicitLimits": [
+    "CPU interval brackets the original wall interval and includes boundary overhead; not exclusive phase CPU.",
+    "Only native managed-cell spans measured; Swift/bridge conversion and SQL assembly remain unmeasured.",
+    "Counter-off retains diagnostic branches and phase clocks; calibration estimates only incremental native counter overhead in this binary, not stock-build overhead or correction factors.",
+    "Pure source restoration apart from trailing whitespace is not a preprocessor/compiler/import proof.",
+    "Uniform native/C-importer/Swift profile flags, consumed new headers, actual clocks, linking and overhead require future qualification.",
+    "Held inherited-runner/proof adaptation and owner/resource admission still required; no current allocation.",
+    "No2x goal, SQL<=3, physical-host, runtime, release or historical-cause credit."
+  ],
+  "frozenBPhaseSQLBudgetsIndependentlyMatched": {
+    "attached": [
+      2,
+      600,
+      602,
+      0,
+      600,
+      1,
+      22,
+      47
+    ],
+    "local": [
+      8,
+      600,
+      608,
+      0,
+      600,
+      1,
+      17,
+      42
+    ],
+    "resultSHA256": "dfa23416638e9c0a8b0b633ac70bdc7aaefb0436701bc48e859897dede3c1839",
+    "samples": 210
+  },
+  "localInputsRehashed": 9,
+  "performanceAccepted": false,
+  "reportedAuthorPureChecks": 17,
+  "reviewedMechanics": [
+    "All prior phase wall boundaries and synchronous bodies retained; counters add explicit bounded before/after snapshots.",
+    "The two native headers provide gated C declarations and fixed calling-thread TLS; no dynamic allocation, lock, logging or SQL introduced by counters.",
+    "Native spans retain the existing unique_ptr finalization signature and callback ordering; nested span/clock/overflow/reset faults invalidate diagnostics without altering SQL policy.",
+    "Exclusive native duration sum is checked against enclosing phase wall; nested phase totals are not summed as independent measurements.",
+    "Sidecar encoding occurs after canonical sample/oracles; profiles are excluded from frozen Codable keys.",
+    "210 canonical samples and16 separate calibration samples are kept distinct; exact phase/SQL/checksum/count inventory is retained.",
+    "Analyzer reports matched tail-sample CPU/native fields without summing component p95 values or claiming host causation."
+  ],
+  "reviewedUTC": "2026-09-19T09:33:20.963527+00:00",
+  "reviewerExecuted": {
+    "compiler": false,
+    "database": false,
+    "nativeProduct": false,
+    "network": false,
+    "pureAnalyzerTestsRerun": false,
+    "resolver": false,
+    "sourceOnlyGitAndPythonChecks": true
+  },
+  "runtimeAccepted": false,
+  "schema": 1,
+  "sourceHashes": {
+    "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/core-live-scalar-profile-001/Sources/LatticeCore/include/lattice/perf_live_profile.h": "e32176a4147f20acd8d74eed45c6aaf1a23d65288decaf2574f557d293799870",
+    "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/core-live-scalar-profile-001/Sources/LatticeCore/src/db.cpp": "c9fc83f8c6377a2d95022a8559c48fdeb8315b0613302b1407227f1bccb6e4f4",
+    "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/core-live-scalar-profile-001/Sources/LatticeCore/src/perf_live_profile.hpp": "5887cb8e88f5a6dd7c828d1f3e255b9f1dfe12c9ddf8cacb2eeb4700a4336872",
+    "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/sdk-live-scalar-profile-001/Tests/CLatticeTestSQLite/shim.h": "ac46d19b7e3763b714eb6f23a34d49790499d473fd1c1c3145ac8bb1b27ed008",
+    "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/sdk-live-scalar-profile-001/Tests/LatticeTests/PerfRefinementBenchmarks.swift": "95b873f75c12c403f6f224c72a8b3a4a8b0fb1ff52c8b134f3b45ed94bd41d32"
+  },
+  "sourceOnly": true,
+  "sourcePostimagesRehashed": 5,
+  "sourceReadySHA256": "6e1c995b5e477ffbaa2f9ce994dd053689ccd12f87bd5454ebf1577127b58ca4",
+  "sourceReviewed": true,
+  "sourceScope": "Five-path diagnostic-only SDK96/Core d1 slice; phase CPU bracketing plus query_managed_cell native exclusive wall counters"
+}

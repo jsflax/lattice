@@ -1,0 +1,213 @@
+diff --git a/Sources/LatticeCore/include/lattice/perf_live_profile.h b/Sources/LatticeCore/include/lattice/perf_live_profile.h
+new file mode 100644
+index 0000000..deb0208
+--- /dev/null
++++ b/Sources/LatticeCore/include/lattice/perf_live_profile.h
+@@ -0,0 +1,25 @@
++#pragma once
++/* Diagnostic-only C seam. Not a shipped/activated profiling API. */
++#if defined(LATTICE_PERF_LIVE_PROFILE) && LATTICE_PERF_LIVE_PROFILE == 1
++#include <stdint.h>
++#ifdef __cplusplus
++extern "C" {
++#endif
++struct lattice_perf_live_snapshot {
++    uint64_t abi_version, enabled, faults;
++    uint64_t managed_calls, prepare_calls, bind_name_calls, step_calls;
++    uint64_t extract_calls, finalize_calls, row_returns;
++    uint64_t prepare_ns, bind_name_ns, step_ns, extract_ns, finalize_ns;
++};
++/* Calling-thread only. Mode changes/reset are allowed only between samples.
++ * faults is sticky until reset: 1 clock, 2 overflow, 4 nested native span,
++ * 8 mode/reset while a managed query is active. A nonzero fault invalidates
++ * the diagnostic sample; it never changes a database result or SQL policy. */
++void lattice_perf_live_reset(int enabled);
++struct lattice_perf_live_snapshot lattice_perf_live_read_snapshot(void);
++/* Returns 1 on success. No fabricated zero duration on clock failure. */
++int lattice_perf_thread_cpu_ns(uint64_t *out);
++#ifdef __cplusplus
++}
++#endif
++#endif
+diff --git a/Sources/LatticeCore/src/db.cpp b/Sources/LatticeCore/src/db.cpp
+index a4f8c5c..7c12984 100644
+--- a/Sources/LatticeCore/src/db.cpp
++++ b/Sources/LatticeCore/src/db.cpp
+@@ -10,6 +10,9 @@
+ #include <algorithm>
+ #include <sys/stat.h>
+ #include <exception>
++#if defined(LATTICE_PERF_LIVE_PROFILE) && LATTICE_PERF_LIVE_PROFILE == 1
++#include "perf_live_profile.hpp"
++#endif
+ 
+ namespace lattice {
+ 
+@@ -976,26 +979,47 @@ std::vector<database::row_t> database::query(const std::string& sql,
+ 
+ std::optional<column_value_t> database::query_managed_cell(
+     const std::string& sql, const std::string& column, primary_key_t row_id) {
++#if defined(LATTICE_PERF_LIVE_PROFILE) && LATTICE_PERF_LIVE_PROFILE == 1
++    lattice_perf_detail::query_scope profile_query;
++#endif
+     g_statement_count.fetch_add(1, std::memory_order_relaxed);
+     ++t_statement_count;
+     if (closed_.load(std::memory_order_acquire)) return std::nullopt;
+ 
+     sqlite3_stmt* raw = nullptr;
++#if defined(LATTICE_PERF_LIVE_PROFILE) && LATTICE_PERF_LIVE_PROFILE == 1
++    int rc = lattice_perf_detail::timed(
++        lattice_perf_detail::local.totals.prepare_calls, lattice_perf_detail::local.totals.prepare_ns,
++        [&] { return sqlite3_prepare_v2(db_, sql.c_str(), -1, &raw, nullptr); });
++#else
+     int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &raw, nullptr);
++#endif
+     std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>
++#if defined(LATTICE_PERF_LIVE_PROFILE) && LATTICE_PERF_LIVE_PROFILE == 1
++        statement(raw, &lattice_perf_detail::finalize);
++#else
+         statement(raw, &sqlite3_finalize);
++#endif
+     if (rc != SQLITE_OK) {
+         auto errmsg = sqlite3_errmsg(db_);
+         LOG_ERROR("db", "%s in %s", errmsg, sql.c_str());
+         std::cerr << "db: " << errmsg << " " << sql.c_str() << std::endl;
+         throw db_error("Failed to prepare query: " + std::string(errmsg));
+     }
++#if defined(LATTICE_PERF_LIVE_PROFILE) && LATTICE_PERF_LIVE_PROFILE == 1
++    int value_index = -1;
++    {
++    lattice_perf_detail::span profile_bind_name(
++        lattice_perf_detail::local.totals.bind_name_calls, lattice_perf_detail::local.totals.bind_name_ns);
++#endif
+     bind_value(raw, 1, row_id);
+ 
+     // Normal primitive getters select one column. Retain the old name-match
+     // behavior (including its last-duplicate-name rule) for manually assigned
+     // field SQL instead of silently treating a different result as the field.
++#if !defined(LATTICE_PERF_LIVE_PROFILE) || LATTICE_PERF_LIVE_PROFILE != 1
+     int value_index = -1;
++#endif
+     const int column_count = sqlite3_column_count(raw);
+     for (int i = 0; i < column_count; ++i) {
+         const char* name = sqlite3_column_name(raw, i);
+@@ -1006,10 +1030,20 @@ std::optional<column_value_t> database::query_managed_cell(
+         if (column == name) value_index = i;
+     }
+ 
++#if defined(LATTICE_PERF_LIVE_PROFILE) && LATTICE_PERF_LIVE_PROFILE == 1
++    }
++#endif
+     std::optional<column_value_t> value;
+     bool first_row = true;
++#if defined(LATTICE_PERF_LIVE_PROFILE) && LATTICE_PERF_LIVE_PROFILE == 1
++    while ((rc = lattice_perf_detail::step(raw)) == SQLITE_ROW) {
++        if (first_row && value_index >= 0) value = lattice_perf_detail::timed(
++            lattice_perf_detail::local.totals.extract_calls, lattice_perf_detail::local.totals.extract_ns,
++            [&] { return extract_column(raw, value_index); });
++#else
+     while ((rc = sqlite3_step(raw)) == SQLITE_ROW) {
+         if (first_row && value_index >= 0) value = extract_column(raw, value_index);
++#endif
+         first_row = false;
+     }
+     // Release the read statement before invoking any settled callback. Keep
+diff --git a/Sources/LatticeCore/src/perf_live_profile.hpp b/Sources/LatticeCore/src/perf_live_profile.hpp
+new file mode 100644
+index 0000000..7a806ef
+--- /dev/null
++++ b/Sources/LatticeCore/src/perf_live_profile.hpp
+@@ -0,0 +1,93 @@
++#pragma once
++// Included in db.cpp only, under the diagnostic build flag. Fixed TLS storage;
++// no allocation, mutex, SQL, printing or callbacks from this instrumentation.
++#include "lattice/perf_live_profile.h"
++#include <time.h>
++#include <limits>
++#include <utility>
++
++namespace lattice_perf_detail {
++using snapshot = struct lattice_perf_live_snapshot;
++struct state {
++    snapshot totals{1, 0, 0};
++    uint64_t query_depth = 0;
++    bool span_active = false;
++};
++static thread_local state local;
++inline bool clock_ns(clockid_t clock, uint64_t& out) noexcept {
++    timespec value{};
++    if (clock_gettime(clock, &value) != 0 || value.tv_sec < 0 ||
++        value.tv_nsec < 0 || value.tv_nsec >= 1000000000 ||
++        static_cast<uint64_t>(value.tv_sec) >
++            (std::numeric_limits<uint64_t>::max() - static_cast<uint64_t>(value.tv_nsec)) / 1000000000) {
++        local.totals.faults |= 1;
++        return false;
++    }
++    out = static_cast<uint64_t>(value.tv_sec) * 1000000000 + value.tv_nsec;
++    return true;
++}
++inline void add(uint64_t& target, uint64_t value) noexcept {
++    if (value > std::numeric_limits<uint64_t>::max() - target) {
++        local.totals.faults |= 2;
++        return;
++    }
++    target += value;
++}
++struct query_scope {
++    bool active = local.totals.enabled != 0;
++    query_scope() noexcept {
++        if (active) { ++local.query_depth; add(local.totals.managed_calls, 1); }
++    }
++    ~query_scope() { if (active) --local.query_depth; }
++};
++struct span {
++    uint64_t* duration;
++    uint64_t start = 0;
++    bool active = false;
++    bool valid = false;
++    span(uint64_t& count, uint64_t& ns) noexcept : duration(&ns) {
++        if (!local.totals.enabled) return;
++        add(count, 1);
++        if (local.span_active) { local.totals.faults |= 4; return; }
++        active = local.span_active = true;
++        valid = clock_ns(CLOCK_MONOTONIC, start);
++    }
++    ~span() {
++        if (!active) return;
++        uint64_t end = 0;
++        if (clock_ns(CLOCK_MONOTONIC, end) && valid) {
++            if (end < start) local.totals.faults |= 1;
++            else add(*duration, end - start);
++        }
++        local.span_active = false;
++    }
++};
++template <typename F>
++decltype(auto) timed(uint64_t& count, uint64_t& ns, F&& operation) {
++    span interval(count, ns);
++    return std::forward<F>(operation)();
++}
++inline int step(sqlite3_stmt* statement) {
++    const int result = timed(local.totals.step_calls, local.totals.step_ns,
++                            [&] { return sqlite3_step(statement); });
++    if (local.totals.enabled && result == SQLITE_ROW) add(local.totals.row_returns, 1);
++    return result;
++}
++inline int finalize(sqlite3_stmt* statement) {
++    return timed(local.totals.finalize_calls, local.totals.finalize_ns,
++                 [&] { return sqlite3_finalize(statement); });
++}
++} // namespace lattice_perf_detail
++
++extern "C" void lattice_perf_live_reset(int enabled) {
++    auto& local = lattice_perf_detail::local;
++    if (local.query_depth || local.span_active) { local.totals.faults |= 8; return; }
++    local.totals = {1, enabled ? uint64_t{1} : uint64_t{0}, 0};
++}
++extern "C" struct lattice_perf_live_snapshot lattice_perf_live_read_snapshot(void) {
++    return lattice_perf_detail::local.totals;
++}
++extern "C" int lattice_perf_thread_cpu_ns(uint64_t* out) {
++    if (!out) { lattice_perf_detail::local.totals.faults |= 1; return 0; }
++    return lattice_perf_detail::clock_ns(CLOCK_THREAD_CPUTIME_ID, *out) ? 1 : 0;
++}

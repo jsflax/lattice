@@ -1,0 +1,33 @@
+{
+  "executionAuthorized": false,
+  "inputs": {
+    "Core.patch": "47ec67d1bc067ce79cd2d30c5cb1ee8211ddeb4eeeeb7372c4d1e97f009dfbce",
+    "PLAN.json": "7b7f76abeb25e640d24adf9cec16916f90195c9e8de8fc02d5c9c3878b941d3c",
+    "PURE-CHECKS.log": "85d9c8de252ee77b715b4779720ffffec78d42d78995a438d1bf3dd61777219b",
+    "README.md": "7ed9acd58808f98c47d0fcc8c3911e4ae372c1711b6301c4fee75392b0bbbb56",
+    "SDK.patch": "f9da5f2cb8a453f13401c1cd1317b31bb1d98914c7366cd78482f6fa7b8037cd",
+    "SOURCE-DELTA.json": "49d2e4ae225951fc6e0acb66438eaa959ae3669ffd5b46b292b7f9e25ba463f4",
+    "analyze_profile.py": "e04e4b0e0299c7de2b8f9830e22ee0e259aade33ae1adb2981296ff54f68723a",
+    "source_checks.py": "5b888db36820561b9db80d9afe2f30f2f8c6613a2d8c4b79c507b1dfc6e6fbbf",
+    "test_profile.py": "d1f722279d0e498f2d9156a677abab29a5a1a212ba9ad8f87198645efa2be86b"
+  },
+  "nativeOrCompilerRun": false,
+  "postimages": {
+    "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/core-live-scalar-profile-001/Sources/LatticeCore/include/lattice/perf_live_profile.h": "e32176a4147f20acd8d74eed45c6aaf1a23d65288decaf2574f557d293799870",
+    "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/core-live-scalar-profile-001/Sources/LatticeCore/src/db.cpp": "c9fc83f8c6377a2d95022a8559c48fdeb8315b0613302b1407227f1bccb6e4f4",
+    "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/core-live-scalar-profile-001/Sources/LatticeCore/src/perf_live_profile.hpp": "5887cb8e88f5a6dd7c828d1f3e255b9f1dfe12c9ddf8cacb2eeb4700a4336872",
+    "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/sdk-live-scalar-profile-001/Tests/CLatticeTestSQLite/shim.h": "ac46d19b7e3763b714eb6f23a34d49790499d473fd1c1c3145ac8bb1b27ed008",
+    "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/sdk-live-scalar-profile-001/Tests/LatticeTests/PerfRefinementBenchmarks.swift": "95b873f75c12c403f6f224c72a8b3a4a8b0fb1ff52c8b134f3b45ed94bd41d32"
+  },
+  "pureChecks": 17,
+  "remainingGates": [
+    "Root and independent source review",
+    "Concrete inherited-runner/proof diagnostic adaptation and new input seal",
+    "Actual compile/import/link/clock validation",
+    "Exact graph prerequisites and owner resource allocation"
+  ],
+  "schemaVersion": 1,
+  "scope": "First diagnostic slice: original phase wall + bracketing thread CPU + managed-cell exclusive native wall counters; no conversion attribution",
+  "sourceOnly": true,
+  "unchangedFrozenPerformanceEvidence": "frozen-read-copies-96-d1-001/ASSESSMENT.json e85989cf8827c9704d9b68ce99d9a30d9a2104acdc00a53b42178b2e140127ad"
+}

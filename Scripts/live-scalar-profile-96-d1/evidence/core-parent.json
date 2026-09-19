@@ -1,0 +1,29 @@
+{
+  "accepted": true,
+  "reviewedUTC": "2026-09-19T05:37:41.245954+00:00",
+  "candidate": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+  "tree": "5280333ecc94b8e7339010c9c8e70a30019f86b9",
+  "compiledMerge": "e465c03e0a8fdab8aa62709d8fd8f51de718cd9e",
+  "nativeAssessmentSHA256": "818194894bbc78c2f72b327da098355d8c3bc587bd7903781b4f5561e6924688",
+  "capiAssessmentSHA256": "8022425a6ea0f1328952d8f3215ed979bd63fe0af9617ba3165781fc9326f21d",
+  "runs": {
+    "macOS": 35423838688,
+    "Linux": 35423838667,
+    "CABI": 35423838671
+  },
+  "tests": {
+    "macOS": 570,
+    "Linux": 517,
+    "CABI": [
+      33,
+      33,
+      33,
+      33
+    ]
+  },
+  "failureCount": 0,
+  "skipCount": 0,
+  "sourceAndLogsAuthenticated": true,
+  "localCompilerOutputsAvailable": false,
+  "scope": "Existing hosted Core full macOS/Linux C++ and C ABI workflow gates. Exact candidate tree matches actual compiled PR merge. Full SDK, iOS/WASM, release and performance remain separate."
+}

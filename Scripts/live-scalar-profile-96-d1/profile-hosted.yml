@@ -1,6 +1,6 @@
-name: Live scalar diagnostic profile
-# Isolated diagnostic branch integration. Runtime entry still requires the exact
-# reviewed packet seal and a separately granted owner allocation receipt.
+name: Held live scalar diagnostic profile
+# Source-only template. The job stays disabled until root/source review and a
+# separate owner allocation; enabling/installing requires a new reviewed seal.
 on:
   workflow_dispatch:
     inputs:
@@ -20,7 +20,7 @@ permissions:
   contents: read
 jobs:
   profile:
-    if: ${{ true }}
+    if: ${{ false }}
     runs-on: macos-26
     timeout-minutes: 360
     env:

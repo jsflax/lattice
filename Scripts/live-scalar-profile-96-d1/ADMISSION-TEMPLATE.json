@@ -1,0 +1,14 @@
+{
+  "approved": false,
+  "coreCommit": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+  "corePrerequisiteSHA256": "467f12df2d65f9655d16d547d16c563cac116e07d8c2b615cbf7b9f309b94824",
+  "ownerAllocation": "",
+  "packetSealSHA256": "REQUIRED_AFTER_FINAL_REVIEW",
+  "performanceTargetClaimed": false,
+  "physicalHostQualified": false,
+  "profileSourceReadySHA256": "6e1c995b5e477ffbaa2f9ce994dd053689ccd12f87bd5454ebf1577127b58ca4",
+  "runOnce": true,
+  "scope": "diagnostic-profile-B-only",
+  "sdkCommit": "96a5bf0256f81691a92d98cb8fe24b54e00de811",
+  "sdkPrerequisiteSHA256": "8f51befbf2ae69715d123f895105618fed3131bf8486830e2d72ddde126c8c45"
+}

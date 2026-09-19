@@ -1,0 +1,49 @@
+{
+  "bases": {
+    "candidateCore": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+    "candidateCoreTree": "5280333ecc94b8e7339010c9c8e70a30019f86b9",
+    "candidateSDK": "96a5bf0256f81691a92d98cb8fe24b54e00de811",
+    "candidateSDKTree": "466e724abeea3e01f0af8c5d7adde729628e4115"
+  },
+  "delta": [
+    "Supplemental object-producing mode + actual unique Swift frontend proof.",
+    "Explicit supported native -MD dependency-generation mode.",
+    "21 new pure controls; original47 retained; no runtime/guard/config/oracle changes."
+  ],
+  "notPerformed": [
+    "compiler",
+    "resolver",
+    "preprocessor",
+    "native runtime",
+    "SQLite",
+    "network",
+    "dispatch",
+    "resource admission"
+  ],
+  "predecessorPacketSealSHA256": "88400d3f25bf0ecfa68f9f64e68152c19325683c5a46e49c0b027ec61800eae0",
+  "predecessorSourceReadySHA256": "cb7f4137bcb2d74959ef56eab7f712820750ee3a739e37b079db943952d53fde",
+  "profileSourceReadySHA256": "6e1c995b5e477ffbaa2f9ce994dd053689ccd12f87bd5454ebf1577127b58ca4",
+  "proofCorrectionReviewSHA256": "bc5a5e2d1215f79e44e403965b4911c80f48d0666b6639bf4fb12bb3321e1249",
+  "pureLogSHA256": "3ae3b2798f122b1e56be9d48a3fc7ff9eeda4aebc039aa6d30243e3eda5568b2",
+  "pureTests": 68,
+  "pythonSyntaxParsed": true,
+  "reusedHelpers": {
+    "build_proof.py": "d527ba9d57fcae5bf91eae35bbb993e9d185fe13cfbb2aae8db34ebf34857720",
+    "frozen_binding.py": "3ce4e5ee92739b6a62f48d6fd19cab4d998cc21671019766007a17aa778b2a2f",
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "perf_refinement_report.py": "aeb1d5994149d28badc6ddfa01d51c60ebed4ffb941f85d885d2d06c8669714f"
+  },
+  "reviewedAnalyzerExact": true,
+  "reviewedSourceOverlaysExact": true,
+  "runtimeAbsent": true,
+  "runtimeRoot": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/live-scalar-profile-hosted-96-d1-002",
+  "schemaVersion": 1,
+  "sourceCounts": {
+    "core-base": 901,
+    "core-profile": 903,
+    "sdk-base": 253,
+    "sdk-profile": 253
+  },
+  "sourceOnly": true,
+  "workflowDisabled": true
+}

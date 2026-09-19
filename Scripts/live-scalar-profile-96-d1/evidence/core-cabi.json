@@ -1,0 +1,180 @@
+{
+  "accepted": true,
+  "artifacts": {
+    "custody": "log-only; full original ZIP retained; no binary, archive, compile-command or symbol-file artifacts supplied by workflow",
+    "reportedCount": 0
+  },
+  "attempt": 1,
+  "candidate": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+  "caseSourceSHA256": "957dbcb52dcfdedd2ef1d956a24a47e54e0f1405eaf2478b7058a275e03ac94e",
+  "ciRerunOrDispatch": false,
+  "collectionNote": "Two initial local unquoted endpoint commands were refused by zsh before HTTP; quoted read-only requests succeeded. FETCH-NOTE preserves this tooling issue; it was not a CI/runtime failure.",
+  "compiledMerge": "e465c03e0a8fdab8aa62709d8fd8f51de718cd9e",
+  "declaredCases": [
+    "CAPIFeatures.Slice2FeatureStringsAreTrue",
+    "CAPISyncOptions.InitFillsDefaults",
+    "CAPISyncOptions.RoundTripThroughRealOpen",
+    "CAPISyncOptions.NullOptionsBehavesLikeCreateWithSync",
+    "CAPISyncOptions.NonsenseValuesAreIgnoredNotFatal",
+    "CAPISyncOptions.ZeroStructSizeFailsTheOpen",
+    "CAPISyncOptions.ReservedSyncIdFailsTheOpen",
+    "CAPISyncOptions.MalformedFilterJsonFailsTheOpen",
+    "CAPISyncOptions.ShorterCallerStructIsAccepted",
+    "CAPISyncProgress.ZeroedOnSyncLessDb",
+    "CAPISyncObservers.RegisterRemoveAndDestroySemantics",
+    "CAPISyncObservers.MultipleObserversPerKind",
+    "CAPIAttachDetach.RoundTripAndIdempotence",
+    "CAPIAttachDetach.SchemaMismatchSurfacesAttachError",
+    "CAPIRowCache.LifecycleOnManagedObject",
+    "CAPIRowCache.NoOpOnUnmanagedObject",
+    "CAPIIncrement.SqlSideIncrementPersists",
+    "CAPIIncrement.InMemoryIncrementOnUnmanagedObject",
+    "CAPIStatementCounters.CountersAdvanceWithQueries",
+    "CAPICheckpoint.PassiveAndTruncateModes",
+    "CAPIUploadFloor.ZeroWithoutSlotAndInvalidArgs",
+    "CAPICrossProcessObservation.ObserverFiresForSiblingInstanceWrites",
+    "CAPIReceiveSyncData.PerEntryErrorIsolation",
+    "CAPIToJson.ScalarTypesBlobBase64AndEmbeddedJson",
+    "CAPIToJson.LinkDepthAndStubs",
+    "CAPIToJson.CycleCollapsesToStubAndTerminates",
+    "CAPIToJson.ListsExpandAtDepthAndSummarizeAtBoundary",
+    "CAPIToJson.UnmanagedObjectAndErrorContract",
+    "CAPIUniqueConstraint.IsUniqueCreatesBridgeNamedIndexAndEnforces",
+    "CAPITransactionVisibility.ReadsInsideOpenTransactionSeeUncommittedWrites",
+    "CAPITransactionVisibility.OtherThreadsNeverSeeTheOpenTransaction",
+    "CAPITransactionVisibility.CommitKeepsTransactionWrites",
+    "CAPIGeoBounds.DynamicAddExpandsGeoBoundsColumns"
+  ],
+  "gates": {
+    "capi-linux": {
+      "checkoutLogSHA256": "e1d90b8b343c2bed98a77cd0f30e36f3c3ba3e2c3c16c4b74009fa055436422e",
+      "checkoutMerge": "e465c03e0a8fdab8aa62709d8fd8f51de718cd9e",
+      "jobID": 105846242768,
+      "pureC11": {
+        "logSHA256": "0038470d872e3b100921450226a5743e346032da34b407a1804c634c514b871b",
+        "passed": true
+      },
+      "symbolFreeze": {
+        "evidence": "unchanged nm+diff workflow and successful step; no exported-symbol file artifact",
+        "logSHA256": "2d79d13b354390ad6720c3317666774bf8985b4127290ab5bce195635b401017",
+        "passed": true
+      }
+    },
+    "capi-macos": {
+      "checkoutLogSHA256": "fcd5bfe1a989055de106f9111d8cfc70f6c4a0d1b7d0752f695bb9f4fc808908",
+      "checkoutMerge": "e465c03e0a8fdab8aa62709d8fd8f51de718cd9e",
+      "jobID": 105846242617,
+      "pureC11": {
+        "logSHA256": "fe97a96f197749ed77dc04f070e6dcfa5f859ce0e1aff492ff5790e9ac63a804",
+        "passed": true
+      },
+      "symbolFreeze": {
+        "evidence": "unchanged nm+diff workflow and successful step; no exported-symbol file artifact",
+        "logSHA256": "e4ae3900a9ea7137c349759e61cae38649f1e3c0f6481de4983ec4a139670fff",
+        "passed": true
+      }
+    }
+  },
+  "legs": [
+    {
+      "allNamesMatchSourceExactly": true,
+      "failed": 0,
+      "leg": "swiftpm",
+      "log": "logs/capi-macos/3_swift run LatticeCAPITests (SwiftPM leg).txt",
+      "logSHA256": "7e3ad5935cafb782915967d4c8c32d663e3fe37c7fe25ae0f37f2287bd30deda",
+      "passed": 33,
+      "platform": "capi-macos",
+      "skipped": 0,
+      "suites": 16
+    },
+    {
+      "allNamesMatchSourceExactly": true,
+      "failed": 0,
+      "leg": "cmake-shared",
+      "log": "logs/capi-macos/6_Run LatticeCAPITests (against the shared library).txt",
+      "logSHA256": "c29168505bd4f9c6dd69e71a6b411e1520b397c84d6d62e0320a7e57405775ca",
+      "passed": 33,
+      "platform": "capi-macos",
+      "skipped": 0,
+      "suites": 16
+    },
+    {
+      "allNamesMatchSourceExactly": true,
+      "failed": 0,
+      "leg": "swiftpm",
+      "log": "logs/capi-linux/6_swift run LatticeCAPITests (SwiftPM leg).txt",
+      "logSHA256": "9d3b3c037471c8882e94334359ce99426e3050e9ebff8ed0253e4f2e6b5bcb7c",
+      "passed": 33,
+      "platform": "capi-linux",
+      "skipped": 0,
+      "suites": 16
+    },
+    {
+      "allNamesMatchSourceExactly": true,
+      "failed": 0,
+      "leg": "cmake-shared",
+      "log": "logs/capi-linux/9_Run LatticeCAPITests (against the shared library).txt",
+      "logSHA256": "26615ad7e9e71099ebc1fd9d182deeecb2e6956adbdfd47a717e089af8e16ae6",
+      "passed": 33,
+      "platform": "capi-linux",
+      "skipped": 0,
+      "suites": 16
+    }
+  ],
+  "linuxAllTargetSwiftBuild": {
+    "logSHA256": "b0550c661ddecf8033183644d740a192d452b4b04ec2e0d64336f8e1f83e5a2b",
+    "passed": true
+  },
+  "localCompilerOrRuntimeExecuted": false,
+  "mergeTreeEqualsCandidate": true,
+  "readOnlyAudit": true,
+  "receiptHashes": {
+    "CAPIBehaviorTests.cpp": "957dbcb52dcfdedd2ef1d956a24a47e54e0f1405eaf2478b7058a275e03ac94e",
+    "FETCH-NOTE.json": "1824e03385d17089766b046790019e39f3e5cf3d538ba828d1f3a1507d250b0e",
+    "HEAD-COMMIT.json": "fe9375e9d86d73b2b7ff8011ceb6555aac4bcd0081dff24e5a3d1610187e634a",
+    "MERGE-COMMIT.json": "147ae2b60e53a27cd43e63a0f91c1f97f01cc95fd56fa63fd65cfb4d17898f37",
+    "WORKFLOW.yml": "f25ded5bb3b5e63119778ede23ce4c1ce4b84e3c46e997def552d7aa658ba78f",
+    "artifacts.json": "244563f989470892c537c9a4622920af0d228ee4528f7d00c64a06d6cd95856c",
+    "jobs.json": "6dac46563f89ada68c09e0ddab1d54b4a5cb5dbb1cf44aca9316430c46c310f2",
+    "logs.zip": "f6ffdf35e360bcc6af89302a58862fac9ca97df602fffd3acc91894bc82c206c",
+    "logs/0_capi-linux.txt": "0b4e58b0ca7e4b3206c692b70e03deffed3561b05995f4b1c94cb41a7b63fbfd",
+    "logs/1_capi-macos.txt": "ffd27317c1da3b6bab5c7a20f1b6cca207d585a9a7e6e8c2392a563d35d7e50a",
+    "logs/capi-linux/10_lattice.h compiles as pure C11.txt": "0038470d872e3b100921450226a5743e346032da34b407a1804c634c514b871b",
+    "logs/capi-linux/19_Post Run actions_checkout@v4.txt": "6c21510332f417dd3f779bce22054bb10d0ff722e11f65c24474241efebaf6de",
+    "logs/capi-linux/1_Set up job.txt": "d6599945efdbb3f0179ce63f7a88f42def250d0133e5c261015893883dec7c6c",
+    "logs/capi-linux/20_Stop containers.txt": "e77599efffe513618a818b99ba58a4b9a2a8033e04748318539eaf0e5a217199",
+    "logs/capi-linux/21_Complete job.txt": "542067f73df9c8727c1c69c8e48ec93dc4438762d2d104e0668d43b9f9e9edb3",
+    "logs/capi-linux/2_Initialize containers.txt": "f2a49cce3962512d86a2665849d0ad4e95f5fef627f312216d72dc8fbf01f7e1",
+    "logs/capi-linux/3_Run actions_checkout@v4.txt": "e1d90b8b343c2bed98a77cd0f30e36f3c3ba3e2c3c16c4b74009fa055436422e",
+    "logs/capi-linux/4_Install dependencies.txt": "a80b349d8bc1a838630f32ec2709ec996654f556e35897bfebe188985be0de91",
+    "logs/capi-linux/5_swift build (ALL targets \u2014 audit V1 pin).txt": "b0550c661ddecf8033183644d740a192d452b4b04ec2e0d64336f8e1f83e5a2b",
+    "logs/capi-linux/6_swift run LatticeCAPITests (SwiftPM leg).txt": "9d3b3c037471c8882e94334359ce99426e3050e9ebff8ed0253e4f2e6b5bcb7c",
+    "logs/capi-linux/7_CMake build (shared LatticeCAPI + C-ABI tests).txt": "2a019a901d842f74b3ef6f4516632cd9d07a0b7418d436e9178d9d6ea0e0f40a",
+    "logs/capi-linux/8_Symbols freeze gate (nm vs lattice_capi.symbols).txt": "2d79d13b354390ad6720c3317666774bf8985b4127290ab5bce195635b401017",
+    "logs/capi-linux/9_Run LatticeCAPITests (against the shared library).txt": "26615ad7e9e71099ebc1fd9d182deeecb2e6956adbdfd47a717e089af8e16ae6",
+    "logs/capi-linux/system.txt": "c28102e26bf4073ded767df2b49e34a70071a0f4d2771049fd1be9c078a99825",
+    "logs/capi-macos/14_Post Run actions_checkout@v4.txt": "6f164cf5b082666a167852eda361cf19b5025b1e30499038ae0288ffd0bf5548",
+    "logs/capi-macos/15_Complete job.txt": "f2d98835d506e8a8d3cf99230c1655b26ce8f1d35c52f180753a311fcb1e2f49",
+    "logs/capi-macos/1_Set up job.txt": "4aeba06349e69879783b8b62888d0f3437910266eee1d9bdb3d889e5dee0f4b1",
+    "logs/capi-macos/2_Run actions_checkout@v4.txt": "fcd5bfe1a989055de106f9111d8cfc70f6c4a0d1b7d0752f695bb9f4fc808908",
+    "logs/capi-macos/3_swift run LatticeCAPITests (SwiftPM leg).txt": "7e3ad5935cafb782915967d4c8c32d663e3fe37c7fe25ae0f37f2287bd30deda",
+    "logs/capi-macos/4_CMake build (shared LatticeCAPI + C-ABI tests).txt": "51d50abbe2b39c7c863175d3939f135d163bb19b4b7e6911d28420271c6e0143",
+    "logs/capi-macos/5_Symbols freeze gate (nm vs lattice_capi.symbols).txt": "e4ae3900a9ea7137c349759e61cae38649f1e3c0f6481de4983ec4a139670fff",
+    "logs/capi-macos/6_Run LatticeCAPITests (against the shared library).txt": "c29168505bd4f9c6dd69e71a6b411e1520b397c84d6d62e0320a7e57405775ca",
+    "logs/capi-macos/7_lattice.h compiles as pure C11.txt": "fe97a96f197749ed77dc04f070e6dcfa5f859ce0e1aff492ff5790e9ac63a804",
+    "logs/capi-macos/system.txt": "cddc65dcc6d1719b0e0762feed7608b3ca63b3de4ef4c0971754718cf4a96784",
+    "run.json": "c238e74b424717deab19bad49fb9f0afee6e18f97ca6ff5cca4cb4783dc02a29"
+  },
+  "reviewedUTC": "2026-09-19T05:35:22.457433+00:00",
+  "runID": 35423838671,
+  "scope": "Hosted C ABI workflow source/log audit only; no downloaded compiler-output or symbol-dump custody, no SDK/performance/release qualification",
+  "totalCaseExecutions": 132,
+  "tree": "5280333ecc94b8e7339010c9c8e70a30019f86b9",
+  "url": "https://github.com/jsflax/LatticeCore/actions/runs/35423838671",
+  "workflow": {
+    "path": ".github/workflows/capi.yml",
+    "sha256": "f25ded5bb3b5e63119778ede23ce4c1ce4b84e3c46e997def552d7aa658ba78f",
+    "unchanged": true,
+    "unchangedFrom": "a09e622e4da3f603698d9f1069d6118e79397b2e"
+  }
+}

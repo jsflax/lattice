@@ -1,0 +1,234 @@
+diff --git a/Tests/CLatticeTestSQLite/shim.h b/Tests/CLatticeTestSQLite/shim.h
+index 1231d5e..09e54de 100644
+--- a/Tests/CLatticeTestSQLite/shim.h
++++ b/Tests/CLatticeTestSQLite/shim.h
+@@ -1,2 +1,6 @@
+ #pragma once
+ #include <sqlite3.h>
++
++#if defined(LATTICE_PERF_LIVE_PROFILE) && LATTICE_PERF_LIVE_PROFILE == 1
++#include <lattice/perf_live_profile.h>
++#endif
+diff --git a/Tests/LatticeTests/PerfRefinementBenchmarks.swift b/Tests/LatticeTests/PerfRefinementBenchmarks.swift
+index df5c5ec..de46cc2 100644
+--- a/Tests/LatticeTests/PerfRefinementBenchmarks.swift
++++ b/Tests/LatticeTests/PerfRefinementBenchmarks.swift
+@@ -65,6 +65,12 @@ private struct PerfRefinementValues: Codable, Equatable {
+ private struct PerfRefinementPhase: Codable {
+     let elapsedNS: UInt64
+     let sqlStatements: UInt64
++    #if LATTICE_PERF_LIVE_PROFILE
++    // Deliberately excluded from the frozen result's encoding. Bounded sidecars
++    // are serialized only after the entire sample and its correctness checks.
++    var profile: PerfLiveInterval? = nil
++    private enum CodingKeys: String, CodingKey { case elapsedNS, sqlStatements }
++    #endif
+ }
+ 
+ private struct PerfRefinementSample: Codable {
+@@ -164,11 +170,23 @@ struct PerfRefinementBenchmarks {
+ 
+     private func measure<T>(_ body: () throws -> T) rethrows -> (T, PerfRefinementPhase) {
+         let sqlBefore = Lattice.threadSQLStatementCount
++        #if LATTICE_PERF_LIVE_PROFILE
++        let profileBefore = PerfLiveBoundary()
++        #endif
+         let start = DispatchTime.now().uptimeNanoseconds
+         let result = try body()
+         let end = DispatchTime.now().uptimeNanoseconds
++        #if LATTICE_PERF_LIVE_PROFILE
++        let profileAfter = PerfLiveBoundary()
++        #endif
+         let sqlAfter = Lattice.threadSQLStatementCount
++        #if LATTICE_PERF_LIVE_PROFILE
++        var phase = PerfRefinementPhase(elapsedNS: end - start, sqlStatements: sqlAfter - sqlBefore)
++        phase.profile = PerfLiveInterval(before: profileBefore, after: profileAfter)
++        return (result, phase)
++        #else
+         return (result, .init(elapsedNS: end - start, sqlStatements: sqlAfter - sqlBefore))
++        #endif
+     }
+ 
+     private func seed(_ url: URL, ranks: [Int]) throws {
+@@ -452,6 +470,10 @@ struct PerfRefinementBenchmarks {
+         case "local": variants = ["local"]
+         default: throw PerfRefinementFailure.invalid("invalid LATTICE_PERF_VARIANTS")
+         }
++        #if LATTICE_PERF_LIVE_PROFILE
++        try require(variants == ["local", "attached"] && measured == 100 && warmups == 5,
++                    "diagnostic cut requires the exact frozen two-variant 5/100 workload")
++        #endif
+         let manifest = try PerfRefinementManifest(
+             updateRanks: Self.updateRanks, measuredSamples: measured, warmupSamples: warmups,
+             startedAt: ISO8601DateFormatter().string(from: Date()), runDirectory: root.path,
+@@ -489,10 +511,17 @@ struct PerfRefinementBenchmarks {
+             let masterChecksum = try validate(masters, updated: false, phase: .checkpointedMaster)
+             for iteration in 0..<(warmups + measured) {
+                 let work = variantDir.appendingPathComponent(String(format: "iteration-%04d", iteration), isDirectory: true)
++                #if LATTICE_PERF_LIVE_PROFILE
++                lattice_perf_live_reset(1)
++                #endif
+                 let sample = try runSample(directory: work, masters: masters, variant: variant,
+                                            iteration: iteration, warmup: iteration < warmups)
+                 try require(sample.beforeChecksum == masterChecksum, "reset changed fixture")
+                 samples.append(sample)
++                #if LATTICE_PERF_LIVE_PROFILE
++                try writeLiveProfile(sample, enabled: true, calibration: false,
++                                     to: variantDir.appendingPathComponent(String(format: "profile-%04d.json", iteration)))
++                #endif
+                 try encode(sample, to: variantDir.appendingPathComponent(String(format: "sample-%04d.json", iteration)))
+                 // Retain the first measured postimage and immutable before
+                 // masters. Failed iterations remain for diagnosis as well.
+@@ -501,7 +530,152 @@ struct PerfRefinementBenchmarks {
+         }
+         try encode(PerfRefinementResult(manifest: manifest, samples: samples),
+                    to: root.appendingPathComponent("result.json"))
++        #if LATTICE_PERF_LIVE_PROFILE
++        // Calibration follows ALL canonical local+attached iterations. Same
++        // synchronous bodies/oracles, fresh copies, fixed ABBA/BAAB order; no
++        // additional samples enter result.json or the frozen target math.
++        for variant in variants {
++            let variantDir = root.appendingPathComponent(variant, isDirectory: true)
++            let masterDir = variantDir.appendingPathComponent("master", isDirectory: true)
++            var masters = [masterDir.appendingPathComponent("main.sqlite")]
++            if variant == "attached" { masters.append(masterDir.appendingPathComponent("attached.sqlite")) }
++            let calibrationDir = variantDir.appendingPathComponent("profile-calibration", isDirectory: true)
++            try fm.createDirectory(at: calibrationDir, withIntermediateDirectories: false)
++            let before = try validate(masters, updated: false, phase: .checkpointedMaster)
++            for (index, enabled) in [false, true, true, false, true, false, false, true].enumerated() {
++                lattice_perf_live_reset(enabled ? 1 : 0)
++                let work = calibrationDir.appendingPathComponent(String(format: "iteration-%04d", index), isDirectory: true)
++                let sample = try runSample(directory: work, masters: masters, variant: variant,
++                                           iteration: index, warmup: false)
++                try require(sample.beforeChecksum == before, "calibration reset changed fixture")
++                try writeLiveProfile(sample, enabled: enabled, calibration: true,
++                                     to: calibrationDir.appendingPathComponent(String(format: "profile-%04d.json", index)))
++                try encode(sample, to: calibrationDir.appendingPathComponent(String(format: "sample-%04d.json", index)))
++                try fm.removeItem(at: work)
++            }
++        }
++        lattice_perf_live_reset(0)
++        #endif
+         print("LATTICE_PERF_REFINEMENT_COMPLETE \(root.appendingPathComponent("result.json").path)")
+         #endif
+     }
+ }
++
++#if LATTICE_PERF_LIVE_PROFILE
++// Plain fixed-size snapshots only inside measure(). The CPU interval brackets
++// the existing wall interval, including its two wall-clock reads; it is not an
++// instruction-aligned CPU subdivision. No suspended/async work is measured.
++private struct PerfLiveBoundary {
++    let cpuNS: UInt64
++    let cpuValid: Bool
++    let native: lattice_perf_live_snapshot
++    init() {
++        var cpu: UInt64 = 0
++        cpuValid = lattice_perf_thread_cpu_ns(&cpu) == 1
++        cpuNS = cpu
++        native = lattice_perf_live_read_snapshot()
++    }
++}
++private struct PerfLiveInterval {
++    let before: PerfLiveBoundary
++    let after: PerfLiveBoundary
++}
++private struct PerfLivePhaseRecord: Encodable {
++    let wallNS: UInt64
++    let threadCPUBracketingNS: UInt64
++    let sqlStatements: UInt64
++    let managedCalls: UInt64
++    let prepareCalls: UInt64
++    let bindNameCalls: UInt64
++    let stepCalls: UInt64
++    let extractCalls: UInt64
++    let finalizeCalls: UInt64
++    let rowReturns: UInt64
++    let prepareNS: UInt64
++    let bindNameNS: UInt64
++    let stepNS: UInt64
++    let extractNS: UInt64
++    let finalizeNS: UInt64
++}
++private struct PerfLiveSidecar: Encodable {
++    let schema = "lattice.live-scalar-profile/1"
++    let instrumented = true
++    let performanceTargetClaimed = false
++    let swiftConversionMeasured = false
++    let bridgeSQLConstructionMeasured = false
++    let nativeScope = "calling-thread query_managed_cell only; exclusive wall spans; no native CPU subdivision"
++    let variant: String
++    let iteration: Int
++    let warmup: Bool
++    let calibration: Bool
++    let nativeCountersEnabled: Bool
++    let readChecksum: String
++    let beforeChecksum: String
++    let afterChecksum: String
++    let phases: [String: PerfLivePhaseRecord]
++}
++private func writeLiveProfile(_ sample: PerfRefinementSample, enabled: Bool,
++                              calibration: Bool, to url: URL) throws {
++    func need(_ condition: Bool, _ reason: String) throws {
++        if !condition { throw PerfRefinementFailure.invalid("profile: " + reason) }
++    }
++    func delta(_ before: UInt64, _ after: UInt64) throws -> UInt64 {
++        try need(after >= before, "counter/clock decreased")
++        return after - before
++    }
++    var records: [String: PerfLivePhaseRecord] = [:]
++    for (name, phase) in sample.phases {
++        guard let profile = phase.profile else { throw PerfRefinementFailure.invalid("missing profile phase") }
++        let a = profile.before.native, b = profile.after.native
++        try need(profile.before.cpuValid && profile.after.cpuValid, "thread CPU clock failed")
++        try need(a.abi_version == 1 && b.abi_version == 1 && a.faults == 0 && b.faults == 0,
++                 "native ABI/clock/overflow/reentrant instrumentation fault")
++        try need(a.enabled == (enabled ? 1 : 0) && b.enabled == a.enabled, "counter mode changed")
++        let record = try PerfLivePhaseRecord(
++            wallNS: phase.elapsedNS,
++            threadCPUBracketingNS: delta(profile.before.cpuNS, profile.after.cpuNS),
++            sqlStatements: phase.sqlStatements,
++            managedCalls: delta(a.managed_calls, b.managed_calls),
++            prepareCalls: delta(a.prepare_calls, b.prepare_calls),
++            bindNameCalls: delta(a.bind_name_calls, b.bind_name_calls),
++            stepCalls: delta(a.step_calls, b.step_calls),
++            extractCalls: delta(a.extract_calls, b.extract_calls),
++            finalizeCalls: delta(a.finalize_calls, b.finalize_calls),
++            rowReturns: delta(a.row_returns, b.row_returns),
++            prepareNS: delta(a.prepare_ns, b.prepare_ns),
++            bindNameNS: delta(a.bind_name_ns, b.bind_name_ns),
++            stepNS: delta(a.step_ns, b.step_ns),
++            extractNS: delta(a.extract_ns, b.extract_ns),
++            finalizeNS: delta(a.finalize_ns, b.finalize_ns))
++        var accounted: UInt64 = 0
++        for duration in [record.prepareNS, record.bindNameNS, record.stepNS, record.extractNS, record.finalizeNS] {
++            let sum = accounted.addingReportingOverflow(duration)
++            try need(!sum.overflow, "duration sum overflow")
++            accounted = sum.partialValue
++        }
++        try need(accounted <= record.wallNS, "native exclusive spans exceed enclosing wall interval")
++        if !enabled {
++            try need(accounted == 0 && record.managedCalls == 0 && record.prepareCalls == 0 &&
++                     record.bindNameCalls == 0 && record.stepCalls == 0 && record.extractCalls == 0 &&
++                     record.finalizeCalls == 0 && record.rowReturns == 0, "disabled native counters changed")
++        }
++        if name == "read.live_scalars" || name == "read.warm_live_scalars" {
++            try need(record.sqlStatements == 600, "frozen six-property SQL count changed")
++            if enabled {
++                try need(record.managedCalls == 600 && record.prepareCalls == 600 && record.bindNameCalls == 600 &&
++                         record.stepCalls == 1200 && record.extractCalls == 600 && record.finalizeCalls == 600 &&
++                         record.rowReturns == 600, "managed-cell route/count changed")
++            }
++        }
++        records[name] = record
++    }
++    let sidecar = PerfLiveSidecar(variant: sample.variant, iteration: sample.iteration, warmup: sample.warmup,
++        calibration: calibration, nativeCountersEnabled: enabled, readChecksum: sample.readChecksum,
++        beforeChecksum: sample.beforeChecksum, afterChecksum: sample.afterChecksum, phases: records)
++    let encoder = JSONEncoder()
++    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
++    let bytes = try encoder.encode(sidecar)
++    try need(bytes.count <= 65_536, "sidecar exceeds 64 KiB")
++    try bytes.write(to: url, options: .atomic)
++}
++#endif

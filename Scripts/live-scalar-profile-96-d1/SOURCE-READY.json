@@ -1,0 +1,24 @@
+{
+  "coreCommit": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+  "executionAuthorized": false,
+  "historicalFullPrerequisitesAuthenticated": true,
+  "inputCount": 37,
+  "newCompilerOrRuntimePerformed": false,
+  "packetSealSHA256": "5721c5549776cf018be2800206e1ca17921866524554f1bb7e6419fa6f29964f",
+  "predecessorSourceReadySHA256": "cb7f4137bcb2d74959ef56eab7f712820750ee3a739e37b079db943952d53fde",
+  "profileSourceReadySHA256": "6e1c995b5e477ffbaa2f9ce994dd053689ccd12f87bd5454ebf1577127b58ca4",
+  "proofReviewFindingSHA256": "bc5a5e2d1215f79e44e403965b4911c80f48d0666b6639bf4fb12bb3321e1249",
+  "pureTests": 68,
+  "remaining": [
+    "Independent and root complete runner/proof source review",
+    "Reviewed workflow installation/enabling delta and admission receipt",
+    "Owner resource allocation before dispatch",
+    "Actual compile/import/header-dependency/clock/runtime gate; unsupported emitted shape stops first failure"
+  ],
+  "runtimeAbsent": true,
+  "schemaVersion": 1,
+  "sdkCommit": "96a5bf0256f81691a92d98cb8fe24b54e00de811",
+  "sequence": "one fresh Release profile build; one command with210canonical+16calibration; noA/A2",
+  "sourceOnly": true,
+  "workflowDisabled": true
+}

@@ -1,0 +1,55 @@
+{
+  "allowedCoreChanges": [
+    "Sources/LatticeCore/include/lattice/perf_live_profile.h",
+    "Sources/LatticeCore/src/db.cpp",
+    "Sources/LatticeCore/src/perf_live_profile.hpp"
+  ],
+  "allowedSDKChanges": [
+    "Tests/CLatticeTestSQLite/shim.h",
+    "Tests/LatticeTests/PerfRefinementBenchmarks.swift"
+  ],
+  "buildTimeoutSeconds": 5400,
+  "calibrationSamples": 16,
+  "candidateCore": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+  "candidateCoreTree": "5280333ecc94b8e7339010c9c8e70a30019f86b9",
+  "candidateSDK": "96a5bf0256f81691a92d98cb8fe24b54e00de811",
+  "candidateSDKTree": "466e724abeea3e01f0af8c5d7adde729628e4115",
+  "canonicalSamples": 210,
+  "finalizationReserveSeconds": 600,
+  "freeFloorBytes": 12884901888,
+  "harnessPath": "Tests/LatticeTests/PerfRefinementBenchmarks.swift",
+  "logCeilingBytes": 536870912,
+  "measuredSamples": 100,
+  "measurementTimeoutSeconds": 1200,
+  "overallSeconds": 18000,
+  "packetCeilingBytes": 32212254720,
+  "performanceTargetClaimed": false,
+  "physicalHostQualified": false,
+  "prerequisites": {
+    "core-cabi.json": "8022425a6ea0f1328952d8f3215ed979bd63fe0af9617ba3165781fc9326f21d",
+    "core-native.json": "818194894bbc78c2f72b327da098355d8c3bc587bd7903781b4f5561e6924688",
+    "core-parent.json": "467f12df2d65f9655d16d547d16c563cac116e07d8c2b615cbf7b9f309b94824",
+    "profile-parent-review.json": "2aecc5e47364b0b19cb8d428996414894a46caadd130afb34d2b1f55a2bd33c6",
+    "profile-peer-review.json": "f9721df032592ff5858a0e9dfeef88f8f690c12572ea60f95637419dfdd0e898",
+    "profile-source-delta.json": "49d2e4ae225951fc6e0acb66438eaa959ae3669ffd5b46b292b7f9e25ba463f4",
+    "profile-source-ready.json": "6e1c995b5e477ffbaa2f9ce994dd053689ccd12f87bd5454ebf1577127b58ca4",
+    "sdk-linux.json": "7949685a917b5113c66ad50eff7cdf5de67db895dacc7d2f17f6483468f05613",
+    "sdk-macos.json": "bf80267d8aee0588c402523bee376fbc130e89706b8f56c04125092030589618",
+    "sdk-parent.json": "8f51befbf2ae69715d123f895105618fed3131bf8486830e2d72ddde126c8c45"
+  },
+  "profileSourceReadySHA256": "6e1c995b5e477ffbaa2f9ce994dd053689ccd12f87bd5454ebf1577127b58ca4",
+  "reuse": {
+    "build_proof.py": "d527ba9d57fcae5bf91eae35bbb993e9d185fe13cfbb2aae8db34ebf34857720",
+    "frozen_binding.py": "3ce4e5ee92739b6a62f48d6fd19cab4d998cc21671019766007a17aa778b2a2f",
+    "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+    "perf_refinement_report.py": "aeb1d5994149d28badc6ddfa01d51c60ebed4ffb941f85d885d2d06c8669714f"
+  },
+  "schemaVersion": 1,
+  "scope": "diagnostic-profile-B-only",
+  "settlingSeconds": 60,
+  "variants": [
+    "local",
+    "attached"
+  ],
+  "warmups": 5
+}

@@ -1,0 +1,32 @@
+{
+  "acceptedLinuxDevelopmentLeg": true,
+  "archiveSHA256": "034b5b03abebef0894c60e40a0c966a9eb2a773a9999bc681adfbdbfecaa26d1",
+  "artifactMembersAuthenticated": 332,
+  "attempt": 1,
+  "cleanCommands": 159,
+  "coreCommit": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+  "fullTestLogSHA256": "bb4b91d6b9824e8bd9fa95acf700e4705e2eba08967eb99661489054b8155b3a",
+  "fullTestSummary": {
+    "XCTest": 2,
+    "individualPasses": 798,
+    "suites": 124,
+    "tests": 804
+  },
+  "job": 105858297726,
+  "limitations": [
+    "Combined exact-source parent assessment pending peer Linux audit.",
+    "No performance or release-graph qualification.",
+    "Workflow does not retain independent compiled-object/archive/test-binary custody."
+  ],
+  "noNewRuntimeOrDispatch": true,
+  "overallSDKPairAccepted": false,
+  "parentChecks": "Independent archive-member, source Git archive, command/log/resource/cleanup, result and full-test summary joins passed. Full named test/skip multiset, dependency graph and compiler action joins are assessed separately by peer.",
+  "resultSHA256": "ef41fb6e70af40f01ad916219dc0df62c97bcf7cbac8a903f9e816a887b3b381",
+  "reviewedUTC": "2026-09-19T07:32:56.277194+00:00",
+  "run": 35428388263,
+  "sdkCommit": "96a5bf0256f81691a92d98cb8fe24b54e00de811",
+  "sourceFiles": {
+    "core": 901,
+    "sdk": 253
+  }
+}

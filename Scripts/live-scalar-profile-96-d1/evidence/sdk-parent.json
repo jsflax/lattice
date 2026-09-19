@@ -1,0 +1,74 @@
+{
+  "accepted": true,
+  "artifactMembersAuthenticated": 664,
+  "boundEvidenceFilesRehashed": 35,
+  "cleanCommands": 318,
+  "completeGraphIdentities": 34,
+  "coreCommit": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+  "coreTree": "5280333ecc94b8e7339010c9c8e70a30019f86b9",
+  "historicalCauseProven": false,
+  "legs": {
+    "linux": {
+      "completePassNameMultisetPreserved": true,
+      "contendedCaseSeconds": 19.94,
+      "exactSkipMultisetPreserved": true,
+      "holderNormalExit0": true,
+      "job": 105858297726,
+      "nackMilliseconds": 4128,
+      "passLines": 798,
+      "skipMarkers": 6,
+      "tests": {
+        "seconds": 230.24,
+        "suites": 124,
+        "tests": 804
+      },
+      "xctest": {
+        "failures": 0,
+        "tests": 2
+      }
+    },
+    "macos": {
+      "completePassNameMultisetPreserved": true,
+      "contendedCaseSeconds": 20.811,
+      "exactSkipMultisetPreserved": true,
+      "holderNormalExit0": true,
+      "job": 105858297889,
+      "nackMilliseconds": 4091,
+      "passLines": 811,
+      "skipMarkers": 15,
+      "tests": {
+        "seconds": 120.01,
+        "suites": 127,
+        "tests": 826
+      },
+      "xctest": {
+        "failures": 0,
+        "tests": 2
+      }
+    }
+  },
+  "limitations": [
+    "One passing run does not establish the historical hang cause; waitUntilExit remains unbounded within the command cap.",
+    "Compiler source actions and logged outputs are authenticated; independent object/archive/test-binary bytes are not uploaded by this workflow.",
+    "Cleanup evidence covers launched process groups and reaped leaders, not arbitrary descendants escaping their process groups.",
+    "Nonfatal Vapor server-stop warning text remains in both test logs; no test/guard failure or forced-cleanup signal was observed.",
+    "No release graph, benchmark, speedup, WASM/browser, iOS, private observation or future candidate qualification is implied."
+  ],
+  "nonCorePinsUnchanged": 33,
+  "parentLinuxAssessmentSHA256": "7949685a917b5113c66ad50eff7cdf5de67db895dacc7d2f17f6483468f05613",
+  "parentMacOSAssessmentSHA256": "bf80267d8aee0588c402523bee376fbc130e89706b8f56c04125092030589618",
+  "peerAssessmentSHA256": "a50823b55fc011d6d14dc64848dcee3617ce51f63db77b0714b2a1de3dfd04a2",
+  "performanceQualified": false,
+  "releaseGraphAccepted": false,
+  "reviewedUTC": "2026-09-19T07:36:24.984408+00:00",
+  "run": 35428388263,
+  "runAttempt": 1,
+  "scope": "Exact EOF-only SDK development graph native correctness on macOS and Linux; no release or performance qualification",
+  "sdkCommit": "96a5bf0256f81691a92d98cb8fe24b54e00de811",
+  "sdkTree": "466e724abeea3e01f0af8c5d7adde729628e4115",
+  "sourceCounts": {
+    "core": 901,
+    "sdk": 253
+  },
+  "sourceDelta": "Only ExternalWriteLock EOF handler detachment in one test fixture; product, graph, test assertions/selection and guards unchanged. No diagnostic overlay."
+}

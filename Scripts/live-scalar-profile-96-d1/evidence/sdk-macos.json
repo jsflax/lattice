@@ -1,0 +1,35 @@
+{
+  "acceptedMacOSDevelopmentLeg": true,
+  "archiveSHA256": "6a527fa6e05d186f0de69cfd03ce6dcb6215b548dc17ae9962711bc5195f2664",
+  "artifactMembersAuthenticated": 332,
+  "attempt": 1,
+  "cleanCommands": 159,
+  "coreCommit": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+  "fullTestSummary": {
+    "XCTest": 2,
+    "existingSkips": 15,
+    "individualPasses": 811,
+    "suites": 127,
+    "tests": 826
+  },
+  "job": 105858297889,
+  "limitations": [
+    "Linux terminal evidence pending.",
+    "Historical hang cause remains unproven.",
+    "Nonfatal Vapor server-stop warnings are retained.",
+    "Workflow does not retain independent compiled-object/archive/test-binary custody.",
+    "No performance or release-graph qualification."
+  ],
+  "noNewRuntimeOrDispatch": true,
+  "overallSDKPairAccepted": false,
+  "parentChecks": "Independent archive-member, source Git archive, command/log/resource/cleanup, result and full-test summary joins passed. Peer retains full named test/skip multisets, dependency graph and actual compiler action joins.",
+  "peerAssessmentSHA256": "a7240575013b8c1da3121460f60361cbeb3b2e201465b3413a091e930fe63471",
+  "peerSwiftFrontendAuditSHA256": "84d0a5e1d2c1fdb76d982ed8f8bb79d62257bcd4d00003ae04de689e9b7e875c",
+  "reviewedUTC": "2026-09-19T07:27:40.026162+00:00",
+  "run": 35428388263,
+  "sdkCommit": "96a5bf0256f81691a92d98cb8fe24b54e00de811",
+  "sourceFiles": {
+    "core": 901,
+    "sdk": 253
+  }
+}

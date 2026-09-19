@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "reviewedAt": "2026-09-19T09:30:10.598138+00:00",
+  "kind": "parent-profiling-source-review",
+  "sourceAccepted": true,
+  "sourceOnly": true,
+  "sourceReadySHA256": "6e1c995b5e477ffbaa2f9ce994dd053689ccd12f87bd5454ebf1577127b58ca4",
+  "verifiedInputs": 9,
+  "verifiedPostimages": 5,
+  "verifiedExternalInputs": 10,
+  "exactSDKBase": "96a5bf0256f81691a92d98cb8fe24b54e00de811",
+  "exactCoreBase": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+  "review": [
+    "Read all five changed paths and actual nested runSample/measure boundaries. The original synchronous bodies, wall endpoints, SQL counters, selected-batch route and assertions stay in place.",
+    "Exclusive native spans surround prepare, binding/name selection, step, extraction and finalization. Fixed TLS counters do not allocate or log; faults reject a sample without changing query behavior. RAII deleter signature and finalize-before-settled ordering remain.",
+    "Phase CPU brackets the original wall interval; nested measurements add diagnostic overhead to outer phases. Counters remain calling-thread only.",
+    "210 canonical diagnostic samples and16 separate off/on calibration samples retain checksums/fresh copies. Sidecars are bounded and emitted after each complete sample. Calibration measures incremental native counter overhead only.",
+    "Default-off text restoration and17 pure checks are source/parser evidence, not compiled behavior."
+  ],
+  "limits": [
+    "Independent final source binding remains separate.",
+    "No compiler/import/link/clock/native runtime or diagnostic execution acceptance.",
+    "Swift/bridge conversion, SQL construction, commit and native subspan CPU remain unmeasured; residual time cannot be attributed to them.",
+    "Instrumented output cannot replace original A/A2/B p95 target results or establish a physical idle host.",
+    "Concrete inherited runner/build-proof adaptation and new owner admission remain required."
+  ],
+  "executionAdmitted": false
+}
