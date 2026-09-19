@@ -130,7 +130,18 @@ struct SyncPublicVisibilityTests {
     }
 
     private func directory(mode: String) throws -> URL {
-        let localdev = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("localdev", isDirectory: true)
+        // Match the runner's shell/Python HOME. In hosted Linux containers,
+        // Foundation's account home can differ from the configured HOME.
+        let home: URL
+        if let path = ProcessInfo.processInfo.environment["HOME"] {
+            guard path.hasPrefix("/") else {
+                throw SyncVisibilityFailure.invalid("HOME must be an absolute directory")
+            }
+            home = URL(fileURLWithPath: path, isDirectory: true)
+        } else {
+            home = FileManager.default.homeDirectoryForCurrentUser
+        }
+        let localdev = home.appendingPathComponent("localdev", isDirectory: true)
             .standardizedFileURL.resolvingSymlinksInPath()
         let raw: URL
         if let path = ProcessInfo.processInfo.environment["LATTICE_SYNC_VISIBILITY_RUN_DIR"] {
@@ -145,8 +156,11 @@ struct SyncPublicVisibilityTests {
             raw = localdev.appendingPathComponent("lattice-sync-visibility-runs/smoke-\(UUID().uuidString)", isDirectory: true)
         }
         let target = raw.standardizedFileURL.resolvingSymlinksInPath()
-        guard target.path.hasPrefix(localdev.path + "/"), !FileManager.default.fileExists(atPath: target.path) else {
-            throw SyncVisibilityFailure.invalid("evidence directory must be new and under ~/localdev")
+        guard target.path.hasPrefix(localdev.path + "/") else {
+            throw SyncVisibilityFailure.invalid("evidence directory must be under the configured HOME/localdev")
+        }
+        guard !FileManager.default.fileExists(atPath: target.path) else {
+            throw SyncVisibilityFailure.invalid("evidence directory must be new")
         }
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
         return target
