@@ -1,0 +1,57 @@
+{
+  "scope": "Read-only comparison to previously authenticated failed-run artifact and extracted command log; no compiler execution.",
+  "checks": {
+    "Lattice.d": {
+      "sha256": "81eaee83b82dba3f3bf286c1b65f8c98da336f1de555a74842e2431207b91828",
+      "bytes": 1869918,
+      "matchesAuditPath": "/Users/jason/localdev/lattice-perf-refinement-20260917/dependency-release/receipts/live-scalar-profile-3882cb0/artifact-audit-001/extracted/artifact/candidate/scratch/arm64-apple-macosx/release/Lattice.build/Lattice.d"
+    },
+    "Lattice-output-file-map.json": {
+      "sha256": "a37fe8a4646f79c3063627aef57459181ee94b100ec21037e54504dfa3cb5451",
+      "bytes": 57134,
+      "matchesAuditPath": "/Users/jason/localdev/lattice-perf-refinement-20260917/dependency-release/receipts/live-scalar-profile-3882cb0/artifact-audit-001/extracted/artifact/receipts/swift-output-maps/Lattice-output-file-map.json"
+    },
+    "LatticeTests.d": {
+      "sha256": "f0f2c8964542162544c204627b04a1097ad27463ca1ce2d24de2f9d675fc0c02",
+      "bytes": 7180184,
+      "matchesAuditPath": "/Users/jason/localdev/lattice-perf-refinement-20260917/dependency-release/receipts/live-scalar-profile-3882cb0/artifact-audit-001/extracted/artifact/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeTests.d"
+    },
+    "LatticeTests-output-file-map.json": {
+      "sha256": "659cc1d5c9c77ef803cc51218e83ac0f975371de0239b2381e022a707d5f9536",
+      "bytes": 106971,
+      "matchesAuditPath": "/Users/jason/localdev/lattice-perf-refinement-20260917/dependency-release/receipts/live-scalar-profile-3882cb0/artifact-audit-001/extracted/artifact/receipts/swift-output-maps/LatticeTests-output-file-map.json"
+    },
+    "swift-drivers.json": {
+      "sha256": "d3988393eff12460cb9ffc19d82ddd28505b1d546eb128af838aac0c9a1c8e21",
+      "matchesExactObjectProducingArgvInBuildLog": "/Users/jason/localdev/lattice-perf-refinement-20260917/dependency-release/receipts/live-scalar-profile-3882cb0/artifact-audit-001/extracted/artifact/receipts/profile-build-release-disabled-benchmark.log",
+      "logSHA256": "f6b124ef93c633a80463fa5ba5cf3d8b67c774e63c173da7c24681242e0c547b",
+      "modules": [
+        "Lattice",
+        "LatticeTests"
+      ]
+    },
+    "swift-frontends.json": {
+      "sha256": "ed45b4e5a6c9b5de6ebe82aea3339d877ff947915bdc65661abb7328aa178def",
+      "matchesExactObjectProducingArgvInBuildLog": "/Users/jason/localdev/lattice-perf-refinement-20260917/dependency-release/receipts/live-scalar-profile-3882cb0/artifact-audit-001/extracted/artifact/receipts/profile-build-release-disabled-benchmark.log",
+      "logSHA256": "f6b124ef93c633a80463fa5ba5cf3d8b67c774e63c173da7c24681242e0c547b",
+      "modules": [
+        "LatticeTests"
+      ]
+    },
+    "fixtures/module.modulemap": {
+      "sha256": "9714c229352fd5582451c8a72dd353e6593e97a3be3144537cacc3c2e7fd7c01",
+      "bytes": 91,
+      "zipMember": "candidate/lattice/Tests/CLatticeTestSQLite/module.modulemap"
+    },
+    "fixtures/shim.h": {
+      "sha256": "ac46d19b7e3763b714eb6f23a34d49790499d473fd1c1c3145ac8bb1b27ed008",
+      "bytes": 154,
+      "zipMember": "candidate/lattice/Tests/CLatticeTestSQLite/shim.h"
+    },
+    "fixtures/perf_live_profile.h": {
+      "sha256": "e32176a4147f20acd8d74eed45c6aaf1a23d65288decaf2574f557d293799870",
+      "bytes": 1079,
+      "zipMember": "candidate/LatticeCore/Sources/LatticeCore/include/lattice/perf_live_profile.h"
+    }
+  }
+}

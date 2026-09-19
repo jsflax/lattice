@@ -1,11 +1,10 @@
 """Strict supplement to the unchanged frozen build proof; no subprocesses.
 
-The retained build establishes the command and output-map dependency paths, not
-the emitted .d bytes. This parser accepts only one make rule (possibly continued,
-with multiple targets); repeated object/module/doc rules are intentionally an
-unqualified, fail-closed shape limit until actual emitted evidence is available.
-A future build must actually emit the shim and profile C header in LatticeTests.d.
-Their presence on disk is not importer evidence. This module never repairs a .d.
+The retained build establishes command/output-map dependency paths. Native input
+accepts one bounded make rule. Swift input accepts the observed WMO multi-rule
+shape only when every authenticated object/module output is present exactly once
+and each rule contains the required source/header inputs. No dependency bytes are
+repaired, and disk presence alone never earns importer evidence.
 """
 from pathlib import Path
 import hashlib
@@ -123,33 +122,171 @@ def object_mode(argv, *, swift, require_compile=True, frontend=False):
                 'contradictory compile and module-only frontend modes')
 
 
-def read_dependencies(path, *, scratch, cwd, allowed, allowed_targets):
-    """SDK006's continuation/shlex technique, narrowed to one bounded rule."""
+DEPENDENCY_BYTE_CAP = 16 * 1024 * 1024
+NATIVE_DEPENDENCY_BYTE_CAP = 4 * 1024 * 1024
+DEPENDENCY_RULE_CAP = 1024
+DEPENDENCY_NAMES_PER_RULE = 32768
+
+
+def parse_dependency_rules(raw, *, multi_rule=False):
+    """Parse only observed make syntax, bounded before decoding/tokenization."""
+    byte_cap = DEPENDENCY_BYTE_CAP if multi_rule else NATIVE_DEPENDENCY_BYTE_CAP
+    require(len(raw) <= byte_cap, 'dependency byte cap')
+    text = raw.decode().replace('\\\r\n', ' ').replace('\\\n', ' ')
+    require(not any(x in text for x in ('\x00', '$', '#', ';', '|', '\r')), 'unsupported dependency syntax')
+    lines = [line for line in text.splitlines() if line.strip()]
+    require(0 < len(lines) <= (DEPENDENCY_RULE_CAP if multi_rule else 1)
+            and all(line.count(':') == 1 for line in lines), 'unknown dependency rule form')
+    rules, inputs_cache = [], {}
+    for line in lines:
+        target_text, dependency_text = line.split(':', 1)
+        targets = shlex.split(target_text)
+        # WMO repeats identical input lists for every object/module output.
+        # Parse each distinct list once; all raw bytes remain hash-bound.
+        if dependency_text not in inputs_cache:
+            names = shlex.split(dependency_text)
+            require(names and len(names) <= DEPENDENCY_NAMES_PER_RULE, 'empty or oversized dependency rule')
+            inputs_cache[dependency_text] = names
+        require(targets and len(targets) <= DEPENDENCY_RULE_CAP, 'empty or oversized dependency targets')
+        rules.append((targets, inputs_cache[dependency_text]))
+    return rules
+
+
+def read_dependencies(path, *, scratch, cwd, allowed, allowed_targets,
+                      multi_rule=False, required_inputs=()):
     path = Path(path)
     require(path.is_absolute(), 'dependency path must be absolute')
     resolved = path.resolve(strict=True)
     require(path == resolved, 'dependency output must not use a symlink alias')
     path = resolved
     require(path.is_relative_to(scratch) and path.is_file(), 'dependency file not owned')
-    require(path.stat().st_size <= 4 * 1024 * 1024, 'dependency byte cap')
-    raw = path.read_bytes()
-    text = raw.decode().replace('\\\r\n', ' ').replace('\\\n', ' ')
-    require(not any(x in text for x in ('\x00', '$', '#', ';', '|', '\r')), 'unsupported dependency syntax')
-    lines = [line for line in text.splitlines() if line.strip()]
-    require(len(lines) == 1 and lines[0].count(':') == 1, 'unknown dependency rule form')
-    target_text, dependency_text = lines[0].split(':', 1)
-    targets, names = shlex.split(target_text), shlex.split(dependency_text)
-    require(targets and names and len(names) <= 32768, 'empty or oversized dependency rule')
-    normalized_targets = {str((cwd / x).resolve()) if x != 'dependencies' else x for x in targets}
-    require(normalized_targets <= allowed_targets, 'unexpected dependency target')
-    files = {}
-    for name in names:
-        file = (cwd / name).resolve(strict=True)
-        require(file.is_file() and any(file.is_relative_to(root) for root in allowed),
-                'dependency outside authenticated roots: ' + name)
-        files[str(file)] = guard.digest(file)
+    byte_cap = DEPENDENCY_BYTE_CAP if multi_rule else NATIVE_DEPENDENCY_BYTE_CAP
+    require(path.stat().st_size <= byte_cap, 'dependency byte cap')
+    with path.open('rb') as source:
+        raw = source.read(byte_cap + 1)
+    rules = parse_dependency_rules(raw, multi_rule=multi_rule)
+    files, target_files, by_target, normalized_cache = {}, {}, {}, {}
+    for targets, names in rules:
+        normalized_targets = [str((cwd / x).resolve()) if x != 'dependencies' else x for x in targets]
+        require(set(normalized_targets) <= allowed_targets, 'unexpected dependency target')
+        require(len(normalized_targets) == len(set(normalized_targets))
+                and not set(normalized_targets).intersection(by_target), 'duplicate dependency target')
+        normalized_inputs = set()
+        for name in names:
+            if name not in normalized_cache:
+                file = (cwd / name).resolve(strict=True)
+                require(file.is_file() and any(file.is_relative_to(root) for root in allowed),
+                        'dependency outside authenticated roots: ' + name)
+                normalized_cache[name] = str(file)
+                if str(file) not in files:
+                    files[str(file)] = guard.digest(file)
+            normalized_inputs.add(normalized_cache[name])
+        require(set(required_inputs) <= normalized_inputs, 'Swift dependency missing required per-rule source/header inputs')
+        for target in normalized_targets:
+            by_target[target] = sorted(normalized_inputs)
+            if target != 'dependencies':
+                output = Path(target)
+                require(output.is_relative_to(scratch) and output.is_file(), 'dependency target file absent or unowned')
+                target_files[target] = guard.digest(output)
+    if multi_rule:
+        require(set(by_target) == allowed_targets, 'missing dependency target')
     return {'path': str(path), 'SHA256': hashlib.sha256(raw).hexdigest(),
-            'targets': sorted(normalized_targets), 'files': files}
+            'targets': sorted(by_target), 'rules': by_target, 'files': files,
+            'targetFiles': target_files}
+
+
+def swift_dependency_targets(mapping, argv, scratch):
+    # The supported full-source frontend emits the per-source objects already
+    # joined by make(). SwiftPM also lists unused partial modules and a global
+    # object slot; they are not actual frontend outputs and earn no target credit.
+    target_paths = {str(Path(outputs['object']).resolve()) for source, outputs in mapping.items()
+                    if source and 'object' in outputs}
+    for flag in ('-emit-module-path', '-emit-objc-header-path'):
+        if flag in argv:
+            output = Path(one(argv, flag)).resolve()
+            target_paths.add(str(output))
+            if flag == '-emit-module-path':
+                require(output.suffix == '.swiftmodule', 'unexpected Swift module output suffix')
+                target_paths.update(str(output.with_suffix(suffix)) for suffix in ('.swiftdoc', '.swiftsourceinfo'))
+    require(target_paths and all(Path(x).is_relative_to(scratch) for x in target_paths), 'unowned Swift dependency targets')
+    return target_paths
+
+
+MODULE_MAP_RELATIVE = 'Tests/CLatticeTestSQLite/module.modulemap'
+MODULE_MAP_BYTES = (b'module CLatticeTestSQLite [system] {\n'
+                    b'    header "shim.h"\n    link "sqlite3"\n    export *\n}\n')
+SHIM_BYTES = (b'#pragma once\n#include <sqlite3.h>\n\n'
+              b'#if defined(LATTICE_PERF_LIVE_PROFILE) && LATTICE_PERF_LIVE_PROFILE == 1\n'
+              b'#include <lattice/perf_live_profile.h>\n#endif\n')
+
+
+def importer_header_chain(driver, frontend, sdk, core, scratch, dependencies, sources):
+    """Source/configuration inference; not emitted transitive-header/PCM proof."""
+    module_map, shim, header = sdk / MODULE_MAP_RELATIVE, sdk / SDK_PATHS[0], core / CORE_PATHS[2]
+    require(module_map.read_bytes() == MODULE_MAP_BYTES, 'unexpected profile module-map declaration')
+    require(shim.read_bytes() == SHIM_BYTES, 'unexpected profile shim include chain')
+    chain_files = {str(path): guard.digest(path) for path in (module_map, shim, header)}
+    require(dependencies['files'].get(str(module_map)) == chain_files[str(module_map)],
+            'Swift dependency missing exact profile module map')
+    require(all(str(module_map) in names for names in dependencies['rules'].values()),
+            'Swift dependency missing profile module map in a target rule')
+    require(all(chain_files[str(path)] == sources[str(path)] for path in (shim, header)),
+            'importer chain source postimage mismatch')
+    expected_include = core / 'Sources/LatticeCore/include'
+    expected_cache = scratch / 'arm64-apple-macosx/release/ModuleCache'
+    require(expected_cache.is_dir() and expected_cache.resolve() == expected_cache,
+            'owned importer module cache absent or aliased')
+    contexts = {}
+    for label, argv in (('driver', driver), ('objectFrontend', frontend)):
+        checked_flags(argv, swift=True)
+        language, importer = swift_channels(argv)
+        selected_map = '-fmodule-map-file=' + str(module_map)
+        require(importer.count(selected_map) == 1
+                and all('CLatticeTestSQLite' not in arg or arg == selected_map for arg in importer),
+                'profile importer module-map selection differs')
+        require(not any(arg.startswith(('-fmodule-file', '-fprebuilt-module-path', '-fmodules-cache-path',
+                                        '-fmodules-user-build-path', '-ivfsoverlay', '-ivfsstatcache', '-include', '-imacros', '-Wp,',
+                                        '-iprefix', '-iwithprefix', '-iwithsysroot', '-index-header-map',
+                                        '--include-directory', '--sysroot', '-imsvc'))
+                        or arg == '-Xclang' for arg in importer),
+                'importer VFS/prebuilt/header/cache override unsupported')
+        require(not any(arg.startswith(('-vfsoverlay', '-ivfsoverlay', '-explicit-swift-module-map-file',
+                                        '-clang-scanner-module-cache-path', '-module-cache-path=')) for arg in language),
+                'Swift VFS/prebuilt/cache override unsupported')
+        def include_roots(arguments):
+            roots, index = [], 0
+            while index < len(arguments):
+                arg = arguments[index]
+                if arg == '-I':
+                    require(index + 1 < len(arguments), 'missing importer include directory')
+                    roots.append(Path(arguments[index + 1])); index += 2
+                else:
+                    if arg.startswith('-I') and len(arg) > 2: roots.append(Path(arg[2:]))
+                    index += 1
+            return roots
+        clang_includes = include_roots(importer)
+        swift_includes = include_roots(language)
+        require(expected_include in clang_includes, 'profile importer Core include root absent')
+        includes = swift_includes + clang_includes
+        require(all(directory.is_absolute() and directory.is_dir() for directory in includes),
+                'non-directory or relative importer include root unsupported')
+        # Swift search roots also participate in importer lookup. Refuse any
+        # alternate profile header in either channel rather than infer their
+        # cross-channel search precedence.
+        for directory in includes:
+            candidate = directory / 'lattice/perf_live_profile.h'
+            if candidate.exists():
+                require(candidate.resolve() == header, 'profile importer header shadowed')
+        cache = Path(one(language, '-module-cache-path'))
+        require(cache == expected_cache, 'profile importer cache differs from fresh owned scratch')
+        contexts[label] = {'moduleMapArgument': selected_map, 'CoreIncludeRoot': str(expected_include),
+                           'moduleCachePath': str(cache), 'importerArguments': importer,
+                           'ordinarySwiftIncludeRoots': [str(path) for path in swift_includes]}
+    return {'kind': 'authenticated module-map/header-chain inference', 'files': chain_files,
+            'contexts': contexts, 'directSwiftModuleMapDependency': True,
+            'directSwiftTransitiveHeaderProofClaimed': False, 'pcmCustody': False,
+            'freshnessBasis': 'runner creates this scratch root empty before resolution/build; exact driver/frontend cache path is inside it',
+            'requiresRuntimeCounterValidation': True, 'runtimeCounterValidationPerformed': False}
 
 
 def log_commands(log):
@@ -258,7 +395,7 @@ def make(base_proof, log, sdk, core, scratch, postimages, retained_dir):
 
     modules = base_proof['swiftModules']
     require(set(modules) == {'Lattice', 'LatticeTests'}, 'Swift module coverage')
-    swift_expanded = {}
+    swift_expanded, swift_compiled = {}, {}
     for module, item in modules.items():
         expanded = action(item['argv'], module + ' driver', swift=True)
         swift_expanded[module] = expanded
@@ -288,6 +425,7 @@ def make(base_proof, log, sdk, core, scratch, postimages, retained_dir):
                 require('-primary-file' not in frontend and consumed == set(item['sources'])
                         and outputs == set(item['objects']), 'frontend source/object set differs')
         require(len(compiled) == 1, 'no unique actual object-producing Swift frontend')
+        swift_compiled[module] = build_proof.native_arguments(compiled[0]['argv'], scratch)[0]
         if item['loggedFrontend'] is not None:
             require(item['loggedFrontend'] in frontends, 'base frontend not in actual log')
         drivers = [r['argv'] for r in records if Path(r['argv'][0]).name == 'swiftc'
@@ -313,17 +451,13 @@ def make(base_proof, log, sdk, core, scratch, postimages, retained_dir):
     mapping = json.loads(Path(tests['outputMap']).read_text())
     require('' in mapping and 'dependencies' in mapping[''], 'global LatticeTests dependency output absent')
     require('-emit-dependencies' in swift_expanded['LatticeTests'], 'driver did not request dependencies')
-    target_paths = {str(Path(v).resolve()) for outputs in mapping.values() for k, v in outputs.items()
-                    if k in ('object', 'swiftmodule')}
-    for flag in ('-emit-module-path', '-emit-objc-header-path'):
-        if flag in swift_expanded['LatticeTests']:
-            target_paths.add(str(Path(one(swift_expanded['LatticeTests'], flag)).resolve()))
-    require(target_paths and all(Path(x).is_relative_to(scratch) for x in target_paths), 'unowned Swift dependency targets')
+    target_paths = swift_dependency_targets(mapping, swift_expanded['LatticeTests'], scratch)
     swift_dep = read_dependencies(mapping['']['dependencies'], scratch=scratch, cwd=sdk,
-        allowed=roots, allowed_targets=target_paths)
+        allowed=roots, allowed_targets=target_paths, multi_rule=True,
+        required_inputs=set(tests['sources']) | {str(sdk / MODULE_MAP_RELATIVE)})
     harness = str(sdk / SDK_PATHS[1])
-    require({str(sdk / p) for p in SDK_PATHS} | {str(core / CORE_PATHS[2])} <= set(swift_dep['files']),
-            'Swift dependency missing shim/header/harness')
+    importer_chain = importer_header_chain(swift_expanded['LatticeTests'], swift_compiled['LatticeTests'],
+                                           sdk, core, scratch, swift_dep, sources)
     require(tests['sources'].get(harness) == sources[harness], 'harness source proof differs')
     require(harness in mapping and 'object' in mapping[harness], 'harness named object absent')
     harness_object = str(Path(mapping[harness]['object']).resolve())
@@ -343,8 +477,13 @@ def make(base_proof, log, sdk, core, scratch, postimages, retained_dir):
     retained_dir.mkdir(parents=True, exist_ok=False)
     for label, dep in (('native', native_dep), ('swift', swift_dep)):
         retained = retained_dir / (label + '.d')
+        cap = NATIVE_DEPENDENCY_BYTE_CAP if label == 'native' else DEPENDENCY_BYTE_CAP
+        with Path(dep['path']).open('rb') as source:
+            raw = source.read(cap + 1)
+        require(len(raw) <= cap, 'dependency byte cap while retaining')
+        require(hashlib.sha256(raw).hexdigest() == dep['SHA256'], 'dependency changed while retaining')
         with retained.open('xb') as out:
-            out.write(Path(dep['path']).read_bytes())
+            out.write(raw)
         require(guard.digest(retained) == dep['SHA256'], 'dependency changed while retaining')
         dep['retainedPath'] = str(retained)
     base_path = retained_dir / 'base-proof.json'
@@ -357,6 +496,7 @@ def make(base_proof, log, sdk, core, scratch, postimages, retained_dir):
         'sources': sources, 'tools': tools, 'responseFiles': responses,
         'authenticatedDependencyRoots': sorted(str(x) for x in roots), 'actions': actions,
         'dependencies': {'native': native_dep, 'swift': swift_dep},
+        'importerHeaderChain': importer_chain,
         'objectJoin': {'dbObject': native[db]['object'], 'harnessSource': harness,
                        'harnessObject': harness_object, 'binary': base_proof['binary']},
         'stockBuildFingerprintCredit': False, 'performanceGoalCredit': False}
@@ -378,8 +518,15 @@ def verify(supplement):
     for name, record in supplement['tools'].items():
         path = Path(name).resolve(strict=True)
         require(str(path) == record['resolvedPath'] and guard.digest(path) == record['SHA256'], 'tool custody changed')
+    chain = supplement['importerHeaderChain']
+    require(chain['directSwiftModuleMapDependency'] and not chain['directSwiftTransitiveHeaderProofClaimed']
+            and not chain['pcmCustody'], 'invalid importer inference scope')
+    for name, expected in chain['files'].items():
+        require(guard.digest(Path(name)) == expected, 'importer header-chain custody changed: ' + name)
     for record in supplement['dependencies'].values():
         for field in ('path', 'retainedPath'):
             require(guard.digest(Path(record[field])) == record['SHA256'], 'dependency custody changed')
         for name, expected in record['files'].items():
             require(guard.digest(Path(name)) == expected, 'dependency input custody changed: ' + name)
+        for name, expected in record['targetFiles'].items():
+            require(guard.digest(Path(name)) == expected, 'dependency target custody changed: ' + name)

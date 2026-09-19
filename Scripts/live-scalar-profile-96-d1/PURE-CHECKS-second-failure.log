@@ -1,0 +1,14 @@
+..............................................................................F.....
+======================================================================
+FAIL: test_saved_actual_swift_rules_match_authenticated_output_maps (test_dependency_regressions.ActualDependencySyntaxTests.test_saved_actual_swift_rules_match_authenticated_output_maps) (module='LatticeTests')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/live-scalar-profile-hosted-96-d1-003/test_dependency_regressions.py", line 42, in test_saved_actual_swift_rules_match_authenticated_output_maps
+    self.assertTrue(any(x.endswith('/Tests/CLatticeTestSQLite/shim.h') for x in inputs))
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+----------------------------------------------------------------------
+Ran 84 tests in 0.982s
+
+FAILED (failures=1)

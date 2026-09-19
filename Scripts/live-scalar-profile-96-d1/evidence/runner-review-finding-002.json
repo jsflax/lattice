@@ -1,0 +1,19 @@
+{
+  "finding": "PROFILE003-HEADER-MAP-001",
+  "createdUTC": "2026-09-19T11:04:46.973905+00:00",
+  "blocking": true,
+  "sourceSHA256": "f416c1206756f2c73642dbe18d3dfba7abbb35a6155c462e0c2f71eec56c7116",
+  "supersedesNarrativeIn": {
+    "path": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/live-scalar-profile-hosted-96-d1-003-review/FINDING-001.json",
+    "sha256": "71b79bf30c35a0a91d74236d17169c3de321a925fde8e8eaeeec73946ab4f1d6",
+    "reason": "Author added VFS and cache refusals concurrently with the probe; those three cases were correctly rejected, contrary to the broad prewritten problem sentence. The saved probe outcomes are authoritative."
+  },
+  "confirmedCase": {
+    "case": "header_map_include",
+    "incorrectlyAccepted": true,
+    "inferenceRecorded": "authenticated module-map/header-chain inference"
+  },
+  "problem": "An earlier importer -I regular .hmap file was accepted. The inferred chain tests physical directory/header existence, which does not account for header-map lookup.",
+  "requiredCorrection": "Reject non-directory/header-map -I search entries and unsupported alternate header lookup mechanisms before inferring exact physical header selection. Preserve exact actual-run arguments and bounded pure regression coverage.",
+  "scope": "Pure existing fixture only, no compiler/native/database/network execution."
+}

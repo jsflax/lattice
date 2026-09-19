@@ -1,0 +1,31 @@
+{
+  "finding": "PROFILE003-IMPORTER-OVERRIDES-001",
+  "recordedUTC": "2026-09-19T11:03:45.156802+00:00",
+  "sourceSHA256": "f416c1206756f2c73642dbe18d3dfba7abbb35a6155c462e0c2f71eec56c7116",
+  "scope": "Pure existing synthetic fixture; no compiler or native execution. Unsealed draft only.",
+  "blocking": true,
+  "cases": [
+    {
+      "case": "importer_vfs_overlay",
+      "incorrectlyAccepted": false,
+      "error": "importer VFS/prebuilt/header/cache override unsupported"
+    },
+    {
+      "case": "swift_vfs_overlay",
+      "incorrectlyAccepted": false,
+      "error": "Swift VFS/prebuilt/cache override unsupported"
+    },
+    {
+      "case": "header_map_include",
+      "incorrectlyAccepted": true,
+      "inferenceRecorded": "authenticated module-map/header-chain inference"
+    },
+    {
+      "case": "importer_foreign_cache",
+      "incorrectlyAccepted": false,
+      "error": "importer VFS/prebuilt/header/cache override unsupported"
+    }
+  ],
+  "problem": "The inferred chain assumes ordinary physical header lookup and the Swift-selected fresh cache, but currently accepts VFS redirection options, an earlier -I regular header-map file and a conflicting Clang module-cache path. Those options are not authenticated by the source-chain check.",
+  "requestedCorrection": "Fail closed on unsupported importer/Swift VFS, prebuilt/module-cache override and header-map/alternate include mechanisms; preserve actual recorded flags, allow only checked search directories for the inferred header, and add bounded pure regressions. Do not add compiler commands or weaken the declared inference boundary."
+}

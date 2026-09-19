@@ -1,0 +1,18 @@
+{
+  "reviewedUTC": "2026-09-19T10:54:48.558239+00:00",
+  "reviewer": "root",
+  "acceptedFailureEvidence": true,
+  "independentAssessmentSHA256": "ec64432a7e3a820e534dad1f88f3be5cff0865f0c00b11e8cbc39f901c4cc49d",
+  "artifactSHA256": "d0477819fcdd8c100f305e7273ff12e0b268cafe730e927d99447968dbe4525c",
+  "evidenceFilesRehashed": 15,
+  "extractedFilesRehashed": 248,
+  "commandReceiptsAndLogsAuthenticated": 93,
+  "buildSuccess": true,
+  "profileMeasurementsRun": 0,
+  "primaryFailure": "Qualification dependency parser 4MiB bound rejected 7180184-byte Swift WMO dependency file; its singleton-rule assumption also conflicts with the retained124-rule file.",
+  "secondaryFailure": "Final compiler-custody check indexed the absent profile supplement.",
+  "runtimeProfileAccepted": false,
+  "performanceClaimed": false,
+  "retryAuthorized": false,
+  "note": "Successful compiler command and retained object bytes do not establish completed source-to-binary proof; original run remains failed."
+}

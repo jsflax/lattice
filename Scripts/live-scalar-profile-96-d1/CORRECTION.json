@@ -1,0 +1,26 @@
+{
+  "compilerNativeDatabaseNetworkLaunchPerformed": false,
+  "corrections": [
+    "Swift bounded dependency read increased from4MiB to16MiB for observed7180184bytes; native remains4MiB.",
+    "Observed multiple target rules are authenticated against all concrete frontend objects and driver module outputs; source/module-map inputs required in every rule.",
+    "Importer transitive headers are bound by an explicitly inferred sealed source/configuration chain rather than falsely claiming direct emitted header/PCM dependency evidence.",
+    "Base compiler proof is retained before supplemental proof construction and independently verified when supplement is absent."
+  ],
+  "createdUTC": "2026-09-19T11:11:02.169293+00:00",
+  "failedRun": 35436821175,
+  "failedRunDisposition": "Preserved failed; no measurements or retrospective acceptance",
+  "predecessor": "live-scalar-profile-hosted-96-d1-002",
+  "rootAcceptedContractSHA256": "af9d64bd7b64f7a958bf1157991268883782d24745aeae9465460fca87beff2d",
+  "runtimeQualified": false,
+  "sourceOnlyFindingsResolved": [
+    "PROFILE003-HEADER-MAP-001: reject non-directory -I roots including header maps",
+    "Ordinary Swift -I and -Xcc -I channels both checked for non-directories and conflicting headers without assuming cross-channel precedence"
+  ],
+  "unchanged": [
+    "product sources and five diagnostic overlays",
+    "actual object-producing modes/target/source/object/link checks",
+    "SDK96/Core d1 inputs and historical prerequisites",
+    "all command arguments, sample counts/order, analyzer and workflow",
+    "process/resource/time guards and first-failure/no-retry policy"
+  ]
+}

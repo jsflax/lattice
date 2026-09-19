@@ -1,0 +1,252 @@
+{
+  "schema": "lattice.failed-profile-artifact-assessment/1",
+  "reviewer": "sdk_composition_review",
+  "reviewedUTC": "2026-09-19T10:53:17.889878+00:00",
+  "verdict": "CONFIRMED_PROOF_TOOL_FAILURE_BEFORE_MEASUREMENT",
+  "acceptedFailureEvidence": true,
+  "runtimeProfileAccepted": false,
+  "performanceTargetClaimed": false,
+  "run": {
+    "id": 35436821175,
+    "attempt": 1,
+    "job": 105880793718,
+    "conclusion": "failure",
+    "workflowCommit": "3882cb08df988e07c0ad265d0e56c4d49688b3dc",
+    "workflowPath": ".github/workflows/release-benchmark.yml",
+    "event": "workflow_dispatch",
+    "url": "https://github.com/jsflax/lattice/actions/runs/35436821175"
+  },
+  "source": {
+    "sdk": "96a5bf0256f81691a92d98cb8fe24b54e00de811",
+    "core": "d1e06f4b74ffc76410a9e59f062117c160e191b6",
+    "packetSealSHA256": "5721c5549776cf018be2800206e1ca17921866524554f1bb7e6419fa6f29964f",
+    "sealedToolInputsRehashed": 37,
+    "note": "The sealed diagnostic overlays and manifests were authenticated; this failure audit does not convert source custody declarations into a completed compiler proof."
+  },
+  "artifact": {
+    "id": 10582672709,
+    "name": "live-scalar-profile-96-d1-attempt-1",
+    "bytes": 254574233,
+    "sha256": "d0477819fcdd8c100f305e7273ff12e0b268cafe730e927d99447968dbe4525c",
+    "safeMembers": 731,
+    "expandedBytes": 1159870699,
+    "downloadedOnce": true
+  },
+  "logs": {
+    "bytes": 17419,
+    "sha256": "7a958f670ec66c957676c7032688101935094acb8bc8f192c8271732a6795c69",
+    "members": 8,
+    "downloadedOnce": true
+  },
+  "primaryFailure": {
+    "phase": "fresh-Release-profile-build",
+    "error": {
+      "message": "dependency byte cap",
+      "type": "ValueError"
+    },
+    "location": "profile_proof.py read_dependencies, line 134, called for the LatticeTests WMO dependency file from make line 322; run-profile.py line 156.",
+    "classification": "Qualification/proof parser rejected compiler output after the build command returned success; the measured benchmark never started.",
+    "file": {
+      "path": "extracted/artifact/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeTests.d",
+      "bytes": 7180184,
+      "sha256": "f0f2c8964542162544c204627b04a1097ad27463ca1ce2d24de2f9d675fc0c02"
+    },
+    "configuredByteCap": 4194304,
+    "actualMakeRuleLines": 124,
+    "additionalVerifiedIncompatibility": "The parser also requires exactly one make rule. The retained LatticeTests.d has 124 nonempty rule lines; Lattice.d has 73. Raising only the byte cap would not accept this actual compiler format. This is a source/evidence observation, not a second executed experiment."
+  },
+  "secondaryFailure": {
+    "error": {
+      "message": "'NoneType' object is not subscriptable",
+      "operation": "compiler-custody",
+      "type": "TypeError"
+    },
+    "classification": "Final compiler-custody verification received an uncreated supplement after the primary proof failure. It is recorded separately and does not replace the preserved primary error."
+  },
+  "build": {
+    "command": [
+      "swift",
+      "test",
+      "--package-path",
+      "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice",
+      "--scratch-path",
+      "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch",
+      "--cache-path",
+      "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/cache",
+      "--config-path",
+      "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/config",
+      "--security-path",
+      "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/security",
+      "--disable-sandbox",
+      "--disable-experimental-prebuilts",
+      "-c",
+      "release",
+      "--force-resolved-versions",
+      "--filter",
+      "PerfRefinementBenchmarks/releaseRead100AndUpdate11",
+      "-j",
+      "2",
+      "-v",
+      "-Xswiftc",
+      "-DLATTICE_PERF_SELECTED_BATCH",
+      "-Xswiftc",
+      "-DLATTICE_PERF_LIVE_PROFILE",
+      "-Xcc",
+      "-DLATTICE_PERF_LIVE_PROFILE=1",
+      "-Xcc",
+      "-I/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/LatticeCore/Sources/LatticeCore/include"
+    ],
+    "exitCode": 0,
+    "commandSeconds": 1305.584010792,
+    "compilerBuildCompleteLogSeconds": 1299.48,
+    "selectedSwiftTestingCase": "releaseRead100AndUpdate11 intentionally skipped while LATTICE_PERF_REFINEMENT remained disabled",
+    "xctestExecuted": 0,
+    "measurementEvidence": false,
+    "qualificationComplete": false
+  },
+  "measurements": {
+    "canonicalExpected": 210,
+    "canonicalExecuted": 0,
+    "calibrationExpected": 16,
+    "calibrationExecuted": 0,
+    "basis": "No measurement command or runs directory exists in the artifact; the recorded command sequence ends after the successful disabled benchmark build.",
+    "noCausalOrSpeedupClaim": true
+  },
+  "cleanup": {
+    "commandReceiptsAuthenticated": 93,
+    "successfulExitZeroCommands": 93,
+    "groupsGone": 93,
+    "leadersReaped": 93,
+    "cleanupErrorCount": 0,
+    "commandEvidenceErrorCount": 0,
+    "commandSignalCount": 0,
+    "runnerSignals": [],
+    "proofKind": "Per-command killpg ESRCH / leader-reaped guarded-runner receipts; no local compiler/native execution.",
+    "note": "The secondary final compiler-custody error remains; clean process closure does not establish complete compile-input proof."
+  },
+  "resources": {
+    "hostedFinal": {
+      "freeBytes": 99184513024,
+      "logBytes": 0,
+      "packetBytes": 3392483328
+    },
+    "hostedBuildMinimumFree": 99184779264,
+    "hostedBuildPeakPacket": 3392311296,
+    "freeFloor": 12884901888,
+    "packetCeiling": 32212254720,
+    "logCeiling": 536870912,
+    "totalRunSeconds": 1486.871989875,
+    "localFreeAfterAudit": 35235041280,
+    "selectivelyExtractedFiles": 248,
+    "selectivelyExtractedBytes": 15651538
+  },
+  "retainedAndAbsent": {
+    "canonicalObjectMembers": 210,
+    "canonicalObjectBytes": 239100672,
+    "testBinaryMembers": [
+      {
+        "path": "candidate/scratch/arm64-apple-macosx/release/LatticePackageTests.xctest/Contents/MacOS/LatticePackageTests",
+        "bytes": 88248672
+      },
+      {
+        "path": "candidate/scratch/arm64-apple-macosx/release/LatticePackageTests.xctest/Contents/MacOS/LatticePackageTests.dSYM/Contents/Resources/DWARF/LatticePackageTests",
+        "bytes": 201816708
+      }
+    ],
+    "compiledBytesNote": "Objects and the test binary are physically retained inside the authenticated artifact, but complete compiler/profile proof receipts were never committed. Byte presence alone is not accepted source-to-binary qualification.",
+    "absentReceipts": [
+      "COMPILER-PROOF.json",
+      "PROFILE-PROOF.json",
+      "RETAINED-COMPILER-INPUTS.json",
+      "BUILD-IDENTITY.json",
+      "PROFILE-ANALYSIS.json"
+    ],
+    "postMeasurementGraph": false,
+    "measurementAnalysis": false
+  },
+  "evidence": [
+    {
+      "path": "artifact.json",
+      "bytes": 730,
+      "sha256": "559ff817585cc3b5f49b70d02dc55b39aa7625c29b988e61eebe644a764c63b9"
+    },
+    {
+      "path": "COLLECTED.json",
+      "bytes": 380,
+      "sha256": "0a4ce790dc2274d04009b9aba636b99e27a2ebfaeaf670004d6d26a7175791cb"
+    },
+    {
+      "path": "EXTRACTED.json",
+      "bytes": 53053,
+      "sha256": "5162383cd9db81897086ece70abada4728bb9c606ca8538590f63a5c9c4ab03e"
+    },
+    {
+      "path": "artifact.zip.members.json",
+      "bytes": 149401,
+      "sha256": "86e2673896b810c92b79a30a4a1bb4bf820da3550405019e485403ac8c35859d"
+    },
+    {
+      "path": "run-logs.zip.members.json",
+      "bytes": 1578,
+      "sha256": "1a774a61c94cbcf06ec095e3a28008784425188c7df0e172c6a41b80fb265405"
+    },
+    {
+      "path": "extracted/artifact/receipts/RESULT.json",
+      "bytes": 41162,
+      "sha256": "52c09cf336a8d5881bb3233f1d9ae7fe339e01aa64ee0001bf78f3b8755daa83"
+    },
+    {
+      "path": "extracted/artifact/receipts/profile-build-release-disabled-benchmark.json",
+      "bytes": 2051,
+      "sha256": "82c7b67e77ab1bbc8aefb47b1672265708ebe727f3da1ee43a5b6e0d3a875a83"
+    },
+    {
+      "path": "extracted/artifact/receipts/profile-build-release-disabled-benchmark.log",
+      "bytes": 4846298,
+      "sha256": "f6b124ef93c633a80463fa5ba5cf3d8b67c774e63c173da7c24681242e0c547b"
+    },
+    {
+      "path": "extracted/artifact/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeTests.d",
+      "bytes": 7180184,
+      "sha256": "f0f2c8964542162544c204627b04a1097ad27463ca1ce2d24de2f9d675fc0c02"
+    },
+    {
+      "path": "extracted/artifact/candidate/scratch/arm64-apple-macosx/release/Lattice.build/Lattice.d",
+      "bytes": 1869918,
+      "sha256": "81eaee83b82dba3f3bf286c1b65f8c98da336f1de555a74842e2431207b91828"
+    },
+    {
+      "path": "extracted/artifact/candidate/scratch/arm64-apple-macosx/release/LatticeCore.build/src/db.cpp.d",
+      "bytes": 165005,
+      "sha256": "ed4b896556d3a1249f0b7996eaa6145d53e3f905327d56c72d70f96441cf1e66"
+    },
+    {
+      "path": "extracted/artifact/tools/Scripts/live-scalar-profile-96-d1/profile_proof.py",
+      "bytes": 21995,
+      "sha256": "878bef894bd8a5e6d72ab20003f76d846693d201b825de04b2295c69dca5475e"
+    },
+    {
+      "path": "extracted/artifact/tools/Scripts/live-scalar-profile-96-d1/run-profile.py",
+      "bytes": 16675,
+      "sha256": "80a83a2e2a783cf10c917a87d9b4570f76916e330158d0dfdbd212ee08c07eb4"
+    },
+    {
+      "path": "extracted/artifact/tools/Scripts/live-scalar-profile-96-d1/PACKET-SEAL.json",
+      "bytes": 3690,
+      "sha256": "5721c5549776cf018be2800206e1ca17921866524554f1bb7e6419fa6f29964f"
+    },
+    {
+      "path": "extracted/logs/profile/4_Build fresh instrumented B then run the fixed diagnostic and calibration sequence.txt",
+      "bytes": 11478,
+      "sha256": "9162e730f1802510b9debeb474794abae57485b066e71e43b561e97b55db1dd0"
+    }
+  ],
+  "actions": {
+    "network": "Read-only artifact metadata and one download each of artifact and attempt-1 logs through authenticated GitHub API.",
+    "nativeCompilerSQLite": false,
+    "experimentRerun": false,
+    "dispatchPushSourceMutation": false,
+    "automaticRetry": false
+  },
+  "nextAction": "Preserve this failure. A separately reviewed source correction must handle the actual bounded multi-rule dependency format and absent compiler supplement. Any new hosted run needs a new explicit allocation; this audit authorizes none."
+}

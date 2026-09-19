@@ -1,0 +1,11 @@
+--- 002/test_runner.py
++++ 003/test_runner.py
+@@ -88,7 +88,7 @@
+         self.assertIn('if: ${{ false }}',text)
+         self.assertEqual(text.count('runs-on:'),1)
+         self.assertNotIn('matrix:',text)
+-        self.assertFalse((P.parents[1]/'validation/live-scalar-profile-hosted-96-d1-002').exists())
++        self.assertFalse((P.parents[1]/'validation/live-scalar-profile-hosted-96-d1-003').exists())
+     def test_runner_syntax_and_single_diagnostic_sequence(self):
+         text=(P/'run-profile.py').read_text();ast.parse(text)
+         self.assertIn("class StrictRunner(guard.GuardedRunner)",text)

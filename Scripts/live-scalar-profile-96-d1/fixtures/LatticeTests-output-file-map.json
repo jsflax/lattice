@@ -1,0 +1,733 @@
+{
+  "": {
+    "dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeTests.d",
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeTests.o",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/primary.swiftdeps"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/AttachTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AttachTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AttachTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AttachTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AttachTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/AttachedInstanceIdentityTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AttachedInstanceIdentityTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AttachedInstanceIdentityTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AttachedInstanceIdentityTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AttachedInstanceIdentityTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/AuditRetentionTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AuditRetentionTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AuditRetentionTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AuditRetentionTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/AuditRetentionTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/BindParameterPerfTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BindParameterPerfTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BindParameterPerfTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BindParameterPerfTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BindParameterPerfTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/BulkUpdateTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BulkUpdateTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BulkUpdateTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BulkUpdateTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BulkUpdateTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/CIEnvironment.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CIEnvironment.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CIEnvironment~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CIEnvironment.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CIEnvironment.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/CascadeLinkCleanupTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CascadeLinkCleanupTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CascadeLinkCleanupTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CascadeLinkCleanupTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CascadeLinkCleanupTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ChangeStreamLifecycleTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ChangeStreamLifecycleTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ChangeStreamLifecycleTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ChangeStreamLifecycleTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ChangeStreamLifecycleTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/CheckedTransactionTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CheckedTransactionTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CheckedTransactionTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CheckedTransactionTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CheckedTransactionTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/CloseGuardTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CloseGuardTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CloseGuardTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CloseGuardTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CloseGuardTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/CoarseInvalidationBackendTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CoarseInvalidationBackendTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CoarseInvalidationBackendTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CoarseInvalidationBackendTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CoarseInvalidationBackendTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/CombinedQueryTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CombinedQueryTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CombinedQueryTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CombinedQueryTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CombinedQueryTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/CompatPathTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CompatPathTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CompatPathTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CompatPathTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CompatPathTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ConstraintEvolutionTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ConstraintEvolutionTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ConstraintEvolutionTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ConstraintEvolutionTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ConstraintEvolutionTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/CrossProcessTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CrossProcessTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CrossProcessTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CrossProcessTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/CrossProcessTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/DeleteCacheLockTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DeleteCacheLockTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DeleteCacheLockTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DeleteCacheLockTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DeleteCacheLockTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/DetachedResultsTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DetachedResultsTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DetachedResultsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DetachedResultsTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DetachedResultsTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/DetachedTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DetachedTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DetachedTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DetachedTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DetachedTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/DistinctTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DistinctTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DistinctTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DistinctTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DistinctTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/DynamicAPITests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DynamicAPITests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DynamicAPITests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DynamicAPITests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DynamicAPITests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/EngramTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/EngramTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/EngramTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/EngramTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/EngramTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/FullTextSearchTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FullTextSearchTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FullTextSearchTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FullTextSearchTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FullTextSearchTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/GeoboundsTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/GeoboundsTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/GeoboundsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/GeoboundsTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/GeoboundsTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/HydrationIdentityTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/HydrationIdentityTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/HydrationIdentityTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/HydrationIdentityTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/HydrationIdentityTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/InTransactionReadYourWritesTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/InTransactionReadYourWritesTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/InTransactionReadYourWritesTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/InTransactionReadYourWritesTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/InTransactionReadYourWritesTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/IndexedTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IndexedTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IndexedTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IndexedTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IndexedTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/InstanceRegistryTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/InstanceRegistryTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/InstanceRegistryTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/InstanceRegistryTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/InstanceRegistryTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LatestStateSnapshotsTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatestStateSnapshotsTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatestStateSnapshotsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatestStateSnapshotsTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatestStateSnapshotsTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LatticeEnumDefaultTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeEnumDefaultTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeEnumDefaultTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeEnumDefaultTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeEnumDefaultTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LatticeMCPPoolTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPPoolTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPPoolTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPPoolTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPPoolTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LatticeMCPProviderTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPProviderTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPProviderTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPProviderTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPProviderTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LatticeMCPSearchTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPSearchTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPSearchTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPSearchTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPSearchTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LatticeMCPStdioTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPStdioTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPStdioTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPStdioTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeMCPStdioTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LatticeTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LatticeTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LinkCompoundUniqueTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LinkCompoundUniqueTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LinkCompoundUniqueTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LinkCompoundUniqueTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LinkCompoundUniqueTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ListQueryTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ListQueryTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ListQueryTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ListQueryTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ListQueryTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LiveResultsChangedFieldsTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsChangedFieldsTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsChangedFieldsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsChangedFieldsTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsChangedFieldsTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LiveResultsCrossProcessBeltTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsCrossProcessBeltTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsCrossProcessBeltTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsCrossProcessBeltTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsCrossProcessBeltTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LiveResultsGenerationReadTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsGenerationReadTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsGenerationReadTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsGenerationReadTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsGenerationReadTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LiveResultsGenerationTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsGenerationTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsGenerationTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsGenerationTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsGenerationTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LiveResultsIdentityTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsIdentityTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsIdentityTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsIdentityTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsIdentityTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LiveResultsKeysetTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsKeysetTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsKeysetTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsKeysetTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsKeysetTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LiveResultsLifecycleSoakTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsLifecycleSoakTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsLifecycleSoakTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsLifecycleSoakTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsLifecycleSoakTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/LiveResultsTrapWatchdogTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsTrapWatchdogTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsTrapWatchdogTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsTrapWatchdogTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/LiveResultsTrapWatchdogTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/MapKitCompat.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MapKitCompat.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MapKitCompat~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MapKitCompat.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MapKitCompat.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/MeasureUtils.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MeasureUtils.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MeasureUtils~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MeasureUtils.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MeasureUtils.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/MigrationContextTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MigrationContextTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MigrationContextTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MigrationContextTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MigrationContextTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/MigrationTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MigrationTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MigrationTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MigrationTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/MigrationTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/NamedMemoryTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NamedMemoryTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NamedMemoryTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NamedMemoryTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NamedMemoryTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/NoHistoryTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NoHistoryTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NoHistoryTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NoHistoryTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NoHistoryTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/NotificationCoalescingTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NotificationCoalescingTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NotificationCoalescingTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NotificationCoalescingTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NotificationCoalescingTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ObservationOrderingTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObservationOrderingTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObservationOrderingTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObservationOrderingTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObservationOrderingTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ObservationTurnSchedulerTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObservationTurnSchedulerTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObservationTurnSchedulerTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObservationTurnSchedulerTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObservationTurnSchedulerTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ObserveCloseRaceTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserveCloseRaceTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserveCloseRaceTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserveCloseRaceTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserveCloseRaceTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ObserverActorDeliveryTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverActorDeliveryTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverActorDeliveryTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverActorDeliveryTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverActorDeliveryTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ObserverDeliveryStoreQueueTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverDeliveryStoreQueueTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverDeliveryStoreQueueTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverDeliveryStoreQueueTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverDeliveryStoreQueueTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ObserverIsolationTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverIsolationTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverIsolationTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverIsolationTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverIsolationTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ObserverMembershipTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverMembershipTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverMembershipTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverMembershipTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverMembershipTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/OptionalLinkCrashTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/OptionalLinkCrashTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/OptionalLinkCrashTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/OptionalLinkCrashTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/OptionalLinkCrashTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/PayloadObserverDiagnosticLog.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PayloadObserverDiagnosticLog.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PayloadObserverDiagnosticLog~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PayloadObserverDiagnosticLog.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PayloadObserverDiagnosticLog.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/PerfRefinementBenchmarks.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PerfRefinementBenchmarks.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PerfRefinementBenchmarks~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PerfRefinementBenchmarks.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PerfRefinementBenchmarks.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/PreserveGlobalIdTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PreserveGlobalIdTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PreserveGlobalIdTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PreserveGlobalIdTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PreserveGlobalIdTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/PreservingIdentityFailureTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PreservingIdentityFailureTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PreservingIdentityFailureTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PreservingIdentityFailureTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PreservingIdentityFailureTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ProjectedResultsTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectedResultsTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectedResultsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectedResultsTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectedResultsTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ProjectionMemoryConsumerExecutor.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryConsumerExecutor.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryConsumerExecutor~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryConsumerExecutor.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryConsumerExecutor.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ProjectionMemoryConsumerExecutorTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryConsumerExecutorTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryConsumerExecutorTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryConsumerExecutorTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryConsumerExecutorTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ProjectionMemoryTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionMemoryTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ProjectionQueryShapeTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionQueryShapeTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionQueryShapeTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionQueryShapeTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionQueryShapeTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ProjectionReadExecutorTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionReadExecutorTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionReadExecutorTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionReadExecutorTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionReadExecutorTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ProjectionScalarTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionScalarTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionScalarTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionScalarTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ProjectionScalarTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/PropertyTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PropertyTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PropertyTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PropertyTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PropertyTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/QueryBindParameterTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryBindParameterTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryBindParameterTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryBindParameterTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryBindParameterTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/QueryErrorSurfaceTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryErrorSurfaceTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryErrorSurfaceTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryErrorSurfaceTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryErrorSurfaceTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/QueryRowAnchorTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryRowAnchorTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryRowAnchorTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryRowAnchorTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/QueryRowAnchorTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/READMESnippetSwiftUITests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/READMESnippetSwiftUITests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/READMESnippetSwiftUITests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/READMESnippetSwiftUITests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/READMESnippetSwiftUITests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/READMESnippetTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/READMESnippetTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/READMESnippetTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/READMESnippetTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/READMESnippetTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/RebindTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RebindTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RebindTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RebindTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RebindTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ReclaimAndHeadersTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ReclaimAndHeadersTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ReclaimAndHeadersTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ReclaimAndHeadersTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ReclaimAndHeadersTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ResultsReferenceShapeTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ResultsReferenceShapeTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ResultsReferenceShapeTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ResultsReferenceShapeTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ResultsReferenceShapeTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/ResultsTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ResultsTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ResultsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ResultsTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ResultsTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/RowCacheContractTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RowCacheContractTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RowCacheContractTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RowCacheContractTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RowCacheContractTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/RowCacheTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RowCacheTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RowCacheTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RowCacheTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RowCacheTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SpatialQueryShapeTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SpatialQueryShapeTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SpatialQueryShapeTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SpatialQueryShapeTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SpatialQueryShapeTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/BasicSyncTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BasicSyncTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BasicSyncTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BasicSyncTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BasicSyncTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/BusySafeApplyForensicsTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BusySafeApplyForensicsTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BusySafeApplyForensicsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BusySafeApplyForensicsTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/BusySafeApplyForensicsTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/DeleteNoRelayTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DeleteNoRelayTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DeleteNoRelayTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DeleteNoRelayTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/DeleteNoRelayTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/FilteredSyncTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FilteredSyncTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FilteredSyncTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FilteredSyncTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FilteredSyncTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/FloorHonestyTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FloorHonestyTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FloorHonestyTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FloorHonestyTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/FloorHonestyTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/IPCCloudRelayTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IPCCloudRelayTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IPCCloudRelayTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IPCCloudRelayTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IPCCloudRelayTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/IPCSyncTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IPCSyncTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IPCSyncTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IPCSyncTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/IPCSyncTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/NIORelaySyncTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NIORelaySyncTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NIORelaySyncTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NIORelaySyncTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/NIORelaySyncTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/ObserverActorDiagnosticsTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverActorDiagnosticsTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverActorDiagnosticsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverActorDiagnosticsTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverActorDiagnosticsTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/ObserverPushLatencyBench.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverPushLatencyBench.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverPushLatencyBench~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverPushLatencyBench.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverPushLatencyBench.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/ObserverPushTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverPushTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverPushTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverPushTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ObserverPushTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/PushHarnessStageDiagnosticsTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PushHarnessStageDiagnosticsTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PushHarnessStageDiagnosticsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PushHarnessStageDiagnosticsTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/PushHarnessStageDiagnosticsTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/RelayCheckpointGovernorTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayCheckpointGovernorTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayCheckpointGovernorTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayCheckpointGovernorTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayCheckpointGovernorTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/RelayConnectionSetupTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayConnectionSetupTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayConnectionSetupTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayConnectionSetupTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayConnectionSetupTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/RelayExecutionTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayExecutionTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayExecutionTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayExecutionTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayExecutionTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/RelayIngressRegistrationTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayIngressRegistrationTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayIngressRegistrationTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayIngressRegistrationTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/RelayIngressRegistrationTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/ReplicationSlotTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ReplicationSlotTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ReplicationSlotTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ReplicationSlotTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ReplicationSlotTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/ServerAckLatencyBench.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ServerAckLatencyBench.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ServerAckLatencyBench~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ServerAckLatencyBench.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ServerAckLatencyBench.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/ServerRelayTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ServerRelayTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ServerRelayTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ServerRelayTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/ServerRelayTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/SocketStoreCancellationTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SocketStoreCancellationTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SocketStoreCancellationTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SocketStoreCancellationTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SocketStoreCancellationTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/SyncProgressTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncProgressTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncProgressTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncProgressTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncProgressTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/SyncTestHelpers.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTestHelpers.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTestHelpers~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTestHelpers.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTestHelpers.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/SyncTestStageLog.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTestStageLog.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTestStageLog~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTestStageLog.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTestStageLog.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/TestSyncServerOrderingTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/TestSyncServerOrderingTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/TestSyncServerOrderingTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/TestSyncServerOrderingTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/TestSyncServerOrderingTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/URLChangeSyncTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/URLChangeSyncTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/URLChangeSyncTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/URLChangeSyncTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/URLChangeSyncTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/VirtualListJunctionTableTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualListJunctionTableTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualListJunctionTableTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualListJunctionTableTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualListJunctionTableTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/VirtualSyncTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualSyncTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualSyncTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualSyncTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualSyncTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTests/WalEpochForensicsTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/WalEpochForensicsTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/WalEpochForensicsTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/WalEpochForensicsTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/WalEpochForensicsTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/SyncTuningTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTuningTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTuningTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTuningTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/SyncTuningTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/TransactionRollbackTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/TransactionRollbackTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/TransactionRollbackTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/TransactionRollbackTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/TransactionRollbackTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/UnfilteredCollectionDeliveryTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnfilteredCollectionDeliveryTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnfilteredCollectionDeliveryTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnfilteredCollectionDeliveryTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnfilteredCollectionDeliveryTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/UnionTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnionTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnionTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnionTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnionTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/UnmanagedConstructionTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnmanagedConstructionTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnmanagedConstructionTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnmanagedConstructionTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UnmanagedConstructionTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/UpsertNotificationTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UpsertNotificationTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UpsertNotificationTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UpsertNotificationTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/UpsertNotificationTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/VectorSearchTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VectorSearchTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VectorSearchTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VectorSearchTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VectorSearchTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/VirtualLinkTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualLinkTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualLinkTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualLinkTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualLinkTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/VirtualListTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualListTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualListTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualListTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualListTests.dia"
+  },
+  "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/lattice/Tests/LatticeTests/VirtualResultsRouteTests.swift": {
+    "object": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualResultsRouteTests.swift.o",
+    "swiftmodule": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualResultsRouteTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualResultsRouteTests.swiftdeps",
+    "diagnostics": "/Users/runner/localdev/lattice-live-scalar-profile-35436821175-1/candidate/scratch/arm64-apple-macosx/release/LatticeTests.build/VirtualResultsRouteTests.dia"
+  }
+}

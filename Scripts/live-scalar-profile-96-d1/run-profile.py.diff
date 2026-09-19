@@ -1,0 +1,72 @@
+--- 002/run-profile.py
++++ 003/run-profile.py
+@@ -15,6 +15,32 @@
+ import analyze_profile
+ 
+ PACKET=Path(__file__).resolve().parent
++
++def compiler_custody(proof, supplement, context, receipts):
++    """Recheck available base evidence even when supplement construction failed."""
++    if proof is None:
++        return {'baseBuildAvailable': False, 'profileBuildAvailable': False}
++    build_proof.verify(proof)
++    proof_hash = context.get('proofHash')
++    binding.require(proof_hash is not None, 'compiler proof receipt unavailable')
++    binding.require(guard.digest(receipts/'COMPILER-PROOF.json') == proof_hash, 'compiler proof drift')
++    value = {'baseBuildAvailable': True, 'profileBuildAvailable': False,
++             'binarySHA256': guard.digest(Path(proof['binary'])), 'compilerProofSHA256': proof_hash}
++    if supplement is None:
++        value['profileSupplementAvailable'] = False
++        return value
++    profile_proof.verify(supplement)
++    value['profileSupplementAvailable'] = True
++    if context.get('retainedInputs') is not None:
++        binding.verify_retained_inputs(context['retainedInputs'])
++        binding.require(guard.digest(receipts/'RETAINED-COMPILER-INPUTS.json') == context['retainedInputsHash'],
++                        'compiler input receipt drift')
++    profile_hash = context.get('profileProofHash')
++    binding.require(profile_hash is not None, 'profile proof receipt unavailable')
++    binding.require(guard.digest(receipts/'PROFILE-PROOF.json') == profile_hash, 'profile proof drift')
++    value.update(profileBuildAvailable=True, profileProofSHA256=profile_hash)
++    return value
++
+ 
+ class StrictRunner(guard.GuardedRunner):
+     def run(self,label,*args,**kwargs):
+@@ -94,15 +120,7 @@
+             return binding.verify_graph(runner,label,guard.read_graph(log),context['pins'],context['core'],
+                 config['candidateCore'],context['home']/'scratch',binding.manifest(PACKET,'core')['files'])
+         def custody():
+-            if proof is None:return {'profileBuildAvailable':False}
+-            build_proof.verify(proof);profile_proof.verify(supplement)
+-            if context.get('retainedInputs') is not None:
+-                binding.verify_retained_inputs(context['retainedInputs'])
+-                binding.require(guard.digest(receipts/'RETAINED-COMPILER-INPUTS.json')==context['retainedInputsHash'],'compiler input receipt drift')
+-            binding.require(guard.digest(receipts/'COMPILER-PROOF.json')==context['proofHash'],'compiler proof drift')
+-            binding.require(guard.digest(receipts/'PROFILE-PROOF.json')==context['profileProofHash'],'profile proof drift')
+-            return {'binarySHA256':guard.digest(Path(proof['binary'])),'compilerProofSHA256':context['proofHash'],
+-                    'profileProofSHA256':context['profileProofHash']}
++            return compiler_custody(proof, supplement, context, receipts)
+         def host(label):
+             boot=command(label+'-boot',['sysctl','-n','kern.bootsessionuuid'],root,timeout=60).read_text().strip()
+             value={'bootSession':boot,'hostname':platform.node(),'operatingSystem':platform.platform(),
+@@ -151,6 +169,8 @@
+                           timeout=config['buildTimeoutSeconds'],require_full_timeout=True)
+             proof=build_proof.make(build,context['sdk'],context['core'],home/'scratch',config['harnessPath'],
+                                   temporary=tmp,map_receipts=receipts/'swift-output-maps')
++            guard.save_json(receipts/'COMPILER-PROOF.json',proof)
++            context['proofHash']=guard.digest(receipts/'COMPILER-PROOF.json')
+             postimages={side:{name:value['sha256'] for name,value in binding.manifest(PACKET,side)['diagnosticOverlay'].items()}
+                         for side in ('sdk','core')}
+             supplement=profile_proof.make(proof,build,context['sdk'],context['core'],home/'scratch',postimages,receipts/'profile-dependencies')
+@@ -158,8 +178,8 @@
+             context['retainedInputs']=binding.retain_compiler_inputs(proof,supplement,receipts/'compiler-input-copies')
+             guard.save_json(receipts/'RETAINED-COMPILER-INPUTS.json',context['retainedInputs'])
+             context['retainedInputsHash']=guard.digest(receipts/'RETAINED-COMPILER-INPUTS.json')
+-            guard.save_json(receipts/'COMPILER-PROOF.json',proof);guard.save_json(receipts/'PROFILE-PROOF.json',supplement)
+-            context['proofHash']=guard.digest(receipts/'COMPILER-PROOF.json');context['profileProofHash']=guard.digest(receipts/'PROFILE-PROOF.json')
++            guard.save_json(receipts/'PROFILE-PROOF.json',supplement)
++            context['profileProofHash']=guard.digest(receipts/'PROFILE-PROOF.json')
+             identity={'baseSDK':config['candidateSDK'],'baseCore':config['candidateCore'],
+                 'sdkPostimageManifestSHA256':guard.digest(PACKET/'manifests/sdk-profile.json'),
+                 'corePostimageManifestSHA256':guard.digest(PACKET/'manifests/core-profile.json'),

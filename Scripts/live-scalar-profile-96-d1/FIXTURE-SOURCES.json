@@ -1,0 +1,17 @@
+{
+  "candidate/lattice/Tests/CLatticeTestSQLite/module.modulemap": {
+    "fixture": "fixtures/module.modulemap",
+    "sha256": "9714c229352fd5582451c8a72dd353e6593e97a3be3144537cacc3c2e7fd7c01",
+    "bytes": 91
+  },
+  "candidate/lattice/Tests/CLatticeTestSQLite/shim.h": {
+    "fixture": "fixtures/shim.h",
+    "sha256": "ac46d19b7e3763b714eb6f23a34d49790499d473fd1c1c3145ac8bb1b27ed008",
+    "bytes": 154
+  },
+  "candidate/LatticeCore/Sources/LatticeCore/include/lattice/perf_live_profile.h": {
+    "fixture": "fixtures/perf_live_profile.h",
+    "sha256": "e32176a4147f20acd8d74eed45c6aaf1a23d65288decaf2574f557d293799870",
+    "bytes": 1079
+  }
+}
