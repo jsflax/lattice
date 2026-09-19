@@ -1,0 +1,1018 @@
+{
+  "commit": "632e3a4feccf45e7f4f0ba095a108a01a8effa2b",
+  "files": {
+    ".github/workflows/ci.yml": {
+      "bytes": 9938,
+      "sha256": "db0d8ad09e655552cba815632ba56307218e7bd90fcc88f2fa48858278675c7b"
+    },
+    ".github/workflows/development.yml": {
+      "bytes": 2775,
+      "sha256": "068c14c34385abbc9b930f0e5e8f3fd78d316b4c9ac09b35e3e478c371c70648"
+    },
+    ".github/workflows/docs.yml": {
+      "bytes": 2196,
+      "sha256": "f3a483688e47d17ce1dfcba331f555b4efe87ea040d2f395c7c2017b759ef0c7"
+    },
+    ".github/workflows/release.yml": {
+      "bytes": 1848,
+      "sha256": "a40f47c6ea69b0d97e7da5f5a3c2b1289ff6d0fdc0cf008fce9fa7b47dbae5d9"
+    },
+    ".gitignore": {
+      "bytes": 350,
+      "sha256": "396a79f8237fc012c2c9194535da555949840f0fb6e0f69f7126e3237e3e7530"
+    },
+    "CHANGELOG.md": {
+      "bytes": 46012,
+      "sha256": "0a349ff0011a4663110fc6b3772e0837b93432b4ad277a3d11bc05efc60c925b"
+    },
+    "CLAUDE.md": {
+      "bytes": 4694,
+      "sha256": "cd2081c9aec27238b6bb5a1dd7b383a3222ca37b9a188e042dfb8232f508da31"
+    },
+    "Examples/NotesApp/.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata": {
+      "bytes": 135,
+      "sha256": "7f3b00b5c3fdb45242d7b87e1e5c4e25d1fa8129a16c94295ecc4e8ea2235c5f"
+    },
+    "Examples/NotesApp/Package.resolved": {
+      "bytes": 8408,
+      "sha256": "7156d4328204dca509dc5e44940a37fcd18addd78e26a59b7b54f05892230481"
+    },
+    "Examples/NotesApp/Package.swift": {
+      "bytes": 551,
+      "sha256": "b7519c25867479db1b0ccc0796811badfc5cd4472e1f896dbb12cd9f6ec3b5a2"
+    },
+    "Examples/NotesApp/Sources/NotesApp/Note.swift": {
+      "bytes": 363,
+      "sha256": "cbf023c3d985c389534d6f9e467d032150936fa4d10febfce81b0d48d713bdc2"
+    },
+    "Examples/NotesApp/Sources/NotesApp/NotesApp.swift": {
+      "bytes": 15332,
+      "sha256": "33a9f042ed059773d8642540b98a7f81cac7bef7224b1d518f74a9d5b38f7ab0"
+    },
+    "LICENSE": {
+      "bytes": 1067,
+      "sha256": "cfb3021585c4eae4fc35af65c00e7aa05eb7bb7a3aa47a37b614c22a71d2a0da"
+    },
+    "MIGRATION-1.0.md": {
+      "bytes": 18751,
+      "sha256": "31fc24ccc2aba4ddcad8c2024224c790bc65982497fbdb22de5c21fcc73aaccb"
+    },
+    "PLAN.md": {
+      "bytes": 3638,
+      "sha256": "8329c877b71b22206b9d31acde9bae1e5f0642f3eeb3996f24806fef794de1e1"
+    },
+    "Package.resolved": {
+      "bytes": 9511,
+      "sha256": "45467884411f8927d221c67e767e6d7c870a067e9052e2a0f0dc851bd112772d"
+    },
+    "Package.swift": {
+      "bytes": 8521,
+      "sha256": "8b9fa91bb364f3e18cfb1cadbc650e6dd4ac574f7aa617ebf4a451ed573a2a30"
+    },
+    "README.md": {
+      "bytes": 20283,
+      "sha256": "334be5e0b867a3972568b7edbe5d415e45f9b4da7d4aacf1c509989cbc76fe30"
+    },
+    "Scripts/capture-wrapper-live-stack.py": {
+      "bytes": 27743,
+      "sha256": "2037033a623b37e3d3f0415d047a24d5ecfa6d849579f0ea6fa21efc5d4fd5d8"
+    },
+    "Scripts/development-core.json": {
+      "bytes": 200,
+      "sha256": "cdaa72ec4bffae30ccf91490a3b339f63259326318a841af48d8187b635a10c4"
+    },
+    "Scripts/development_crashes.py": {
+      "bytes": 5789,
+      "sha256": "f8c5901c59ecaab4c049bcbbf979be45bc423f872698201953297d93592c0dba"
+    },
+    "Scripts/perf_refinement_report.py": {
+      "bytes": 13948,
+      "sha256": "aeb1d5994149d28badc6ddfa01d51c60ebed4ffb941f85d885d2d06c8669714f"
+    },
+    "Scripts/release-preflight.sh": {
+      "bytes": 9335,
+      "sha256": "f64deff3bd788427cbe0da00ae4c59a2fd697ed6243869cdd5c71fb3ce5110af"
+    },
+    "Scripts/run-development.py": {
+      "bytes": 30009,
+      "sha256": "368ba9664acfa8453f5fa6752de94297c6402b1e33502bc12fc2aed1c2a4fb28"
+    },
+    "Scripts/verify-wrapper-bindings.py": {
+      "bytes": 6161,
+      "sha256": "10536f9dd6c1575c8dd9b33af31b4d38ed384c5d1863e41591a6c5e8b04d0af9"
+    },
+    "Scripts/verify-wrapper-lock-integrity.py": {
+      "bytes": 15757,
+      "sha256": "311ddc034893a6756cad8ad12c0a75cb9023cf6d14afbaec167ee2bd44a24f3a"
+    },
+    "Scripts/wrapper-expected-bindings.json": {
+      "bytes": 1804,
+      "sha256": "862c70d4528161ba0527f5755ad6a520b3c560da2ef932de5f4ef35e5862d53e"
+    },
+    "Sources/Lattice/Accessor.swift": {
+      "bytes": 28881,
+      "sha256": "bacded91488c61bd2b0a0fce8a0574ba81a364ac4903b18890c31013c3e639cd"
+    },
+    "Sources/Lattice/AuditLog.swift": {
+      "bytes": 7456,
+      "sha256": "d1661f64f3fd61e57dd4ca393bebd127d34d70f98ad79b7d68c7b2058f50ad82"
+    },
+    "Sources/Lattice/Backend/Backend.swift": {
+      "bytes": 32292,
+      "sha256": "cdde250ccc2f332d0a5d0102f71041281891f817a26399da024800f0bacd7c0c"
+    },
+    "Sources/Lattice/Backend/CoarseInvalidationBackend.swift": {
+      "bytes": 2279,
+      "sha256": "43c0b290a363a48e9a9601d7d8eb498d888448c6009c59657e5406db485ba2a7"
+    },
+    "Sources/Lattice/Backend/CxxBackend.swift": {
+      "bytes": 53740,
+      "sha256": "777ee78bde5d4dc372533123c81e6b3c8a2d3e1af5a0d32513f63d14825549f5"
+    },
+    "Sources/Lattice/Backend/CxxProjectionRead.swift": {
+      "bytes": 10849,
+      "sha256": "1a07215f08d69a8aa5f71e06a767d1e5af794eb63e1e9dea32679463dd491284"
+    },
+    "Sources/Lattice/Backend/TransactionFailureScope.swift": {
+      "bytes": 1476,
+      "sha256": "1611fec32e1a3773f0cb7d168000a786fe0510f42c30d6d5d90dd32f263550b2"
+    },
+    "Sources/Lattice/BulkUpdate.swift": {
+      "bytes": 5172,
+      "sha256": "443373fbce6081cc0ff809eedda68a0b5e91fe6c1c6274af649beb064dc20399"
+    },
+    "Sources/Lattice/Cursor.swift": {
+      "bytes": 18,
+      "sha256": "dda9b75f64b106eb544de201f599122d75abc483c5b156bba6c05c0f956dbc3c"
+    },
+    "Sources/Lattice/CustomTypes.swift": {
+      "bytes": 3009,
+      "sha256": "0be11adb7c4dd0d38769e33f505e234f6c12eb216ee6b3c54103e00a9b8ada5b"
+    },
+    "Sources/Lattice/DatabaseConnection.swift": {
+      "bytes": 16710,
+      "sha256": "ea9078719135cf600c57c0180c2a95bbc5f8a6e3d464e00bc97561a6556a4f4f"
+    },
+    "Sources/Lattice/Detached.swift": {
+      "bytes": 10339,
+      "sha256": "5a8e922d8b57a3db930b5fac3bc711900f6ec95adb622a0084b85a12dddc6afd"
+    },
+    "Sources/Lattice/DetachedResults.swift": {
+      "bytes": 8508,
+      "sha256": "f008eec3e4c3cb266efea337061990c3522c483c3e15b62a9cadb6723f5a127a"
+    },
+    "Sources/Lattice/Dynamic/DynamicObject+JSON.swift": {
+      "bytes": 5738,
+      "sha256": "80b7edbd5ae20c0fce49794f8a72470afd626b5ce599d78f1fe91fd0e9877c51"
+    },
+    "Sources/Lattice/Dynamic/DynamicObject.swift": {
+      "bytes": 6198,
+      "sha256": "5f6b96c23fd8c3bb5452a234b2758c4dd0c74c6e322ed6e1ed23647e1a7b553b"
+    },
+    "Sources/Lattice/Dynamic/DynamicQuery.swift": {
+      "bytes": 6261,
+      "sha256": "69d6652466337c4198f267ba72d3222e734af5f7040fbe9f6cd15f7286cea359"
+    },
+    "Sources/Lattice/Dynamic/DynamicResults.swift": {
+      "bytes": 3502,
+      "sha256": "832f730a58eb785680175aa312009232cfb882603e525b4904cb828230040136"
+    },
+    "Sources/Lattice/Dynamic/DynamicSchemaProviding.swift": {
+      "bytes": 3493,
+      "sha256": "09f5ee8927b42bb82ffad6984634161ed7832a2be5465625687fb2b9260141af"
+    },
+    "Sources/Lattice/Dynamic/DynamicSearch.swift": {
+      "bytes": 1228,
+      "sha256": "f264fe498dde0bb33dcc807423f4421cfd23cc752e7400d18529378e58b2ce6b"
+    },
+    "Sources/Lattice/Dynamic/Lattice+Dynamic.swift": {
+      "bytes": 2493,
+      "sha256": "241f24e72ce65bcc268d0b6e8aa05db659bbd1ac42a5f169703d63d61ac04249"
+    },
+    "Sources/Lattice/Dynamic/ObjectSchema.swift": {
+      "bytes": 4337,
+      "sha256": "4b2ebf1f40ba02efe2fd2f13b477d792f8b52c697a4f15f0f9d3b021ab014445"
+    },
+    "Sources/Lattice/EmbeddedModel.swift": {
+      "bytes": 3783,
+      "sha256": "bc5c7843a4d75d91906a5748eb51b14704fa79f25fdf896b6242cf58691f0eda"
+    },
+    "Sources/Lattice/Geobounds.swift": {
+      "bytes": 8155,
+      "sha256": "4902894b8c53bfeb1b25d7bbf5f7800dc592077cdf044f818b2cffce3d050412"
+    },
+    "Sources/Lattice/LatestStateSnapshots.swift": {
+      "bytes": 17062,
+      "sha256": "05779778d0fdaf96f7b0580a01dd1fe5b6f23f1410a7f060d39adb313d467e1e"
+    },
+    "Sources/Lattice/Lattice.docc/GettingStarted.md": {
+      "bytes": 3567,
+      "sha256": "80ce4e7a490186fa7ddca618f40508e924595ee4ea0baa39f92b7512cfcbf807"
+    },
+    "Sources/Lattice/Lattice.docc/IPC.md": {
+      "bytes": 2723,
+      "sha256": "c8682cb471e48b04f68aa305b38ff32102e02ccdedad85b249b3ca4e95e7a6d1"
+    },
+    "Sources/Lattice/Lattice.docc/Lattice.md": {
+      "bytes": 2102,
+      "sha256": "9776c0ec015f41c590c9f679ebad8651b392c72863638356932a915079adb4db"
+    },
+    "Sources/Lattice/Lattice.docc/ModelingData.md": {
+      "bytes": 5466,
+      "sha256": "aa0e0d7287170bc2ce8b4bbd1d3784ee41b6742afdd1e28d2f88e3e6890dbd8a"
+    },
+    "Sources/Lattice/Lattice.docc/ObservationAndSwiftUI.md": {
+      "bytes": 3946,
+      "sha256": "d00d5442f2c836a5b869b27ea60b3b8d8a7851c884a1146fe3717b11048a3d1d"
+    },
+    "Sources/Lattice/Lattice.docc/PlatformSupport.md": {
+      "bytes": 1736,
+      "sha256": "0eee006c29ea9de86c5ba4dea0255d20bd825a44a425918189aed89f79a33260"
+    },
+    "Sources/Lattice/Lattice.docc/Sync.md": {
+      "bytes": 3830,
+      "sha256": "d130d5d0df8f533908d410de7c89f480e4f1bd1c55242273151dce20b66c3c28"
+    },
+    "Sources/Lattice/Lattice.swift": {
+      "bytes": 145933,
+      "sha256": "81cf2d2ef9428924f20feb93d536e049fce7b51e475aca84605194d5938622ce"
+    },
+    "Sources/Lattice/LatticeActor.swift": {
+      "bytes": 1192,
+      "sha256": "135d6566f491d4f9308bf356b02493539281843003d830eacdb87432c51e6075"
+    },
+    "Sources/Lattice/LatticePerf.swift": {
+      "bytes": 4992,
+      "sha256": "981d76e64229fa957029fc31a24c59dfa955b3a1e8ae040c1df57d14c5f2048c"
+    },
+    "Sources/Lattice/LinuxCompat.swift": {
+      "bytes": 5517,
+      "sha256": "ba8db88bb3e6ff7ff46beed23f99d235b81a42fd9d0aa5369802a9ddf4924c9f"
+    },
+    "Sources/Lattice/LinuxWebSocket.swift": {
+      "bytes": 7037,
+      "sha256": "88c7a249abf13abe8b946d851ce18358b4facf362e8a4aa9e5e1748477343b6e"
+    },
+    "Sources/Lattice/List.swift": {
+      "bytes": 15703,
+      "sha256": "d56ce3ce2f0be1d5103142294c02009d7a71ea4e1b5df5d31176f30dc87e4092"
+    },
+    "Sources/Lattice/Maintenance.swift": {
+      "bytes": 3665,
+      "sha256": "ac28dea16bc31fbf0b314b7bc35e752835265c81406150bab6a91710ca14c87b"
+    },
+    "Sources/Lattice/Migration.swift": {
+      "bytes": 17965,
+      "sha256": "3b626663842a6f729fd9c124274f80068866ea005f1935e96f5d8b9ae65fedac"
+    },
+    "Sources/Lattice/Model.swift": {
+      "bytes": 45127,
+      "sha256": "0698ff97f7804c95b5d76537e16a09762a1e152ceb2a6c922faedbbbc478d680"
+    },
+    "Sources/Lattice/ObservationScheduler.swift": {
+      "bytes": 2261,
+      "sha256": "1336b89b2a9a1c7d56abec11ab22ba8f6a7fc7970dae91195b9f783a27d64901"
+    },
+    "Sources/Lattice/ObservationTurnScheduler.swift": {
+      "bytes": 18237,
+      "sha256": "5e9d701a2411656d831d6e539828c5d2c873995c0ffd6f8f6d9b438f591fc9ca"
+    },
+    "Sources/Lattice/ObserverActorDelivery.swift": {
+      "bytes": 3979,
+      "sha256": "3d91f92125627488aefac536c3e9801b4e16c0e2f107ab17fc9cddbdf3bf8ed8"
+    },
+    "Sources/Lattice/ObserverDelivery.swift": {
+      "bytes": 18079,
+      "sha256": "b26ce4016bb592c6baa66af3db8af20019ef45402c582333d9d42b2b801cb875"
+    },
+    "Sources/Lattice/ProjectedResults.swift": {
+      "bytes": 17925,
+      "sha256": "91b8af1c4c4bbb90cd18ae02eb1e7111f639f4c07123c38cc05f7ec25de4d8ba"
+    },
+    "Sources/Lattice/ProjectionQuery.swift": {
+      "bytes": 10179,
+      "sha256": "ea1414b3e60c03826c05c5ddd77e6da65940df4be0858460b88979b641aca1a2"
+    },
+    "Sources/Lattice/ProjectionReadBackend.swift": {
+      "bytes": 4447,
+      "sha256": "18b5eaa11102fe3cca51ca33f988b03159da10d0a0d7cacc8156bf0d3194f22d"
+    },
+    "Sources/Lattice/ProjectionReadExecutor.swift": {
+      "bytes": 15622,
+      "sha256": "7683f05d0f6792a7597257d19a74c6868d62cc0120e4fd20fd09c1692672d988"
+    },
+    "Sources/Lattice/ProjectionScalar.swift": {
+      "bytes": 7522,
+      "sha256": "8107118fa61b781467562949db4bf1c5e5f9eb90b6a41cdb20347055110847a9"
+    },
+    "Sources/Lattice/Property/LinkProperty.swift": {
+      "bytes": 1146,
+      "sha256": "f7856e76be8cd74c45cde54b62101fd1a57d15a37c10319a07f760722818dc2e"
+    },
+    "Sources/Lattice/Property/ListProperty.swift": {
+      "bytes": 114,
+      "sha256": "e3799c6dfcf362115b481a92cac33889bc930620c289c89d71e8db17a7d78672"
+    },
+    "Sources/Lattice/Property/PrimitiveProperty.swift": {
+      "bytes": 8464,
+      "sha256": "403557fa3b7fd771acbc5384ca013ab90de98a4bfbea9e2d992671fb1516a490"
+    },
+    "Sources/Lattice/Property/SchemaProperty.swift": {
+      "bytes": 4615,
+      "sha256": "ca4d33caf3b6e9d23c6041c15d0c0d2c1a32f979051682b3a1f73c2f082ae5a2"
+    },
+    "Sources/Lattice/Property/UnionProperty.swift": {
+      "bytes": 7391,
+      "sha256": "581eb4dceea7d1898e5882f284f4675610e05518087c70e4548d1b3191804722"
+    },
+    "Sources/Lattice/Property/VirtualListProperty.swift": {
+      "bytes": 70,
+      "sha256": "eb03c34054291c34cd159eebe99e8bb99572d1a91b16606366b365c842dbf85a"
+    },
+    "Sources/Lattice/Query.swift": {
+      "bytes": 70085,
+      "sha256": "1a4754a5a1999a88db0fde5c02b71066033cd965cba5c2f9df9fe3e3bf49e5d6"
+    },
+    "Sources/Lattice/Results/GenerationCoordinator.swift": {
+      "bytes": 77273,
+      "sha256": "3e7aa1fb64c91a460e2b1d9a4293e2da986e00868f832386aac794dd5ef9ef9a"
+    },
+    "Sources/Lattice/Results/InTransactionReads.swift": {
+      "bytes": 9689,
+      "sha256": "14e44aa10faa1e132a59d62d3d6c672b99edd7ad225b4f56f6a122ea7505be59"
+    },
+    "Sources/Lattice/Results/KeyPathSort.swift": {
+      "bytes": 1110,
+      "sha256": "7dec66b80e5b3e59da9f4e66e5e86248176cac3a70e902e3e2df2f6fcd7e088b"
+    },
+    "Sources/Lattice/Results/KeysetPagination.swift": {
+      "bytes": 11011,
+      "sha256": "ad4327ada979840775e570b013edbb773ee378dbe519042ea038d31db17a5cd1"
+    },
+    "Sources/Lattice/Results/NearestResults.swift": {
+      "bytes": 50064,
+      "sha256": "cee94c5a00621dff725d2e83e0d0693bd4af07afe11cd034ba78b3e8ada388b1"
+    },
+    "Sources/Lattice/Results/NearestResultsCompat.swift": {
+      "bytes": 16232,
+      "sha256": "06bcb0321a414de523e4d9e1aeb70102589158d7ea9160a54e138f0f6b5dc047"
+    },
+    "Sources/Lattice/Results/QueryShapeCache.swift": {
+      "bytes": 15055,
+      "sha256": "52e8391d99c4385b1ad11c63425e6bf1a8e8287f1ce6eaed1493bcad37355c1e"
+    },
+    "Sources/Lattice/Results/Results.swift": {
+      "bytes": 21168,
+      "sha256": "669f5eb4bb9cae73240ce4bcc217f9b976adc16cb568092f094aa331b286bf9f"
+    },
+    "Sources/Lattice/Results/ShapeColumnExtraction.swift": {
+      "bytes": 11270,
+      "sha256": "8565d368e6fbda22ab7b27baaf918d5a6e09e4f72daef675d7c366d86b7dbf77"
+    },
+    "Sources/Lattice/Results/TableResults.swift": {
+      "bytes": 76343,
+      "sha256": "19e7b764154f31d18598ecb7f860abf3b02a0e341b9efe3797694886a3c5c66e"
+    },
+    "Sources/Lattice/Results/VirtualResults.swift": {
+      "bytes": 16088,
+      "sha256": "193b2d8adb41b0b7487fc770eef83cdc4cfa07471351de31a8d1a68b5ea2337d"
+    },
+    "Sources/Lattice/Results/VirtualResultsCompat.swift": {
+      "bytes": 11115,
+      "sha256": "2813382b9863668ecf3f3216d4c86f936d1ca97eb51aa2c91611c2a2340c959e"
+    },
+    "Sources/Lattice/RowCache.swift": {
+      "bytes": 6624,
+      "sha256": "5a506cc0f4646b0af8b2bfa46ced4031a3b9ec7720ae8e3beac8fceef380eb18"
+    },
+    "Sources/Lattice/SwiftUI.swift": {
+      "bytes": 8364,
+      "sha256": "a4d8619200204782fdfe766b8d0e31ca75f0faa0fb7d29472fa63d5d9305f3d6"
+    },
+    "Sources/Lattice/Sync.swift": {
+      "bytes": 15854,
+      "sha256": "dcec868ec39ec275d540c4806748271f38b4a0c023dea3a10b57435415b0fb5c"
+    },
+    "Sources/Lattice/ThreadSafeReference.swift": {
+      "bytes": 10521,
+      "sha256": "03b14561ec1b7a9d3213b9caacd26224ff5f7ce804b5c69a9c0d2dcacb554be4"
+    },
+    "Sources/Lattice/Vector.swift": {
+      "bytes": 8372,
+      "sha256": "7c34adcdcc88e4fda3230e928ac0691582cf17d74e8c3baee9ebdab670f96c20"
+    },
+    "Sources/Lattice/VirtualLink.swift": {
+      "bytes": 1347,
+      "sha256": "0007fedc5f10f932cbda82e508ad778ca8939516f5144d2494fb1a3554264f8f"
+    },
+    "Sources/Lattice/VirtualList.swift": {
+      "bytes": 5056,
+      "sha256": "cdddd20c9b87cf26ff844f9072423d666bbf452776d3bb270b633229f6bbb61e"
+    },
+    "Sources/Lattice/VirtualModel.swift": {
+      "bytes": 6789,
+      "sha256": "8b65b50dfef1294fe90896713fdebbc7399c79f27d27301dff837bea555ebce0"
+    },
+    "Sources/LatticeMCP/LatticeDataProvider.swift": {
+      "bytes": 12917,
+      "sha256": "dac4ab01d83b6dd4f78990ddd7786764feab5656417dcc6bfed3fde48bed8be7"
+    },
+    "Sources/LatticeMCP/LatticeProviderPool.swift": {
+      "bytes": 4341,
+      "sha256": "1e4a57100fd3c67753e06a84bc827a9a99f7237a2d70c8142da327fa9d91b413"
+    },
+    "Sources/LatticeMCPTransport/LatticeSerializedStdioTransport.swift": {
+      "bytes": 6746,
+      "sha256": "7cc160cb4376b87a08c88136262ab57c32cbe09404d311adcdb449c7f57a49bc"
+    },
+    "Sources/LatticeMacros/LatticeMacros.swift": {
+      "bytes": 70026,
+      "sha256": "4d0c2b347d7fb3379707c48241479ae7406757406add968d4c1386cf3d8f82e6"
+    },
+    "Sources/LatticeMacros/SyntaxFactory.swift": {
+      "bytes": 93,
+      "sha256": "bbdb626c13bc44bad52bbc6484e5eee9a38812b62deea40c074fd2a3134ba114"
+    },
+    "Sources/LatticeMain/main.swift": {
+      "bytes": 158,
+      "sha256": "83bb98324424969f48fd3a195dd6ace6af9efcdeb83b2b13471b9c0e719e8d3f"
+    },
+    "Sources/LatticeServerKit/LatticeServerKit.swift": {
+      "bytes": 69997,
+      "sha256": "65aaf0ad9779ac180e08bb9e65ab67d0f9532bccb4af9259fdd2b31dc4d5c603"
+    },
+    "Sources/LatticeServerKit/ObserverActorDiagnostics.swift": {
+      "bytes": 8004,
+      "sha256": "68831b6b9ec3a4696646fee80292aee37035559345ce25347bdebfb912786770"
+    },
+    "Sources/LatticeServerKit/ObserverPush.swift": {
+      "bytes": 49220,
+      "sha256": "757b772b4837aa3ded0e7bb5482e5eabda618629a4de328f3a8feb1886fe8180"
+    },
+    "Sources/LatticeServerKit/RelayApply.swift": {
+      "bytes": 21125,
+      "sha256": "0aacd99200ac67b0517c1824ebd7703bdb72a42146b21fc849055d47bdb713bd"
+    },
+    "Sources/LatticeServerKit/RelayCheckpoint.swift": {
+      "bytes": 14267,
+      "sha256": "93427f16b6271e01885b3e02d9d1c7fb6582614c20149aca0a238d0545439516"
+    },
+    "Sources/LatticeServerKit/RelayConnectionSetup.swift": {
+      "bytes": 15707,
+      "sha256": "85338a9e38a2914270c7374ffc7d75466c9093ce2e718822a71eca3362065582"
+    },
+    "Sources/LatticeServerKit/RelayExecution.swift": {
+      "bytes": 14627,
+      "sha256": "7d23a9974f8443957865460cda2f270dd92817602fcdf2e5d2410155f338e7f5"
+    },
+    "Sources/WalEpochWriterChild/Models.swift": {
+      "bytes": 872,
+      "sha256": "eec7ee9cdc408a0af8bf713247ee3e7dd06570150719458d6a4f60a2016d2bc8"
+    },
+    "Sources/WalEpochWriterChild/main.swift": {
+      "bytes": 4322,
+      "sha256": "67f6b3b0552daf52a3833d89fdc448eddd0d8760cce42da66e20304b8c643958"
+    },
+    "Sources/lattice-mcp/main.swift": {
+      "bytes": 7168,
+      "sha256": "866a3af82e32e80c29e2fcfd3d0c3b5c47c6f270c058e9f0c6a447198935aa3b"
+    },
+    "Tests/CLatticeTestSQLite/module.modulemap": {
+      "bytes": 91,
+      "sha256": "9714c229352fd5582451c8a72dd353e6593e97a3be3144537cacc3c2e7fd7c01"
+    },
+    "Tests/CLatticeTestSQLite/shim.h": {
+      "bytes": 34,
+      "sha256": "e61e37171e278690947c4119acc81d441ce7a18a1346b7b6c7b3611b1be31f07"
+    },
+    "Tests/LatticeConformanceTests/ConformanceCatalog.swift": {
+      "bytes": 16823,
+      "sha256": "c19ca0cccbbca7ed8fdf5f734808093387d36712d1adf5fa1058cb14a026e920"
+    },
+    "Tests/LatticeConformanceTests/ConformanceCorpusTests.swift": {
+      "bytes": 4362,
+      "sha256": "2a4e65f05bd54a6116c6aa391bc59a6bccb3f79d0445e84f0f562bd70fc74f0c"
+    },
+    "Tests/LatticeConformanceTests/ConformanceRunner.swift": {
+      "bytes": 40754,
+      "sha256": "421dbf73a4f9fc165d16f22bff422410b47f12e55356d0ea4e32d8b1b688c573"
+    },
+    "Tests/LatticeConformanceTests/ConformanceValues.swift": {
+      "bytes": 5768,
+      "sha256": "4c467342794d5d6d9121963ca5da0aaf38bf867a7576851b6d980ae2ccf952d9"
+    },
+    "Tests/LatticeMCPTransportTests/SerializedStdioLifetimeTests.swift": {
+      "bytes": 6843,
+      "sha256": "ac7791a562865e68c449714e6952693d05e800bfb3c6192c87dfa0ecf19ac674"
+    },
+    "Tests/LatticeTests/AttachTests.swift": {
+      "bytes": 14375,
+      "sha256": "f3f4bc40325e1c6fbe99c3fb2fb1c296ea79dd6e4d8c5805b070650ec69c8537"
+    },
+    "Tests/LatticeTests/AttachedInstanceIdentityTests.swift": {
+      "bytes": 14439,
+      "sha256": "409acf699ae8a38e150da988d4b589f23c338109feaaea4cbfff3e2253036dbc"
+    },
+    "Tests/LatticeTests/AuditRetentionTests.swift": {
+      "bytes": 4579,
+      "sha256": "670e080db842c9ff3270b43513bd1ab195877ec5b4e89c23a4d4354287a27f46"
+    },
+    "Tests/LatticeTests/BindParameterPerfTests.swift": {
+      "bytes": 2727,
+      "sha256": "b3922d24e3aca970cf694d4238d5f646d33bbefd8231168fa3ea08335ab83138"
+    },
+    "Tests/LatticeTests/BulkUpdateTests.swift": {
+      "bytes": 8974,
+      "sha256": "3bfb10c103bd69562ecbd2af84c1259700a7dc32c19841bcf067517cccd1c569"
+    },
+    "Tests/LatticeTests/CIEnvironment.swift": {
+      "bytes": 752,
+      "sha256": "b0ced9c6e24862c9d1992041fddd130f31d69bdfb3048ba75cefebcad24dfa8e"
+    },
+    "Tests/LatticeTests/CascadeLinkCleanupTests.swift": {
+      "bytes": 14693,
+      "sha256": "d1eb51209007f6468c202f7bce30232ec86b39d205d99a97ba4933f9fe17b356"
+    },
+    "Tests/LatticeTests/ChangeStreamLifecycleTests.swift": {
+      "bytes": 7564,
+      "sha256": "5ae8f5006ac64bf4fede33a97b4c28b0783cc5ef400c240f9195e87e7f86d2ea"
+    },
+    "Tests/LatticeTests/CheckedTransactionTests.swift": {
+      "bytes": 14115,
+      "sha256": "2f360d0885a58082c6b332d86c00a8799f09f304b48558b6422feb83311d9778"
+    },
+    "Tests/LatticeTests/CloseGuardTests.swift": {
+      "bytes": 7707,
+      "sha256": "04ed2a0de154e0739881600a8802667b9bcb946bc04210016fdd07f297e0a4ce"
+    },
+    "Tests/LatticeTests/CoarseInvalidationBackendTests.swift": {
+      "bytes": 2228,
+      "sha256": "63fca673104d248c9a1b2b67dfc13c7b1d18bab3b4b22601fb4a87419f178f40"
+    },
+    "Tests/LatticeTests/CombinedQueryTests.swift": {
+      "bytes": 24410,
+      "sha256": "1fabeacf85410af94b5b915f624492a51f3270cee956b3ef373f38184080f1b4"
+    },
+    "Tests/LatticeTests/CompatPathTests.swift": {
+      "bytes": 5259,
+      "sha256": "de7d6ab498b14a397b1917c38d4f67ce0729ad03cb2163ccc9e641feefc5458f"
+    },
+    "Tests/LatticeTests/ConstraintEvolutionTests.swift": {
+      "bytes": 11624,
+      "sha256": "c7b9d20af63710034ce12a95b7066251ab0f587a4875b1c3738a731d668f5319"
+    },
+    "Tests/LatticeTests/CrossProcessTests.swift": {
+      "bytes": 32601,
+      "sha256": "cb4bfba9cdc0fc6f51d6cbd4f7e6d8f69d8f7accaed0b89e2216b291528d4a58"
+    },
+    "Tests/LatticeTests/DeleteCacheLockTests.swift": {
+      "bytes": 5493,
+      "sha256": "4d687b284a6c8e7fe862f69021f0b35a67833ff7e79bb1afdc2a6405c06fb4ad"
+    },
+    "Tests/LatticeTests/DetachedResultsTests.swift": {
+      "bytes": 3393,
+      "sha256": "f099c7bc25056faa258c5bcfe73a061a02109825ec55f5fce030df131adb656e"
+    },
+    "Tests/LatticeTests/DetachedTests.swift": {
+      "bytes": 7641,
+      "sha256": "e2ad9027f27533a7dae52a560d3f02f31f70f04a213c791d91f40e7f5d10d6e1"
+    },
+    "Tests/LatticeTests/DistinctTests.swift": {
+      "bytes": 9034,
+      "sha256": "47e25766efc2b37fa6f85626a72641d6828ad5ba04fb27916601ecea231ad238"
+    },
+    "Tests/LatticeTests/DynamicAPITests.swift": {
+      "bytes": 8569,
+      "sha256": "2f322083dbf86fbc515cfbab8c191e5700de1e17acff3cefbfe833baea653eea"
+    },
+    "Tests/LatticeTests/EngramTests.swift": {
+      "bytes": 37816,
+      "sha256": "dbf49525fedb878b524325b8f55d43b76974d766528db40ce1213b4136051fb8"
+    },
+    "Tests/LatticeTests/FullTextSearchTests.swift": {
+      "bytes": 12436,
+      "sha256": "202c89ec59be218e100e39c98e1cf143b8226dfc65a52ec782b59ba99ec6c0f8"
+    },
+    "Tests/LatticeTests/GeoboundsTests.swift": {
+      "bytes": 25247,
+      "sha256": "ef2ea0a24d82cc706f104100a868cf6c5f221af8917d305285253ee13b8aef4b"
+    },
+    "Tests/LatticeTests/HydrationIdentityTests.swift": {
+      "bytes": 2738,
+      "sha256": "5eac6eff27b193d60e9da726041be07a033a04122413c9f01f2bd96d36a34808"
+    },
+    "Tests/LatticeTests/InTransactionReadYourWritesTests.swift": {
+      "bytes": 9222,
+      "sha256": "e84843bdbfccd287e92eaf2d69dd546e80269bb01adfef381a1a4602d453d22e"
+    },
+    "Tests/LatticeTests/IndexedTests.swift": {
+      "bytes": 2578,
+      "sha256": "9d5614fe2d265c50d99ceb907f94f6163fa407833f0bdbd57a0684a24754391d"
+    },
+    "Tests/LatticeTests/InstanceRegistryTests.swift": {
+      "bytes": 5471,
+      "sha256": "769683baaf9c125cd9af8d3249eb49459e2bb0e422cfd36bce5017dacc445d6b"
+    },
+    "Tests/LatticeTests/LatestStateSnapshotsTests.swift": {
+      "bytes": 27323,
+      "sha256": "f20ad7cd12b07841e55aa600521b82c448c9be037909f730589baee4609a10f4"
+    },
+    "Tests/LatticeTests/LatticeEnumDefaultTests.swift": {
+      "bytes": 1344,
+      "sha256": "d5949ccff4eb1d1c59faeeaf96d7169b1910a869d5fc278cb8533de963859307"
+    },
+    "Tests/LatticeTests/LatticeMCPPoolTests.swift": {
+      "bytes": 3266,
+      "sha256": "222a39b84d4663be9ea703f57af5fbf9393cc7eb6653851fcf21aceb501ecb63"
+    },
+    "Tests/LatticeTests/LatticeMCPProviderTests.swift": {
+      "bytes": 4147,
+      "sha256": "bc54c6f1be27c35b59f11dbef79d1d63c7930979e551c5761c10c6467a533961"
+    },
+    "Tests/LatticeTests/LatticeMCPSearchTests.swift": {
+      "bytes": 3326,
+      "sha256": "e9eebef3c687fd59cc37c39acb8f83624cadf97905bbac135879cd0789df35d2"
+    },
+    "Tests/LatticeTests/LatticeMCPStdioTests.swift": {
+      "bytes": 4677,
+      "sha256": "7792f933f7267f0dbfb1217433059ec51d903c16de97ae18f6149b387f7af764"
+    },
+    "Tests/LatticeTests/LatticeTests.swift": {
+      "bytes": 80386,
+      "sha256": "ad4e8bfd0d1f9a585a6ebc42487e9bde0b1e400b844403204db4b8afed5d3deb"
+    },
+    "Tests/LatticeTests/LinkCompoundUniqueTests.swift": {
+      "bytes": 14782,
+      "sha256": "afe599558f3857515ca9b2eddb9740a1f1bdd4a6c0033345d07e13d997af3dcc"
+    },
+    "Tests/LatticeTests/ListQueryTests.swift": {
+      "bytes": 10711,
+      "sha256": "19ea2a0d00e3a97c8e917a0a4c88eb97bba14b6fd3390ff8609a19f1bf24305a"
+    },
+    "Tests/LatticeTests/LiveResultsChangedFieldsTests.swift": {
+      "bytes": 21071,
+      "sha256": "5a008d145c346bb6532081991940ca9c371bd01d5acf1207938c1c2469801456"
+    },
+    "Tests/LatticeTests/LiveResultsCrossProcessBeltTests.swift": {
+      "bytes": 10639,
+      "sha256": "6680b793181656d4d82dc3edcfbcd534c992332a631f24f2f9adf71eba333586"
+    },
+    "Tests/LatticeTests/LiveResultsGenerationReadTests.swift": {
+      "bytes": 21218,
+      "sha256": "e7fdeba68b74377d3a459ae729c8a1b9377ae60bf89bbe8d100e6af144e54da9"
+    },
+    "Tests/LatticeTests/LiveResultsGenerationTests.swift": {
+      "bytes": 14102,
+      "sha256": "0275dab19f7ee330db8212165c966e5efabe11ec4d8df44d04b92194bc9de4bf"
+    },
+    "Tests/LatticeTests/LiveResultsIdentityTests.swift": {
+      "bytes": 14843,
+      "sha256": "b322a5b14a7326460c58227bd8a4f05493666c69aaef667cb1d283bb198488c9"
+    },
+    "Tests/LatticeTests/LiveResultsKeysetTests.swift": {
+      "bytes": 26164,
+      "sha256": "a14c48d7c3686198127853ed1c24723f20db1805d7822fb220c3dc9a8799a391"
+    },
+    "Tests/LatticeTests/LiveResultsLifecycleSoakTests.swift": {
+      "bytes": 22842,
+      "sha256": "8209c9900547b20f94f4bb7667a42ef4d3df39f69e799a8642fbd8da6cdda92e"
+    },
+    "Tests/LatticeTests/LiveResultsTrapWatchdogTests.swift": {
+      "bytes": 11806,
+      "sha256": "9ce61ef83df92975877f9dc2c76bccee826e816b942ce5e57b145c88fd804d11"
+    },
+    "Tests/LatticeTests/MapKitCompat.swift": {
+      "bytes": 5779,
+      "sha256": "38b4685ad51e3870646111044b1bfe58b89ab2c3c57fa8b935f8fa1ff4ff41ed"
+    },
+    "Tests/LatticeTests/MeasureUtils.swift": {
+      "bytes": 11182,
+      "sha256": "511a46e5ef5030fbeee6447c6bc5fd4c538a70eedd35ccb54e71340dd6466fe9"
+    },
+    "Tests/LatticeTests/MigrationContextTests.swift": {
+      "bytes": 7319,
+      "sha256": "31816a3648bcf429e9b78f5fa03ecb1e41139363542599377c53ae439c783b25"
+    },
+    "Tests/LatticeTests/MigrationTests.swift": {
+      "bytes": 61944,
+      "sha256": "79c26bbf678d078f5f9ef72fbf9dd69c2569a824140726bccfbe7d504d9c8c83"
+    },
+    "Tests/LatticeTests/NamedMemoryTests.swift": {
+      "bytes": 4574,
+      "sha256": "6683f29ec21f30870570bf4278d38913ab90f3cc18cc0c48605dd23fedbc4062"
+    },
+    "Tests/LatticeTests/NoHistoryTests.swift": {
+      "bytes": 5342,
+      "sha256": "1587f0905dfc93a16dd82671688de39d2ebc1415079fda6021f1ef05d7c3cb34"
+    },
+    "Tests/LatticeTests/NotificationCoalescingTests.swift": {
+      "bytes": 8243,
+      "sha256": "a06884121bdda68cd193ff5054587cf03514c37c9d8d665888a1e98d323cb304"
+    },
+    "Tests/LatticeTests/ObservationOrderingTests.swift": {
+      "bytes": 5060,
+      "sha256": "fcae7625dd463ad6ca70e5e0b30d64a2dd799f0f565d7da7d374cbd5a1bbf1ce"
+    },
+    "Tests/LatticeTests/ObservationTurnSchedulerTests.swift": {
+      "bytes": 19148,
+      "sha256": "9632c2f20c8ec3b58004d7381ad6b0c906b0cc1ada1d97a6a0c1a5d75e1e4dc1"
+    },
+    "Tests/LatticeTests/ObserveCloseRaceTests.swift": {
+      "bytes": 11198,
+      "sha256": "97d3d2e5719600c4cf036662cb0638fec7ef135f06c3dc002e8a57d30b217a96"
+    },
+    "Tests/LatticeTests/ObserverActorDeliveryTests.swift": {
+      "bytes": 7613,
+      "sha256": "b87bdeb5e58a2c321eecc74186d4c5610e920a613f2245e6f96f4e9992a585a9"
+    },
+    "Tests/LatticeTests/ObserverDeliveryStoreQueueTests.swift": {
+      "bytes": 4450,
+      "sha256": "03c1ab7f8290afe75e413dadd9083438df9c8ca300dc1ecab1cb1a13978ce50f"
+    },
+    "Tests/LatticeTests/ObserverIsolationTests.swift": {
+      "bytes": 6345,
+      "sha256": "9fa12747689769625bd3ea4ca1f269e03774b615ffb53b8cefbeefee519d1f98"
+    },
+    "Tests/LatticeTests/ObserverMembershipTests.swift": {
+      "bytes": 3446,
+      "sha256": "e98be07f390e1c6613a87589be45a5ce38d448c1b43f9b41e461d99aeb140cac"
+    },
+    "Tests/LatticeTests/OptionalLinkCrashTests.swift": {
+      "bytes": 3532,
+      "sha256": "858a1d9fbd229ce47a91c69f4e7055e04e1b1786854216b8297b00ff13542852"
+    },
+    "Tests/LatticeTests/PayloadObserverDiagnosticLog.swift": {
+      "bytes": 4439,
+      "sha256": "544aabe42053d51d0cf86ed2dae751e62041dcd9e7c6110129a562dd5bc152cf"
+    },
+    "Tests/LatticeTests/PerfRefinementBenchmarks.swift": {
+      "bytes": 24803,
+      "sha256": "993d3a6f384958185c9ee5817e6ba1f125a037f722a074a3a719ef71226455e2"
+    },
+    "Tests/LatticeTests/PreserveGlobalIdTests.swift": {
+      "bytes": 2452,
+      "sha256": "7133b8878d958c8d242f5227ad50aea21ff3abc879849d6d1c94082b36f3b36f"
+    },
+    "Tests/LatticeTests/PreservingIdentityFailureTests.swift": {
+      "bytes": 1463,
+      "sha256": "2f3aab4f7e7adced7d487b0c7553e43b79f9ee612cf61f069ba2e86fed2b7bff"
+    },
+    "Tests/LatticeTests/ProjectedResultsTests.swift": {
+      "bytes": 24751,
+      "sha256": "6c22ecdd12af569796c98c29a23a5b032bf081ba944d69bdeebcba15bf2d9557"
+    },
+    "Tests/LatticeTests/ProjectionMemoryConsumerExecutor.swift": {
+      "bytes": 6666,
+      "sha256": "ebf19a837d79fd47c6c1e94f5b2b15008d28d05b3d04a26e2b7a4a5268b6de50"
+    },
+    "Tests/LatticeTests/ProjectionMemoryConsumerExecutorTests.swift": {
+      "bytes": 4347,
+      "sha256": "06fe6b9ce8e67e32da65746d392e0f5ff6641b36d4faf4d5154d5cb49fd05614"
+    },
+    "Tests/LatticeTests/ProjectionMemoryTests.swift": {
+      "bytes": 11205,
+      "sha256": "146bb1543a778767168ea557d8a105ac7bb97f7bd7ae1e825ff436278bed7e7f"
+    },
+    "Tests/LatticeTests/ProjectionQueryShapeTests.swift": {
+      "bytes": 11822,
+      "sha256": "8fa3a6122ba8de940115171cdafc04f4b638dfdbe34c8df692223585d3886d50"
+    },
+    "Tests/LatticeTests/ProjectionReadExecutorTests.swift": {
+      "bytes": 14589,
+      "sha256": "59e1399fee33ef957c9f98974c159fdf24e7271e82cf83a80e0b5fba53202845"
+    },
+    "Tests/LatticeTests/ProjectionScalarTests.swift": {
+      "bytes": 11127,
+      "sha256": "a419b29e1af21f436f8960cb4dc012e588868a673879d3d58319aa73f25200a0"
+    },
+    "Tests/LatticeTests/PropertyTests.swift": {
+      "bytes": 1225,
+      "sha256": "ce376170bb60a15ab4d06efef60c0cb819ccb1122eade5ad73281035485c1a75"
+    },
+    "Tests/LatticeTests/QueryBindParameterTests.swift": {
+      "bytes": 24998,
+      "sha256": "743dff8084aabda19e98a13cd95db92e95418cb2bf6b952f859ab97a8013a240"
+    },
+    "Tests/LatticeTests/QueryErrorSurfaceTests.swift": {
+      "bytes": 3133,
+      "sha256": "2f67d07e0b9422300e869b6501d21e5a9d608517b30b8056530645fef820a217"
+    },
+    "Tests/LatticeTests/QueryRowAnchorTests.swift": {
+      "bytes": 10955,
+      "sha256": "efa34cf2b670cde50bf19f20c18384c6b8c92aeaaa5f0fae9084d0328ef3caf2"
+    },
+    "Tests/LatticeTests/READMESnippetSwiftUITests.swift": {
+      "bytes": 1433,
+      "sha256": "1450f585c42e58e8a41fd27c5463799f57c9751bd0662b3e5ddc71c6b89f9943"
+    },
+    "Tests/LatticeTests/READMESnippetTests.swift": {
+      "bytes": 29268,
+      "sha256": "043ba760c9940ce0766693f474f31d60eb0e8aa95eb7c1e4a02308de6f439f33"
+    },
+    "Tests/LatticeTests/RebindTests.swift": {
+      "bytes": 3550,
+      "sha256": "7861d9640e0bc8bc03ff55ec68fc33f7d103a2db5f6ecdd4adf56a4ac6095c93"
+    },
+    "Tests/LatticeTests/ReclaimAndHeadersTests.swift": {
+      "bytes": 4360,
+      "sha256": "ebeee7ac8e85fede1ca842ade50142c15579079a0c873fc7ebdfda0de9e1591e"
+    },
+    "Tests/LatticeTests/ResultsReferenceShapeTests.swift": {
+      "bytes": 6213,
+      "sha256": "69817199d65afbcc6cedde78e5a81742d4345ae7703dc34b68311818a68f732f"
+    },
+    "Tests/LatticeTests/ResultsTests.swift": {
+      "bytes": 12212,
+      "sha256": "1b85a743309db3efd65c536c021eb1f412b49c9df8540ca8c7e3dc415b03696b"
+    },
+    "Tests/LatticeTests/RowCacheContractTests.swift": {
+      "bytes": 5439,
+      "sha256": "d492edecaec4ae344fdff580ed84394da3a155e7251b9f211df5b807367be044"
+    },
+    "Tests/LatticeTests/RowCacheTests.swift": {
+      "bytes": 6803,
+      "sha256": "58d117ccaa70087a85804d908abfd1669b6dbf51b658b8465899b43b2847302a"
+    },
+    "Tests/LatticeTests/SpatialQueryShapeTests.swift": {
+      "bytes": 8313,
+      "sha256": "163fa0f497b70c7d57d7714a06fea21701cbfaab2631c842a1ca5361dc904a91"
+    },
+    "Tests/LatticeTests/SyncTests/BasicSyncTests.swift": {
+      "bytes": 56302,
+      "sha256": "497adef465235718e5423230a5fab1b98934e51556272ce26d05c9b0fdb23925"
+    },
+    "Tests/LatticeTests/SyncTests/BusySafeApplyForensicsTests.swift": {
+      "bytes": 50931,
+      "sha256": "6d8047fc92500cb5aa679c52301eabad79dea9e88e6ef873e3e39af240cc13b1"
+    },
+    "Tests/LatticeTests/SyncTests/DeleteNoRelayTests.swift": {
+      "bytes": 4446,
+      "sha256": "b53139ed6796269ba739053b25fd14d9142de343d74cbe597429bd672fcbe2b6"
+    },
+    "Tests/LatticeTests/SyncTests/FilteredSyncTests.swift": {
+      "bytes": 17602,
+      "sha256": "39211934ab50bfced7002f87ca3f18e47735d6d75714bbf4e338e76314bd31f7"
+    },
+    "Tests/LatticeTests/SyncTests/FloorHonestyTests.swift": {
+      "bytes": 5560,
+      "sha256": "9c73cc402850af1e84c03141e700005ba9a1f9f0dcf8e34c9504b0c4507978c6"
+    },
+    "Tests/LatticeTests/SyncTests/IPCCloudRelayTests.swift": {
+      "bytes": 6907,
+      "sha256": "78d7e2e3f97ede6306650be1c613559820a99093fc551f720b316052e52f1cde"
+    },
+    "Tests/LatticeTests/SyncTests/IPCSyncTests.swift": {
+      "bytes": 35715,
+      "sha256": "9e8d9eebccf21864fa5b9c62dd93e5a9d8b3abc5dddebcb773ecd2a655e822f5"
+    },
+    "Tests/LatticeTests/SyncTests/NIORelaySyncTests.swift": {
+      "bytes": 18098,
+      "sha256": "37f083e1e8c2b3d7085e32992019250392df6bce0c882c1912395c754795282c"
+    },
+    "Tests/LatticeTests/SyncTests/ObserverActorDiagnosticsTests.swift": {
+      "bytes": 3402,
+      "sha256": "6ac26fe038e44187258699a477da64c6c24a3ea7d9d997fd38b1653551c561e7"
+    },
+    "Tests/LatticeTests/SyncTests/ObserverPushLatencyBench.swift": {
+      "bytes": 20787,
+      "sha256": "76db04aaf53f5f1bbf76503afaec180f47151f4045689eac70a6d9d1a33beda0"
+    },
+    "Tests/LatticeTests/SyncTests/ObserverPushTests.swift": {
+      "bytes": 47112,
+      "sha256": "f0e2f64ac2374e3b221d3ac593f8515d2027298f1d32a71230f5059a665d78ce"
+    },
+    "Tests/LatticeTests/SyncTests/PushHarnessStageDiagnosticsTests.swift": {
+      "bytes": 3587,
+      "sha256": "b8d0ab4c18e55966d7271a90afa961d4151d0284932e05f8e9d524f73a7c8eb5"
+    },
+    "Tests/LatticeTests/SyncTests/RelayCheckpointGovernorTests.swift": {
+      "bytes": 5553,
+      "sha256": "e7bbe1016b1a4109ce69899d0163f8c2a02ab1b82753c8cafd7e4a05f405d053"
+    },
+    "Tests/LatticeTests/SyncTests/RelayConnectionSetupTests.swift": {
+      "bytes": 13580,
+      "sha256": "6c2607691bf4c9ac7c77038026f5c5b8c940320edd0ba9a624fa34c4ae5f674a"
+    },
+    "Tests/LatticeTests/SyncTests/RelayExecutionTests.swift": {
+      "bytes": 15641,
+      "sha256": "f1d9feda3c1ac4e32a4f682be907b9253fbfeb5dc79fa878d23226d255edf4c3"
+    },
+    "Tests/LatticeTests/SyncTests/RelayIngressRegistrationTests.swift": {
+      "bytes": 19889,
+      "sha256": "b8a87534d38590f401f0bb537bb8289f760068e4c651b6764bb738d99b7a03b8"
+    },
+    "Tests/LatticeTests/SyncTests/ReplicationSlotTests.swift": {
+      "bytes": 13870,
+      "sha256": "652fe3fcb5edf4032eb55c4d675aff839e0377c687c1625dd5d0276be4e3febf"
+    },
+    "Tests/LatticeTests/SyncTests/ServerAckLatencyBench.swift": {
+      "bytes": 19057,
+      "sha256": "5cf91d37bb3cf9ec37347f831a8bd94cfd4bfbd035043e790d972e5e2df98747"
+    },
+    "Tests/LatticeTests/SyncTests/ServerRelayTests.swift": {
+      "bytes": 48908,
+      "sha256": "ffc2d293b61c2801a227eef774d0b7a2ea05a763c57d03a378572732fe0f2e1a"
+    },
+    "Tests/LatticeTests/SyncTests/SocketStoreCancellationTests.swift": {
+      "bytes": 2148,
+      "sha256": "8f01480b82a6c40459f01cb0930633d911cd2f63c9093f27c34fdfba7fd57b49"
+    },
+    "Tests/LatticeTests/SyncTests/SyncProgressTests.swift": {
+      "bytes": 9798,
+      "sha256": "c22e465b4cefd2c9fc470f86f362527fdc3962b987429e25c2252874e3392d77"
+    },
+    "Tests/LatticeTests/SyncTests/SyncTestHelpers.swift": {
+      "bytes": 17829,
+      "sha256": "bd3f66681a894aea3f81fb52aa6ef75e65b45b209cb909e74271c9d475330a40"
+    },
+    "Tests/LatticeTests/SyncTests/SyncTestStageLog.swift": {
+      "bytes": 2712,
+      "sha256": "f2d35a732de6c68348b4b4a3ee03b7dd00fb9da7f8aec382b0f20480bf89b9da"
+    },
+    "Tests/LatticeTests/SyncTests/TestSyncServerOrderingTests.swift": {
+      "bytes": 6045,
+      "sha256": "db3456632ead394b7164aa82280cc337aff56c465a62604a3ec98674297cf546"
+    },
+    "Tests/LatticeTests/SyncTests/URLChangeSyncTests.swift": {
+      "bytes": 11215,
+      "sha256": "1437963eb8a966e0fff537a05638a16043136af1030e00bff50aafd8c1583f76"
+    },
+    "Tests/LatticeTests/SyncTests/VirtualListJunctionTableTests.swift": {
+      "bytes": 8992,
+      "sha256": "4627f836cd13ecb14e403f28cab5f748645c3969b9a3691cf399664b9766c116"
+    },
+    "Tests/LatticeTests/SyncTests/VirtualSyncTests.swift": {
+      "bytes": 17856,
+      "sha256": "42ac51e15760dea20f4f0e30bd3da9fd1f4482a0a0c0c880f01ec4a92a9337ee"
+    },
+    "Tests/LatticeTests/SyncTests/WalEpochForensicsTests.swift": {
+      "bytes": 48244,
+      "sha256": "bc38aac5479aefeb097b7bc0d841668a72e024e4599109bd9ba656a59073c21d"
+    },
+    "Tests/LatticeTests/SyncTuningTests.swift": {
+      "bytes": 4079,
+      "sha256": "f66565ef1604b1d6a4bec8686dd66c4e0c9ec136832266e448be8e588c2ea134"
+    },
+    "Tests/LatticeTests/TransactionRollbackTests.swift": {
+      "bytes": 2172,
+      "sha256": "73e85ed5e4c06d373a26667477169693dc5b42d50093e2e57c98c6b87fe4053b"
+    },
+    "Tests/LatticeTests/UnfilteredCollectionDeliveryTests.swift": {
+      "bytes": 8242,
+      "sha256": "5c90658037dd1b2be90c3fee82cc617af8d65bb2a1f37b22b688e49ed4edeaa6"
+    },
+    "Tests/LatticeTests/UnionTests.swift": {
+      "bytes": 17595,
+      "sha256": "8f3b136e342ba6b0d1e38947f9b483de696ef5acd74394c87d2f8cbef6a72320"
+    },
+    "Tests/LatticeTests/UnmanagedConstructionTests.swift": {
+      "bytes": 7525,
+      "sha256": "ce04d6b51d2a312568b01f96290d1e9030a485349d8323234e2b513f0f1784e0"
+    },
+    "Tests/LatticeTests/UpsertNotificationTests.swift": {
+      "bytes": 5239,
+      "sha256": "eaa25f2b7b39a3c1463d36e5f62ac1e9c902e81a29f5a23b4300e66ba2ba76c9"
+    },
+    "Tests/LatticeTests/VectorSearchTests.swift": {
+      "bytes": 58811,
+      "sha256": "9edb9198f193a875b6a12668dd69f95466a3865a63e02dec8aaeddb85aa41c39"
+    },
+    "Tests/LatticeTests/VirtualLinkTests.swift": {
+      "bytes": 4607,
+      "sha256": "48536b01c1e11d46078c015ad32133bf04d156e7540fe2ee55a231fed35c75a8"
+    },
+    "Tests/LatticeTests/VirtualListTests.swift": {
+      "bytes": 6695,
+      "sha256": "dfab4ef263320c61ee8275788e278cbf6095ad43843a3375959a008dc22fb955"
+    },
+    "Tests/LatticeTests/VirtualResultsRouteTests.swift": {
+      "bytes": 10344,
+      "sha256": "6e0badf7c7e49697d9d6cea5db4650ef022258d318c7f6ed7bec75717af5826f"
+    },
+    "VERSIONING.md": {
+      "bytes": 1099,
+      "sha256": "11db8a36f198beaa57470ebaa3e4853167104391effb5bf07f57d9e3677c59da"
+    },
+    "docs/design-results-A1-generation-cache.md": {
+      "bytes": 22203,
+      "sha256": "b4e3b663977c688266d1ee41dd990a913d1be39e5e799297c947524408ccb67a"
+    },
+    "docs/design-results-A2-snapshot-tokens.md": {
+      "bytes": 22269,
+      "sha256": "7aa6bde7677ae9d4aaa72048cb9cfe4615eb49ea26b71f52aa674cfa87f60640"
+    },
+    "docs/design-results-A3-sequence-plus-paged.md": {
+      "bytes": 23135,
+      "sha256": "f19dc2830e3cba644297388a6182b08fb6c69f6a5e94f24dc8ed1aac7394873e"
+    },
+    "docs/design-results-item-A-SPEC.md": {
+      "bytes": 78075,
+      "sha256": "f09a35a0b3917abb767e349b3bcb5642285f9e5f43c72731c38ced52703ca656"
+    },
+    "docs/spi-audit-1.0.md": {
+      "bytes": 9608,
+      "sha256": "afa9273b2590bb30844ff3c63bebc9d7d1d9a2fe29a3e2401d710ac93c78fb5b"
+    }
+  },
+  "tree": "645e2be1920dc5b4c1096fe1512dfe1891dc558c"
+}
