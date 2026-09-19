@@ -417,6 +417,7 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--core-sha', required=True)
     parser.add_argument('--test-timeout', type=int, choices=(1800, 5400), required=True)
+    parser.add_argument('--test-scope', choices=('full', 'relay-admission', 'relay-io'), default='full')
     args = parser.parse_args()
     root = args.root.resolve(strict=True)
     allowed = (Path.home() / 'localdev').resolve(strict=True)
@@ -436,6 +437,7 @@ def main():
                LATTICE_ACK_PATH_DIAGNOSTICS='1', LATTICE_OBSERVER_WORKER_DIAGNOSTICS='1',
                PYTHONDONTWRITEBYTECODE='1')
     result = {'scope': 'development source override only; not release qualification',
+              'testScope': args.test_scope,
               'coreCommit': args.core_sha, 'sdkCommit': sdk_sha,
               'runnerOS': platform.platform(), 'machine': platform.machine(), 'cpuCount': os.cpu_count(),
               'runID': env.get('GITHUB_RUN_ID'), 'attempt': env.get('GITHUB_RUN_ATTEMPT'),
@@ -485,7 +487,15 @@ def main():
             save_json(receipts / 'compiler-input-proof.json', compiler_input_proof(build, core))
             # Do not shorten or silently consume the original platform test allowance.
             test_started_at = time.time()
-            runner.run('full-test', ['swift', 'test', *common, '--force-resolved-versions', '--skip-build'], cwd=sdk,
+            test_command = ['swift', 'test', *common, '--force-resolved-versions', '--skip-build']
+            test_label = 'full-test'
+            if args.test_scope == 'relay-admission':
+                test_command.extend(['--filter', 'RelayApplyAdmissionTests'])
+                test_label = 'relay-admission-test'
+            elif args.test_scope == 'relay-io':
+                test_command.extend(['--filter', 'RelayIOIntervalDiagnosticTests|BusySafeApplyForensicsTests'])
+                test_label = 'relay-io-test'
+            runner.run(test_label, test_command, cwd=sdk,
                        timeout=args.test_timeout, require_full_timeout=True)
             graph = runner.run('effective-graph-after', ['swift', 'package', *common, 'show-dependencies', '--format', 'json'], cwd=sdk)
             verify_graph(runner, 'graph-after', read_graph(graph), original, core, args.core_sha, root / 'scratch')
