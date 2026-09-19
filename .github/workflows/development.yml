@@ -1,0 +1,80 @@
+name: Published SDK maintenance Core compatibility
+
+# Installed only on an isolated qualification branch using the already registered
+# development.yml workflow. No push/tag trigger and no publication permissions.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  development:
+    name: Published SDK2.0.0 / maintenance Core (${{ matrix.leg }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: linux
+            runner: ubuntu-24.04
+            container: swift:6.3-noble
+            testTimeout: 5400
+          - leg: macos
+            runner: macos-26
+            container: null
+            testTimeout: 1800
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 240
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DEVELOPMENT_LEG: ${{ matrix.leg }}
+      TEST_TIMEOUT: ${{ matrix.testTimeout }}
+    steps:
+      - name: Install Linux prerequisites
+        if: matrix.leg == 'linux'
+        run: apt-get update && apt-get install -y git python3 libsqlite3-dev sqlite3
+
+      - name: Fetch reviewed qualification tools into owned localdev directory
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          TASK_ROOT="$HOME/localdev/lattice-published-sdk-core206-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DEVELOPMENT_LEG}"
+          test ! -e "$TASK_ROOT"
+          mkdir -p "$TASK_ROOT/tmp"
+          echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          git init "$TASK_ROOT/tools"
+          git -C "$TASK_ROOT/tools" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C "$TASK_ROOT/tools" checkout --detach "$GITHUB_SHA"
+          test "$(git -C "$TASK_ROOT/tools" rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git -C "$TASK_ROOT/tools" status --porcelain=v1 --untracked-files=all)"
+          mkdir "$TASK_ROOT/qualification-inputs"
+          cp "$TASK_ROOT/tools/Scripts/published-sdk-core206/"*.py "$TASK_ROOT/qualification-inputs/"
+          cp "$TASK_ROOT/tools/Scripts/published-sdk-core206/binding.json" "$TASK_ROOT/qualification-inputs/"
+          cp "$TASK_ROOT/tools/.github/workflows/development.yml" "$TASK_ROOT/qualification-inputs/"
+          git -C "$TASK_ROOT/tools" show --no-patch --format='%H %T' HEAD > "$TASK_ROOT/qualification-inputs/workflow-source.txt"
+
+      - name: Build and test exact published SDK with the maintenance Core override
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B "$TASK_ROOT/tools/Scripts/published-sdk-core206/run-development.py" \
+            --root "$TASK_ROOT" \
+            --binding "$TASK_ROOT/tools/Scripts/published-sdk-core206/binding.json" \
+            --test-timeout "$TEST_TIMEOUT"
+
+      - name: Retain exact source, graph, test and failure evidence
+        timeout-minutes: 10
+        if: always() && env.TASK_ROOT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-sdk-core206-${{ matrix.leg }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ env.TASK_ROOT }}/receipts
+            ${{ env.TASK_ROOT }}/test-logs
+            ${{ env.TASK_ROOT }}/qualification-inputs
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
