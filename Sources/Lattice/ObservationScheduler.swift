@@ -23,6 +23,11 @@ public final class ObservationScheduler: @unchecked Sendable {
         turns = ObservationTurnScheduler(workerCount: workerCount, maxSubscriptions: maxSubscriptions)
     }
 
+    /// Current scheduler work and monotonic ages, plus the last settled turn.
+    /// Samples fixed metadata in O(current subscriptions), bounded by this
+    /// scheduler's registration cap. No user callback or query runs here.
+    public var diagnostics: ObservationSchedulerDiagnostics { turns.diagnostics }
+
     func register(storeID: UInt64, delivery: @escaping ObservationTurnScheduler.Delivery)
         throws -> ObservationTurnScheduler.Subscription {
         lock.lock()

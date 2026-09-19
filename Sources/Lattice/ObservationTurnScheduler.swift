@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -32,10 +33,13 @@ internal final class ObservationTurnScheduler: @unchecked Sendable {
 
     private let state: ObservationTurnState
 
-    init(workerCount: Int, maxSubscriptions: Int) {
+    // Internal clock seam for deterministic diagnostics tests. It must be
+    // monotonic, nonblocking and must not reenter the scheduler.
+    init(workerCount: Int, maxSubscriptions: Int,
+         now: @escaping @Sendable () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }) {
         precondition((1...Self.maximumWorkerCount).contains(workerCount))
         precondition(maxSubscriptions > 0)
-        state = ObservationTurnState(workerCount: workerCount, maxSubscriptions: maxSubscriptions)
+        state = ObservationTurnState(workerCount: workerCount, maxSubscriptions: maxSubscriptions, now: now)
         state.startWorkers(count: workerCount)
     }
 
@@ -71,6 +75,8 @@ internal final class ObservationTurnScheduler: @unchecked Sendable {
     }
 
     var snapshot: Snapshot { state.snapshot }
+
+    var diagnostics: ObservationSchedulerDiagnostics { state.diagnostics }
 
     final class Subscription: @unchecked Sendable {
         private let state: ObservationTurnState
@@ -177,6 +183,9 @@ private final class ObservationTurnRecord {
     var turnID: UUID?
     var bodyReturned = false
     var acknowledged = false
+    var pendingSince: UInt64?
+    var readySince: UInt64?
+    var timing: ObservationTurnTiming?
     var drainWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(id: UUID, storeID: UInt64, delivery: ObservationDeliveryBox) {
@@ -184,6 +193,18 @@ private final class ObservationTurnRecord {
         self.storeID = storeID
         self.delivery = delivery
     }
+}
+
+private struct ObservationTurnTiming {
+    let notifiedAt: UInt64
+    let admittedAt: UInt64
+    var bodyReturnedAt: UInt64?
+    var acknowledgedAt: UInt64?
+}
+
+private func observationElapsed(from start: UInt64, to end: UInt64) -> UInt64 {
+    precondition(end >= start, "observation diagnostics clock must be monotonic")
+    return end - start
 }
 
 private final class ObservationStoreQueue {
@@ -204,7 +225,10 @@ private struct ObservationAdmittedTurn {
 /// drops the registered closure off-lock, even while an actor holds its token.
 private final class ObservationTurnState: @unchecked Sendable {
     private let condition = NSCondition()
+    private let workerCount: Int
     private let maxSubscriptions: Int
+    private let now: @Sendable () -> UInt64
+    private var lastCompletedTurn: ObservationSchedulerDiagnostics.CompletedTurn?
     private var records: [UUID: ObservationTurnRecord] = [:]
     private var stores: [UInt64: ObservationStoreQueue] = [:]
     private var readyStores = ObservationReadyQueue<UInt64>()
@@ -213,9 +237,11 @@ private final class ObservationTurnState: @unchecked Sendable {
     private var verifiedWorkers = 0
     private var shutdownWaiters: [CheckedContinuation<Void, Never>] = []
 
-    init(workerCount: Int, maxSubscriptions: Int) {
+    init(workerCount: Int, maxSubscriptions: Int, now: @escaping @Sendable () -> UInt64) {
+        self.workerCount = workerCount
         self.liveWorkers = workerCount
         self.maxSubscriptions = maxSubscriptions
+        self.now = now
     }
 
     func startWorkers(count: Int) {
@@ -258,6 +284,50 @@ private final class ObservationTurnState: @unchecked Sendable {
                      liveWorkers: liveWorkers, verifiedWorkers: verifiedWorkers, isShutdown: stopping)
     }
 
+    var diagnostics: ObservationSchedulerDiagnostics {
+        condition.lock()
+        defer { condition.unlock() }
+        let sampledAt = now()
+        var pending = 0, ready = 0, pendingWhileAdmitted = 0
+        var admitted = 0, running = 0, awaitingAcknowledgement = 0
+        var oldestPending: UInt64?, oldestReady: UInt64?
+        var oldestAdmitted: UInt64?, oldestAcknowledgement: UInt64?
+        func include(_ startedAt: UInt64, in oldest: inout UInt64?) {
+            let age = observationElapsed(from: startedAt, to: sampledAt)
+            oldest = max(oldest ?? 0, age)
+        }
+        for record in records.values {
+            if record.dirty {
+                pending += 1
+                include(record.pendingSince!, in: &oldestPending)
+                if record.turnID != nil { pendingWhileAdmitted += 1 }
+            }
+            if record.ready {
+                ready += 1
+                include(record.readySince!, in: &oldestReady)
+            }
+            if let timing = record.timing {
+                admitted += 1
+                include(timing.admittedAt, in: &oldestAdmitted)
+                if !record.bodyReturned { running += 1 }
+                else if !record.acknowledged {
+                    awaitingAcknowledgement += 1
+                    include(timing.bodyReturnedAt!, in: &oldestAcknowledgement)
+                }
+            }
+        }
+        return .init(workerCount: workerCount, maxSubscriptions: maxSubscriptions,
+                     subscriptions: records.count, pendingSubscriptions: pending,
+                     readySubscriptions: ready, pendingWhileAdmitted: pendingWhileAdmitted,
+                     admittedTurns: admitted, bodiesRunning: running,
+                     awaitingAcknowledgement: awaitingAcknowledgement,
+                     oldestPendingAgeNanoseconds: oldestPending,
+                     oldestReadyAgeNanoseconds: oldestReady,
+                     oldestAdmittedAgeNanoseconds: oldestAdmitted,
+                     oldestAwaitingAcknowledgementAgeNanoseconds: oldestAcknowledgement,
+                     lastCompletedTurn: lastCompletedTurn)
+    }
+
     func register(storeID: UInt64, delivery: @escaping ObservationTurnScheduler.Delivery) throws -> UUID {
         condition.lock()
         defer { condition.unlock() }
@@ -275,6 +345,7 @@ private final class ObservationTurnState: @unchecked Sendable {
         condition.lock()
         if !stopping, let record = records[id], !record.cancelled {
             record.revision = revision
+            if !record.dirty { record.pendingSince = now() }
             record.dirty = true
             if record.turnID == nil && !record.ready { enqueueLocked(record) }
         }
@@ -285,6 +356,7 @@ private final class ObservationTurnState: @unchecked Sendable {
         precondition(!record.ready && record.turnID == nil && !record.cancelled)
         let store = stores[record.storeID]!
         record.ready = true
+        record.readySince = now()
         store.ready.append(record.id)
         makeStoreReadyLocked(record.storeID, store: store)
     }
@@ -310,6 +382,9 @@ private final class ObservationTurnState: @unchecked Sendable {
         precondition(record.ready && record.turnID == nil && !record.cancelled)
         // Remaining subscriptions stay parked until this store's complete
         // turn (body AND actor acknowledgement) settles.
+        record.timing = .init(notifiedAt: record.pendingSince!, admittedAt: now())
+        record.pendingSince = nil
+        record.readySince = nil
         record.ready = false
         record.dirty = false
         let turnID = UUID()
@@ -334,6 +409,7 @@ private final class ObservationTurnState: @unchecked Sendable {
         condition.lock()
         var actions: [ObservationTurnAction] = []
         if let record = records[id], record.turnID == turnID {
+            if !record.bodyReturned { record.timing?.bodyReturnedAt = now() }
             record.bodyReturned = true
             actions = settleLocked(record)
         }
@@ -345,6 +421,7 @@ private final class ObservationTurnState: @unchecked Sendable {
         condition.lock()
         var actions: [ObservationTurnAction] = []
         if let record = records[id], record.turnID == turnID {
+            if !record.acknowledged { record.timing?.acknowledgedAt = now() }
             record.acknowledged = true
             actions = settleLocked(record)
         }
@@ -354,6 +431,15 @@ private final class ObservationTurnState: @unchecked Sendable {
 
     private func settleLocked(_ record: ObservationTurnRecord) -> [ObservationTurnAction] {
         guard record.bodyReturned && record.acknowledged else { return [] }
+        let timing = record.timing!
+        let completedAt = now()
+        lastCompletedTurn = .init(subscriptionID: record.id, turnID: record.turnID!,
+            notificationToAdmissionNanoseconds: observationElapsed(from: timing.notifiedAt, to: timing.admittedAt),
+            notificationToCompletionNanoseconds: observationElapsed(from: timing.notifiedAt, to: completedAt),
+            admittedToBodyReturnNanoseconds: observationElapsed(from: timing.admittedAt, to: timing.bodyReturnedAt!),
+            admittedToAcknowledgementNanoseconds: observationElapsed(from: timing.admittedAt, to: timing.acknowledgedAt!),
+            admittedToCompletionNanoseconds: observationElapsed(from: timing.admittedAt, to: completedAt))
+        record.timing = nil
         let store = stores[record.storeID]!
         precondition(store.admitted)
         store.admitted = false
@@ -385,6 +471,8 @@ private final class ObservationTurnState: @unchecked Sendable {
     private func cancelLocked(_ record: ObservationTurnRecord) -> [ObservationTurnAction] {
         record.cancelled = true
         record.dirty = false
+        record.pendingSince = nil
+        record.readySince = nil
         var actions: [ObservationTurnAction] = []
         if let delivery = record.delivery {
             record.delivery = nil
