@@ -413,6 +413,7 @@ final class ServerRelayTests: BaseTest {
     // MARK: Write policy
 
     @Test func writePolicyRejectsDisallowedOperationWhole() async throws {
+        let setupCompletions = RelaySetupCompletions()
         let policy = SyncWritePolicy(allowedOperations: [
             "SimpleSyncObject": [.insert, .update],
         ])
@@ -420,20 +421,38 @@ final class ServerRelayTests: BaseTest {
             path: ["sync", "group", ":groupID"],
             schema: [SimpleSyncObject.self],
             writePolicy: policy,
+            onSetupFinished: { setupCompletions.noteFinished() },
             channelExtractor: groupExtractor)
         defer { Task { [harness] in await harness.shutdown() } }
 
         let a = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
         let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
 
+        // Finish both empty-channel catch-ups before creating the seed. Client
+        // upgrade alone does not establish server setup/catch-up completion.
+        let setupsReady = await a.wait { _ in setupCompletions.count == 2 }
+        try #require(setupsReady)
+
         // INSERT passes.
         let donor = try testLattice(SimpleSyncObject.self)
         let obj = SimpleSyncObject(value: 90, floatValue: 1)
         try donor.add(obj)
         let insertEntries = Array(donor.eventsAfter(globalId: nil))
+        let insertedIds = Set(insertEntries.compactMap(\.globalId))
+        try #require(!insertedIds.isEmpty)
         try await a.socket!.send(try makeFrame(entries: insertEntries))
         #expect(await a.wait { !$0.acks.isEmpty })
+        let seedWasAcked = await a.wait {
+            insertedIds.isSubset(of: Set($0.acks))
+        }
+        try #require(seedWasAcked)
         #expect(await peer.wait { $0.count(of: "auditLog") > 0 })
+        // ACK precedes awaited fan-out. Identify every seed audit event at the
+        // peer before freezing the no-fanout count for the refused DELETE.
+        let seedReachedPeer = await peer.wait {
+            insertedIds.isSubset(of: Set($0.receivedAuditIds))
+        }
+        try #require(seedReachedPeer)
 
         // DELETE is refused: rejected frame, row survives, no fan-out.
         let preDelete = Array(donor.eventsAfter(globalId: nil))
