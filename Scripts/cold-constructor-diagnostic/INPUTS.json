@@ -1,0 +1,76 @@
+{
+  "files": {
+    "README.md": {
+      "bytes": 6583,
+      "sha256": "ac0245c8edbf17c88789dca28bda5d9812922a81b1881b82eb0506ba79ccea84"
+    },
+    "SOURCE-MANIFEST.json": {
+      "bytes": 159619,
+      "sha256": "0b12e037f245e2bcb76b8d100ecea1f812e92fdca9bac2ee129da084fd3afc60"
+    },
+    "cold-keeper-diagnostic.yml": {
+      "bytes": 3778,
+      "sha256": "d43a4593e74b9a53a6fbdde3d030f5d424ad63623c757a49127d04b11ce25178"
+    },
+    "diagnostic.patch": {
+      "bytes": 14802,
+      "sha256": "4e63eb2edb8c6500130e8c138fd3de4abf146311b4307de6b958a0ae83ba347b"
+    },
+    "fetch-core.py": {
+      "bytes": 2023,
+      "sha256": "4f5e2c1610e66a007b850b628cfc7554025497017cf1f6f57617fc337e78b94e"
+    },
+    "harness/CMakeLists.txt": {
+      "bytes": 960,
+      "sha256": "76a8b61c5c69cc87af2633368b40310e4e64824e0d60c90866a8e191873deb00"
+    },
+    "harness/build.py": {
+      "bytes": 11044,
+      "sha256": "d340a51772e1c453c786c873d011c8b6fba6df2191b5958c1434570b2ba3acce"
+    },
+    "harness/guarded_runner.py": {
+      "bytes": 29477,
+      "sha256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71"
+    },
+    "harness/prepare.py": {
+      "bytes": 3997,
+      "sha256": "7db879c4479d41676e7237cc047d2b89885deecb0e7924cac519cc6183554695"
+    },
+    "harness/probe.cpp": {
+      "bytes": 6439,
+      "sha256": "b9212f53d6b82c9cd57701a9a020ef12c7b399c1b82efafb3ddabe93331dba40"
+    },
+    "harness/run.py": {
+      "bytes": 8373,
+      "sha256": "d51c40d83412573ac1c9336d15a4a808301a4b4c4a6b8c556494f519a566676f"
+    },
+    "harness/summary.py": {
+      "bytes": 5686,
+      "sha256": "10279add70e6722d438342f7aac736295054d52dac8d9cf45060ab968f5156d9"
+    },
+    "harness/test_summary.py": {
+      "bytes": 5500,
+      "sha256": "2a303482fa06ff127b0352dc0439d17b695fd3b46eeca8e2f68e8eb579533b4f"
+    },
+    "overlay/Sources/LatticeCore/include/lattice/detail/cold_keeper_timing.hpp": {
+      "bytes": 5041,
+      "sha256": "638148c3f99c0960a2ba6e15c517215f08d4357b91b0c607a629eb148499a70b"
+    },
+    "overlay/Sources/LatticeCore/include/lattice/lattice.hpp": {
+      "bytes": 457854,
+      "sha256": "c95d0a9bae7b68acd26ec97cdac11be7f4579bc3ad82debb6f2fb6b654895204"
+    },
+    "overlay/Sources/LatticeCore/src/db.cpp": {
+      "bytes": 56081,
+      "sha256": "8da63d688e24632f3aa7dddb562bba06ea69c63acd2bafa12422038411ff66f1"
+    },
+    "parser-fixtures/prior-001-off.log": {
+      "bytes": 320,
+      "sha256": "cd72a324e9958af25bf575c806b1fab30d5601d594cca965dc04e8c8780ef262"
+    },
+    "parser-fixtures/prior-002-on.log": {
+      "bytes": 1579,
+      "sha256": "be33c66c2cba65342dc01deb7e32f64bf0ddabef024b8999eda91d61a420c327"
+    }
+  }
+}

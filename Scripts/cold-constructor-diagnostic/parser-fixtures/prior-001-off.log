@@ -1,0 +1,3 @@
+{"sqliteVersion":"3.43.2","sqliteSourceId":"2023-10-10 13:08:14 1b37c146ee9ebb7acd0160c0ab1fd11017a419fa8a3187386ed8cb32b709aapl"}
+{"sample":"cold","cppScopeOnly":true,"rows":100,"sql":8,"totalNs":262125,"instrumented":false}
+{"sample":"warm","cppScopeOnly":true,"rows":100,"sql":3,"totalNs":68417,"instrumented":false}

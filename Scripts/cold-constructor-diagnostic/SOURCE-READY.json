@@ -1,0 +1,72 @@
+{
+  "actualNativeOrNetworkExecution": false,
+  "admission": {
+    "allowUnchangedRetry": false,
+    "allowedRunAttempt": 1,
+    "branch": "codex/cold-constructor-743-20260919",
+    "createdAt": "2026-09-19T13:55:07.445999+00:00",
+    "kind": "root-owned hosted diagnostic; not local resource grant",
+    "ownerTask": "01a0b267-615d-7571-8a31-91c7b837d549",
+    "workflowPath": ".github/workflows/cold-keeper-diagnostic.yml"
+  },
+  "claimsExcluded": [
+    "Native syntax/build success",
+    "Runtime phase/count/guard success",
+    "Frozen Swift benchmark or speedup",
+    "p95/2x qualification",
+    "Cross-graph/runtime latency comparison",
+    "Product cache/reader/vector policy change",
+    "Release benefit"
+  ],
+  "diagnosticPatchSHA256": "4e63eb2edb8c6500130e8c138fd3de4abf146311b4307de6b958a0ae83ba347b",
+  "executionAdmitted": true,
+  "expectedActualTUsPerArm": 14,
+  "expectedCppSQL": {
+    "cold": 7,
+    "warm": 3
+  },
+  "expectedRecords": {
+    "capacity": 24,
+    "cold": 21,
+    "warm": 15
+  },
+  "freshO3BuildArms": [
+    "off",
+    "on"
+  ],
+  "inputsSHA256": "64ac6f0c6a85d215f9f2aa0e8e4051ceb11e40d15e34d5e3d147b7a61fb27e5a",
+  "packetInstallationPath": "Scripts/cold-constructor-diagnostic",
+  "parserChecksSHA256": "3dec36cbeae7ceea6df54afd3a8862752e8d2940bf76069fbe89f5a4390fe5b6",
+  "readmeSHA256": "ac0245c8edbf17c88789dca28bda5d9812922a81b1881b82eb0506ba79ccea84",
+  "resourceBounds": {
+    "compileLogCapBytes": 67108864,
+    "eachCompileChildSeconds": 1200,
+    "eachCompileOuterSeconds": 1355,
+    "entireTaskRootCapBytes": 536870912,
+    "freeFloorBytes": 13421772800,
+    "runOuterSeconds": 335,
+    "sampleCommandSeconds": 30,
+    "sampleLogCapBytes": 65536,
+    "sharedSampleWindowSeconds": 180
+  },
+  "rootReview": "DRAFT e5acb43223f298cf62a5956207e04e2eb0b22d0a43a05b904dc55e4eb5e8cf02; peer 4ca3af9bb2db3acb2ea844a55be90ebe191e5dc0743202f75ff8a8ea9e3ceaf8",
+  "sampleSchedule": [
+    "off",
+    "on",
+    "off",
+    "on",
+    "off",
+    "on"
+  ],
+  "source": "743c1c20bea3fcb966f640e22348916571c83034",
+  "sourceAuditSHA256": "42b69f55f479b2711fb5e6f92b1131d6373b859fb307c254f6f530dd147d01f1",
+  "sourceChecksSHA256": "6dd239e9489d44b64bcb270b46aa6aab9ed03d06c16b887c1fe5e81a7b6d5a35",
+  "sourceManifestSHA256": "0b12e037f245e2bcb76b8d100ecea1f812e92fdca9bac2ee129da084fd3afc60",
+  "state": "Root admitted one hosted diagnostic attempt after independent source review; no runtime or performance acceptance",
+  "tree": "85dbc9548b5ad6e2f8932c002b1f9f75a7c28f6c",
+  "workflowInstallationPath": ".github/workflows/cold-keeper-diagnostic.yml",
+  "workflowSHA256": "d43a4593e74b9a53a6fbdde3d030f5d424ad63623c757a49127d04b11ce25178",
+  "workflowTriggers": [
+    "workflow_dispatch"
+  ]
+}
