@@ -53,10 +53,13 @@ private final class CxxOwnedPageStop: OwnedPageStop, @unchecked Sendable {
 private func ownedPageBridgeFailure() -> Data? {
     // Copy immediately on this thread, before another sealed helper can clear
     // TLS. The explicit length keeps embedded NUL and bounds even temporary
-    // error-copy allocation; c_str is not scanned or escaped from this scope.
+    // error-copy allocation. Swift's C++ importer exposes the raw data accessor
+    // used by CxxStdlib; the TLS storage stays alive and unchanged until Data
+    // has copied this prefix. No interior pointer escapes this scope.
     let slot = lattice.last_bridge_error()
     let count = min(512, Int(clamping: slot.pointee.size()))
-    return count == 0 ? nil : Data(bytes: slot.pointee.c_str(), count: count)
+    guard count > 0 else { return nil }
+    return Data(buffer: UnsafeBufferPointer(start: slot.pointee.__dataUnsafe(), count: count))
 }
 private func checkOwnedPageBridgeError() throws {
     if let error = ownedPageBridgeFailure() { throw OwnedPageReadError.bridgeFailure(error) }
