@@ -6,6 +6,12 @@ on:
   push:
     branches: [codex/perf-refinement-20260918]
   workflow_dispatch:
+    inputs:
+      sync_probe_qualification:
+        description: 'Qualify opt-in tagged WAL probe and public SDK visibility fixtures only; not performance or full-suite acceptance'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -32,6 +38,7 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       DEVELOPMENT_LEG: ${{ matrix.leg }}
       TEST_TIMEOUT: ${{ matrix.testTimeout }}
+      SYNC_PROBE_QUALIFICATION: ${{ inputs.sync_probe_qualification || false }}
     steps:
       - name: Install Linux prerequisites
         if: matrix.leg == 'linux'
@@ -57,8 +64,12 @@ jobs:
         run: |
           set -euo pipefail
           CORE_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["coreCommit"])' "$TASK_ROOT/lattice/Scripts/development-core.json")"
+          PROBE_ARGUMENTS=()
+          if [[ "$SYNC_PROBE_QUALIFICATION" == 'true' ]]; then
+            PROBE_ARGUMENTS+=(--sync-probe-qualification)
+          fi
           python3 "$TASK_ROOT/lattice/Scripts/run-development.py" \
-            --root "$TASK_ROOT" --core-sha "$CORE_SHA" --test-timeout "$TEST_TIMEOUT"
+            --root "$TASK_ROOT" --core-sha "$CORE_SHA" --test-timeout "$TEST_TIMEOUT" "${PROBE_ARGUMENTS[@]}"
 
       - name: Retain development graph evidence, including failures
         timeout-minutes: 10
@@ -69,6 +80,7 @@ jobs:
           path: |
             ${{ env.TASK_ROOT }}/receipts
             ${{ env.TASK_ROOT }}/test-logs
+            ${{ env.TASK_ROOT }}/visibility-smoke/receipts.json
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14

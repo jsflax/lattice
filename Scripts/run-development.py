@@ -417,6 +417,8 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--core-sha', required=True)
     parser.add_argument('--test-timeout', type=int, choices=(1800, 5400), required=True)
+    parser.add_argument('--sync-probe-qualification', action='store_true',
+                        help='Instrumented Core probe and SDK visibility fixtures only; not full suite or performance')
     args = parser.parse_args()
     root = args.root.resolve(strict=True)
     allowed = (Path.home() / 'localdev').resolve(strict=True)
@@ -435,6 +437,9 @@ def main():
                LATTICE_TEST_LOG_PATH=str(root / 'test-logs/native.log'),
                LATTICE_ACK_PATH_DIAGNOSTICS='1', LATTICE_OBSERVER_WORKER_DIAGNOSTICS='1',
                PYTHONDONTWRITEBYTECODE='1')
+    if args.sync_probe_qualification:
+        env.update(LATTICE_SYNC_VISIBILITY_PERF='0',
+                   LATTICE_SYNC_VISIBILITY_RUN_DIR=str(root / 'visibility-smoke'))
     result = {'scope': 'development source override only; not release qualification',
               'coreCommit': args.core_sha, 'sdkCommit': sdk_sha,
               'runnerOS': platform.platform(), 'machine': platform.machine(), 'cpuCount': os.cpu_count(),
@@ -443,6 +448,9 @@ def main():
               'scriptSHA256': digest(Path(__file__)), 'success': False,
               'primaryError': None, 'evidenceErrors': [], 'releaseGraphAccepted': False,
               'overallSeconds': OVERALL_SECONDS, 'finalizationReserveSeconds': FINALIZATION_RESERVE}
+    result['syncProbeQualification'] = args.sync_probe_qualification
+    if args.sync_probe_qualification:
+        result['scope'] = 'opt-in native origin / Swift importer / public visibility qualification only; no full-suite or performance acceptance'
     original = sdk_inputs = core_inputs = None
     primary = None
     test_started_at = None
@@ -481,12 +489,26 @@ def main():
             runner.run('edit-core', ['swift', 'package', *common, 'edit', 'LatticeCore', '--path', str(core)], cwd=sdk)
             graph = runner.run('effective-graph-before', ['swift', 'package', *common, 'show-dependencies', '--format', 'json'], cwd=sdk)
             verify_graph(runner, 'graph-before', read_graph(graph), original, core, args.core_sha, root / 'scratch')
-            build = runner.run('build-tests', ['swift', 'build', *common, '--force-resolved-versions', '--build-tests', '-j', '2', '-v'], cwd=sdk, timeout=5400)
+            probe_flags = []
+            if args.sync_probe_qualification:
+                import sync_probe_qualification
+                probe_flags = sync_probe_qualification.FLAGS
+                test_started_at = time.time()
+                sync_probe_qualification.qualify_native(runner, core, root, compiler_input_proof)
+            build = runner.run('build-tests', ['swift', 'build', *common, *probe_flags, '--force-resolved-versions', '--build-tests', '-j', '2', '-v'], cwd=sdk, timeout=5400)
             save_json(receipts / 'compiler-input-proof.json', compiler_input_proof(build, core))
             # Do not shorten or silently consume the original platform test allowance.
             test_started_at = time.time()
-            runner.run('full-test', ['swift', 'test', *common, '--force-resolved-versions', '--skip-build'], cwd=sdk,
-                       timeout=args.test_timeout, require_full_timeout=True)
+            if args.sync_probe_qualification:
+                sdk_probe_log = runner.run('sdk-probe-fixtures', ['swift', 'test', *common, *probe_flags,
+                           '--force-resolved-versions', '--skip-build', '--filter',
+                           'SyncPublicVisibilityTests|SyncVisibilityRecorderTests'], cwd=sdk,
+                           timeout=300, require_full_timeout=True)
+                sync_probe_qualification.qualify_sdk_log(sdk_probe_log, receipts)
+                sync_probe_qualification.qualify_public_receipts(root, receipts)
+            else:
+                runner.run('full-test', ['swift', 'test', *common, '--force-resolved-versions', '--skip-build'], cwd=sdk,
+                           timeout=args.test_timeout, require_full_timeout=True)
             graph = runner.run('effective-graph-after', ['swift', 'package', *common, 'show-dependencies', '--format', 'json'], cwd=sdk)
             verify_graph(runner, 'graph-after', read_graph(graph), original, core, args.core_sha, root / 'scratch')
             final_sdk = authenticate_repository(runner, 'sdk-final', sdk, sdk_sha, allowed_changes=('Package.resolved',))

@@ -1,5 +1,5 @@
 {
-  "scope": "Prepublication development graph only; published Core 2.0.5 is the baseline, not the provider of broad APIs or a release-qualified graph",
-  "coreCommit": "917602ee2c9d77a2c0ce6777f792792bef1b00f8",
-  "coreTree": "a3dc117c35f88efcb5e252042ed365256c579d61"
+  "scope": "Opt-in tagged WAL origin and public SDK visibility qualification only; not full-suite, performance or release acceptance",
+  "coreCommit": "a05fd480236430ab0d707ed0201d3edbef299de5",
+  "coreTree": "dd9dae612a7fb22e17b0d9378dadbf4ff85a68b0"
 }
