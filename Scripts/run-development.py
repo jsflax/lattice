@@ -539,6 +539,17 @@ def main():
                     if before != after:
                         raise ValueError('unapproved non-Core dependency drift')
                     shutil.copyfile(sdk / 'Package.resolved', receipts / 'Package.resolved.final')
+                if args.sync_probe_qualification and (root / 'visibility-smoke/receipts.json').is_file():
+                    def visibility_postmortem():
+                        command = json.loads((receipts / 'sdk-probe-fixtures.json').read_text())
+                        cleanup = command.get('cleanup', {})
+                        if (command.get('started') is not True or cleanup.get('leaderReaped') is not True
+                                or cleanup.get('groupGone') is not True):
+                            raise ValueError('postmortem requires proved SDK process exit')
+                        runner.run('sync-visibility-postmortem-command', ['python3',
+                                   str(sdk / 'Scripts/sync_visibility_postmortem.py'), '--root', str(root)],
+                                   cwd=sdk, timeout=30, require_full_timeout=True)
+                    evidence('post-exit visibility copied-store report', visibility_postmortem)
                 if platform.system() == 'Darwin' and test_started_at is not None and primary is not None:
                     def crash_evidence():
                         import development_crashes
