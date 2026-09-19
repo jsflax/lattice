@@ -37,6 +37,28 @@ def phase_record(record, sample):
             'cleanSignature': delta['prepares'] == expected and delta['retired'] == 0,
             'before': record['before'], 'after': record['after']}
 
+def cold_record(value, sample):
+    durations = ('query_ns', 'hydrate_ns', 'boxing_ns', 'model_map_ns')
+    rows = ('query_rows', 'hydrate_rows', 'boxing_rows', 'model_map_rows')
+    numbers = durations + rows + ('errors', 'completed_phases', 'route', 'cold_elapsed_ns')
+    require(set(value) == set(numbers + ('complete',)), 'cold field inventory')
+    require(value['complete'] is True, 'cold capture incomplete')
+    require(all(type(value[x]) is int and 0 <= value[x] < 2**64 for x in numbers), 'cold scalar range')
+    require(value['errors'] == 0 and value['completed_phases'] == 4, 'cold phase errors/count')
+    require(value['route'] == (2 if sample['variant'] == 'local' else 1), 'cold route mismatch')
+    require(all(value[x] == sample['readRows'] == 100 for x in rows), 'cold row count')
+    require(sample['coldOffsetFills'] == 1 and sample['coldKeysetFills'] == 0, 'cold page inventory')
+    elapsed = sample['phases']['read.cold_page_identity_anchor']['elapsedNS']
+    require(type(elapsed) is int and value['cold_elapsed_ns'] == elapsed, 'cold timer join')
+    require(all(value[x] > 0 for x in durations), 'cold missing duration')
+    measured = sum(value[x] for x in durations)
+    require(measured <= elapsed, 'cold bracket overlap/clock inconsistency')
+    return {'bracketsNS': {x: value[x] for x in durations}, 'outerResidualNS': elapsed-measured,
+            'coldElapsedNS': elapsed, 'route': value['route'], 'rows': 100,
+            'instrumentationOverheadNotSubtracted': True, 'schedulingIncluded': True,
+            'performanceTargetClaimed': False}
+
+
 def validate(data, sidecars):
     require(data.get('complete') is True, 'original run incomplete')
     manifest = data['manifest']
@@ -50,15 +72,17 @@ def validate(data, sidecars):
     joined = []
     for sample in samples:
         key = (sample['variant'], sample['iteration']); item = sidecars[key]
-        require(item['schema'] == 'lattice.swift-managed-cell-mechanism/1', 'sidecar schema')
+        require(item['schema'] == 'lattice.swift-managed-cell-mechanism/2', 'sidecar schema')
         require((item['variant'], item['iteration']) == key, 'sidecar identity')
         require(type(item['warmup']) is bool and item['warmup'] == sample['warmup'] == (key[1] < 5), 'warmup join')
         require(item['readChecksum'] == sample['readChecksum'], 'value checksum join')
         require([p['phase'] for p in item['phases']] == list(PHASES), 'phase inventory/order')
         joined.append({'variant': key[0], 'iteration': key[1], 'warmup': item['warmup'],
                        'readChecksum': item['readChecksum'],
+                       'coldAttribution': cold_record(item['coldAttribution'], sample),
                        'phases': [phase_record(p, sample) for p in item['phases']]})
-    return {'schemaVersion': 1, 'observedMechanismAccepted': True, 'phaseCount': 420,
+    return {'schemaVersion': 2, 'observedMechanismAccepted': True, 'phaseCount': 420,
+            'coldAttributionAccepted': True, 'coldPageCount': 210, 'coldBracketCount': 840,
             'scalarExecutions': 252000, 'cleanExpectedSignatures': all(p['cleanSignature'] for s in joined for p in s['phases']),
             'perConnectionCounters': True, 'requiresExclusiveFixtureManagedCellProducer': True,
             'performanceTargetClaimed': False, 'releaseQualified': False, 'samples': joined}

@@ -800,7 +800,17 @@ public:
         // empty on failure, e.g. transient SQLITE_NOMEM under memory pressure.
         last_bridge_error().clear();
         try {
+// BEGIN COLD-PAGE-ATTRIBUTION
+#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
+        cold_attribution_phase cold_query(1, 1);
+#endif
+// END COLD-PAGE-ATTRIBUTION
         auto rows = query_rows(table_name, where_clause, order_by, limit, offset, group_by, distinct_by, params);
+// BEGIN COLD-PAGE-ATTRIBUTION
+#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
+        cold_query.finish(rows.size());
+#endif
+// END COLD-PAGE-ATTRIBUTION
         return hydrate_swift_rows(std::move(rows), table_name);
         } catch (const std::exception& e) {
             last_bridge_error() = e.what();
@@ -1419,6 +1429,11 @@ private:
     std::vector<managed<swift_dynamic_object>> hydrate_swift_rows(
         std::vector<database::row_t>&& rows,
         const std::string& table_name) {
+// BEGIN COLD-PAGE-ATTRIBUTION
+#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
+        cold_attribution_phase cold_hydrate(2);
+#endif
+// END COLD-PAGE-ATTRIBUTION
         std::vector<managed<swift_dynamic_object>> results;
         results.reserve(rows.size());
         const SwiftSchema* props = get_properties_for_table(table_name);
@@ -1431,6 +1446,11 @@ private:
             obj.query_row_image_ = std::make_shared<const database::row_t>(std::move(row));
             results.push_back(std::move(obj));
         }
+// BEGIN COLD-PAGE-ATTRIBUTION
+#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
+        cold_hydrate.finish(results.size());
+#endif
+// END COLD-PAGE-ATTRIBUTION
         return results;
     }
 
@@ -1817,6 +1837,11 @@ public:
         const ColumnValueVector& params = {}) {
         generation_read_stale_tl() = false;
         try {
+// BEGIN COLD-PAGE-ATTRIBUTION
+#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
+            cold_attribution_phase cold_query(1, 2);
+#endif
+// END COLD-PAGE-ATTRIBUTION
             auto rows = query_at_generation(
                 generation_id,
                 build_query_rows_sql(table_name, where_clause, order_by, limit,
@@ -1826,6 +1851,11 @@ public:
                 generation_read_stale_tl() = true;
                 return {};
             }
+// BEGIN COLD-PAGE-ATTRIBUTION
+#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
+            cold_query.finish(rows->size());
+#endif
+// END COLD-PAGE-ATTRIBUTION
             return hydrate_swift_rows(std::move(*rows), table_name);
         } catch (...) {
             generation_read_stale_tl() = true;

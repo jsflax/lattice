@@ -144,8 +144,26 @@ private struct ManagedCellMechanismPhase: Codable {
     let before: ManagedCellMechanismSnapshot
     let after: ManagedCellMechanismSnapshot
 }
+private struct ColdPageAttributionSidecar: Codable {
+    let complete: Bool
+    let errors: UInt32, completed_phases: UInt32, route: UInt32
+    let query_ns: UInt64, hydrate_ns: UInt64, boxing_ns: UInt64, model_map_ns: UInt64
+    let query_rows: UInt64, hydrate_rows: UInt64, boxing_rows: UInt64, model_map_rows: UInt64
+    let cold_elapsed_ns: UInt64
+    init(_ value: lattice.cold_attribution_snapshot, elapsedNS: UInt64) {
+        complete = value.complete; errors = value.errors
+        completed_phases = value.completed_phases; route = value.route
+        query_ns = value.query_ns; hydrate_ns = value.hydrate_ns
+        boxing_ns = value.boxing_ns; model_map_ns = value.model_map_ns
+        query_rows = value.query_rows; hydrate_rows = value.hydrate_rows
+        boxing_rows = value.boxing_rows; model_map_rows = value.model_map_rows
+        cold_elapsed_ns = elapsedNS
+    }
+}
+
 private struct ManagedCellMechanismSidecar: Codable {
-    let schema = "lattice.swift-managed-cell-mechanism/1"
+    let schema = "lattice.swift-managed-cell-mechanism/2"
+    let coldAttribution: ColdPageAttributionSidecar
     let variant: String
     let iteration: Int
     let warmup: Bool
@@ -373,6 +391,9 @@ struct PerfRefinementBenchmarks {
 #if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
         var mechanismColdBefore: lattice.managed_cell_mechanism_snapshot? = nil
         var mechanismColdAfter: lattice.managed_cell_mechanism_snapshot? = nil
+        var coldAttribution: lattice.cold_attribution_snapshot? = nil
+        let coldToken = lattice.coldAttributionBegin()
+        defer { lattice.coldAttributionCancel(coldToken) }
 #endif
 // END MANAGED-CELL-DIAGNOSTIC cold-storage
         let (readResult, readTotal) = try measure {
@@ -386,6 +407,7 @@ struct PerfRefinementBenchmarks {
             }
 // BEGIN MANAGED-CELL-DIAGNOSTIC cold-before
 #if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
+            coldAttribution = lattice.coldAttributionEnd(coldToken)
             mechanismColdBefore = query.cxxLatticeRef.managedCellMechanismSnapshotForTest()
 #endif
 // END MANAGED-CELL-DIAGNOSTIC cold-before
@@ -434,10 +456,11 @@ struct PerfRefinementBenchmarks {
         try require(zip(rows, warmRows).allSatisfy { $0.0 === $0.1 }, "warm identity changed")
 // BEGIN MANAGED-CELL-DIAGNOSTIC sidecar
 #if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
-        guard let mechanismColdBefore, let mechanismColdAfter else {
+        guard let mechanismColdBefore, let mechanismColdAfter, let coldAttribution else {
             throw PerfRefinementFailure.invalid("missing cold mechanism snapshots")
         }
         let mechanism = ManagedCellMechanismSidecar(
+            coldAttribution: .init(coldAttribution, elapsedNS: cold.elapsedNS),
             variant: variant, iteration: iteration, warmup: warmup, readChecksum: readChecksum,
             phases: [
                 .init(phase: "read.live_scalars", sqlStatements: scalars.sqlStatements,

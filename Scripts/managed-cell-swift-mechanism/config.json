@@ -17,6 +17,8 @@
       "Tests/LatticeCoreTests/ManagedCellStatementReuseTests.cpp"
     ],
     "SDK": [
+      "Sources/Lattice/Backend/CxxBackend.swift",
+      "Sources/Lattice/Results/TableResults.swift",
       "Tests/LatticeTests/PerfRefinementBenchmarks.swift"
     ]
   },

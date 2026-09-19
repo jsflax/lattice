@@ -1,6 +1,70 @@
+--- a/Sources/Lattice/Backend/CxxBackend.swift
++++ b/Sources/Lattice/Backend/CxxBackend.swift
+@@ -7,6 +7,20 @@
+ // `lattice` namespace inside the conformers. Alias the C++ types we need so we
+ // never have to write `lattice.X` in a method body.
+ private typealias CxxByteVector = lattice.ByteVector
++
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++// Namespace access outside CxxBackend avoids its `lattice` property shadow.
++enum ColdPageAttribution {
++    static func begin(_ phase: UInt32) -> UInt64 {
++        lattice.coldAttributionPhaseBegin(phase, route: 0)
++    }
++    static func end(_ token: UInt64, phase: UInt32, rows: Int) {
++        lattice.coldAttributionPhaseEnd(token, phase: phase, rows: UInt64(rows))
++    }
++}
++#endif
++// END COLD-PAGE-ATTRIBUTION
+ 
+ // MARK: - FRT/value import-gap helpers
+ //
+@@ -432,6 +446,12 @@
+     func objects(table: String, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?, params: [QueryParameter]) -> [any ObjectBackend] {
+         let res = ref.objects(std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy), columnValues(params))
+         reportQueryFailureIfAny()
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++        let coldBoxing = ColdPageAttribution.begin(3)
++        defer { ColdPageAttribution.end(coldBoxing, phase: 3, rows: Int(res.size())) }
++#endif
++// END COLD-PAGE-ATTRIBUTION
+         var out: [any ObjectBackend] = []
+         out.reserveCapacity(res.size())
+         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
+@@ -836,6 +856,12 @@
+ 
+     func objectsAt(generation: UInt64, table: String, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?, params: [QueryParameter]) -> [any ObjectBackend] {
+         let res = ref.objects_at(generation, std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy), columnValues(params))
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++        let coldBoxing = ColdPageAttribution.begin(3)
++        defer { ColdPageAttribution.end(coldBoxing, phase: 3, rows: Int(res.size())) }
++#endif
++// END COLD-PAGE-ATTRIBUTION
+         var out: [any ObjectBackend] = []
+         out.reserveCapacity(res.size())
+         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
+--- a/Sources/Lattice/Results/TableResults.swift
++++ b/Sources/Lattice/Results/TableResults.swift
+@@ -620,6 +620,12 @@
+                             reuseInstances: Bool = false,
+                             captureQueryRows: (([any ObjectBackend]) -> Void)? = nil) -> [Element]? {
+         func hydrate(_ rows: [any ObjectBackend]) -> [Element] {
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++            let coldMap = ColdPageAttribution.begin(4)
++            defer { ColdPageAttribution.end(coldMap, phase: 4, rows: rows.count) }
++#endif
++// END COLD-PAGE-ATTRIBUTION
+             // Position metadata belongs to this SELECT, even if a registered
+             // model is reused or a concurrent writer changes its live values.
+             captureQueryRows?(rows)
 --- a/Tests/LatticeTests/PerfRefinementBenchmarks.swift
 +++ b/Tests/LatticeTests/PerfRefinementBenchmarks.swift
-@@ -122,6 +122,55 @@
+@@ -122,6 +122,73 @@
      let samples: [PerfRefinementSample]
  }
  
@@ -26,8 +90,26 @@
 +    let before: ManagedCellMechanismSnapshot
 +    let after: ManagedCellMechanismSnapshot
 +}
++private struct ColdPageAttributionSidecar: Codable {
++    let complete: Bool
++    let errors: UInt32, completed_phases: UInt32, route: UInt32
++    let query_ns: UInt64, hydrate_ns: UInt64, boxing_ns: UInt64, model_map_ns: UInt64
++    let query_rows: UInt64, hydrate_rows: UInt64, boxing_rows: UInt64, model_map_rows: UInt64
++    let cold_elapsed_ns: UInt64
++    init(_ value: lattice.cold_attribution_snapshot, elapsedNS: UInt64) {
++        complete = value.complete; errors = value.errors
++        completed_phases = value.completed_phases; route = value.route
++        query_ns = value.query_ns; hydrate_ns = value.hydrate_ns
++        boxing_ns = value.boxing_ns; model_map_ns = value.model_map_ns
++        query_rows = value.query_rows; hydrate_rows = value.hydrate_rows
++        boxing_rows = value.boxing_rows; model_map_rows = value.model_map_rows
++        cold_elapsed_ns = elapsedNS
++    }
++}
++
 +private struct ManagedCellMechanismSidecar: Codable {
-+    let schema = "lattice.swift-managed-cell-mechanism/1"
++    let schema = "lattice.swift-managed-cell-mechanism/2"
++    let coldAttribution: ColdPageAttributionSidecar
 +    let variant: String
 +    let iteration: Int
 +    let warmup: Bool
@@ -56,7 +138,7 @@
  @Suite("PerfRefinementBenchmarks", .serialized)
  struct PerfRefinementBenchmarks {
      private static let updateRanks = [7, 100, 333, 999, 1234, 2345, 3456, 4567, 5678, 6789, 9998]
-@@ -320,6 +369,12 @@
+@@ -320,6 +387,15 @@
                      "read shape is unexpectedly warm")
          var rows: [PerfRefinementMemory] = []
          rows.reserveCapacity(100)
@@ -64,17 +146,21 @@
 +#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
 +        var mechanismColdBefore: lattice.managed_cell_mechanism_snapshot? = nil
 +        var mechanismColdAfter: lattice.managed_cell_mechanism_snapshot? = nil
++        var coldAttribution: lattice.cold_attribution_snapshot? = nil
++        let coldToken = lattice.coldAttributionBegin()
++        defer { lattice.coldAttributionCancel(coldToken) }
 +#endif
 +// END MANAGED-CELL-DIAGNOSTIC cold-storage
          let (readResult, readTotal) = try measure {
              let (_, cold) = try measure {
                  for index in 4_000..<4_100 {
-@@ -329,7 +384,17 @@
+@@ -329,7 +405,18 @@
                      rows.append(row)
                  }
              }
 +// BEGIN MANAGED-CELL-DIAGNOSTIC cold-before
 +#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
++            coldAttribution = lattice.coldAttributionEnd(coldToken)
 +            mechanismColdBefore = query.cxxLatticeRef.managedCellMechanismSnapshotForTest()
 +#endif
 +// END MANAGED-CELL-DIAGNOSTIC cold-before
@@ -87,7 +173,7 @@
              return (cold, displayed, scalars)
          }
          let (cold, displayed, scalars) = readResult
-@@ -354,9 +419,37 @@
+@@ -354,9 +441,38 @@
          }
          let warmFills = shape.fillCounts
          let warmAnchors = shape.anchorCount
@@ -106,10 +192,11 @@
          try require(zip(rows, warmRows).allSatisfy { $0.0 === $0.1 }, "warm identity changed")
 +// BEGIN MANAGED-CELL-DIAGNOSTIC sidecar
 +#if LATTICE_MANAGED_CELL_SWIFT_MECHANISM
-+        guard let mechanismColdBefore, let mechanismColdAfter else {
++        guard let mechanismColdBefore, let mechanismColdAfter, let coldAttribution else {
 +            throw PerfRefinementFailure.invalid("missing cold mechanism snapshots")
 +        }
 +        let mechanism = ManagedCellMechanismSidecar(
++            coldAttribution: .init(coldAttribution, elapsedNS: cold.elapsedNS),
 +            variant: variant, iteration: iteration, warmup: warmup, readChecksum: readChecksum,
 +            phases: [
 +                .init(phase: "read.live_scalars", sqlStatements: scalars.sqlStatements,

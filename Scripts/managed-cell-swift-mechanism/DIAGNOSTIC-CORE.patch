@@ -20,7 +20,73 @@
  #include <projection.hpp>
  #include <list.hpp>
  #include <error.hpp>
-@@ -3727,6 +3728,11 @@
+@@ -799,7 +800,17 @@
+         // empty on failure, e.g. transient SQLITE_NOMEM under memory pressure.
+         last_bridge_error().clear();
+         try {
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
++        cold_attribution_phase cold_query(1, 1);
++#endif
++// END COLD-PAGE-ATTRIBUTION
+         auto rows = query_rows(table_name, where_clause, order_by, limit, offset, group_by, distinct_by, params);
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
++        cold_query.finish(rows.size());
++#endif
++// END COLD-PAGE-ATTRIBUTION
+         return hydrate_swift_rows(std::move(rows), table_name);
+         } catch (const std::exception& e) {
+             last_bridge_error() = e.what();
+@@ -1418,6 +1429,11 @@
+     std::vector<managed<swift_dynamic_object>> hydrate_swift_rows(
+         std::vector<database::row_t>&& rows,
+         const std::string& table_name) {
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
++        cold_attribution_phase cold_hydrate(2);
++#endif
++// END COLD-PAGE-ATTRIBUTION
+         std::vector<managed<swift_dynamic_object>> results;
+         results.reserve(rows.size());
+         const SwiftSchema* props = get_properties_for_table(table_name);
+@@ -1430,6 +1446,11 @@
+             obj.query_row_image_ = std::make_shared<const database::row_t>(std::move(row));
+             results.push_back(std::move(obj));
+         }
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
++        cold_hydrate.finish(results.size());
++#endif
++// END COLD-PAGE-ATTRIBUTION
+         return results;
+     }
+ 
+@@ -1816,6 +1837,11 @@
+         const ColumnValueVector& params = {}) {
+         generation_read_stale_tl() = false;
+         try {
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
++            cold_attribution_phase cold_query(1, 2);
++#endif
++// END COLD-PAGE-ATTRIBUTION
+             auto rows = query_at_generation(
+                 generation_id,
+                 build_query_rows_sql(table_name, where_clause, order_by, limit,
+@@ -1825,6 +1851,11 @@
+                 generation_read_stale_tl() = true;
+                 return {};
+             }
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
++            cold_query.finish(rows->size());
++#endif
++// END COLD-PAGE-ATTRIBUTION
+             return hydrate_swift_rows(std::move(*rows), table_name);
+         } catch (...) {
+             generation_read_stale_tl() = true;
+@@ -3727,6 +3758,11 @@
      //      non-const swift_lattice methods through the shared_ptr member is
      //      legal in a const method). ----
  
@@ -34,7 +100,7 @@
      void add_preserving_global_id(const dynamic_object_ref& ref, const std::string& preserved_global_id) const {
 --- /dev/null
 +++ b/Sources/LatticeSwiftCppBridge/include/managed_cell_mechanism.hpp
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,64 @@
 +#pragma once
 +// Private diagnostic overlay only; absent unless explicitly opted in.
 +#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
@@ -61,9 +127,47 @@
 +};
 +}
 +#endif
++
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
++#include <bridging.hpp>
++namespace lattice {
++// One synchronous 100-row page. No owner, row, statement or Swift pointer is retained.
++struct cold_attribution_snapshot {
++    bool complete = false;
++    uint32_t errors = 0, completed_phases = 0, route = 0;
++    uint64_t query_ns = 0, hydrate_ns = 0, boxing_ns = 0, model_map_ns = 0;
++    uint64_t query_rows = 0, hydrate_rows = 0, boxing_rows = 0, model_map_rows = 0;
++};
++uint64_t coldAttributionBegin() noexcept;
++void coldAttributionCancel(uint64_t capture) noexcept SWIFT_NAME(coldAttributionCancel(_:));
++cold_attribution_snapshot coldAttributionEnd(uint64_t capture) noexcept SWIFT_NAME(coldAttributionEnd(_:));
++uint64_t coldAttributionPhaseBegin(uint32_t phase, uint32_t route) noexcept
++    SWIFT_NAME(coldAttributionPhaseBegin(_:route:));
++void coldAttributionPhaseEnd(uint64_t capture, uint32_t phase, uint64_t rows) noexcept
++    SWIFT_NAME(coldAttributionPhaseEnd(_:phase:rows:));
++void coldAttributionPhaseAbort(uint64_t capture, uint32_t phase) noexcept;
++class cold_attribution_phase {
++    uint64_t capture_;
++    uint32_t phase_;
++public:
++    explicit cold_attribution_phase(uint32_t phase, uint32_t route = 0) noexcept
++        : capture_(coldAttributionPhaseBegin(phase, route)), phase_(phase) {}
++    cold_attribution_phase(const cold_attribution_phase&) = delete;
++    cold_attribution_phase& operator=(const cold_attribution_phase&) = delete;
++    ~cold_attribution_phase() { coldAttributionPhaseAbort(capture_, phase_); }
++    void finish(uint64_t rows) noexcept {
++        coldAttributionPhaseEnd(capture_, phase_, rows);
++        capture_ = 0;
++    }
++};
++}
++
++#endif
++// END COLD-PAGE-ATTRIBUTION
 --- /dev/null
 +++ b/Sources/LatticeSwiftCppBridge/src/managed_cell_mechanism.cpp
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,127 @@
 +// Private stock-runtime mechanism diagnostic; no raw handle or callback changes.
 +#include <lattice.hpp>
 +#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
@@ -103,3 +207,91 @@
 +}
 +}
 +#endif
++
++// BEGIN COLD-PAGE-ATTRIBUTION
++#if defined(LATTICE_MANAGED_CELL_SWIFT_MECHANISM)
++#include <chrono>
++#include <limits>
++namespace lattice {
++namespace {
++struct cold_attribution_state {
++    bool active = false;
++    uint64_t epoch = 0, started = 0;
++    uint32_t current = 0;
++    cold_attribution_snapshot result;
++};
++// Each synchronous fixture stays on its current thread. Inactive calls are no-ops.
++// A crossing to another thread cannot borrow this record or produce completeness.
++thread_local cold_attribution_state cold_state;
++uint64_t cold_now() noexcept {
++    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
++        std::chrono::steady_clock::now().time_since_epoch()).count());
++}
++void cold_error() noexcept {
++    if (cold_state.result.errors != std::numeric_limits<uint32_t>::max())
++        ++cold_state.result.errors;
++}
++}
++uint64_t coldAttributionBegin() noexcept {
++    if (cold_state.active) { cold_error(); return 0; }
++    // Never reuse a token on this thread after wraparound.
++    if (cold_state.epoch == std::numeric_limits<uint64_t>::max()) return 0;
++    ++cold_state.epoch;
++    cold_state.active = true;
++    cold_state.current = 0;
++    cold_state.started = 0;
++    cold_state.result = {};
++    return cold_state.epoch;
++}
++void coldAttributionCancel(uint64_t capture) noexcept {
++    if (capture && cold_state.active && capture == cold_state.epoch) {
++        cold_state.active = false;
++        cold_state.current = 0;
++    }
++}
++uint64_t coldAttributionPhaseBegin(uint32_t phase, uint32_t route) noexcept {
++    if (!cold_state.active) return 0;
++    if (cold_state.current || phase < 1 || phase > 4 ||
++        phase != cold_state.result.completed_phases + 1 ||
++        (phase == 1 ? (route != 1 && route != 2) : route != 0)) {
++        cold_error(); return 0;
++    }
++    if (phase == 1) cold_state.result.route = route; // 1 live; 2 generation.
++    cold_state.current = phase;
++    cold_state.started = cold_now();
++    return cold_state.epoch;
++}
++void coldAttributionPhaseEnd(uint64_t capture, uint32_t phase, uint64_t rows) noexcept {
++    if (!capture) return;
++    if (!cold_state.active || capture != cold_state.epoch) return;
++    if (cold_state.current != phase || phase < 1 || phase > 4) {
++        cold_error(); return;
++    }
++    const auto now = cold_now();
++    if (now < cold_state.started || rows != 100) cold_error();
++    const auto elapsed = now >= cold_state.started ? now - cold_state.started : 0;
++    switch (phase) {
++    case 1: cold_state.result.query_ns = elapsed; cold_state.result.query_rows = rows; break;
++    case 2: cold_state.result.hydrate_ns = elapsed; cold_state.result.hydrate_rows = rows; break;
++    case 3: cold_state.result.boxing_ns = elapsed; cold_state.result.boxing_rows = rows; break;
++    case 4: cold_state.result.model_map_ns = elapsed; cold_state.result.model_map_rows = rows; break;
++    }
++    cold_state.current = 0;
++    ++cold_state.result.completed_phases;
++}
++void coldAttributionPhaseAbort(uint64_t capture, uint32_t phase) noexcept {
++    if (!capture || !cold_state.active || capture != cold_state.epoch) return;
++    cold_error();
++    if (cold_state.current == phase) cold_state.current = 0;
++}
++cold_attribution_snapshot coldAttributionEnd(uint64_t capture) noexcept {
++    if (!capture || !cold_state.active || capture != cold_state.epoch) return {};
++    auto out = cold_state.result;
++    out.complete = out.errors == 0 && out.completed_phases == 4 && cold_state.current == 0;
++    coldAttributionCancel(capture);
++    return out;
++}
++}
++
++#endif
++// END COLD-PAGE-ATTRIBUTION
