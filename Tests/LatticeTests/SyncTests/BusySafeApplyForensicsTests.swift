@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS)
+import Darwin
+#endif
 import Testing
 import Vapor
 import NIOWebSocket
@@ -301,6 +304,98 @@ private func poisonedFrame(_ entries: [AuditLog], poisonTable: String) throws ->
 /// Holds a real SQLite write lock on the channel file from ANOTHER PROCESS,
 /// so the relay's `BEGIN IMMEDIATE` genuinely gets SQLITE_BUSY (rather than
 /// the same-connection transaction race an in-process holder would produce).
+
+/// Test-only, default-off observation. Never changes lock ownership or wait policy.
+/// Loss and output failures remain explicit; missing markers are not a hang proof.
+private final class ContendedPhaseDiagnostic: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sequence = 0
+    private var holder: Int32 = 0
+    private var drops = 0
+    private var logErrors = 0
+    private var once: Set<String> = []
+    #if os(macOS)
+    private var fd: Int32 = -1
+    private var address = sockaddr_un()
+    private let nonce: String
+    private let pid: pid_t
+    #endif
+
+    init?() {
+        #if os(macOS)
+        let env = ProcessInfo.processInfo.environment
+        guard env["LATTICE_CONTENDED_STACK_DIAGNOSTIC"] == "1",
+              let path = env["LATTICE_CONTENDED_MARKER_SOCKET"],
+              let nonce = env["LATTICE_CONTENDED_MARKER_NONCE"],
+              nonce.utf8.count == 32,
+              nonce.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) })
+        else { return nil }
+        self.nonce = nonce
+        pid = Darwin.getpid()
+        let bytes = Array(path.utf8)
+        guard bytes.first == 47, !bytes.contains(0),
+              bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { return nil }
+        address.sun_family = sa_family_t(AF_UNIX)
+        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
+        fd = Darwin.socket(AF_UNIX, SOCK_DGRAM, 0)
+        guard fd >= 0 else { return nil }
+        var one: Int32 = 1
+        guard fcntl(fd, F_SETFL, O_NONBLOCK) == 0,
+              fcntl(fd, F_SETFD, FD_CLOEXEC) == 0,
+              setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one,
+                         socklen_t(MemoryLayout.size(ofValue: one))) == 0 else {
+            _ = Darwin.close(fd); fd = -1
+            return nil
+        }
+        #else
+        return nil
+        #endif
+    }
+
+    deinit {
+        #if os(macOS)
+        if fd >= 0 { _ = Darwin.close(fd) }
+        #endif
+    }
+
+    func registerHolder(_ pid: Int32) { lock.withLock { holder = pid } }
+
+    func mark(_ phase: String, caller: String = "test", value: String = "-", firstOnly: Bool = false) {
+        #if os(macOS)
+        // Capture the diagnostic timestamp before its own serialization/I/O.
+        // The test's measured timestamps are separate and stay unchanged.
+        let ticks = mach_absolute_time()
+        lock.lock(); defer { lock.unlock() }
+        if firstOnly && !once.insert(phase).inserted { return }
+        guard sequence < 48 else { return }
+        sequence += 1
+        let phase = sequence == 48 && phase != "test_end" ? "marker_overflow" : phase
+        if phase == "marker_overflow" { drops += 1 }
+        func row() -> [UInt8] {
+            Array(("CONTENDED_PHASE_V1 \(nonce) \(pid) \(sequence) \(phase) \(ticks) \(holder) "
+                + "\(caller) \(value) \(drops) \(logErrors)\n").utf8)
+        }
+        let log = row()
+        guard log.count <= 512 else { drops += 1; return }
+        let written = log.withUnsafeBytes { Darwin.write(STDERR_FILENO, $0.baseAddress, $0.count) }
+        if written != log.count { logErrors += 1 }
+        // The datagram reports this log-write result. A failed final datagram
+        // leaves the receiver without a terminal marker; it cannot claim zero loss.
+        let bytes = row()
+        let sent = bytes.withUnsafeBytes { buffer in
+            withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.sendto(fd, buffer.baseAddress, buffer.count, MSG_DONTWAIT,
+                                  $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                }
+            }
+        }
+        if sent != bytes.count { drops += 1 }
+        #endif
+    }
+}
+
 private final class ExternalWriteLock: @unchecked Sendable {
     private let proc = Process()
     private let stdinPipe = Pipe()
@@ -308,6 +403,7 @@ private final class ExternalWriteLock: @unchecked Sendable {
     private let seen = LockedBox("")
     private let releasedOnce = AtomicOnce()
     private let timing = LockedBox(Timing())
+    private let diagnostic: ContendedPhaseDiagnostic?
 
     struct Timing: Sendable {
         var heldObservedNS: UInt64?
@@ -329,13 +425,14 @@ private final class ExternalWriteLock: @unchecked Sendable {
     var timingSnapshot: Timing { timing.withLock { $0 } }
     var isRunning: Bool { proc.isRunning }
 
-    init(path: String) throws {
+    init(path: String, diagnostic: ContendedPhaseDiagnostic? = nil) throws {
+        self.diagnostic = diagnostic
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
         proc.arguments = [path]
         proc.standardInput = stdinPipe
         proc.standardOutput = stdoutPipe
         proc.standardError = FileHandle.nullDevice
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [seen, timing] h in
+        stdoutPipe.fileHandleForReading.readabilityHandler = { [seen, timing, diagnostic] h in
             let d = h.availableData
             if !d.isEmpty {
                 let now = DispatchTime.now().uptimeNanoseconds
@@ -347,9 +444,14 @@ private final class ExternalWriteLock: @unchecked Sendable {
                     if markers.0, value.heldObservedNS == nil { value.heldObservedNS = now }
                     if markers.1, value.releaseObservedNS == nil { value.releaseObservedNS = now }
                 }
+                if markers.0 { diagnostic?.mark("pipe_held", caller: "pipe", firstOnly: true) }
+                if markers.1 { diagnostic?.mark("pipe_released", caller: "pipe", firstOnly: true) }
+            } else {
+                diagnostic?.mark("pipe_eof", caller: "pipe", firstOnly: true)
             }
         }
         try proc.run()
+        diagnostic?.registerHolder(proc.processIdentifier)
         // Without bail, sqlite3 can print LOCKHELD after a failed BEGIN.
         stdinPipe.fileHandleForWriting.write(Data(".bail on\nBEGIN IMMEDIATE;\nSELECT 'LOCKHELD';\n".utf8))
     }
@@ -362,20 +464,32 @@ private final class ExternalWriteLock: @unchecked Sendable {
 
     /// Idempotent: the tests release as soon as they have their answer and
     /// again in a deadline task, whichever comes first.
-    func release() {
-        guard releasedOnce.tryFire() else { return }
-        timing.withLock { $0.releaseRequestedNS = DispatchTime.now().uptimeNanoseconds }
-        if proc.isRunning {
-            stdinPipe.fileHandleForWriting.write(Data("COMMIT;\nSELECT 'LOCKRELEASED';\n.quit\n".utf8))
+    func release(caller: String = "test") {
+        diagnostic?.mark("release_attempt", caller: caller)
+        guard releasedOnce.tryFire() else {
+            diagnostic?.mark("release_duplicate", caller: caller)
+            return
         }
+        timing.withLock { $0.releaseRequestedNS = DispatchTime.now().uptimeNanoseconds }
+        diagnostic?.mark("release_admitted", caller: caller)
+        if proc.isRunning {
+            diagnostic?.mark("stdin_write_begin", caller: caller)
+            stdinPipe.fileHandleForWriting.write(Data("COMMIT;\nSELECT 'LOCKRELEASED';\n.quit\n".utf8))
+            diagnostic?.mark("stdin_write_end", caller: caller)
+        }
+        diagnostic?.mark("stdin_close_begin", caller: caller)
         try? stdinPipe.fileHandleForWriting.close()
+        diagnostic?.mark("stdin_close_end", caller: caller)
+        diagnostic?.mark("wait_begin", caller: caller)
         proc.waitUntilExit()
         timing.withLock {
             $0.processExitObservedNS = DispatchTime.now().uptimeNanoseconds
             $0.exitStatus = proc.terminationStatus
             $0.exitedNormally = proc.terminationReason == .exit
         }
+        diagnostic?.mark("wait_end", caller: caller)
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        diagnostic?.mark("release_return", caller: caller, value: String(proc.terminationStatus))
     }
 }
 
@@ -705,19 +819,26 @@ final class BusySafeApplyForensicsTests: BaseTest {
     /// entry — WHILE THE LOCK IS STILL HELD. Nothing is fanned out, and
     /// nothing is silently applied later.
     @Test func contendedApplyNacksPromptlyInsteadOfParking() async throws {
+        let diagnostic = ContendedPhaseDiagnostic()
+        diagnostic?.mark("test_begin")
+        defer { diagnostic?.mark("test_end") }
         let holdSeconds = Double(ProcessInfo.processInfo.environment["FORENSIC_HOLD_S"] ?? "") ?? 12
         let recorder = ProcessInfo.processInfo.environment["LATTICE_ACK_PATH_DIAGNOSTICS"] == "1"
             ? ACKPathRecorder(testRunID: UUID(), retainLatestStages: true) : nil
         var capturedFailure: ACKPathRecorder.Snapshot?
         var reachedLatencyCheck = false
+        var failureSnapshotEmitted = false
         defer {
             // Any earlier thrown setup/send failure gets its own bounded cutoff.
             // A normal passing latency check closes silently; a frozen failure
             // remains independent of later lock release, waits and teardown.
-            if let capturedFailure { ACKPathRecorder.emitSnapshot(capturedFailure) }
+            if let capturedFailure {
+                if !failureSnapshotEmitted { ACKPathRecorder.emitSnapshot(capturedFailure) }
+            }
             else if !reachedLatencyCheck { recorder?.emitSnapshot(partial: true) }
             else { _ = recorder?.closeSnapshot(partial: false) }
         }
+        diagnostic?.mark("harness_begin")
         let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self], ackPathRecorder: recorder)
         defer { harness.removeACKPathRecorder() }
 
@@ -725,13 +846,18 @@ final class BusySafeApplyForensicsTests: BaseTest {
         try await harness.connect(peer, diagnosticRole: .peer)
         let uploader = ForensicClient(label: "uploader", autoAck: false)
         try await harness.connect(uploader)
+        diagnostic?.mark("harness_end")
 
         // Prove the pipeline acks a healthy frame first.
         let warm = try makeUploadEntries(donorPath: "donor-lockwarm-\(String.random(length: 8)).sqlite", value: -1)
         let warmId = try #require(warm.first?.globalId)
+        diagnostic?.mark("warm_send_begin")
         try await uploader.socket!.send(Array(buffer: try frame(warm)))
+        diagnostic?.mark("warm_send_end")
+        diagnostic?.mark("warm_poll_begin")
         try #require(await poll(timeout: 60) { uploader.ackTime(for: warmId) != nil },
                      "warmup frame was not acked — harness is wrong, not the relay")
+        diagnostic?.mark("warm_poll_end")
 
         // Complete donor I/O and encoding before starting the finite lock
         // window; fixture work must not consume the contention coverage.
@@ -741,22 +867,33 @@ final class BusySafeApplyForensicsTests: BaseTest {
         let peerPagesBefore = peer.pages
 
         // Another process takes the write lock and holds it.
-        let lock = try ExternalWriteLock(path: harness.channelFileURL.path)
-        defer { lock.release() }
+        diagnostic?.mark("holder_spawn_begin")
+        let lock = try ExternalWriteLock(path: harness.channelFileURL.path, diagnostic: diagnostic)
+        diagnostic?.mark("holder_spawn_end")
+        defer { lock.release(caller: "defer") }
+        diagnostic?.mark("held_poll_begin")
         try #require(await lock.waitUntilHeld(timeout: 30), "external lock never engaged")
+        diagnostic?.mark("held_poll_end")
         // Deadline release, so a regression can't hang the suite.
         let deadlineRelease = Task { [lock] in
+            defer { diagnostic?.mark("deadline_complete", caller: "deadline") }
             try? await Task.sleep(nanoseconds: UInt64(holdSeconds * 1e9))
-            lock.release()
+            diagnostic?.mark("deadline_wake", caller: "deadline")
+            diagnostic?.mark("deadline_release_begin", caller: "deadline")
+            lock.release(caller: "deadline")
+            diagnostic?.mark("deadline_release_end", caller: "deadline")
         }
 
         defer { deadlineRelease.cancel() }
         try #require(lock.isRunning, "external lock holder exited before the upload")
+        diagnostic?.mark("upload_send_begin")
         let t0 = DispatchTime.now()
         try await uploader.socket!.send(uploadBytes)
         let sendReturnedNS = DispatchTime.now().uptimeNanoseconds
+        diagnostic?.mark("upload_send_end", value: String(sendReturnedNS))
 
         // The headline: an answer arrives while the lock is STILL HELD.
+        diagnostic?.mark("nack_poll_begin")
         let nacked = await poll(timeout: holdSeconds) { uploader.nackTime(for: uploadId) != nil }
         let answerObservedNS = DispatchTime.now().uptimeNanoseconds
         let nackTime = uploader.nackTime(for: uploadId)
@@ -770,11 +907,18 @@ final class BusySafeApplyForensicsTests: BaseTest {
         } else {
             _ = recorder?.closeSnapshot(partial: false)
         }
+        diagnostic?.mark("nack_poll_end", value: nackMs.map { String(format: "%.3f", $0) } ?? "missing")
+        if diagnostic != nil, let capturedFailure {
+            ACKPathRecorder.emitSnapshot(capturedFailure)
+            failureSnapshotEmitted = true
+        }
         lock.release()
         deadlineRelease.cancel()
         // If the deadline won release admission, it owns process reaping.
         // Await it before treating release completion as cleanup evidence.
+        diagnostic?.mark("deadline_join_begin")
         await deadlineRelease.value
+        diagnostic?.mark("deadline_join_end")
         let timing = lock.timingSnapshot
         let sendBeganWhileLocked = timing.confirmsHeld(at: t0.uptimeNanoseconds)
         let sendReturnedWhileLocked = timing.confirmsHeld(at: sendReturnedNS)
@@ -787,9 +931,11 @@ final class BusySafeApplyForensicsTests: BaseTest {
 
         // Nothing may be applied after the fact either: the relay dropped the
         // frame deliberately and told the client to resend it.
+        diagnostic?.mark("post_checks_begin")
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         let ackedEventually = uploader.ackTime(for: uploadId) != nil
         let fannedOut = await poll(timeout: 3) { peer.pages > peerPagesBefore }
+        diagnostic?.mark("post_checks_end")
 
         if let recorder, capturedFailure != nil {
             print("DIAGNOSTIC ContendedApplyFailure: test=\(recorder.testRunID) send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) nack_callback_ns=\(nackTime.map { String($0.uptimeNanoseconds) } ?? "NONE") answer_observed_ns=\(answerObservedNS) frozen_before_post_answer_waits=true")
@@ -825,11 +971,17 @@ final class BusySafeApplyForensicsTests: BaseTest {
                 || uploader.nacks.first?.contains("no-throw-shortfall") == true,
                 "the nack must name the SQLite classification: \(uploader.nacks.first ?? "-")")
 
+        diagnostic?.mark("shutdown_begin")
         await harness.shutdown_keepingStorage()
+        diagnostic?.mark("shutdown_end")
+        diagnostic?.mark("durable_check_begin")
         let counts = try rowCount(inChannelFile: harness.channelFileURL)
+        diagnostic?.mark("durable_check_end")
         print("FORENSIC lock-contention server state: rows=\(counts.rows)")
         #expect(counts.rows == 1, "only the warmup row is durable; the nacked upload is not")
+        diagnostic?.mark("storage_cleanup_begin")
         try? FileManager.default.removeItem(at: harness.storageURL)
+        diagnostic?.mark("storage_cleanup_end")
     }
 
     // MARK: - (4) Retry ladder — deterministic

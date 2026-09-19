@@ -6,6 +6,12 @@ on:
   push:
     branches: [codex/perf-refinement-20260918]
   workflow_dispatch:
+    inputs:
+      contendedStackDiagnostic:
+        description: 'Opt-in bounded macOS contended-case stack diagnostic (not latency qualification)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -32,6 +38,7 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       DEVELOPMENT_LEG: ${{ matrix.leg }}
       TEST_TIMEOUT: ${{ matrix.testTimeout }}
+      LATTICE_CONTENDED_STACK_DIAGNOSTIC: ${{ matrix.leg == 'macos' && inputs.contendedStackDiagnostic && '1' || '0' }}
     steps:
       - name: Install Linux prerequisites
         if: matrix.leg == 'linux'

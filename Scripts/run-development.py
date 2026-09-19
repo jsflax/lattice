@@ -183,7 +183,7 @@ class GuardedRunner:
         proof['proof'] = method if exists is False else 'missing group-absence proof'
         return proof
 
-    def run(self, label, argv, *, cwd, timeout=3600, require_full_timeout=False):
+    def run(self, label, argv, *, cwd, timeout=3600, require_full_timeout=False, diagnostic=False):
         if self.interrupts.received:
             raise RunnerInterrupted('runner has already received interruption')
         log = self.receipts / (label + '.log')
@@ -193,6 +193,8 @@ class GuardedRunner:
                   'primaryError': None, 'evidenceErrors': []}
         process = None
         output = None
+        observer = None
+        command_env = self.env
         started = time.monotonic()
         deadline = min(started + timeout, self.work_deadline)
         primary = None
@@ -205,16 +207,33 @@ class GuardedRunner:
                 record['stopReason'] = 'overall budget cannot admit unchanged command timeout'
             if record['stopReason']:
                 raise RuntimeError(record['stopReason'])
+            if diagnostic:
+                if label != 'full-test':
+                    raise ValueError('contended diagnostic only observes full-test')
+                from contended_stack_diagnostic import Diagnostic
+                observer = Diagnostic(self.root, self.receipts, argv, timeout, self.env)
+                command_env = observer.prepare(self.env)
+            if self.interrupts.received:
+                raise RunnerInterrupted('interrupted during diagnostic preparation')
             output = log.open('xb')
             # Defer TERM/INT until Popen returns and ownership is recorded:
             # the OS child can exist before the Python assignment completes.
             with self.interrupts.hold():
-                process = subprocess.Popen(argv, cwd=cwd, env=self.env, stdout=output,
+                process = subprocess.Popen(argv, cwd=cwd, env=command_env, stdout=output,
                                            stderr=subprocess.STDOUT, start_new_session=True)
                 record.update(started=True, pid=process.pid, ownedPGID=process.pid)
+                if observer is not None:
+                    observer.started(process)
             if self.interrupts.received:
                 raise RunnerInterrupted('interrupted during owned process launch')
             while process.poll() is None:
+                if observer is not None:
+                    # tick may create the one sampler child. Defer interruption
+                    # until Capture has recorded ownership, exactly as for Popen above.
+                    with self.interrupts.hold():
+                        observer.tick(deadline)
+                if self.interrupts.received:
+                    raise RunnerInterrupted('interrupted during owned command observation')
                 sample = self.measure(log)
                 record['minFreeBytes'] = min(record['minFreeBytes'], sample['freeBytes'])
                 record['peakPacketBytes'] = max(record['peakPacketBytes'], sample['packetBytes'])
@@ -230,6 +249,14 @@ class GuardedRunner:
         finally:
             # A second TERM/INT cannot interrupt cleanup or overwrite the first error.
             with self.interrupts.hold():
+                if observer is not None:
+                    try:
+                        record['diagnostic'] = observer.finish()
+                        if not record['diagnostic']['diagnosticComplete']:
+                            record['evidenceErrors'].append({'type': 'IncompleteDiagnostic',
+                                'message': 'requested phase/capture evidence incomplete; native outcome remains separate'})
+                    except Exception as error:
+                        record['evidenceErrors'].append(error_record(error))
                 if process is not None:
                     try:
                         record['cleanup'] = self.cleanup(process)
@@ -435,6 +462,12 @@ def main():
                LATTICE_TEST_LOG_PATH=str(root / 'test-logs/native.log'),
                LATTICE_ACK_PATH_DIAGNOSTICS='1', LATTICE_OBSERVER_WORKER_DIAGNOSTICS='1',
                PYTHONDONTWRITEBYTECODE='1')
+    diagnostic_requested = env.get('LATTICE_CONTENDED_STACK_DIAGNOSTIC', '0')
+    if diagnostic_requested not in ('0', '1'):
+        raise ValueError('contended diagnostic opt-in must be 0 or 1')
+    # Only GuardedRunner supplies fresh marker routing to its full-test child.
+    env.pop('LATTICE_CONTENDED_MARKER_SOCKET', None)
+    env.pop('LATTICE_CONTENDED_MARKER_NONCE', None)
     result = {'scope': 'development source override only; not release qualification',
               'coreCommit': args.core_sha, 'sdkCommit': sdk_sha,
               'runnerOS': platform.platform(), 'machine': platform.machine(), 'cpuCount': os.cpu_count(),
@@ -486,7 +519,7 @@ def main():
             # Do not shorten or silently consume the original platform test allowance.
             test_started_at = time.time()
             runner.run('full-test', ['swift', 'test', *common, '--force-resolved-versions', '--skip-build'], cwd=sdk,
-                       timeout=args.test_timeout, require_full_timeout=True)
+                       timeout=args.test_timeout, require_full_timeout=True, diagnostic=diagnostic_requested == '1')
             graph = runner.run('effective-graph-after', ['swift', 'package', *common, 'show-dependencies', '--format', 'json'], cwd=sdk)
             verify_graph(runner, 'graph-after', read_graph(graph), original, core, args.core_sha, root / 'scratch')
             final_sdk = authenticate_repository(runner, 'sdk-final', sdk, sdk_sha, allowed_changes=('Package.resolved',))
