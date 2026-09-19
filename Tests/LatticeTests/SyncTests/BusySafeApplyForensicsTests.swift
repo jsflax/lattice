@@ -298,88 +298,6 @@ private func poisonedFrame(_ entries: [AuditLog], poisonTable: String) throws ->
     return (Array(try JSONSerialization.data(withJSONObject: root)), poisonId)
 }
 
-/// Holds a real SQLite write lock on the channel file from ANOTHER PROCESS,
-/// so the relay's `BEGIN IMMEDIATE` genuinely gets SQLITE_BUSY (rather than
-/// the same-connection transaction race an in-process holder would produce).
-private final class ExternalWriteLock: @unchecked Sendable {
-    private let proc = Process()
-    private let stdinPipe = Pipe()
-    private let stdoutPipe = Pipe()
-    private let seen = LockedBox("")
-    private let releasedOnce = AtomicOnce()
-    private let timing = LockedBox(Timing())
-
-    struct Timing: Sendable {
-        var heldObservedNS: UInt64?
-        var releaseRequestedNS: UInt64?
-        var releaseObservedNS: UInt64?
-        var processExitObservedNS: UInt64?
-        var exitStatus: Int32?
-        var exitedNormally = false
-
-        // A conservative interval: acquisition was already confirmed and
-        // no COMMIT had yet been requested. Pipe delivery can be delayed,
-        // so releaseObservedNS is an upper bound, not the COMMIT instant.
-        func confirmsHeld(at time: UInt64) -> Bool {
-            guard let heldObservedNS, heldObservedNS <= time else { return false }
-            return releaseRequestedNS.map { time < $0 } ?? true
-        }
-    }
-
-    var timingSnapshot: Timing { timing.withLock { $0 } }
-    var isRunning: Bool { proc.isRunning }
-
-    init(path: String) throws {
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        proc.arguments = [path]
-        proc.standardInput = stdinPipe
-        proc.standardOutput = stdoutPipe
-        proc.standardError = FileHandle.nullDevice
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [seen, timing] h in
-            let d = h.availableData
-            if d.isEmpty { h.readabilityHandler = nil; return }
-            if !d.isEmpty {
-                let now = DispatchTime.now().uptimeNanoseconds
-                let markers = seen.withLock { value in
-                    value += String(decoding: d, as: UTF8.self)
-                    return (value.contains("LOCKHELD"), value.contains("LOCKRELEASED"))
-                }
-                timing.withLock { value in
-                    if markers.0, value.heldObservedNS == nil { value.heldObservedNS = now }
-                    if markers.1, value.releaseObservedNS == nil { value.releaseObservedNS = now }
-                }
-            }
-        }
-        try proc.run()
-        // Without bail, sqlite3 can print LOCKHELD after a failed BEGIN.
-        stdinPipe.fileHandleForWriting.write(Data(".bail on\nBEGIN IMMEDIATE;\nSELECT 'LOCKHELD';\n".utf8))
-    }
-
-    func waitUntilHeld(timeout: TimeInterval) async -> Bool {
-        await poll(timeout: timeout) { [timing] in
-            timing.withLock { $0.heldObservedNS != nil }
-        }
-    }
-
-    /// Idempotent: the tests release as soon as they have their answer and
-    /// again in a deadline task, whichever comes first.
-    func release() {
-        guard releasedOnce.tryFire() else { return }
-        timing.withLock { $0.releaseRequestedNS = DispatchTime.now().uptimeNanoseconds }
-        if proc.isRunning {
-            stdinPipe.fileHandleForWriting.write(Data("COMMIT;\nSELECT 'LOCKRELEASED';\n.quit\n".utf8))
-        }
-        try? stdinPipe.fileHandleForWriting.close()
-        proc.waitUntilExit()
-        timing.withLock {
-            $0.processExitObservedNS = DispatchTime.now().uptimeNanoseconds
-            $0.exitStatus = proc.terminationStatus
-            $0.exitedNormally = proc.terminationReason == .exit
-        }
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
-    }
-}
-
 /// Rows present in the channel file, read with a throwaway handle after the
 /// relay has been shut down.
 private func rowCount(inChannelFile url: URL) throws -> (rows: Int, audit: Int) {
@@ -743,94 +661,110 @@ final class BusySafeApplyForensicsTests: BaseTest {
 
         // Another process takes the write lock and holds it.
         let lock = try ExternalWriteLock(path: harness.channelFileURL.path)
-        defer { lock.release() }
-        try #require(await lock.waitUntilHeld(timeout: 30), "external lock never engaged")
-        // Deadline release, so a regression can't hang the suite.
-        let deadlineRelease = Task { [lock] in
-            try? await Task.sleep(nanoseconds: UInt64(holdSeconds * 1e9))
-            lock.release()
+        var deadlineRelease: Task<ExternalWriteLock.ReleaseResult, Never>?
+        do {
+            try #require(await lock.waitUntilHeld(timeout: 30), "external lock never engaged")
+            // Deadline release, so a regression can't hang the suite.
+            deadlineRelease = Task { [lock] in
+                try? await Task.sleep(nanoseconds: UInt64(holdSeconds * 1e9))
+                return await lock.release()
+            }
+
+            try #require(lock.isRunning, "external lock holder exited before the upload")
+            let t0 = DispatchTime.now()
+            try await uploader.socket!.send(uploadBytes)
+            let sendReturnedNS = DispatchTime.now().uptimeNanoseconds
+
+            // The headline: an answer arrives while the lock is STILL HELD.
+            let nacked = await poll(timeout: holdSeconds) { uploader.nackTime(for: uploadId) != nil }
+            let answerObservedNS = DispatchTime.now().uptimeNanoseconds
+            let nackTime = uploader.nackTime(for: uploadId)
+            let nackMs = nackTime.map {
+                Double($0.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
+            }
+            let ackBeforeRelease = uploader.ackTime(for: uploadId)
+            reachedLatencyCheck = true
+            if !(nackMs ?? .infinity < 9_000) {
+                capturedFailure = recorder?.closeSnapshot(partial: true)
+            } else {
+                _ = recorder?.closeSnapshot(partial: false)
+            }
+            let releaseResult = await lock.release()
+            deadlineRelease?.cancel()
+            if let deadlineRelease {
+                let deadlineResult = await deadlineRelease.value
+                #expect(deadlineResult == releaseResult, "all release callers share the same completion")
+            }
+            #expect(releaseResult.success, Comment(rawValue: "external lock release: \(releaseResult.failures)"))
+            try #require(releaseResult.cleanupComplete, "external child cleanup is incomplete")
+            let timing = releaseResult.timing
+            let sendBeganWhileLocked = timing.confirmsHeld(at: t0.uptimeNanoseconds)
+            let sendReturnedWhileLocked = timing.confirmsHeld(at: sendReturnedNS)
+            let nackedWhileLocked = nackTime.map {
+                timing.confirmsHeld(at: $0.uptimeNanoseconds)
+            } ?? false
+            let ackedWhileLocked = ackBeforeRelease.map {
+                timing.confirmsHeld(at: $0.uptimeNanoseconds)
+            } ?? false
+
+            // Nothing may be applied after the fact either: the relay dropped the
+            // frame deliberately and told the client to resend it.
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            let ackedEventually = uploader.ackTime(for: uploadId) != nil
+            let fannedOut = await poll(timeout: 3) { peer.pages > peerPagesBefore }
+
+            if let recorder, capturedFailure != nil {
+                print("DIAGNOSTIC ContendedApplyFailure: test=\(recorder.testRunID) send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) nack_callback_ns=\(nackTime.map { String($0.uptimeNanoseconds) } ?? "NONE") answer_observed_ns=\(answerObservedNS) frozen_before_post_answer_waits=true")
+            }
+            print("""
+            FORENSIC lock-contention: hold_s=\(holdSeconds) nacked=\(nacked) \
+            send_began_while_locked=\(sendBeganWhileLocked) send_returned_while_locked=\(sendReturnedWhileLocked) \
+            nacked_while_locked=\(nackedWhileLocked) \
+            held_observed_ns=\(timing.heldObservedNS.map { String($0) } ?? "NONE") \
+            send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) \
+            answer_observed_ns=\(answerObservedNS) \
+            release_requested_ns=\(timing.releaseRequestedNS.map { String($0) } ?? "NONE") \
+            release_observed_ns=\(timing.releaseObservedNS.map { String($0) } ?? "NONE") \
+            process_exit_observed_ns=\(timing.processExitObservedNS.map { String($0) } ?? "NONE") \
+            holder_exit_status=\(timing.exitStatus.map { String($0) } ?? "NONE") holder_exited_normally=\(timing.exitedNormally) \
+            nack_ms=\(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER") \
+            acked_while_locked=\(ackedWhileLocked) acked_eventually=\(ackedEventually) \
+            nacks=\(uploader.nacks.count) fanned_out_to_peer=\(fannedOut) \
+            reason=\(uploader.nacks.first ?? "-")
+            """)
+
+            #expect(timing.exitedNormally && timing.exitStatus == 0, "the external lock holder must complete its confirmed transaction successfully")
+            #expect(sendBeganWhileLocked, "the upload send must begin while the confirmed external write lock is held")
+            #expect(nackedWhileLocked, "the nack must be observed before the external lock is released")
+            #expect(nacked, "a contended apply must answer with a nack, not silence")
+            #expect(nackMs ?? .infinity < 9_000,
+                    Comment(rawValue: "the nack took \(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER")ms — "
+                    + "the relay is parking again instead of failing fast"))
+            #expect(!ackedWhileLocked, "nothing can be acked while the write lock is held elsewhere")
+            #expect(!ackedEventually, "a nacked frame is dropped, not applied behind the client's back")
+            #expect(!fannedOut, "a frame the relay could not store must never reach a peer")
+            #expect(uploader.nacks.first?.contains("SQLITE") == true
+                    || uploader.nacks.first?.contains("no-throw-shortfall") == true,
+                    "the nack must name the SQLite classification: \(uploader.nacks.first ?? "-")")
+
+            await harness.shutdown_keepingStorage()
+            let counts = try rowCount(inChannelFile: harness.channelFileURL)
+            print("FORENSIC lock-contention server state: rows=\(counts.rows)")
+            #expect(counts.rows == 1, "only the warmup row is durable; the nacked upload is not")
+            try? FileManager.default.removeItem(at: harness.storageURL)
+        } catch {
+            // Preserve the original setup/send/assertion error. Cancellation only
+            // wakes the hold task; both paths still join the same disposal result.
+            deadlineRelease?.cancel()
+            let releaseResult = await lock.release()
+            if let deadlineRelease {
+                let deadlineResult = await deadlineRelease.value
+                #expect(deadlineResult == releaseResult)
+            }
+            #expect(releaseResult.success && releaseResult.cleanupComplete,
+                    Comment(rawValue: "cleanup after primary failure: \(releaseResult.failures)"))
+            throw error
         }
-
-        defer { deadlineRelease.cancel() }
-        try #require(lock.isRunning, "external lock holder exited before the upload")
-        let t0 = DispatchTime.now()
-        try await uploader.socket!.send(uploadBytes)
-        let sendReturnedNS = DispatchTime.now().uptimeNanoseconds
-
-        // The headline: an answer arrives while the lock is STILL HELD.
-        let nacked = await poll(timeout: holdSeconds) { uploader.nackTime(for: uploadId) != nil }
-        let answerObservedNS = DispatchTime.now().uptimeNanoseconds
-        let nackTime = uploader.nackTime(for: uploadId)
-        let nackMs = nackTime.map {
-            Double($0.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
-        }
-        let ackBeforeRelease = uploader.ackTime(for: uploadId)
-        reachedLatencyCheck = true
-        if !(nackMs ?? .infinity < 9_000) {
-            capturedFailure = recorder?.closeSnapshot(partial: true)
-        } else {
-            _ = recorder?.closeSnapshot(partial: false)
-        }
-        lock.release()
-        deadlineRelease.cancel()
-        // If the deadline won release admission, it owns process reaping.
-        // Await it before treating release completion as cleanup evidence.
-        await deadlineRelease.value
-        let timing = lock.timingSnapshot
-        let sendBeganWhileLocked = timing.confirmsHeld(at: t0.uptimeNanoseconds)
-        let sendReturnedWhileLocked = timing.confirmsHeld(at: sendReturnedNS)
-        let nackedWhileLocked = nackTime.map {
-            timing.confirmsHeld(at: $0.uptimeNanoseconds)
-        } ?? false
-        let ackedWhileLocked = ackBeforeRelease.map {
-            timing.confirmsHeld(at: $0.uptimeNanoseconds)
-        } ?? false
-
-        // Nothing may be applied after the fact either: the relay dropped the
-        // frame deliberately and told the client to resend it.
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
-        let ackedEventually = uploader.ackTime(for: uploadId) != nil
-        let fannedOut = await poll(timeout: 3) { peer.pages > peerPagesBefore }
-
-        if let recorder, capturedFailure != nil {
-            print("DIAGNOSTIC ContendedApplyFailure: test=\(recorder.testRunID) send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) nack_callback_ns=\(nackTime.map { String($0.uptimeNanoseconds) } ?? "NONE") answer_observed_ns=\(answerObservedNS) frozen_before_post_answer_waits=true")
-        }
-        print("""
-        FORENSIC lock-contention: hold_s=\(holdSeconds) nacked=\(nacked) \
-        send_began_while_locked=\(sendBeganWhileLocked) send_returned_while_locked=\(sendReturnedWhileLocked) \
-        nacked_while_locked=\(nackedWhileLocked) \
-        held_observed_ns=\(timing.heldObservedNS.map { String($0) } ?? "NONE") \
-        send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) \
-        answer_observed_ns=\(answerObservedNS) \
-        release_requested_ns=\(timing.releaseRequestedNS.map { String($0) } ?? "NONE") \
-        release_observed_ns=\(timing.releaseObservedNS.map { String($0) } ?? "NONE") \
-        process_exit_observed_ns=\(timing.processExitObservedNS.map { String($0) } ?? "NONE") \
-        holder_exit_status=\(timing.exitStatus.map { String($0) } ?? "NONE") holder_exited_normally=\(timing.exitedNormally) \
-        nack_ms=\(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER") \
-        acked_while_locked=\(ackedWhileLocked) acked_eventually=\(ackedEventually) \
-        nacks=\(uploader.nacks.count) fanned_out_to_peer=\(fannedOut) \
-        reason=\(uploader.nacks.first ?? "-")
-        """)
-
-        #expect(timing.exitedNormally && timing.exitStatus == 0, "the external lock holder must complete its confirmed transaction successfully")
-        #expect(sendBeganWhileLocked, "the upload send must begin while the confirmed external write lock is held")
-        #expect(nackedWhileLocked, "the nack must be observed before the external lock is released")
-        #expect(nacked, "a contended apply must answer with a nack, not silence")
-        #expect(nackMs ?? .infinity < 9_000,
-                Comment(rawValue: "the nack took \(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER")ms — "
-                + "the relay is parking again instead of failing fast"))
-        #expect(!ackedWhileLocked, "nothing can be acked while the write lock is held elsewhere")
-        #expect(!ackedEventually, "a nacked frame is dropped, not applied behind the client's back")
-        #expect(!fannedOut, "a frame the relay could not store must never reach a peer")
-        #expect(uploader.nacks.first?.contains("SQLITE") == true
-                || uploader.nacks.first?.contains("no-throw-shortfall") == true,
-                "the nack must name the SQLite classification: \(uploader.nacks.first ?? "-")")
-
-        await harness.shutdown_keepingStorage()
-        let counts = try rowCount(inChannelFile: harness.channelFileURL)
-        print("FORENSIC lock-contention server state: rows=\(counts.rows)")
-        #expect(counts.rows == 1, "only the warmup row is durable; the nacked upload is not")
-        try? FileManager.default.removeItem(at: harness.storageURL)
     }
 
     // MARK: - (4) Retry ladder — deterministic
