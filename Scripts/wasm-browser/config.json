@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 2,
+  "jsCommit": "d811adcdfbb39d09afbe82564be48cde0553a92e",
+  "jsSourceHashes": {
+    ".github/workflows/ci.yml": "2279ccb285d1e659cab1dc97c1d9c8feafed270fd0d249c4f84cf17400a8abf2",
+    ".gitignore": "ffae9108f366eedb35fef4f805ef6b5a2d64583508ebf90edee80c3658d6196d",
+    ".gitmodules": "3f71ea847e32c5147435f6f0584aa37744e1e1f4a6dff13814d3478e95430535",
+    "CHANGELOG.md": "bff35108931a56c74be559615a6837fa36d1633b950f03b2f3029088d6646ddc",
+    "CLAUDE.md": "b35b81978baa984251eef5533eb35f60a313605076d1ce36dac39d699f55ba22",
+    "README.md": "49c33991d9d1f0b91739b465ea41b28dbffa3a19313aecebb02e127fe7693d43",
+    "examples/notes.html": "67e96668a0f2eda692b9928259eb5dab08ae925ae2245e81144cf1ef23d1a510",
+    "examples/notes.ts": "a944f7ef16f2057ef8d013ed3b3e63a82c5b878d30020c5af06bbbc7ee33210c",
+    "package-lock.json": "52a96fa08672794ea3840a464ef2d2e747e7bb886ba1b8ae14f473ee4f6bec78",
+    "package.json": "dbbf64e5c6fd824c6508fc53519a59c10c441f83a3384e335b01f9229b7ac0b8",
+    "src/decorators.ts": "7306c978a57fbecfac45d85c2f47e7d3208a45ee6902bbca23dd20b5c8e463b6",
+    "src/index.ts": "85c57229c7edf213ff54b52584a636b35294a5d64458da5595a7ab481cac2a55",
+    "src/lattice.ts": "85d729b10fa219566b023ebef2870e8b4bb0a0334d7fa29dd64d83b9fecb89a2",
+    "src/list.ts": "5be0788a6eaff77fe4820e7f5b2e912fa0f6746c7386fd8cd3e070124b518590",
+    "src/pending-drain.ts": "9905db3a1e5c28f412a51698b01bdd7ff0ba52868cef68a80ce72461bf5fc5b2",
+    "src/query.ts": "9d20ed6e307e61bf7b570e8595040504e48533c4a6ca577151b6d0c19064ebeb",
+    "src/results.ts": "f5912a6359e463f9bfe9c007ac56f9bbcd6813e0e1d86e2883a584b29a3e2491",
+    "src/storage.ts": "567fcf63f3c391993b6f0293e4db6c2b9662719b52bcb5c08892802918a41583",
+    "src/sync-socket.ts": "b479abb557b4813432792796a74d8a73e20177202c974536288b8ce376de3cc9",
+    "src/types.ts": "35f7720f50dd213db9aa46537086de438c01b0c6c83aa7c378de2740cceb90a4",
+    "src/uuid.ts": "8281c6ee9abf815434b4a07e39d8ac81981a57e920374aac5281fc23c4c1ff34",
+    "src/vite-plugin.ts": "4a4076955a4b7e4b7258e22b1ef6cd407b321e6faa352c792b3d4b6071e0d81c",
+    "test/browser/index.html": "dacb51d1c023b46fb07e1606419f8d2d4450bed617a505c9caf5c2f5afa6efa1",
+    "test/browser/test-sync-server.ts": "2bf53f224fa57bc5a5533c37ae596ce23a089cfa831f9e816df801dd841709fd",
+    "test/browser/tests.ts": "15bc899a8cff25a93181a163fb277dce44f19c5f372b71374ef636bd12725e0e",
+    "test/fixtures/fake-wasm.js": "1f8e36e7610780686a9b41508bfeb47c78622bc9f913bf2650209206ba658e03",
+    "test/fixtures/lifecycle-wasm.js": "5dc2bf57b3fa61c69743d9603ba79523e72eae6b83fc52bea6151ff074edfa09",
+    "test/instance-sync-state.test.ts": "94b3d0dd985c2a7dc371cb5bf14bb76c466ab826e08c3671e5508bf1a32674a2",
+    "test/lattice-lifecycle.test.ts": "3d168d423275d83e79c8e651e13abf3a3e1be0c4487c30ebf10fa567dd728a8a",
+    "test/lattice.test.ts": "5355f782a839e99c09aabf2357e565374bbdeeba146cddbf2caf9d8744362262",
+    "test/no-shared-worker.test.ts": "70eca6338279aeeb556b4b05cf47cd3ad72df06306d178e5624f32c2ede23572",
+    "test/pending-drain.test.ts": "7f6e8564c33930e548f573c30def552c07dcca157553c26dfb267f7e7186a710",
+    "test/sync-socket.test.ts": "bd53c0a17e2c8930b6f7b5f0d259bdfb18afd83289a34b84090c943dc2be4160",
+    "test/wasm-lifecycle.mjs": "1af95fe65a44cb47a1c6f2e4827d54373e633b133f4342068b21f81ae0103487",
+    "tsconfig.json": "7ef7bdbf539269271db1e8ba127ee5b2f829fdece3bb4202bed9dba37d7e7ab4",
+    "vite.config.ts": "1dfd0502fdb406421c8a488dd1a490c770948e6600728054ba56bb4ce94d2fd4",
+    "vitest.config.ts": "3d8344d53409c0803aea0e97cd425391d079a7aca98e843915a24a1c5bbde87e",
+    "wasm/CMakeLists.txt": "34e292d919ba2e1cdb456099bd6e4319bd7fd600b39733fff706bb79fb694f8e",
+    "wasm/bindings.cpp": "8ae32bea061321ccad1491a65c521b52cfc1367d14cabe898b7c647ddb538353",
+    "wasm/build.sh": "999d94379ed79081256ac55163dcb8e72a60d09621931c35bb0fecb00978e597",
+    "wasm/opfs_vfs.cpp": "d42e33574556ecd7f81efbb8c376951235fd55896390703a85bccb501da039ee",
+    "wasm/opfs_vfs_lib.js": "8b2d758e16bcd884868f56f360db47241998114b366b6bcdbde452eb28dc06f4"
+  },
+  "originalCaseNames": [
+    "buildSchemas creates correct schema",
+    "link() and list() create correct markers",
+    "test_SimpleExample",
+    "test_ResultsQuery",
+    "test_Count",
+    "test_Remove",
+    "test_RemoveQueriedObject",
+    "test_BulkInsert",
+    "test_LinkResolution",
+    "test_LinkAssignment",
+    "test_ListAppendAndIterate",
+    "test_DateRoundTrip",
+    "test_Observation",
+    "test_PersistentDB_WorkerSync",
+    "test_SyncLoop_Debug",
+    "test_SyncLoop_WithBroadcastChannel",
+    "test_GroupBy",
+    "test_TypeSafeQueryBuilder",
+    "test_AddAll_BulkInsert",
+    "test_FineGrainedTableObservation",
+    "test_EmbeddedModel",
+    "test_EnumValue",
+    "test_RealServerSync"
+  ],
+  "coreB": "db6bf8b97d7af22db4c1224f17bbdea80a43cc57",
+  "coreBTree": "781cf09659a06475d88c1f33122c2130142e93c1",
+  "wasmCI": null,
+  "artifactID": null,
+  "artifactSHA256": null,
+  "assets": {},
+  "playwrightVersion": "1.58.2",
+  "nodeVersion": "20.18.0",
+  "browserEngine": "chromium",
+  "remoteSyncQualified": false,
+  "fullBrowserMatrixQualified": false,
+  "originalSuiteTimeoutMs": 120000,
+  "fixtureActionTimeoutMs": 30000,
+  "browserLaunchTimeoutMs": 30000,
+  "overallSeconds": 1200,
+  "freeFloorBytes": 12884901888,
+  "packetCeilingBytes": 2147483648,
+  "supervisorSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+  "platform": "linux",
+  "playwrightLockSHA256": "588b777799547077d3ba093ab6d18a61740321deefb80c7cdfdaea338ebafad8",
+  "jsTree": "286282e3e3bde4c5c2e8f45d97136bd4c12bbe95",
+  "executedArms": [
+    "B"
+  ],
+  "artifactInputReady": false,
+  "regressionSuiteTimeoutMs": 120000,
+  "historicalBaseline": {
+    "executedInThisRun": false,
+    "jsCommit": "ea5379bdffbf60a76f939d74ff1a2d7aa38f7b36",
+    "coreCommit": "36b828864cbb1543e945898be31589f9c04d6384",
+    "browserRunID": 35343411536,
+    "browserArtifactID": 10546381179,
+    "receipt": "historical-A-original-23.json",
+    "receiptSHA256": "6119895d8dadacf3f09dcbc80219a8ff434866adc9c0845aba4aa8ee63d96028",
+    "originalCases": {
+      "passed": 21,
+      "failed": 2,
+      "skipped": 0
+    },
+    "failedNames": [
+      "test_Observation",
+      "test_RealServerSync"
+    ],
+    "jsResponseByteProofComplete": false,
+    "wasmResponseSHA256": "f7ba4249e452c93cd060c8363d28b9e588e5c510e6fad26800d8966803a7c56d",
+    "baselineQualified": false,
+    "fullABCompatibility": false,
+    "originalBuildArtifact": {
+      "runID": 35340302120,
+      "artifactID": 10544642780,
+      "archiveSHA256": "8c88e372b2a962ffaf06d60a62077e39fa2dd254598c45004f6d652a7bd6d145",
+      "assets": {
+        "js": {
+          "zipMember": "A-lattice.js",
+          "sha256": "944c62508a53166a4a6948eaf7246a854abb89b1001f1e6e460c541e11798f5c",
+          "bytes": 142630
+        },
+        "wasm": {
+          "zipMember": "A-lattice.wasm",
+          "sha256": "f7ba4249e452c93cd060c8363d28b9e588e5c510e6fad26800d8966803a7c56d",
+          "bytes": 2967288
+        }
+      }
+    }
+  },
+  "regressionCaseNames": [
+    "audit_fields_memory_transaction",
+    "audit_fields_persistent_transaction",
+    "audit_link_rows_once_persistent",
+    "audit_unsubscribe_queued_and_idempotent",
+    "audit_unsubscribe_inside_callback",
+    "audit_close_suppresses_queued_callback"
+  ],
+  "supersededCandidate": {
+    "executedInThisRun": false,
+    "jsCommit": "ea5379bdffbf60a76f939d74ff1a2d7aa38f7b36",
+    "coreCommit": "cbf360d14d696c84b40f5a58a966eed0271035ae",
+    "coreTree": "cfa80cca9a05fbb2ee92f6db7ed5b9e2cbf41e03",
+    "originalBuildArtifactID": 10544642780,
+    "assets": {
+      "js": {
+        "zipMember": "B-lattice.js",
+        "sha256": "ec4beb6991050935c215b5c92e3a8b55bab8b989876214d18c8b8efc4d6e0d6d",
+        "bytes": 142630
+      },
+      "wasm": {
+        "zipMember": "B-lattice.wasm",
+        "sha256": "d686024a248e3e1ed2e6479c22f73ffb9616a4cad1a288b78b18906d841cdc34",
+        "bytes": 3019123
+      }
+    },
+    "browserStartedInOriginalRun": false,
+    "browserCandidateQualified": false
+  },
+  "nativeLifecycle": {
+    "harnessSHA256": "1af95fe65a44cb47a1c6f2e4827d54373e633b133f4342068b21f81ae0103487",
+    "caseNames": [
+      "queued table and object unsubscribe suppresses real native delivery",
+      "table callback self-unsubscribes after first row of a native batch",
+      "AuditLog repeated unsubscribe releases once and disables queued copies",
+      "closing cached handle A retires only A observers and preserves B",
+      "closing older progress subscriber preserves newer cached subscriber",
+      "direct native delete inside observer defers final destruction safely",
+      "exact cached transport identity excludes another store at identical URL",
+      "queued transport messages and old events cannot reach replacement owner",
+      "server-closed transport can retire before its queued native close callback",
+      "socket watcher delivery may delete its native handle after registration returns",
+      "Core handoff binds replacement socket to surviving distinct native scheduler",
+      "twenty final closes return native resources and sockets to baseline without blocking drain",
+      "managed findObject wrappers release their native owner references",
+      "AuditLog memory transaction emits every stored row exactly once",
+      "AuditLog named-file transaction emits every stored row exactly once",
+      "AuditLog named-file link changes emit every model and junction row exactly once"
+    ],
+    "nodeVersion": "22.16.0",
+    "timeoutSeconds": 100
+  },
+  "typeScript": {
+    "counts": {
+      "passed": 109,
+      "skipped": 6
+    },
+    "skippedNames": [
+      "Decorators list() creates list properties (requires WASM)",
+      "Integration Tests (Browser Required) test_SimpleExample",
+      "Integration Tests (Browser Required) test_ResultsQuery",
+      "Integration Tests (Browser Required) test_Link",
+      "Integration Tests (Browser Required) test_LinkList",
+      "Integration Tests (Browser Required) test_BulkInsert"
+    ]
+  },
+  "regressionFixtureHashes": {
+    "audit-observation-regressions.ts": "315dbe37446586404712c1e6993924abdaede8161f6984634861295d1d3b53a2",
+    "audit-observation-regressions.html": "f047428f5337f5815c1b4a196c090d33abb137cd90c2ff37b8f683eab0b5295e"
+  },
+  "builderToolchain": {
+    "emsdkCommit": "948c31acd3f369a5da276e33ab2ed57108c165e5",
+    "releaseRevision": "1724b50443d92e23ef2a56abf0dc501206839cef",
+    "nodeVersion": "v22.16.0",
+    "manifestSHA256": "7a7201711bd5311a17d95a3cf97329ebc5bebe35d36ab4657631a5c74662c188",
+    "emscriptenVersion": "5.0.6"
+  }
+}

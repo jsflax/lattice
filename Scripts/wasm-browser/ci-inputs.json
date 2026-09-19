@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "repository": "jsflax/Lattice",
+  "artifactID": null,
+  "artifactRunID": null,
+  "artifactRunHeadSHA": null,
+  "artifactBytes": null,
+  "artifactSHA256": null,
+  "jsRepository": "https://github.com/jsflax/LatticeJS.git",
+  "jsCommit": "d811adcdfbb39d09afbe82564be48cde0553a92e",
+  "runtimePacketSealSHA256": "4c080b65a518a1127e4b3fa505599f804a498c50d0793b793d41de5f88df7ead",
+  "node": {
+    "version": "20.18.0",
+    "archive": "node-v20.18.0-linux-x64.tar.xz",
+    "url": "https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-x64.tar.xz",
+    "sha256": "4543670b589593f8fa5f106111fd5139081da42bb165a9239f05195e405f240a",
+    "checksumSource": "https://nodejs.org/dist/v20.18.0/SHASUMS256.txt",
+    "checksumSourceSHA256": "3a4d58219ce6ed145d8b9b69ff64a099b9e62f59d7b55cc4093fbae219518758"
+  },
+  "artifactInputReady": false,
+  "jsTree": "286282e3e3bde4c5c2e8f45d97136bd4c12bbe95",
+  "coreCommit": "db6bf8b97d7af22db4c1224f17bbdea80a43cc57",
+  "coreTree": "781cf09659a06475d88c1f33122c2130142e93c1",
+  "builderRunnerSHA256": "8590dfa8d46cdc385ae4d91925275a3331e1941b8e50795d2a07412412252588",
+  "builderConfigSHA256": "1f9d91d01d1f68ecca7b8ee46ae00d329e3082fd16a6336baebfce47d928c96c"
+}

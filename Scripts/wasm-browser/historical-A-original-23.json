@@ -1,0 +1,704 @@
+{
+  "namesExpected": [
+    "buildSchemas creates correct schema",
+    "link() and list() create correct markers",
+    "test_SimpleExample",
+    "test_ResultsQuery",
+    "test_Count",
+    "test_Remove",
+    "test_RemoveQueriedObject",
+    "test_BulkInsert",
+    "test_LinkResolution",
+    "test_LinkAssignment",
+    "test_ListAppendAndIterate",
+    "test_DateRoundTrip",
+    "test_Observation",
+    "test_PersistentDB_WorkerSync",
+    "test_SyncLoop_Debug",
+    "test_SyncLoop_WithBroadcastChannel",
+    "test_GroupBy",
+    "test_TypeSafeQueryBuilder",
+    "test_AddAll_BulkInsert",
+    "test_FineGrainedTableObservation",
+    "test_EmbeddedModel",
+    "test_EnumValue",
+    "test_RealServerSync"
+  ],
+  "cases": [
+    {
+      "name": "buildSchemas creates correct schema",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "link() and list() create correct markers",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_SimpleExample",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_ResultsQuery",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_Count",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_Remove",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_RemoveQueriedObject",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_BulkInsert",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_LinkResolution",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_LinkAssignment",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_ListAppendAndIterate",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_DateRoundTrip",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_Observation",
+      "status": "fail",
+      "error": "Expected defined but got undefined\nError: Expected defined but got undefined\n    at Object.toBeDefined (http://127.0.0.1:5173/test/browser/tests.ts:140:15)\n    at http://127.0.0.1:5173/test/browser/tests.ts:406:25\n    at async test (http://127.0.0.1:5173/test/browser/tests.ts:70:5)\n    at async runTests (http://127.0.0.1:5173/test/browser/tests.ts:391:3)"
+    },
+    {
+      "name": "test_PersistentDB_WorkerSync",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_SyncLoop_Debug",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_SyncLoop_WithBroadcastChannel",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_GroupBy",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_TypeSafeQueryBuilder",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_AddAll_BulkInsert",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_FineGrainedTableObservation",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_EmbeddedModel",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_EnumValue",
+      "status": "pass",
+      "error": null
+    },
+    {
+      "name": "test_RealServerSync",
+      "status": "fail",
+      "error": "Expected 1 but got 2\nError: Expected 1 but got 2\n    at Object.toBe (http://127.0.0.1:5173/test/browser/tests.ts:125:15)\n    at http://127.0.0.1:5173/test/browser/tests.ts:740:29\n    at async test (http://127.0.0.1:5173/test/browser/tests.ts:70:5)\n    at async runTests (http://127.0.0.1:5173/test/browser/tests.ts:691:3)"
+    }
+  ],
+  "console": [
+    {
+      "type": "debug",
+      "text": "[vite] connecting..."
+    },
+    {
+      "type": "log",
+      "text": "Opening database..."
+    },
+    {
+      "type": "log",
+      "text": "[WASM] SQLite shared cache enabled globally"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "Database opened, creating person..."
+    },
+    {
+      "type": "log",
+      "text": "Adding person... NewClass"
+    },
+    {
+      "type": "log",
+      "text": "Person added, id: 1"
+    },
+    {
+      "type": "log",
+      "text": "Finding person..."
+    },
+    {
+      "type": "log",
+      "text": "Found: NewClass"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "Dog created with id: 1 globalId: eafe29ab-3be2-4df1-a399-11f0eb865330"
+    },
+    {
+      "type": "log",
+      "text": "Before assign - dog.id: 1"
+    },
+    {
+      "type": "log",
+      "text": "setting link: [object Object]"
+    },
+    {
+      "type": "log",
+      "text": "After assign - dog assigned"
+    },
+    {
+      "type": "log",
+      "text": "Person created with id: 1"
+    },
+    {
+      "type": "log",
+      "text": "Found person, checking dog link..."
+    },
+    {
+      "type": "log",
+      "text": "AHHH HYDRATING"
+    },
+    {
+      "type": "log",
+      "text": "linkedDog: NewClass"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "setting link: [object Object]"
+    },
+    {
+      "type": "log",
+      "text": "AHHH HYDRATING"
+    },
+    {
+      "type": "log",
+      "text": "Found person dog: NewClass"
+    },
+    {
+      "type": "log",
+      "text": "AHHH HYDRATING"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[getPropertyValue] Getting list 'puppies' from parent id=1"
+    },
+    {
+      "type": "log",
+      "text": "Initial puppies length: 0"
+    },
+    {
+      "type": "log",
+      "text": "After push, puppies length: 2"
+    },
+    {
+      "type": "log",
+      "text": "[debugListTables] Tables:"
+    },
+    {
+      "type": "log",
+      "text": "AuditLog"
+    },
+    {
+      "type": "log",
+      "text": "Dog"
+    },
+    {
+      "type": "log",
+      "text": "Person"
+    },
+    {
+      "type": "log",
+      "text": "_Dog_Dog_puppies"
+    },
+    {
+      "type": "log",
+      "text": "_Person_Dog_dog"
+    },
+    {
+      "type": "log",
+      "text": "_SyncControl"
+    },
+    {
+      "type": "log",
+      "text": "_lattice_meta"
+    },
+    {
+      "type": "log",
+      "text": "_lattice_replication_slots"
+    },
+    {
+      "type": "log",
+      "text": "_lattice_sync_set"
+    },
+    {
+      "type": "log",
+      "text": "_lattice_sync_state"
+    },
+    {
+      "type": "log",
+      "text": "sqlite_sequence"
+    },
+    {
+      "type": "log",
+      "text": "Tables in DB: AuditLog\nDog\nPerson\n_Dog_Dog_puppies\n_Person_Dog_dog\n_SyncControl\n_lattice_meta\n_lattice_replication_slots\n_lattice_sync_set\n_lattice_sync_state\nsqlite_sequence\n"
+    },
+    {
+      "type": "log",
+      "text": "[debugQueryCount] SQL: SELECT * FROM \"_Dog_Dog_puppies\""
+    },
+    {
+      "type": "log",
+      "text": "Result: 2 rows"
+    },
+    {
+      "type": "log",
+      "text": "  rhs = '029491d4-cfc4-466b-b971-e531918e6cdb'"
+    },
+    {
+      "type": "log",
+      "text": "  globalId = 'c4e08b41-409a-4bff-B21f-a657c97b5bfd'"
+    },
+    {
+      "type": "log",
+      "text": "  lhs = '1591f40a-6d3e-48bd-94a3-962c37261bc2'"
+    },
+    {
+      "type": "log",
+      "text": "  rhs = 'a65432fb-a9d4-4f17-97ee-579f4c9e3d28'"
+    },
+    {
+      "type": "log",
+      "text": "  globalId = '578654b7-370c-49a9-Ba83-2298f6568d43'"
+    },
+    {
+      "type": "log",
+      "text": "  lhs = '1591f40a-6d3e-48bd-94a3-962c37261bc2'"
+    },
+    {
+      "type": "log",
+      "text": "Junction table contents: 2"
+    },
+    {
+      "type": "log",
+      "text": "Puppy names: [Spot, Buddy]"
+    },
+    {
+      "type": "log",
+      "text": "[getPropertyValue] Getting list 'puppies' from parent id=1"
+    },
+    {
+      "type": "log",
+      "text": "Found puppies length: 2"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "Event created with id: 1"
+    },
+    {
+      "type": "log",
+      "text": "Original date: 2024-06-15T10:30:00.000Z"
+    },
+    {
+      "type": "log",
+      "text": "Found date: 2024-06-15T10:30:00.000Z"
+    },
+    {
+      "type": "log",
+      "text": "Set updatedAt to: 2024-07-20T15:00:00.000Z"
+    },
+    {
+      "type": "log",
+      "text": "Found2 updatedAt: 2024-07-20T15:00:00.000Z"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Observation] Received entries: 2"
+    },
+    {
+      "type": "log",
+      "text": "Observed entries count: 2"
+    },
+    {
+      "type": "error",
+      "text": "test_Observation Error: Expected defined but got undefined\n    at Object.toBeDefined (http://127.0.0.1:5173/test/browser/tests.ts:140:15)\n    at http://127.0.0.1:5173/test/browser/tests.ts:406:25\n    at async test (http://127.0.0.1:5173/test/browser/tests.ts:70:5)\n    at async runTests (http://127.0.0.1:5173/test/browser/tests.ts:391:3)"
+    },
+    {
+      "type": "log",
+      "text": "Opening persistent database: test-db-1789733564247"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Opening persistent database: test-db-1789733564247"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Persistent database ready"
+    },
+    {
+      "type": "log",
+      "text": "Persistent database opened"
+    },
+    {
+      "type": "log",
+      "text": "Person added, id: 1"
+    },
+    {
+      "type": "log",
+      "text": "Persistent database test passed - worker sync active"
+    },
+    {
+      "type": "log",
+      "text": "=== SYNC LOOP DEBUG TEST ==="
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "\n--- Step 1: Create local change on main lattice ---"
+    },
+    {
+      "type": "log",
+      "text": "[MainLattice] Observation #1: 2 entries"
+    },
+    {
+      "type": "log",
+      "text": "  - INSERT undefined globalId=d095cf58 isFromRemote=undefined"
+    },
+    {
+      "type": "log",
+      "text": "  - INSERT undefined globalId=d095cf58 isFromRemote=undefined"
+    },
+    {
+      "type": "log",
+      "text": "After local add: 1 observations, isFromRemote values: [undefined, undefined]"
+    },
+    {
+      "type": "log",
+      "text": "\n--- Step 2: Pending entries from main lattice ---"
+    },
+    {
+      "type": "log",
+      "text": "  - INSERT Person globalId=d095cf58 isFromRemote=false"
+    },
+    {
+      "type": "log",
+      "text": "\n--- Step 3: Simulate server echoing back the same data ---"
+    },
+    {
+      "type": "log",
+      "text": "[MainLattice] Observation #2: 1 entries"
+    },
+    {
+      "type": "log",
+      "text": "  - INSERT undefined globalId=d095cf58 isFromRemote=undefined"
+    },
+    {
+      "type": "log",
+      "text": "After applyRemoteChanges: 2 observations (was 1)"
+    },
+    {
+      "type": "log",
+      "text": "New observations: [Object, Object]"
+    },
+    {
+      "type": "log",
+      "text": "\n--- Step 4: Check pending after remote apply ---"
+    },
+    {
+      "type": "log",
+      "text": "Pending entries after apply: 1"
+    },
+    {
+      "type": "log",
+      "text": "  - INSERT Person globalId=d095cf58 isFromRemote=true"
+    },
+    {
+      "type": "log",
+      "text": "\n=== SYNC LOOP DEBUG TEST COMPLETE ==="
+    },
+    {
+      "type": "log",
+      "text": "Total observations: 2"
+    },
+    {
+      "type": "log",
+      "text": "=== SYNC LOOP WITH BROADCAST CHANNEL TEST ==="
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "\n--- Step 1: Add person on main thread ---"
+    },
+    {
+      "type": "log",
+      "text": "[Main Observer] 1 entries: [Object]"
+    },
+    {
+      "type": "log",
+      "text": "[Main] Broadcasting 1 local entries to worker"
+    },
+    {
+      "type": "log",
+      "text": "[Broadcast #1] Main -> Worker: 1 entries"
+    },
+    {
+      "type": "log",
+      "text": "[C++] applyRemoteChanges SQL FAILED: Failed to prepare statement: near \"(\": syntax error | SQL: INSERT INTO (globalId) VALUES (?) | table:  op: INSERT"
+    },
+    {
+      "type": "log",
+      "text": "\n--- Results ---"
+    },
+    {
+      "type": "log",
+      "text": "Total broadcasts: 1"
+    },
+    {
+      "type": "log",
+      "text": "Main observations: 1"
+    },
+    {
+      "type": "log",
+      "text": "Worker observations: 0"
+    },
+    {
+      "type": "log",
+      "text": "=== TEST COMPLETE ==="
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Creating in-memory database"
+    },
+    {
+      "type": "log",
+      "text": "=== REAL SERVER SYNC TEST ==="
+    },
+    {
+      "type": "log",
+      "text": "Connecting to: ws://localhost:5050/sync"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Opening persistent database: sync-test-1789733564899"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Sync enabled: ws://localhost:5050/sync"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Persistent database ready"
+    },
+    {
+      "type": "log",
+      "text": "Lattice opened with sync"
+    },
+    {
+      "type": "log",
+      "text": "[C++ JS] onclose fired: code=1008 reason=isolated qualification: remote sync unresolved client=8142544"
+    },
+    {
+      "type": "log",
+      "text": "[C++] WS closed: code=1008 reason=isolated qualification: remote sync unresolved"
+    },
+    {
+      "type": "log",
+      "text": "\n--- Adding person ---"
+    },
+    {
+      "type": "log",
+      "text": "Person added, id: 1"
+    },
+    {
+      "type": "log",
+      "text": "\n--- Waiting for server response ---"
+    },
+    {
+      "type": "log",
+      "text": "[Observation #1] 2 entries:"
+    },
+    {
+      "type": "log",
+      "text": "  - INSERT undefined globalId=380e6800 isFromRemote=undefined"
+    },
+    {
+      "type": "log",
+      "text": "  - INSERT undefined globalId=380e6800 isFromRemote=undefined"
+    },
+    {
+      "type": "log",
+      "text": "\n--- Results ---"
+    },
+    {
+      "type": "log",
+      "text": "Total observations: 1"
+    },
+    {
+      "type": "log",
+      "text": "Observations breakdown:"
+    },
+    {
+      "type": "log",
+      "text": "  Local: 2"
+    },
+    {
+      "type": "log",
+      "text": "  Remote: 0"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice.close] Closing database..."
+    },
+    {
+      "type": "log",
+      "text": "[Lattice.close] sync sockets released (0 closed)"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice] Snapshot saved: 118784 bytes"
+    },
+    {
+      "type": "log",
+      "text": "[Lattice.close] Database closed"
+    },
+    {
+      "type": "log",
+      "text": "=== REAL SERVER SYNC TEST COMPLETE ==="
+    },
+    {
+      "type": "error",
+      "text": "test_RealServerSync Error: Expected 1 but got 2\n    at Object.toBe (http://127.0.0.1:5173/test/browser/tests.ts:125:15)\n    at http://127.0.0.1:5173/test/browser/tests.ts:740:29\n    at async test (http://127.0.0.1:5173/test/browser/tests.ts:70:5)\n    at async runTests (http://127.0.0.1:5173/test/browser/tests.ts:691:3)"
+    }
+  ],
+  "consoleDropped": 0,
+  "pageErrors": [],
+  "timeLimitMs": 120000,
+  "success": false,
+  "instantiation": {
+    "instantiate": 0,
+    "streaming": 1
+  },
+  "remoteSyncQualified": false,
+  "realServerSyncMeaning": "unchanged local-observation assertion; all WebSocket traffic isolated/blocked"
+}

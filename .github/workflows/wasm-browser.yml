@@ -1,0 +1,66 @@
+name: Core2.0.6 / published JS1.1.1 isolated Chromium (partial)
+# Consumes the authenticated corrected candidate archive; historical A remains failed.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  browser-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Fetch exact workflow source into owned localdev root
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          TASK_ROOT="$HOME/localdev/lattice-wasm-browser-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$TASK_ROOT"
+          mkdir -p "$TASK_ROOT/tmp" "$TASK_ROOT/bootstrap-receipts"
+          echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
+          echo "TMPDIR=$TASK_ROOT/tmp" >> "$GITHUB_ENV"
+          echo "TMP=$TASK_ROOT/tmp" >> "$GITHUB_ENV"
+          echo "TEMP=$TASK_ROOT/tmp" >> "$GITHUB_ENV"
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          python3 -c 'import shutil,sys; sys.exit(0 if shutil.disk_usage(sys.argv[1]).free >= 12*1024**3 else 1)' "$TASK_ROOT"
+          git init "$TASK_ROOT/workflow"
+          git -C "$TASK_ROOT/workflow" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C "$TASK_ROOT/workflow" checkout --detach "$GITHUB_SHA"
+          test "$(git -C "$TASK_ROOT/workflow" rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git -C "$TASK_ROOT/workflow" status --porcelain=v1 --untracked-files=all)"
+          git -C "$TASK_ROOT/workflow" show --no-patch --format='%H %T' HEAD > "$TASK_ROOT/bootstrap-receipts/workflow-source.txt"
+      - name: Install pinned owned Node and authenticate existing WASM/JS inputs
+        timeout-minutes: 9
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 "$TASK_ROOT/workflow/Scripts/wasm-browser/fetch-ci-inputs.py" --root "$TASK_ROOT/inputs"
+          echo "$TASK_ROOT/inputs/node-v20.18.0-linux-x64/bin" >> "$GITHUB_PATH"
+      - name: Run unchanged original23, six audit regressions and real OPFS fixtures
+        timeout-minutes: 21
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$TASK_ROOT/workflow/Scripts/wasm-browser/run-browser.py" \
+            --root "$TASK_ROOT/runtime" \
+            --js-source "$TASK_ROOT/inputs/LatticeJS" \
+            --wasm-artifact "$TASK_ROOT/inputs/candidate-artifact.zip"
+      - name: Retain exact original outcomes and bounded raw evidence even on failure
+        if: always() && env.TASK_ROOT != ''
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-browser-Chromium-PARTIAL-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ env.TASK_ROOT }}/bootstrap-receipts
+            ${{ env.TASK_ROOT }}/inputs/receipts
+            ${{ env.TASK_ROOT }}/inputs/candidate-artifact.zip
+            ${{ env.TASK_ROOT }}/runtime/receipts
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14

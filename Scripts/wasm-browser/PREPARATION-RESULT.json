@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 2,
+  "scope": "corrected candidate runtime source only; historical baseline failed",
+  "browserLaunched": false,
+  "qualificationClaim": false,
+  "files": {
+    "driver.mjs": {
+      "bytes": 25567,
+      "sha256": "fd6a105c18dfc06ea8ce250ccb363ab5566b41a03ad395369d95bfc71203330f"
+    },
+    "run-browser.py": {
+      "bytes": 15702,
+      "sha256": "24904a2f4783cc2c9ce7a95f0d78afcba654e06b45b5c324b63d4d775168036a"
+    },
+    "fetch-ci-inputs.py": {
+      "bytes": 8244,
+      "sha256": "8606c9273be9ec7a4aed6d8fdc3bd55b5a373a0fd97f2183a247009e22b9df1a"
+    },
+    "input_contract.py": {
+      "bytes": 8240,
+      "sha256": "e99f3429112a2d02b5127c49ea8c95ffff07d747a7296e00f7ed84c5f8f34c7f"
+    },
+    "fixture.ts": {
+      "bytes": 4297,
+      "sha256": "ea823098c146de7e729b855b5582647b65b1d66df3c78fb5cf8cb2caef68b6f9"
+    },
+    "fixture.html": {
+      "bytes": 151,
+      "sha256": "a2b7e9b60a5dfc931ed97d32c302028b3026d2122a72306ed30a5f0c5557be03"
+    },
+    "guarded_runner.py": {
+      "bytes": 29477,
+      "sha256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71"
+    },
+    "config.json": {
+      "bytes": 10604,
+      "sha256": "f78a5b0e3450ce2341877e57621c57f9f1c83183cab266f1841b9f84327372e5"
+    },
+    "package.json": {
+      "bytes": 206,
+      "sha256": "66baadc31e00a14d04e48908feec693aa35da425b179add0cb210c37ad0353da"
+    },
+    "package-lock.json": {
+      "bytes": 1849,
+      "sha256": "588b777799547077d3ba093ab6d18a61740321deefb80c7cdfdaea338ebafad8"
+    },
+    "historical-A-original-23.json": {
+      "bytes": 16567,
+      "sha256": "6119895d8dadacf3f09dcbc80219a8ff434866adc9c0845aba4aa8ee63d96028"
+    },
+    "node-v20.18.0-SHASUMS256.txt": {
+      "bytes": 3777,
+      "sha256": "3a4d58219ce6ed145d8b9b69ff64a099b9e62f59d7b55cc4093fbae219518758"
+    },
+    "lifecycle_contract.py": {
+      "bytes": 3203,
+      "sha256": "30ce2faa7c051252d549c52d8754c9b49e3558bfcc8a5453acdf123232a4686b"
+    },
+    "NODE-SKIP-BROWSER-MAPPING.json": {
+      "bytes": 2713,
+      "sha256": "f122eb1bc565d7d08ef13a6580f6213a8bf07c122197268ac2a4ee77ffc55066"
+    },
+    "audit-fixtures/audit-observation-regressions.ts": {
+      "bytes": 8089,
+      "sha256": "315dbe37446586404712c1e6993924abdaede8161f6984634861295d1d3b53a2"
+    },
+    "audit-fixtures/audit-observation-regressions.html": {
+      "bytes": 271,
+      "sha256": "f047428f5337f5815c1b4a196c090d33abb137cd90c2ff37b8f683eab0b5295e"
+    }
+  }
+}

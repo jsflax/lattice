@@ -1,0 +1,65 @@
+{
+  "scope": "Exact maintenance Core2.0.6 with published JS1.1.1; candidate-only WASM/native16/TypeScript/strict Node gate; no browser or release qualification",
+  "browserCompatibility": false,
+  "releaseGraphAccepted": false,
+  "jsRepository": "https://github.com/jsflax/LatticeJS.git",
+  "jsCommit": "d811adcdfbb39d09afbe82564be48cde0553a92e",
+  "candidateCore": "db6bf8b97d7af22db4c1224f17bbdea80a43cc57",
+  "candidateCoreTree": "781cf09659a06475d88c1f33122c2130142e93c1",
+  "emsdkCommit": "948c31acd3f369a5da276e33ab2ed57108c165e5",
+  "emsdkVersion": "5.0.6",
+  "emscriptenReleaseRevision": "1724b50443d92e23ef2a56abf0dc501206839cef",
+  "nodeVersion": "22.16.0",
+  "supervisorSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
+  "freeFloorBytes": 12884901888,
+  "packetCeilingBytes": 12884901888,
+  "perCommandLogCeilingBytes": 134217728,
+  "overallSeconds": 4200,
+  "finalizationReserveSeconds": 300,
+  "parallelism": 2,
+  "jsTree": "286282e3e3bde4c5c2e8f45d97136bd4c12bbe95",
+  "executedArms": [
+    "B"
+  ],
+  "baselinePolicy": "Historical original A remains failed; no unchanged baseline rebuild or rerun; fullABCompatibility=false.",
+  "nativeLifecycle": {
+    "harnessSHA256": "1af95fe65a44cb47a1c6f2e4827d54373e633b133f4342068b21f81ae0103487",
+    "caseNames": [
+      "queued table and object unsubscribe suppresses real native delivery",
+      "table callback self-unsubscribes after first row of a native batch",
+      "AuditLog repeated unsubscribe releases once and disables queued copies",
+      "closing cached handle A retires only A observers and preserves B",
+      "closing older progress subscriber preserves newer cached subscriber",
+      "direct native delete inside observer defers final destruction safely",
+      "exact cached transport identity excludes another store at identical URL",
+      "queued transport messages and old events cannot reach replacement owner",
+      "server-closed transport can retire before its queued native close callback",
+      "socket watcher delivery may delete its native handle after registration returns",
+      "Core handoff binds replacement socket to surviving distinct native scheduler",
+      "twenty final closes return native resources and sockets to baseline without blocking drain",
+      "managed findObject wrappers release their native owner references",
+      "AuditLog memory transaction emits every stored row exactly once",
+      "AuditLog named-file transaction emits every stored row exactly once",
+      "AuditLog named-file link changes emit every model and junction row exactly once"
+    ],
+    "nodeVersion": "22.16.0",
+    "timeoutSeconds": 100
+  },
+  "typeScript": {
+    "counts": {
+      "passed": 109,
+      "skipped": 6
+    },
+    "skippedNames": [
+      "Decorators list() creates list properties (requires WASM)",
+      "Integration Tests (Browser Required) test_SimpleExample",
+      "Integration Tests (Browser Required) test_ResultsQuery",
+      "Integration Tests (Browser Required) test_Link",
+      "Integration Tests (Browser Required) test_LinkList",
+      "Integration Tests (Browser Required) test_BulkInsert"
+    ]
+  },
+  "lifecycleContractSHA256": "30ce2faa7c051252d549c52d8754c9b49e3558bfcc8a5453acdf123232a4686b",
+  "emsdkManifestSHA256": "7a7201711bd5311a17d95a3cf97329ebc5bebe35d36ab4657631a5c74662c188",
+  "emsdkReleaseTagsSHA256": "e6c2efaa1d434e7f89b68fa3ef1599b4b39e0da8ed6e1f2290172c899c654674"
+}
