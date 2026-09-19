@@ -434,7 +434,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         reportQueryFailureIfAny()
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
-        for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
+        for i in 0..<res.size() { out.append(CxxObjectBackend(_requireRef(CxxDynamicObjectRef.wrapManaged(res[i])))) }
         return out
     }
     func unionObjects(tables: [String], where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, params: [QueryParameter]) -> [any ObjectBackend] {
@@ -838,7 +838,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         let res = ref.objects_at(generation, std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy), columnValues(params))
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
-        for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
+        for i in 0..<res.size() { out.append(CxxObjectBackend(_requireRef(CxxDynamicObjectRef.wrapManaged(res[i])))) }
         return out
     }
 
