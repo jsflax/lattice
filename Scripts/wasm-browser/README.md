@@ -1,9 +1,9 @@
-# Corrected candidate browser runtime (partial qualification)
+# Broad Core205 / published JS1.1 browser preparation
 
-Only exact corrected B is executed. Original A's unchanged21/23 outcome is retained in `historical-A-original-23.json`; baselineQualified/fullABCompatibility remain false. Superseded cbf B assets are recorded separately. Runtime refuses unbound candidate artifacts before setup.
+This pending successor uses exact Core a09e622 / JS831cac6. It refuses runtime setup until a new actual builder artifact is authenticated and sealed with bind-artifact.py. Historical cfe/4b assets are not current inputs.
 
-B must pass all23 unchanged original browser tests, the six strictly named real-WASM audit regressions, actual OPFS close/reload/update/reload and unavailable-SharedWorker checks. Original120s test/30s fixture bounds, exact Playwright1.58.2 and Node20.18.0, byte proof, source checks and owned process cleanup remain mandatory. All WebSockets/external HTTP are blocked; remote sync remains unqualified.
+The additional builder gate requires the unchanged published native16 harness, its exact newly built assets and zero per-case/final native resources, plus JS109 passes and the exact six existing browser-required skips. The strict all-Node-cases gate remains false. Node skips do not become passes. Native16 uses real WASM/SQLite in Node22.16.0 with fixture sockets, not browser/live sync.
 
-The reviewed collector records non-module JS fetch metadata without treating it as executed-module proof; actual module and WASM response hashes are still required. Any case, asset, page-error, source-integrity or cleanup failure keeps the candidate unqualified. Historical A failures never prevent capturing B's independent evidence and never become passes.
+Browser runtime retains Node20.18.0, Playwright1.58.2, unchanged original23, audit6 and both three-page persistence scenarios, received asset hashes and owned cleanup. Published JS1.1 omits audit6 files; their frozen bytes are an explicit qualification-only overlay under audit-fixtures, separate from exact published source and verified again at exit. Browser driver, fixture deadlines and resource guards remain unchanged. Remote sync, full matrix, release and performance qualification remain false.
 
-`check-preparation.py` performs source checks only. `bind-artifact.py` is a separate one-shot preparation step requiring actual authenticated builder output, never a CI fallback or fixture correction. See the parent packet README for the two-stage installation and source identities.
+Builder and later bound-browser workflows have separate isolated trigger branches. Source review/admission precedes a build; actual builder evidence review and one-shot binding precede any browser run.

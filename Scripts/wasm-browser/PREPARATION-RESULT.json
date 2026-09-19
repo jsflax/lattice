@@ -9,16 +9,16 @@
       "sha256": "fd6a105c18dfc06ea8ce250ccb363ab5566b41a03ad395369d95bfc71203330f"
     },
     "run-browser.py": {
-      "bytes": 14277,
-      "sha256": "ca66b9abccf4e11edd8e6d5102bcd1f415b10a710d37645819f0ae4749f50ce2"
+      "bytes": 15702,
+      "sha256": "24904a2f4783cc2c9ce7a95f0d78afcba654e06b45b5c324b63d4d775168036a"
     },
     "fetch-ci-inputs.py": {
       "bytes": 8244,
       "sha256": "8606c9273be9ec7a4aed6d8fdc3bd55b5a373a0fd97f2183a247009e22b9df1a"
     },
     "input_contract.py": {
-      "bytes": 5623,
-      "sha256": "08dd51d5b12a4a19ed8c15509d9ce73bb0e89a0fe77416eb321a66c6dfc17ec8"
+      "bytes": 8240,
+      "sha256": "e99f3429112a2d02b5127c49ea8c95ffff07d747a7296e00f7ed84c5f8f34c7f"
     },
     "fixture.ts": {
       "bytes": 4297,
@@ -33,8 +33,8 @@
       "sha256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71"
     },
     "config.json": {
-      "bytes": 6139,
-      "sha256": "10d2a8b0ad432419fada83f12b8261141ff9a2a4f90b5b2f7d0215f8e78ec7a7"
+      "bytes": 10619,
+      "sha256": "5c1ce6a9b516d12580cf3eb86a04b1abb2705fe293deff008df4aa1bc3b95330"
     },
     "package.json": {
       "bytes": 206,
@@ -51,6 +51,22 @@
     "node-v20.18.0-SHASUMS256.txt": {
       "bytes": 3777,
       "sha256": "3a4d58219ce6ed145d8b9b69ff64a099b9e62f59d7b55cc4093fbae219518758"
+    },
+    "lifecycle_contract.py": {
+      "bytes": 3203,
+      "sha256": "30ce2faa7c051252d549c52d8754c9b49e3558bfcc8a5453acdf123232a4686b"
+    },
+    "NODE-SKIP-BROWSER-MAPPING.json": {
+      "bytes": 2713,
+      "sha256": "f122eb1bc565d7d08ef13a6580f6213a8bf07c122197268ac2a4ee77ffc55066"
+    },
+    "audit-fixtures/audit-observation-regressions.ts": {
+      "bytes": 8089,
+      "sha256": "315dbe37446586404712c1e6993924abdaede8161f6984634861295d1d3b53a2"
+    },
+    "audit-fixtures/audit-observation-regressions.html": {
+      "bytes": 271,
+      "sha256": "f047428f5337f5815c1b4a196c090d33abb137cd90c2ff37b8f683eab0b5295e"
     }
   }
 }

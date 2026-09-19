@@ -1,11 +1,7 @@
 {
   "schemaVersion": 1,
   "executed": false,
-  "nodeEvidenceRun": 35340302120,
-  "nodeActualPerArm": {
-    "passed": 82,
-    "skipped": 6
-  },
+  "nodeEvidenceRun": null,
   "note": "The five Integration Tests Node bodies are empty skipped placeholders. This mapping requires their substantive existing browser counterparts to pass unchanged with successful real WASM instantiation and matching served/received artifact bytes; it does not claim the empty bodies were executed. All 23 original browser cases must pass, with zero skips, in each arm.",
   "cases": [
     {
@@ -58,5 +54,10 @@
       ],
       "oracle": "Performs 100 real WASM-backed inserts in a transaction and asserts count equals 100."
     }
-  ]
+  ],
+  "nodeExpectedPerArm": {
+    "passed": 109,
+    "skipped": 6
+  },
+  "nativeLifecycleAdditionalCases": 16
 }

@@ -1,8 +1,8 @@
-name: Corrected candidate isolated Chromium WASM compatibility (partial)
+name: Broad Core205 / published JS1.1 isolated Chromium (partial)
 # Consumes the authenticated corrected candidate archive; historical A remains failed.
 on:
   push:
-    branches: [codex/perf-qualification-20260918]
+    branches: [codex/broad-core205-wasm-browser-20260919]
     paths:
       - "Scripts/wasm-browser/**"
       - ".github/workflows/wasm-browser.yml"

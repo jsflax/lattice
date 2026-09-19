@@ -1,23 +1,49 @@
 {
   "schemaVersion": 2,
-  "jsCommit": "cfe12e6a928270418b133f2a080c02a9c4531966",
+  "jsCommit": "831cac6790504ab6d9eddcd525ead81ce2a971b9",
   "jsSourceHashes": {
-    ".github/workflows/ci.yml": "b54ac370bfd8c8f458882ccb5d4a5c9c4c8f3860ff19742aced3e497570a61be",
-    "package.json": "21aa4172a3a71534ff39316d08ac7518615037fd9e4d46cc835771d926b1a4a1",
-    "package-lock.json": "672216d1513fc0db2ab9ffdaafc72897b97a3f2574c4f8dee7955cbee3595129",
-    "wasm/CMakeLists.txt": "62e07b765b5a923698d5efa7ae2d4109bc5a2e0d70e39783a3f1a94be1e652d9",
-    "wasm/build.sh": "2ce9b2cb5734e367954c3a00d636281b66553a620f0351d91c3067d3a8785661",
-    "wasm/bindings.cpp": "a0072b12e12e12d565d509cc7f3646063e32295bff6b04f78d3a8cff7caa3926",
+    ".github/workflows/ci.yml": "2279ccb285d1e659cab1dc97c1d9c8feafed270fd0d249c4f84cf17400a8abf2",
+    ".gitignore": "ffae9108f366eedb35fef4f805ef6b5a2d64583508ebf90edee80c3658d6196d",
+    ".gitmodules": "3f71ea847e32c5147435f6f0584aa37744e1e1f4a6dff13814d3478e95430535",
+    "CHANGELOG.md": "a3d5c4995d7eb19b31f05bfce352b5d050ce20dcfd127b329242cb164459c3c5",
+    "CLAUDE.md": "b35b81978baa984251eef5533eb35f60a313605076d1ce36dac39d699f55ba22",
+    "README.md": "5e97aa0b0f411765d183d1a7420d8b53f2cb0a51ef442e0075fb2b5cdf129e03",
+    "examples/notes.html": "67e96668a0f2eda692b9928259eb5dab08ae925ae2245e81144cf1ef23d1a510",
+    "examples/notes.ts": "a944f7ef16f2057ef8d013ed3b3e63a82c5b878d30020c5af06bbbc7ee33210c",
+    "package-lock.json": "4d107c55a28392aaea548db8bd7bf4c681e35dbb83bbee386824589b17122fad",
+    "package.json": "8c28ae5777410c19e7e893ac52288d3ae9725d55df56703fa8dbbae8714afced",
+    "src/decorators.ts": "7306c978a57fbecfac45d85c2f47e7d3208a45ee6902bbca23dd20b5c8e463b6",
+    "src/index.ts": "85c57229c7edf213ff54b52584a636b35294a5d64458da5595a7ab481cac2a55",
+    "src/lattice.ts": "85d729b10fa219566b023ebef2870e8b4bb0a0334d7fa29dd64d83b9fecb89a2",
+    "src/list.ts": "5be0788a6eaff77fe4820e7f5b2e912fa0f6746c7386fd8cd3e070124b518590",
+    "src/pending-drain.ts": "9905db3a1e5c28f412a51698b01bdd7ff0ba52868cef68a80ce72461bf5fc5b2",
+    "src/query.ts": "9d20ed6e307e61bf7b570e8595040504e48533c4a6ca577151b6d0c19064ebeb",
+    "src/results.ts": "f5912a6359e463f9bfe9c007ac56f9bbcd6813e0e1d86e2883a584b29a3e2491",
+    "src/storage.ts": "567fcf63f3c391993b6f0293e4db6c2b9662719b52bcb5c08892802918a41583",
+    "src/sync-socket.ts": "b479abb557b4813432792796a74d8a73e20177202c974536288b8ce376de3cc9",
+    "src/types.ts": "35f7720f50dd213db9aa46537086de438c01b0c6c83aa7c378de2740cceb90a4",
+    "src/uuid.ts": "8281c6ee9abf815434b4a07e39d8ac81981a57e920374aac5281fc23c4c1ff34",
+    "src/vite-plugin.ts": "4a4076955a4b7e4b7258e22b1ef6cd407b321e6faa352c792b3d4b6071e0d81c",
+    "test/browser/index.html": "dacb51d1c023b46fb07e1606419f8d2d4450bed617a505c9caf5c2f5afa6efa1",
+    "test/browser/test-sync-server.ts": "2bf53f224fa57bc5a5533c37ae596ce23a089cfa831f9e816df801dd841709fd",
+    "test/browser/tests.ts": "15bc899a8cff25a93181a163fb277dce44f19c5f372b71374ef636bd12725e0e",
+    "test/fixtures/fake-wasm.js": "1f8e36e7610780686a9b41508bfeb47c78622bc9f913bf2650209206ba658e03",
+    "test/fixtures/lifecycle-wasm.js": "5dc2bf57b3fa61c69743d9603ba79523e72eae6b83fc52bea6151ff074edfa09",
+    "test/instance-sync-state.test.ts": "94b3d0dd985c2a7dc371cb5bf14bb76c466ab826e08c3671e5508bf1a32674a2",
+    "test/lattice-lifecycle.test.ts": "3d168d423275d83e79c8e651e13abf3a3e1be0c4487c30ebf10fa567dd728a8a",
+    "test/lattice.test.ts": "5355f782a839e99c09aabf2357e565374bbdeeba146cddbf2caf9d8744362262",
+    "test/no-shared-worker.test.ts": "70eca6338279aeeb556b4b05cf47cd3ad72df06306d178e5624f32c2ede23572",
+    "test/pending-drain.test.ts": "7f6e8564c33930e548f573c30def552c07dcca157553c26dfb267f7e7186a710",
+    "test/sync-socket.test.ts": "bd53c0a17e2c8930b6f7b5f0d259bdfb18afd83289a34b84090c943dc2be4160",
+    "test/wasm-lifecycle.mjs": "1af95fe65a44cb47a1c6f2e4827d54373e633b133f4342068b21f81ae0103487",
+    "tsconfig.json": "7ef7bdbf539269271db1e8ba127ee5b2f829fdece3bb4202bed9dba37d7e7ab4",
     "vite.config.ts": "1dfd0502fdb406421c8a488dd1a490c770948e6600728054ba56bb4ce94d2fd4",
     "vitest.config.ts": "3d8344d53409c0803aea0e97cd425391d079a7aca98e843915a24a1c5bbde87e",
-    "test/browser/tests.ts": "15bc899a8cff25a93181a163fb277dce44f19c5f372b71374ef636bd12725e0e",
-    "test/browser/test-sync-server.ts": "2bf53f224fa57bc5a5533c37ae596ce23a089cfa831f9e816df801dd841709fd",
-    "test/browser/index.html": "dacb51d1c023b46fb07e1606419f8d2d4450bed617a505c9caf5c2f5afa6efa1",
-    "test/no-shared-worker.test.ts": "9da5fc569c7c8854c5b9ae679c215727f5dc70c967ab926c97d9001e04bfdd4b",
-    "test/sync-socket.test.ts": "3ce33954033acf50b108016c8a6833bf5b5f676b81782c27b00932eeb1287669",
-    "test/pending-drain.test.ts": "7f6e8564c33930e548f573c30def552c07dcca157553c26dfb267f7e7186a710",
-    "test/browser/audit-observation-regressions.html": "f047428f5337f5815c1b4a196c090d33abb137cd90c2ff37b8f683eab0b5295e",
-    "test/browser/audit-observation-regressions.ts": "315dbe37446586404712c1e6993924abdaede8161f6984634861295d1d3b53a2"
+    "wasm/CMakeLists.txt": "62e07b765b5a923698d5efa7ae2d4109bc5a2e0d70e39783a3f1a94be1e652d9",
+    "wasm/bindings.cpp": "8ae32bea061321ccad1491a65c521b52cfc1367d14cabe898b7c647ddb538353",
+    "wasm/build.sh": "999d94379ed79081256ac55163dcb8e72a60d09621931c35bb0fecb00978e597",
+    "wasm/opfs_vfs.cpp": "d42e33574556ecd7f81efbb8c376951235fd55896390703a85bccb501da039ee",
+    "wasm/opfs_vfs_lib.js": "8b2d758e16bcd884868f56f360db47241998114b366b6bcdbde452eb28dc06f4"
   },
   "originalCaseNames": [
     "buildSchemas creates correct schema",
@@ -44,24 +70,13 @@
     "test_EnumValue",
     "test_RealServerSync"
   ],
-  "coreB": "4b0a292196047fc1ed0d9b6d961b2c0d22594c59",
-  "coreBTree": "4cfdb665ee3da6cc36cb3f3a64cb33af8718259e",
-  "wasmCI": 35413682106,
-  "artifactID": 10574777230,
-  "artifactSHA256": "6da704e6dbffc229f47d688c98d479d025268f8bce5b10d785284b4720570505",
+  "coreB": "a09e622e4da3f603698d9f1069d6118e79397b2e",
+  "coreBTree": "b77b51371ff107a81a05a4d5c259683f65120f4b",
+  "wasmCI": null,
+  "artifactID": null,
+  "artifactSHA256": null,
   "assets": {
-    "B": {
-      "js": {
-        "bytes": 142862,
-        "sha256": "ff580f4fb11ce481e841d68cb33c7c4146404ef5f404ee40ce55d49ecb24e6a9",
-        "zipMember": "B-lattice.js"
-      },
-      "wasm": {
-        "bytes": 3067678,
-        "sha256": "243fbc43aa9cdc9ed8934b30de59d682bf3cce2c3d604dc714fb64a3394d52c1",
-        "zipMember": "B-lattice.wasm"
-      }
-    }
+    "B": {}
   },
   "playwrightVersion": "1.58.2",
   "nodeVersion": "20.18.0",
@@ -77,11 +92,11 @@
   "supervisorSHA256": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
   "platform": "linux",
   "playwrightLockSHA256": "588b777799547077d3ba093ab6d18a61740321deefb80c7cdfdaea338ebafad8",
-  "jsTree": "b04a622635afed6980bcbbd48b7824695f4bc4b3",
+  "jsTree": "fd26a8e907f24e8e8249c2624f696f0895ac2d41",
   "executedArms": [
     "B"
   ],
-  "artifactInputReady": true,
+  "artifactInputReady": false,
   "regressionSuiteTimeoutMs": 120000,
   "historicalBaseline": {
     "executedInThisRun": false,
@@ -150,5 +165,53 @@
     },
     "browserStartedInOriginalRun": false,
     "browserCandidateQualified": false
+  },
+  "nativeLifecycle": {
+    "harnessSHA256": "1af95fe65a44cb47a1c6f2e4827d54373e633b133f4342068b21f81ae0103487",
+    "caseNames": [
+      "queued table and object unsubscribe suppresses real native delivery",
+      "table callback self-unsubscribes after first row of a native batch",
+      "AuditLog repeated unsubscribe releases once and disables queued copies",
+      "closing cached handle A retires only A observers and preserves B",
+      "closing older progress subscriber preserves newer cached subscriber",
+      "direct native delete inside observer defers final destruction safely",
+      "exact cached transport identity excludes another store at identical URL",
+      "queued transport messages and old events cannot reach replacement owner",
+      "server-closed transport can retire before its queued native close callback",
+      "socket watcher delivery may delete its native handle after registration returns",
+      "Core handoff binds replacement socket to surviving distinct native scheduler",
+      "twenty final closes return native resources and sockets to baseline without blocking drain",
+      "managed findObject wrappers release their native owner references",
+      "AuditLog memory transaction emits every stored row exactly once",
+      "AuditLog named-file transaction emits every stored row exactly once",
+      "AuditLog named-file link changes emit every model and junction row exactly once"
+    ],
+    "nodeVersion": "22.16.0",
+    "timeoutSeconds": 100
+  },
+  "typeScript": {
+    "counts": {
+      "passed": 109,
+      "skipped": 6
+    },
+    "skippedNames": [
+      "Decorators list() creates list properties (requires WASM)",
+      "Integration Tests (Browser Required) test_SimpleExample",
+      "Integration Tests (Browser Required) test_ResultsQuery",
+      "Integration Tests (Browser Required) test_Link",
+      "Integration Tests (Browser Required) test_LinkList",
+      "Integration Tests (Browser Required) test_BulkInsert"
+    ]
+  },
+  "regressionFixtureHashes": {
+    "audit-observation-regressions.ts": "315dbe37446586404712c1e6993924abdaede8161f6984634861295d1d3b53a2",
+    "audit-observation-regressions.html": "f047428f5337f5815c1b4a196c090d33abb137cd90c2ff37b8f683eab0b5295e"
+  },
+  "builderToolchain": {
+    "emsdkCommit": "948c31acd3f369a5da276e33ab2ed57108c165e5",
+    "releaseRevision": "1724b50443d92e23ef2a56abf0dc501206839cef",
+    "nodeVersion": "v22.16.0",
+    "manifestSHA256": "7a7201711bd5311a17d95a3cf97329ebc5bebe35d36ab4657631a5c74662c188",
+    "emscriptenVersion": "5.0.6"
   }
 }

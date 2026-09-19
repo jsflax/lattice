@@ -1,9 +1,9 @@
-name: Corrected WASM candidate compile and JS unit checks (partial)
-# Install with the three reviewed companion files in Scripts/wasm-candidate/.
+name: Broad Core205 / published JS1.1 compatibility builder (partial)
+# Install with all reviewed companion files in Scripts/wasm-candidate/.
 # This is a supplementary gate, not browser or release qualification.
 on:
   push:
-    branches: [codex/perf-qualification-20260918]
+    branches: [codex/broad-core205-wasm-builder-20260919]
     paths:
       - "Scripts/wasm-candidate/**"
       - ".github/workflows/wasm-candidate.yml"
@@ -31,7 +31,7 @@ jobs:
           git -C "$TASK_ROOT/workflow" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
           git -C "$TASK_ROOT/workflow" checkout --detach "$GITHUB_SHA"
           test "$(git -C "$TASK_ROOT/workflow" rev-parse HEAD)" = "$GITHUB_SHA"
-      - name: Build exact corrected candidate and retain strict Node outcomes
+      - name: Build exact pair and run native16 plus strict JS outcomes
         shell: bash
         run: |
           set -euo pipefail

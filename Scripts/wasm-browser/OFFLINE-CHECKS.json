@@ -6,14 +6,15 @@
     "AST fetch-ci-inputs.py",
     "AST guarded_runner.py",
     "AST input_contract.py",
+    "AST lifecycle_contract.py",
     "AST run-browser.py",
     "AST seal_runtime.py",
     "Only B; original23 bytes frozen; six exact names",
     "Historical baseline remains21pass2fail0skip",
     "Every runtime input matches its source seal",
-    "Actual artifact fields complete; runtime reauthenticates archive"
+    "Pending artifact rejected before runtime setup"
   ],
-  "readyForRuntime": true,
+  "readyForRuntime": false,
   "browserLaunched": false,
   "buildExecuted": false,
   "browserCandidateQualified": false,

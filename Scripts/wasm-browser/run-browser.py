@@ -43,7 +43,7 @@ def main():
             current=process_identity(recorded['pid'])
             if current==recorded and current['processGroup']==row['pid'] and current['session']==row['pid']:return True
         return False
-    primary=None;input_manifest={}
+    primary=None;input_manifest={};qualification_manifest={}
     shutil.copyfile(historical,receipts/historical.name)
     with guard.Interrupts() as interrupts:
         runner=guard.GuardedRunner(root,receipts,env,interrupts,free_floor=config['freeFloorBytes'],
@@ -83,7 +83,18 @@ def main():
                         (target/'wasm/build'/('lattice.'+ext)).write_bytes(raw)
                 fixture=target/'test/qualification';fixture.mkdir()
                 for name in ['fixture.html','fixture.ts']:shutil.copyfile(P/name,fixture/name)
+                qualification_manifest[arm]={'test/qualification/'+name:guard.digest(P/name) for name in ['fixture.html','fixture.ts']}
+                # Published JS1.1 does not contain the earlier audit6 fixtures.
+                # Preserve them as an explicit qualification-only overlay;
+                # never attribute their bytes to the published source tree.
+                for name,expected in config['regressionFixtureHashes'].items():
+                    supplied=P/'audit-fixtures'/name
+                    destination=target/'test/browser'/name
+                    if destination.exists() or guard.digest(supplied)!=expected:raise ValueError('Audit regression overlay differs or overwrites published source')
+                    shutil.copyfile(supplied,destination)
+                    qualification_manifest[arm]['test/browser/'+name]=expected
             guard.save_json(receipts/'ORIGINAL-SOURCE-MANIFEST.json',input_manifest)
+            guard.save_json(receipts/'QUALIFICATION-OVERLAY-MANIFEST.json',qualification_manifest)
             for name in ['package.json','package-lock.json','driver.mjs']:shutil.copyfile(P/name,root/'tooling'/name)
             shutil.copyfile(P/'config.json',root/'config.json')
             node=command('node-version',['node','--version']).read_text().strip()
@@ -114,6 +125,10 @@ def main():
                     for name,expected in input_manifest['B'].items():
                         if guard.digest(root/'B'/name)!=expected:raise ValueError('Candidate source changed: '+name)
                     result['stagedSourceVerifiedAtExit']=True
+                    if set(qualification_manifest)!= {'B'} or len(qualification_manifest['B'])!=4:raise ValueError('Qualification-only overlay manifest incomplete')
+                    for name,expected in qualification_manifest['B'].items():
+                        if guard.digest(root/'B'/name)!=expected:raise ValueError('Qualification-only fixture changed: '+name)
+                    result['qualificationOverlayVerifiedAtExit']=True
                 except BaseException as error:result['errors'].append(guard.error_record(error))
                 # Playwright can create a detached browser session. Its audited
                 # spawn registry is the authority; never signal a guessed/foreign group.
