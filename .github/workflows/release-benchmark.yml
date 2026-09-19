@@ -36,6 +36,7 @@ jobs:
           test ! -e "$TASK_ROOT"
           mkdir -p "$TASK_ROOT/tmp"
           echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
+          export TASK_ROOT
           export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
           git init "$TASK_ROOT/tools"
           git -C "$TASK_ROOT/tools" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
