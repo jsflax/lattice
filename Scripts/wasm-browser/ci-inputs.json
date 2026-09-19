@@ -1,14 +1,14 @@
 {
   "schemaVersion": 2,
   "repository": "jsflax/Lattice",
-  "artifactID": 10556071423,
-  "artifactRunID": 35364340382,
-  "artifactRunHeadSHA": "7bfc27121aa4a6dc011403f5eb6f59cc1f8bdf6b",
-  "artifactBytes": 1293361,
-  "artifactSHA256": "959ebb064db3478ea15f86e9d615daf33822d8655071187cf1cfdeb03116211c",
+  "artifactID": 10573503412,
+  "artifactRunID": 35408504554,
+  "artifactRunHeadSHA": "45cf1f6a54130ce1198c8a58126198d44a86761b",
+  "artifactBytes": 1304731,
+  "artifactSHA256": "aabff7caa91ffae5df81253586c2ea95a2a25daeb1350d682898202e359e6c31",
   "jsRepository": "https://github.com/jsflax/LatticeJS.git",
   "jsCommit": "cfe12e6a928270418b133f2a080c02a9c4531966",
-  "runtimePacketSealSHA256": "4599a4a6d9bb651f7bb94d5fce0276cf8e995228380afccb842667802ceed45f",
+  "runtimePacketSealSHA256": "85a077c8620ab8a9074e45914fdbedae392b9772e4bdbd1bfd08ee3c62450f69",
   "node": {
     "version": "20.18.0",
     "archive": "node-v20.18.0-linux-x64.tar.xz",
@@ -19,8 +19,8 @@
   },
   "artifactInputReady": true,
   "jsTree": "b04a622635afed6980bcbbd48b7824695f4bc4b3",
-  "coreCommit": "7b11c282800d2bd6478538edb4e87de81953d315",
-  "coreTree": "18b482a47df9413e151887ef77a9dc5abb6be041",
+  "coreCommit": "234afb4ad4f74174bd875035e6bb47b1a878ac56",
+  "coreTree": "06cacd09ecaf80a460418dad52c352abade58654",
   "builderRunnerSHA256": "fd765315bc0d95525be73d5a9fa210389d91b2ab7cb3eaef919bba3ecb49905b",
-  "builderConfigSHA256": "82f4b3e20528aaa3382e29fb0af681364fc45d1ce5ce4b806d3413465b3e21c2"
+  "builderConfigSHA256": "7bd78fd25a2baf26440ed2f8b6c0d8e0eb2958cbb74016b0b0be7b95b31d8203"
 }
