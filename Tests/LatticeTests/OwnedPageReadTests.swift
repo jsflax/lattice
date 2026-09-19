@@ -253,11 +253,11 @@ struct OwnedPageReadTests {
         let executor = ProjectionReadExecutor(workerCount: 2, maxPendingJobs: 2)
         let entered = OwnedPageTestBox(false), finished = OwnedPageTestBox(false)
         let cleanup = OwnedPageTestGate(); defer { cleanup.open() }
-        let backend = OwnedPageTestBackend { _, state in
+        let backend = OwnedPageTestBackend(onMakeStop: {}, { _, state in
             state.record(ownedTestTerminal(status: 17, cleanup: false))
             entered.use { $0 = true }; try cleanup.wait()
             throw OwnedPageReadError.bridgeFailure(Data("cleanup getter".utf8))
-        }
+        })
         let input = try request(), sibling = OwnedPageTestBackend()
         let task = Task {
             defer { finished.use { $0 = true } }
@@ -333,12 +333,12 @@ struct OwnedPageReadTests {
         let executor = ProjectionReadExecutor(workerCount: 1, maxPendingJobs: 1)
         let entered = OwnedPageTestBox(false), finished = OwnedPageTestBox(false)
         let cleanup = OwnedPageTestGate(); defer { cleanup.open() }
-        let backend = OwnedPageTestBackend { input, state in
+        let backend = OwnedPageTestBackend(onMakeStop: {}, { input, state in
             let value = try decodeOwnedPage(OwnedPageTestSource(), request: input, state: state)
             if cleanupFails { state.record(ownedTestTerminal(status: 17, cleanup: false)) }
             entered.use { $0 = true }; try cleanup.wait()
             return value // deliberately late: executor must discard this value
-        }
+        })
         let task = Task {
             defer { finished.use { $0 = true } }
             return try await readOwnedPage(backend: backend, request: request(timeout: 1_000), executor: executor)
