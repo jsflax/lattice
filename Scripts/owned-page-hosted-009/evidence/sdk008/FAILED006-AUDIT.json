@@ -1,0 +1,442 @@
+{
+  "absentReceipts": [
+    "debug-build-tests-and-runtime.json",
+    "COMPILER-PROOF.json",
+    "discover-owned-page.json",
+    "owned-page-26.json",
+    "owned-page-26.xml",
+    "owning-edge-9.json",
+    "effective-graph-after.json",
+    "RESULT.json"
+  ],
+  "compilerProofAccepted": false,
+  "completedCommandCount": 72,
+  "completedCommandReceipts": [
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/edit-private-core.json",
+      "sha256": "9c7866482f84bd808172402c8c6d4657aa051906f2a2cfe77394388ef3d074ae"
+    },
+    {
+      "logSHA256": "1477ad381674a40178eeb84e1ab82a2fb8045c6a59444c7ec88b2076cbd2e68f",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-async-http-client-head.json",
+      "sha256": "de3f055a7e2886437857e20727cc386ce57751ccaf5dfaf4b2e5d29ed02f6061"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-async-http-client-status.json",
+      "sha256": "0a9c99cb55f34ab1c0ddab17b0797607f6f5a4ac36ea0b925b81756bb86cd0ed"
+    },
+    {
+      "logSHA256": "9c5c38524cc110e5231b5d64b56d861c90fa01496d6589271b948c73606c8c0b",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-async-kit-head.json",
+      "sha256": "ab081a0f8574b8f36913cb11742b2fc9752f4847ed90b302834772826ade5ae0"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-async-kit-status.json",
+      "sha256": "7d8a6866541b3e1b381c6353517dc8bd5e363eb7d1ce8878d1f6070ed7ba0506"
+    },
+    {
+      "logSHA256": "13393539904b61be7b86906b6cfae7d810fdf6eb3d1ef53a056e4d66dd132ae6",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-console-kit-head.json",
+      "sha256": "438b30e05fe0f47fe513dd82211a2c3c2d75d1481e1e1516803024c1f9368328"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-console-kit-status.json",
+      "sha256": "f1f3e5e7fd52d704da67ec647233d953ff3fe0f296fcabf050a705397da424b2"
+    },
+    {
+      "logSHA256": "35f7db63a91c75fc36e78d61d341e2447d0778b2fabfbac121f860f79457cc18",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-eventsource-head.json",
+      "sha256": "dc39b6bc34823b92df9412327c80a7f92858d37e647b5cf740e16e0b15c8d92e"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-eventsource-status.json",
+      "sha256": "c0f57ef9eda0fc40c1136c0b834052570d8294c2e5c6838dce41735cf9e5b8b4"
+    },
+    {
+      "logSHA256": "24c8ce606ecfc955983be4258150610b6fcae5f1fcf021febf5e6d3e5145a117",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-multipart-kit-head.json",
+      "sha256": "0964505db826e2bf5598db72fa56d7b086107b93da612dcfbfefbe16f5007764"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-multipart-kit-status.json",
+      "sha256": "cd21f8f8d49537bcd3bd733b1711d45e003bd70e6f3d5e0a331018b5a13305ba"
+    },
+    {
+      "logSHA256": "76df4fbd312af5445cf0acf50ead34ed69a6540250cdc34ad4055a72e0275d57",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-routing-kit-head.json",
+      "sha256": "b46c9980c918a474b08042fcd96696e361ed78bcc739895ae771e20b1e297057"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-routing-kit-status.json",
+      "sha256": "0be17523571788872412411e74985804945c10601cbff8b2136c2d334b3cdcfe"
+    },
+    {
+      "logSHA256": "3297ac82be794434e477acd79f5ddf76cff327aa9bcb6b83a11e6f040dbe241a",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-algorithms-head.json",
+      "sha256": "5e46e2ade5df5a1aba343e2152d9210fd9cc2e1562a8033e52ae0ed49735ccaa"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-algorithms-status.json",
+      "sha256": "274a1331415a718613245fbddcea7885b1ebf12b64f938d9d30795638c7e878e"
+    },
+    {
+      "logSHA256": "9cf27eb45b418aed4d73584e86f22db21088099e4f81a41dc6f4d0ef5a22c4df",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-asn1-head.json",
+      "sha256": "9018a5be338fd7f6ccf30723f01ad65144a0b63adfec8e1eeb3fdb9a9f200ae8"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-asn1-status.json",
+      "sha256": "cae7688470c4acddc11ec935f99b7f7e5c4a26368cfc042bb7fabee2f744236f"
+    },
+    {
+      "logSHA256": "50e859150de48ce72f436f8e0e30aebc3d50dccedc61db5475e10cd8131b86ca",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-async-algorithms-head.json",
+      "sha256": "17221b1aa550be790780c6e58ca2e373d6d10e566c913dc0ec6c211d869c30dd"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-async-algorithms-status.json",
+      "sha256": "4b863a51d268e1812deddd9c2cde786c538ebafb20d5c2af2aecc663d7a5eb3e"
+    },
+    {
+      "logSHA256": "d24c28cec4456015f356a47e706746ce70096cf9c697826b56baf846499441b2",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-atomics-head.json",
+      "sha256": "ae2b2d6818c374a4b51e518e2cf6587d0c6400ff1cf3776ec6e0ae4159a5b9e0"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-atomics-status.json",
+      "sha256": "0b6aa341c30bcaaae440ce3648609e1e90310a4c149baad2b4220d5a5c6aa560"
+    },
+    {
+      "logSHA256": "a24765743f7222c946d81361da7a3f4936809224851d0b6f4e3f915f46f3eee7",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-certificates-head.json",
+      "sha256": "5e0f47d3c0f7110fe2dc8b6a5c71903cc5823eaf03f826e34b4986344643b855"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-certificates-status.json",
+      "sha256": "4848dbb54b4386537405b422f991d414b7f243594ff5a8be67a5336dc1082e6a"
+    },
+    {
+      "logSHA256": "5d78fbe73d6aad08ce6a710f95283490fd48a43bd285e9e00a68548a9d0e7d28",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-collections-head.json",
+      "sha256": "f7f27964d50b26a027d875393eb3c6f1d62398697fc9fca9878d8631b192a27f"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-collections-status.json",
+      "sha256": "bab2db89e0bc35765b75e6a748212a11abb166057ca378b17e9de472e86aad4c"
+    },
+    {
+      "logSHA256": "ef8eeb61fe04f82c76a4ec16e4c2a882a38547ae9cc2d03ccdcccdf63aced299",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-crypto-head.json",
+      "sha256": "e6ea8a5013f873ee0c99ac1cf342c83f78cc6d699dd682e3bb561008f80fb1f4"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-crypto-status.json",
+      "sha256": "702beaa874d3c500306926536cdc8fe0630897ffb3c27ad1036edfdb1ecfeb54"
+    },
+    {
+      "logSHA256": "a99cf0bae20abb6aad101288dca73578f266a96689d80e9b7f7c1235cbc609a3",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-distributed-tracing-head.json",
+      "sha256": "3b47ef44058f9c4d1282f5b6eb005e89914f0e1ab1106d7d2bdccb8c7f000d1a"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-distributed-tracing-status.json",
+      "sha256": "846eb516acef1346928fe67249193f8a38f392a2ae93387b84f4ac0efee75bc1"
+    },
+    {
+      "logSHA256": "168a96076bea7184aeafc4c16c30dba771f86a202d6ef7e23c78b9f3721330c7",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-docc-plugin-head.json",
+      "sha256": "d28f19e68923caade6fc6d3c3f4f9f52850c24f03bb835b3a47799f4a58da21e"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-docc-plugin-status.json",
+      "sha256": "a2190611481c58847872657ced27b057cf7f2c7cef75e2ad0725b805c3224842"
+    },
+    {
+      "logSHA256": "98dd84b743f57ba03bc89e1e724801ae6d239e2c74dc860f4a69932e9a463b8f",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-docc-symbolkit-head.json",
+      "sha256": "2c8ccfdba323b7ff4c57c5211abcc4b616c79fcdb5b6d894141d2591a414b4e5"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-docc-symbolkit-status.json",
+      "sha256": "db62c4f7c18e26737340624a81420b28dea75ad6e169662192e7066614c79a72"
+    },
+    {
+      "logSHA256": "abe0e14fa65fa448a4c334ec052d2ad3fd4aee12eab37f78885b8c3241a3556f",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-http-structured-headers-head.json",
+      "sha256": "79c8a7df92eb021f3f73de226ec408bf2abe84acf7ad6165ba1fce9fa70cb619"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-http-structured-headers-status.json",
+      "sha256": "e5974dcc142968294627e04d05596f1151f3b9517c5c0607d8a79451f057a352"
+    },
+    {
+      "logSHA256": "dead723e4b4a29e78cc4a5646fe79b4605bbf95f72d681237bc23575b623346c",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-http-types-head.json",
+      "sha256": "b01e60ba48b6a6819a386feed49d6f80f1608e6a9c7879f7c5d6ef7c7b07a19a"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-http-types-status.json",
+      "sha256": "1e98f4ee8e9203d17607156f4a56f47a124691d7b708e9258c0958ed5bf4c71d"
+    },
+    {
+      "logSHA256": "044b37b2ae924373a68f024604081699073c2c5be45ea94bf0db9dc25778bbd2",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-log-head.json",
+      "sha256": "7de35ffb843cacedf0e585c3920e23f9c7fc688f248d84b7aa7a7af013a339aa"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-log-status.json",
+      "sha256": "1c6b14e610d8a7f6ddef9fcb0304cec7d1205d02f9ddb564828cca2e06ab5f44"
+    },
+    {
+      "logSHA256": "8cf44d12d7e086a45d0974672de5deb351543ef3d9d20d6bb942e9cad799a6c4",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-metrics-head.json",
+      "sha256": "9fe7b92ba69017168acd4f92f8a5b4c750b8dbe70bb48e38563cb603219a2bf5"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-metrics-status.json",
+      "sha256": "cc6b2225d81ee28d9d178e4d698caa1a0a397aab4dfcb7a6987e577c0aedcc19"
+    },
+    {
+      "logSHA256": "e756b981a08bfd9392fa355feb3036dfb097ad96d0704aa7adaa6101599d75bb",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-nio-extras-head.json",
+      "sha256": "78d9276aee0565b8a13382a61f0977780e73a2d4ff6f918106c2bc49226c78b5"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-nio-extras-status.json",
+      "sha256": "0310ae945b2fc40b8e885b77a0e84139210901099e74c2d70a292e886eddb4e0"
+    },
+    {
+      "logSHA256": "3f90c08158166b1a4f1249b3ce05f3f8a02db14413496ae42a538069e6e98c24",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-nio-head.json",
+      "sha256": "0318c4b373321802b6dc82856cda2ddc38266a75402df35507f8d171f11f0120"
+    },
+    {
+      "logSHA256": "09d7534c4c9e70b320817741d2183e1c241a3536a88eb8707b328352e877136a",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-nio-http2-head.json",
+      "sha256": "c2294e11843b793a6303d58449424d2f6d8268f27aabe880226a57ad83acedef"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-nio-http2-status.json",
+      "sha256": "1c8aaf9f7a40e8672b68b9df1128064905a877e9e2dae575368c011d9b236da2"
+    },
+    {
+      "logSHA256": "e4ddb9cc8883722b7e1c778de8dcd8fc1db9e52d0f0924909ffb433450037c04",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-nio-ssl-head.json",
+      "sha256": "5b87b4cd748bb60433710c9e6e1449f53450113d690ed3e61a4aaeeebb5bd8a6"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-nio-ssl-status.json",
+      "sha256": "ede8aba8926555776614c6a192030845a1f494e2d4c42eeaebd41a6b749dde59"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-nio-status.json",
+      "sha256": "1fa601bbe9dccd37dca3f1a3d0f4b6d978bb299b413f3652cb380be4c1ce3fb1"
+    },
+    {
+      "logSHA256": "9c3e11817220c5bf2c3d2e7aa51107ed80e7c35bde58a5021cca3886751b1e5c",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-nio-transport-services-head.json",
+      "sha256": "a29a1b4ddad88c1695d22f87d1fcc79e93fa8ed700c20ce6d1a73b8c8c4bf198"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-nio-transport-services-status.json",
+      "sha256": "3cb30329852623ae712e478bf69f718993bcf07753028728344aaf130c62aa8f"
+    },
+    {
+      "logSHA256": "d462f34670b57c60523a9c4c568ee8e93491b80b52d09d042276f901e408fed4",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-numerics-head.json",
+      "sha256": "df32f10b2353a48024c9e25b38d9b15a7238d3c9e50ab642b8a2b6143cfa6cda"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-numerics-status.json",
+      "sha256": "afbd3c81c821f74323137f520bb5a9b2377b7b63b02bb6c4f985c34bd7e8cf5c"
+    },
+    {
+      "logSHA256": "edd11d46b761cee028d19a79f27c4c091b953e8da8eeba5919c1dfed13407b98",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-sdk-head.json",
+      "sha256": "7ef52f4a6b29dd678f2deac74c837bf082e377fb68a584b28ac6b396b0ef5059"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-sdk-status.json",
+      "sha256": "e5f27d997d35e1b2dadf912bc5f42a9949df312477a7580e8b680a448debb64a"
+    },
+    {
+      "logSHA256": "7b01fea2b2313f75e7ec8eae5373e81ddbd0235844e756b54a2d0322801d50fc",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-service-context-head.json",
+      "sha256": "fc36e9cd80e23421941054748a23c4eb3dca6e3d94137b4ca6ff47b95c0a9681"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-service-context-status.json",
+      "sha256": "bb8df01cdf5e74a212775bef434869346677d1d706a593f93aba7a1e59bf16e7"
+    },
+    {
+      "logSHA256": "147dfdaafe32d5d0aa06af730e02fd4de059a78720de3bb9844770f2d3cebe4d",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-service-lifecycle-head.json",
+      "sha256": "71f4748935d623142e9dbe57d19b91f090f57addf09a7809be3bf0210e6ded2b"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-service-lifecycle-status.json",
+      "sha256": "38cc8551c4b9039570a7d3fac32b90895a72a12d765f39080ab982d6f52e7e23"
+    },
+    {
+      "logSHA256": "ba5e21087475e4d40069a5e456fe74885c7f7fe69543e2f54765134ea2b9d978",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-syntax-head.json",
+      "sha256": "622dc9bad0ffa602d9f128ff52db3225d163b28c15d93243fb8ec1b7640aec09"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-syntax-status.json",
+      "sha256": "a99df838d70efabb4d7558af6b457e885712b8712132314c7bebfdbe81b4b706"
+    },
+    {
+      "logSHA256": "52bdc2fd41287a897315f3aca8cd65eb6d65ad82cc03f916cfbe023b2ef376db",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-system-head.json",
+      "sha256": "b81cb58769192afca8029f4c885af7964ca7b546b16ed70bec5ecf54e35f5803"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-swift-system-status.json",
+      "sha256": "16152e2eb91299f5e72dca628508e94fdac3382694cd91db67ab1a1fafeac433"
+    },
+    {
+      "logSHA256": "f7061c3c793eba88e804345509448b604c4b6b49c73c7545c19771301d90be7e",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-vapor-head.json",
+      "sha256": "f985c808e0dbd9fdc1633b489b4cf024eb62a41c880578c048a7bd954bd5da0d"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-vapor-status.json",
+      "sha256": "0078872ee99ca979c9bcafbee6315f5d3b8be920b5241dd155637d63a12ae17b"
+    },
+    {
+      "logSHA256": "1793e15b3ac7841ebb4b34e48de75a780169483708c196676fde87e38ba3ecf6",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-websocket-kit-head.json",
+      "sha256": "fd5524bb989612e994c888ec3b8e5be6f287e211e79545093e58538fb7a5e947"
+    },
+    {
+      "logSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before-websocket-kit-status.json",
+      "sha256": "4defbf5103ac7b95ad9a54e5449ff62e5fb9d5b746545c6130e9f400509e09bf"
+    },
+    {
+      "logSHA256": "2eaa7c559b2b747db7726609c55259061e183d7d7070b0baf10bbdacd9626f71",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/effective-graph-before.json",
+      "sha256": "e1e113ade91f8cfb585f369748cc7c680aaf84db87d495702d1d7f5a6d7a9e7b"
+    },
+    {
+      "logSHA256": "207182ae4e90b5b73d6ea99d02d47bf98adeba47c28bf9b1eb443d232378c993",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/resolve-versioned.json",
+      "sha256": "b02d724851bceadfcb8edea55196148900b19f4511f58a37384b6e6a134b7dba"
+    },
+    {
+      "logSHA256": "641c1f3a778b1159b8469b165014d42df79e28c8a10ba72eba5ee67d859ed75c",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/runtime-output-directory.json",
+      "sha256": "2e4beb0ef9a9d334c945cf374f0dd580501e8f2850188de3bc94a88954fa0586"
+    },
+    {
+      "logSHA256": "30bb0d72a580e8e936ab32e24cab2876f82fa6b06d66fef876fe21a47e828acc",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/swift-version.json",
+      "sha256": "afb86e3b4815154f39ee9e319b157234b39b17532618c503fd142ed1c84bc3d8"
+    },
+    {
+      "logSHA256": "f9fb4fedafe8adcfca56688ed894e3e1e304f530ddcfc652755ca7beda5bce58",
+      "receipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/test-help.json",
+      "sha256": "0d66b2708d65b22e88e894dacbae780f472f22c05b3ab6e6a4e86e073a95103f"
+    }
+  ],
+  "evidenceLimits": [
+    "The absence of an error diagnostic in the partial log is not a successful build.",
+    "No final source, product, resource, deadline or wait-status custody was recovered for the interrupted build.",
+    "The 72 completed command receipts establish only their original process-group and leader checks; no claim of independently tracked descendant closure is retroactively added.",
+    "The last recorded descendant absence is retained evidence, not a fresh live process-table inspection by this subagent."
+  ],
+  "finding": "The outer execution/turn interruption coincides with disappearance of the owner supervisor and unified session; exact termination signal is unavailable. The original process group closed while five owned Swift driver/frontend/macro processes remained in other groups. Existing group-only cleanup cannot establish complete command closure.",
+  "firstFailure": {
+    "path": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/interruption-evidence/FIRST-FAILURE.json",
+    "sha256": "0341d04491660bed4248a05751a198f45a108c88ad53a6a9586325e5a16fe7c5"
+  },
+  "lastCompletedPlannedCommand": "runtime-output-directory",
+  "laterClosure": {
+    "means": "Later recorded process absence only; not recovered supervisor wait status or completed command cleanup",
+    "path": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/interruption-evidence/DETACHED-DESCENDANTS-CLOSURE.json",
+    "sha256": "9eb395f58ae3e96c52bc7af627d6b192bef026a949b7eddb8d51e1822663bfeb"
+  },
+  "observedUTC": "2026-09-19T10:42:39.896484+00:00",
+  "originalGroupClosure": {
+    "originalGroupRemainingCount": 0,
+    "ownedCompilerDescendantsRemainingCount": 5,
+    "path": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/interruption-evidence/ROOT-CLOSURE.json",
+    "remainingPIDGroups": [
+      {
+        "pgid": 29895,
+        "pid": 29895,
+        "ppid": 80717
+      },
+      {
+        "pgid": 29916,
+        "pid": 29916,
+        "ppid": 80717
+      },
+      {
+        "pgid": 29895,
+        "pid": 30185,
+        "ppid": 29895
+      },
+      {
+        "pgid": 29916,
+        "pid": 30656,
+        "ppid": 29916
+      },
+      {
+        "pgid": 80717,
+        "pid": 80717,
+        "ppid": 1
+      }
+    ],
+    "sha256": "e2f9fb0f9617a3774c3ff69a47f385b3ba44842d8b950f91e59acad9e8a4a261"
+  },
+  "partialBuildLog": {
+    "buildCompleteMarkerObserved": false,
+    "bytes": 51500128,
+    "errorDiagnosticsObserved": false,
+    "path": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-006/receipts/debug-build-tests-and-runtime.log",
+    "sha256": "2d2558555c4d398036b94c58b784a89e7aa913d141f63da12fed499baa7e3963",
+    "successfulBuildProven": false
+  },
+  "qualificationAccepted": false,
+  "retryAuthorized": false,
+  "runtimeCasesExecuted": 0,
+  "scope": "Read-only audit of interrupted SDK006 and source-only successor design; no compiler, database, native test, network, signals or launches performed",
+  "sealedInputsRehashed": 35,
+  "sourceReadySHA256": "86af87df1cbb10b688a8edc6f080775860ebdcc3799880120273d8adad7c5266",
+  "successorImplemented": false
+}

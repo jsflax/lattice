@@ -1,0 +1,23 @@
+{
+  "utc": "2026-09-19T13:37:31.668812+00:00",
+  "checks": [
+    {
+      "source": "sdk",
+      "repo": "jsflax/lattice",
+      "sha": "0706257cbaf0b23e0f8ebeeba34ec4f7b234f030",
+      "status": 1,
+      "remoteTree": null,
+      "apiKnown": false
+    },
+    {
+      "source": "core",
+      "repo": "jsflax/LatticeCore",
+      "sha": "a09e622e4da3f603698d9f1069d6118e79397b2e",
+      "status": 0,
+      "remoteTree": "b77b51371ff107a81a05a4d5c259683f65120f4b",
+      "apiKnown": true
+    }
+  ],
+  "claim": "GitHub API object availability only; hosted exact fetch+tree/manifests remain mandatory",
+  "pushed": false
+}

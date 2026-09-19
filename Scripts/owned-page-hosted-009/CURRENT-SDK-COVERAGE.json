@@ -1,0 +1,63 @@
+{
+  "currentDevelopmentCore": {
+    "coreCommit": "743c1c20bea3fcb966f640e22348916571c83034",
+    "coreTree": "85dbc9548b5ad6e2f8932c002b1f9f75a7c28f6c",
+    "scope": "Prepublication development graph only; published Core 2.0.5 is the baseline, not the provider of broad APIs or a release-qualified graph"
+  },
+  "currentSDKCommit": "2d749fea9a2b96200306f00d907a95dab754a80b",
+  "currentSDKTree": "7d835d1eff3981d5d1761d126cf8f8106aa37e45",
+  "exactFeatureSourceSearch": {
+    "matched": false,
+    "pattern": "OwnedPageRead|OwnedPageByteSource|EXPERIMENTAL_OWNED_READ",
+    "scope": [
+      "Sources",
+      "Tests",
+      "Package.swift",
+      "Scripts",
+      ".github"
+    ]
+  },
+  "inputs": {
+    ".github/workflows/development.yml": {
+      "SDK070SHA256": "068c14c34385abbc9b930f0e5e8f3fd78d316b4c9ac09b35e3e478c371c70648",
+      "byteIdentical": true,
+      "currentSHA256": "068c14c34385abbc9b930f0e5e8f3fd78d316b4c9ac09b35e3e478c371c70648"
+    },
+    "Package.swift": {
+      "SDK070SHA256": "f30af1e6584c67a5272417e7e980861432926d7fc387468b675dcf6248a22485",
+      "byteIdentical": true,
+      "currentSHA256": "f30af1e6584c67a5272417e7e980861432926d7fc387468b675dcf6248a22485"
+    },
+    "Scripts/development-core.json": {
+      "SDK070SHA256": "2cae4c6713cf2b7e394cc20923b103a5b9bf21b811f661e9caec8b7c5fed3f6e",
+      "byteIdentical": false,
+      "currentSHA256": "567d969f007513b4d12f68fd9d1da2e13c31fbc0c97cc5f45886c3e9066ebbcb"
+    },
+    "Scripts/run-development.py": {
+      "SDK070SHA256": "368ba9664acfa8453f5fa6752de94297c6402b1e33502bc12fc2aed1c2a4fb28",
+      "byteIdentical": true,
+      "currentSHA256": "368ba9664acfa8453f5fa6752de94297c6402b1e33502bc12fc2aed1c2a4fb28"
+    },
+    "Sources/Lattice/ProjectionReadExecutor.swift": {
+      "SDK070SHA256": "7683f05d0f6792a7597257d19a74c6868d62cc0120e4fd20fd09c1692672d988",
+      "byteIdentical": true,
+      "currentSHA256": "7683f05d0f6792a7597257d19a74c6868d62cc0120e4fd20fd09c1692672d988"
+    },
+    "Tests/LatticeTests/ExactVectorBridgeSmokeTests.swift": {
+      "SDK070SHA256": null,
+      "byteIdentical": false,
+      "currentSHA256": "ac5a035a208a48d8a79a6ef4d82c064e2ec590dec2d45da6c863f5157dc01fd2"
+    },
+    "Tests/LatticeTests/ProjectionReadExecutorTests.swift": {
+      "SDK070SHA256": "59e1399fee33ef957c9f98974c159fdf24e7271e82cf83a80e0b5fba53202845",
+      "byteIdentical": true,
+      "currentSHA256": "59e1399fee33ef957c9f98974c159fdf24e7271e82cf83a80e0b5fba53202845"
+    }
+  },
+  "interpretation": "Shared executor component tests overlap as prerequisites only. Current full SDK source lacks owned-page adapter/byte decoder/26 fixture invocations/9 direct owner runtime; exact vector smoke returns live model rows, not owned audit pages.",
+  "ownedDirectCasesCoveredByCurrentSuite": 0,
+  "ownedFakeInvocationsCoveredByCurrentSuite": 0,
+  "runtimeExecutionClaimed": false,
+  "sharedExecutorTests": 9,
+  "sourceOnly": true
+}

@@ -1,0 +1,5 @@
+{
+  "returncode": 0,
+  "stdout": "",
+  "stderr": "remote: \nremote: Create a pull request for 'codex/owned-page-sdk070-source-20260919' on GitHub by visiting:        \nremote:      https://github.com/jsflax/lattice/pull/new/codex/owned-page-sdk070-source-20260919        \nremote: \nTo https://github.com/jsflax/lattice.git\n * [new branch]        0706257cbaf0b23e0f8ebeeba34ec4f7b234f030 -> codex/owned-page-sdk070-source-20260919\n"
+}

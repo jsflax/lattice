@@ -1,5 +1,6 @@
-name: Owned-page SDK070 qualification
-# Root-reviewed one-run qualification; exact admission is required at dispatch.
+name: Held owned-page SDK070 qualification
+# Source-only template. Independent/root review and a new hosted allocation
+# must precede installation/enabling and the single explicit dispatch.
 on:
   workflow_dispatch:
     inputs:
@@ -19,6 +20,7 @@ permissions:
   contents: read
 jobs:
   qualification:
+    if: ${{ false }}
     runs-on: macos-26
     timeout-minutes: 180
     env:

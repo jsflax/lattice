@@ -1,0 +1,13 @@
+{
+  "CoreBaseManifestSHA256": "f3d01414c755f44bf03d58838fd46be9b8f6344ac687857da719d5910fd44bc0",
+  "CoreEffectiveManifestSHA256": "76d473d772eaa5ff3523e32cb7cc46a0ed4a71e0c94cc3aa37a04e1fe437f091",
+  "CorePostimagesSHA256": "ef6810fbd24767b61a3cad2719073eed1892f4beb2d9ecf7f9761077bc4f8695",
+  "SDKCommit": "0706257cbaf0b23e0f8ebeeba34ec4f7b234f030",
+  "SDKFilesComparedToExactGitBlobs": 256,
+  "SDKManifestSHA256": "9a0267f5627184c053f8b989dad8142c532890171bacc914da468804b178464c",
+  "SDKTree": "12b932471c32b513d7a13fa13bc0b2ea943393a2",
+  "compilerDatabaseResolverOrNetworkExecuted": false,
+  "historicalSDK008Unchanged": true,
+  "productSourceChanges": false,
+  "sourceOnly": true
+}

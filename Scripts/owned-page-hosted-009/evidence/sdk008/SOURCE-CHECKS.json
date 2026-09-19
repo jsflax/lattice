@@ -1,0 +1,15 @@
+{
+  "allCommandsOnlyOwnedPathsChanged": true,
+  "allLimitsUnchanged": true,
+  "executionAdmitted": false,
+  "old43PureChecksPreserved": true,
+  "original26And9Preserved": true,
+  "predecessorSeal": "86af87df1cbb10b688a8edc6f080775860ebdcc3799880120273d8adad7c5266",
+  "productSourcesChanged": false,
+  "runtimeAbsent": true,
+  "sourceCounts": {
+    "SDK": 256,
+    "privateCore": 919
+  },
+  "sourceOnly": true
+}

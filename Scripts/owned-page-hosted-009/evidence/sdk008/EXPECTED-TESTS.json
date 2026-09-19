@@ -1,0 +1,57 @@
+{
+  "declarationCount": 12,
+  "declarations": [
+    "canonicalCursorAndModelAdmissionRemainExact",
+    "rawNullEmptyNulAndInvalidUTF8KeepExactBoundaryBudget",
+    "oversizedDimensionsAndOverflowingRangesFailBeforePayloadCopy",
+    "failureDiagnosticsSurviveEarlyGetterErrorAndUnknownStatus",
+    "cancellationDuringLargeFieldStopsWithinOneCopyChunk",
+    "cancellationDuringStopCreationNeverStartsReader",
+    "emptyReadyPageKeepsCanonicalCursorAndFixedBudget",
+    "canonicalButUnrelatedCursorCannotBePublished",
+    "nativeFailuresRemainDistinctWithoutAdvancingInput",
+    "cancelledRunningCleanupFailureWinsAndIndependentReadProgresses",
+    "preCancelledQueuedFullExpiryAndShutdownDoNotReadRejectedBackend",
+    "runningDeadlineWaitsForCleanupAndDiscardsLateSuccess"
+  ],
+  "discoverySuffixPolicy": "Accept the actual Swift Testing source-location suffix after the exact function ID; no zero/substring fallback.",
+  "filter": "^LatticeTests\\.OwnedPageReadTests/",
+  "invocationCount": 26,
+  "module": "LatticeTests",
+  "nonParameterized": [
+    "canonicalCursorAndModelAdmissionRemainExact",
+    "rawNullEmptyNulAndInvalidUTF8KeepExactBoundaryBudget",
+    "oversizedDimensionsAndOverflowingRangesFailBeforePayloadCopy",
+    "failureDiagnosticsSurviveEarlyGetterErrorAndUnknownStatus",
+    "cancellationDuringLargeFieldStopsWithinOneCopyChunk",
+    "cancellationDuringStopCreationNeverStartsReader",
+    "emptyReadyPageKeepsCanonicalCursorAndFixedBudget",
+    "canonicalButUnrelatedCursorCannotBePublished",
+    "cancelledRunningCleanupFailureWinsAndIndependentReadProgresses",
+    "preCancelledQueuedFullExpiryAndShutdownDoNotReadRejectedBackend"
+  ],
+  "note": "The26 value includes14 status and2 deadline invocations. Function-level summaries/XML are not assumed to contain26 entries; retain exact arguments and successful terminal records.",
+  "parameterized": {
+    "nativeFailuresRemainDistinctWithoutAdvancingInput": [
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17
+    ],
+    "runningDeadlineWaitsForCleanupAndDiscardsLateSuccess": [
+      false,
+      true
+    ]
+  },
+  "suite": "OwnedPageReadTests"
+}

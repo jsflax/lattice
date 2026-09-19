@@ -1,0 +1,22 @@
+{
+  "finding": "SDK007-DETACHED-ENTRY-001",
+  "recordedUTC": "2026-09-19T10:56:48.992898+00:00",
+  "blocking": true,
+  "scope": "Current source snapshot; final seal not yet received. No execution.",
+  "sourceFiles": {
+    "qualify.py": "d83618b89d62c40bb73d2e402bed11760b99851bf25702078a7600446c248d5b",
+    "source_checks.py": "9daa19a30d8254d97af28ac16158f307a0ced4ccf09edc9216c3d8dbfacd05c0",
+    "detached_owner.py": "f229d69ad9b9005b4797e3404f9b84bf175acf1aab3c2762e5e88e14b90511d0",
+    "smoke_lifecycle.py": "4957f6c2d32331f5587b0cdff7a21ea1a7192a29b36037631613497cdaad3367"
+  },
+  "problem": "The detached launcher creates the owner directory and OWNER.json, then calls qualify.main. Its initial source_packet(no_runtime=True) requires the owner directory absent before it can authenticate the existing detached owner. A real qualification therefore refuses its own launch.",
+  "locations": [
+    "detached_owner.py main/launch/body",
+    "qualify.py main initial source_packet call",
+    "source_checks.py verify require_no_runtime branch"
+  ],
+  "smokeCoverageGap": "smoke_lifecycle.py calls owner_body directly and does not enter qualify.main; lifecycle success cannot demonstrate that the real qualification entry is reachable.",
+  "requestedCorrection": "Separate prelaunch owner-directory absence from qualifier-entry fresh-runtime plus authenticated-existing-owner requirements. Add a pure test that exercises the actual entry ordering; retain first source seal/finding if already created.",
+  "runtimeExecuted": false,
+  "nativeCompilerSQLiteNetwork": false
+}

@@ -1,0 +1,2 @@
+warning: '--build-system native' has been deprecated and will be removed in a future release; please report an issue at https://github.com/swiftlang/swift-package-manager/issues if you are unable to adopt the default build system.
+/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-003/scratch/arm64-apple-macosx/debug

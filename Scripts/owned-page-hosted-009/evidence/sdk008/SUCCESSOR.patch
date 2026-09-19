@@ -1,0 +1,621 @@
+--- SDK007/README.md
++++ SDK008/README.md
+@@ -1,13 +1,15 @@
+-# SDK007: detached ownership and complete descendant cleanup
++# SDK008: detached ownership and complete descendant cleanup
+ 
+ HELD for independent source review and a new native resource allocation. SDK006 remains an interrupted failure; its outputs are never reused. This packet keeps SDK070/Core919, all dependency pins, the 26 fake-source invocations, nine direct cases, Debug compiler commands, jobs 2 and every SDK006 resource/time limit unchanged. Only owned paths and lifecycle custody change.
+ 
+ Run the native qualification only through `detached_owner.py --reviewed-sdk-owned-page-qualification --source-ready-sha256 <reviewed SHA256 of SOURCE-READY.json>`. Direct `qualify.py` execution refuses a missing authenticated owner. The entry point creates an exclusive sibling `-owner` directory and a detached, reparented qualifier, then returns within five seconds after an OS-identity acknowledgement. Existing intent/root or uncertainty never triggers another launch. No scheduler, service, automatic retry or restart is installed.
+ 
+-`process_custody.py` uses macOS `proc_pidinfo` birth seconds/microseconds, observed parentage and retained identities across Swift process groups. It never reads a process environment. Runtime-path matches without authenticated ancestry are refusal evidence, never signal authority. Such an orphan may require separate recovery; it cannot pass as complete cleanup. TERM/KILL target individually revalidated owned PIDs, never a broad compiler name/group. Normal command acceptance requires original-group absence, leader reaping, all owned descendants gone, no ambiguous runtime process and no cleanup signals/errors.
++`process_custody.py` uses macOS `proc_pidinfo` birth seconds/microseconds, observed parentage and retained identities across Swift process groups. It never reads a process environment. Runtime-path matches without authenticated ancestry are refusal evidence, never signal authority. Such an orphan may require separate recovery; it cannot pass as complete cleanup. TERM/KILL target individually revalidated owned PIDs, never a broad compiler name/group. Normal command acceptance requires original-group absence, leader reaping, all observed owned identities gone, no ambiguous runtime process and no cleanup signals/errors.
+ 
+ The owner directory contains immutable intent, owner and terminal receipts, bounded output, and a replaceable small status record. Authoritative liveness still requires matching the actual OS PID/birth identity; an old file is not liveness. To request a terminal stop, create `STOP.json` atomically containing exactly the owner receipt's `nonce` and `identity`. This stops the current command and preserves its first failure. The overall clock starts before detachment; owner output and evidence count toward the unchanged 8 GiB packet cap and 512 MiB log cap.
+ 
+-The Python-only smoke terminates the launcher after acknowledgement, verifies the detached owner continues, tracks three synthetic descendants in three groups, requests STOP, checks complete closure and checks an unrelated control process survives. Smoke001 passed before final bounded-wait/direct-child refinements and is retained. Smoke002 binds the final lifecycle source. No smoke runs a compiler, package resolver, database or network. Neither smoke grants SDK qualification.
++The Python-only smoke terminates the launcher after acknowledgement, verifies the detached owner continues, tracks three synthetic descendants in three groups, requests STOP, checks complete closure and checks an unrelated control process survives. The two SDK007 smokes passed in a combined 9.41 seconds and remain retained. Independent review then found the SDK007 prelaunch-owner check was incorrectly repeated inside the qualifier. SDK008 separates those phases, adds pure tests for actual entry ordering, and adds bounded durable command argv/cwd, owner executable/argv and terminal result hashing. A fresh SDK008 smoke will bind these final lifecycle bytes before native admission. No smoke runs a compiler, package resolver, database or network. Neither smoke grants SDK qualification.
+ 
+ `SOURCE-DELTA.json` and `SUCCESSOR.patch` describe changes from sealed SDK006. `FAILED006-AUDIT.json` preserves the interruption assessment. Historical `PROOF-REVIEW.md`, build proof corrections, overlay and original manifests remain byte-exact evidence from SDK006; they do not assert the new lifecycle code was previously reviewed.
++
++Discovery is sampled. Closure proves absence of observed owned birth identities and no ambiguous exact-runtime-path candidates; it cannot prove discovery of a child that forks/reparents entirely between snapshots and omits the runtime path. Such uncertainty is not permission for broader signals. The smoke exercises POSIX launcher termination, not an undocumented host-wide force-kill mechanism.
+--- SDK007/ACCEPTANCE.md
++++ SDK008/ACCEPTANCE.md
+@@ -1,7 +1,9 @@
+-# SDK007 acceptance
++# SDK008 acceptance
+ 
+ A new explicit allocation and independent source review are required before one fresh native invocation. Use only the detached owner entry and bind its exact source seal. All SDK006 package, test, compiler, resource and timing requirements remain in force; the original 43 pure checks and four cap-boundary assertions remain.
+ 
+-Additionally require the exact owner PID/birth identity, durable command-start ownership events, terminal owner receipt with matching nonce and a zero qualifier exit, successful RESULT.json, and complete closure on every command: original group absent, leader reaped, owned descendants absent, no unknown runtime-path candidates, cleanup signals or cleanup errors. A missing owner, snapshot error, reused PID or missing terminal proof is failure, never permission to relaunch. SIGKILL/machine loss cannot promise orderly finalization; preserve missing-custody failure and seek separate recovery.
++Additionally require the exact owner PID/birth identity, durable command-start ownership events, terminal owner receipt with matching nonce and a zero qualifier exit, successful RESULT.json, and complete closure on every command: original group absent, leader reaped, observed owned identities absent, no unknown runtime-path candidates, cleanup signals or cleanup errors. A missing owner, snapshot error, reused PID or missing terminal proof is failure, never permission to relaunch. SIGKILL/machine loss cannot promise orderly finalization; preserve missing-custody failure and seek separate recovery.
+ 
+ SDK006's 72 completed command receipts and partial build remain historical evidence only. No build/runtime acceptance, cached object reuse, performance credit, physical CxxBackend acceptance, native FRT0, iOS, release or public activation is implied. Product oracles and exact 26+9 case scope are unchanged.
++
++SDK007 seal 18d8372a88f2fe98207e8c0cb73ecdb5d5991703d1e35c0f0920a672c7701bcf is held because its actual native entry would reject the just-created owner directory. The immutable finding is retained in SDK007-INTEGRATION-FINDING.json. A passing lifecycle smoke alone does not qualify native entry, compiler outputs or runtime behavior.
+--- SDK007/COMMANDS.json
++++ SDK008/COMMANDS.json
+@@ -4,7 +4,7 @@
+       "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift",
+       "--version"
+     ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007",
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008",
+     "label": "swift-version",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 30
+@@ -15,7 +15,7 @@
+       "test",
+       "--help"
+     ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007",
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008",
+     "label": "test-help",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 30
+@@ -25,21 +25,21 @@
+       "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift",
+       "package",
+       "--package-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
+-      "--scratch-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/scratch",
+-      "--cache-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/cache",
+-      "--config-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/config",
+-      "--security-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/security",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
++      "--scratch-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/scratch",
++      "--cache-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/cache",
++      "--config-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/config",
++      "--security-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/security",
+       "--disable-sandbox",
+       "--disable-experimental-prebuilts",
+       "--force-resolved-versions",
+       "resolve"
+     ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
+     "label": "resolve-versioned",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 600
+@@ -49,23 +49,23 @@
+       "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift",
+       "package",
+       "--package-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
+-      "--scratch-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/scratch",
+-      "--cache-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/cache",
+-      "--config-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/config",
+-      "--security-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/security",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
++      "--scratch-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/scratch",
++      "--cache-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/cache",
++      "--config-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/config",
++      "--security-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/security",
+       "--disable-sandbox",
+       "--disable-experimental-prebuilts",
+       "edit",
+       "LatticeCore",
+       "--path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/Core"
+-    ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/Core"
++    ],
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
+     "label": "edit-private-core",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 120
+@@ -75,22 +75,22 @@
+       "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift",
+       "package",
+       "--package-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
+-      "--scratch-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/scratch",
+-      "--cache-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/cache",
+-      "--config-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/config",
+-      "--security-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/security",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
++      "--scratch-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/scratch",
++      "--cache-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/cache",
++      "--config-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/config",
++      "--security-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/security",
+       "--disable-sandbox",
+       "--disable-experimental-prebuilts",
+       "show-dependencies",
+       "--format",
+       "json"
+     ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
+     "label": "effective-graph-before",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 120
+@@ -104,15 +104,15 @@
+       "-j",
+       "2",
+       "--package-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
+-      "--scratch-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/scratch",
+-      "--cache-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/cache",
+-      "--config-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/config",
+-      "--security-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/security",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
++      "--scratch-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/scratch",
++      "--cache-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/cache",
++      "--config-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/config",
++      "--security-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/security",
+       "--disable-sandbox",
+       "--disable-experimental-prebuilts",
+       "-c",
+@@ -135,7 +135,7 @@
+       "-Xswiftc",
+       "-DLATTICE_EXPERIMENTAL_OWNED_READ"
+     ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
+     "label": "runtime-output-directory",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 60
+@@ -147,15 +147,15 @@
+       "--build-system",
+       "native",
+       "--package-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
+-      "--scratch-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/scratch",
+-      "--cache-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/cache",
+-      "--config-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/config",
+-      "--security-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/security",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
++      "--scratch-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/scratch",
++      "--cache-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/cache",
++      "--config-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/config",
++      "--security-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/security",
+       "--disable-sandbox",
+       "--disable-experimental-prebuilts",
+       "-c",
+@@ -182,7 +182,7 @@
+       "-Xswiftc",
+       "-DLATTICE_EXPERIMENTAL_OWNED_READ"
+     ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
+     "label": "debug-build-tests-and-runtime",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 5400
+@@ -196,15 +196,15 @@
+       "-j",
+       "2",
+       "--package-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
+-      "--scratch-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/scratch",
+-      "--cache-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/cache",
+-      "--config-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/config",
+-      "--security-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/security",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
++      "--scratch-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/scratch",
++      "--cache-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/cache",
++      "--config-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/config",
++      "--security-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/security",
+       "--disable-sandbox",
+       "--disable-experimental-prebuilts",
+       "-c",
+@@ -231,7 +231,7 @@
+       "-Xswiftc",
+       "-DLATTICE_EXPERIMENTAL_OWNED_READ"
+     ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
+     "label": "discover-owned-page",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 120
+@@ -245,15 +245,15 @@
+       "-j",
+       "2",
+       "--package-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
+-      "--scratch-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/scratch",
+-      "--cache-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/cache",
+-      "--config-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/config",
+-      "--security-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/security",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
++      "--scratch-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/scratch",
++      "--cache-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/cache",
++      "--config-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/config",
++      "--security-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/security",
+       "--disable-sandbox",
+       "--disable-experimental-prebuilts",
+       "-c",
+@@ -266,7 +266,7 @@
+       "--filter",
+       "^LatticeTests\\.OwnedPageReadTests/",
+       "--xunit-output",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/receipts/owned-page-26.xml",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/receipts/owned-page-26.xml",
+       "-Xcxx",
+       "-DLATTICE_HAS_FRT=1",
+       "-Xcxx",
+@@ -284,7 +284,7 @@
+       "-Xswiftc",
+       "-DLATTICE_EXPERIMENTAL_OWNED_READ"
+     ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
+     "label": "owned-page-26",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 300
+@@ -293,19 +293,19 @@
+     "argv": [
+       "/usr/bin/otool",
+       "-L",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/scratch/arm64-apple-macosx/debug/OwnedPageQualificationRuntime"
+-    ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/scratch/arm64-apple-macosx/debug/OwnedPageQualificationRuntime"
++    ],
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008",
+     "label": "runtime-system-linkage",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 15
+   },
+   {
+     "argv": [
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/scratch/arm64-apple-macosx/debug/OwnedPageQualificationRuntime",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/data/frt1"
+-    ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/scratch/arm64-apple-macosx/debug/OwnedPageQualificationRuntime",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/data/frt1"
++    ],
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008",
+     "label": "owning-edge-9",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 30
+@@ -315,22 +315,22 @@
+       "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift",
+       "package",
+       "--package-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
+-      "--scratch-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/scratch",
+-      "--cache-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/cache",
+-      "--config-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/config",
+-      "--security-path",
+-      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/security",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
++      "--scratch-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/scratch",
++      "--cache-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/cache",
++      "--config-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/config",
++      "--security-path",
++      "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/security",
+       "--disable-sandbox",
+       "--disable-experimental-prebuilts",
+       "show-dependencies",
+       "--format",
+       "json"
+     ],
+-    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/SDK",
++    "cwd": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/SDK",
+     "label": "effective-graph-after",
+     "requireFullTimeout": true,
+     "timeoutSeconds": 120
+--- SDK007/CONFIG.json
++++ SDK008/CONFIG.json
+@@ -56,16 +56,16 @@
+     "SwiftOwningAPIValidationAndOperationStop"
+   ],
+   "ownedEnvironment": {
+-    "CLANG_MODULE_CACHE_PATH": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/module-cache",
++    "CLANG_MODULE_CACHE_PATH": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/module-cache",
+     "DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer",
+     "LATTICE_PERF_REFINEMENT": "0",
+-    "LATTICE_TEST_LOG_PATH": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/test-logs/native.log",
++    "LATTICE_TEST_LOG_PATH": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/test-logs/native.log",
+     "PYTHONDONTWRITEBYTECODE": "1",
+-    "SWIFTPM_MODULECACHE_OVERRIDE": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/module-cache",
+-    "SWIFT_MODULECACHE_PATH": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/module-cache",
+-    "TEMP": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/tmp",
+-    "TMP": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/tmp",
+-    "TMPDIR": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/tmp"
++    "SWIFTPM_MODULECACHE_OVERRIDE": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/module-cache",
++    "SWIFT_MODULECACHE_PATH": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/module-cache",
++    "TEMP": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/tmp",
++    "TMP": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/tmp",
++    "TMPDIR": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/tmp"
+   },
+   "previousQualificationPacket": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/owned-page-sdk-qualification-004",
+   "previousQualificationSourceReadySHA256": "bc80381f0a1892c461558762fee3069564c4fa1d772b9ed6405626008e9e11ac",
+@@ -86,9 +86,9 @@
+   "publicActivation": false,
+   "resourceAdmission": false,
+   "runtimeEnvironment": {
+-    "DURABLE_RUNTIME_DATA_ROOT": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007/data/frt1"
++    "DURABLE_RUNTIME_DATA_ROOT": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008/data/frt1"
+   },
+-  "runtimeRoot": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-007",
++  "runtimeRoot": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk-qualification-008",
+   "schemaVersion": 1,
+   "scope": "HELD executable actual SDK0706257 Debug graph; explicit test read closures and authenticated DocC/rpath proof correction; unchanged26 fake-source invocations and separate9 direct cases; root admission required",
+   "sdkCommit": "0706257cbaf0b23e0f8ebeeba34ec4f7b234f030",
+--- SDK007/qualify.py
++++ SDK008/qualify.py
+@@ -31,7 +31,7 @@
+             'unbound native runtime bin directory')
+     return expected
+ 
+-def source_packet(expected, *, no_runtime=False):
++def source_packet(expected, *, no_runtime=False, prelaunch=False):
+     require(re.fullmatch(r'[0-9a-f]{64}',expected or '') and H(P/'SOURCE-READY.json')==expected,'reviewed source seal required')
+     value=json.loads((P/'SOURCE-READY.json').read_text())
+     required={'qualify.py','source_checks.py','sdk_test_oracles.py','runtime_oracles.py','build_proof.py',
+@@ -42,7 +42,7 @@
+     require(required<=set(value['files']),'runtime input omitted from seal')
+     for name,digest in value['files'].items():
+         path=P/name;require(path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(P) and H(path)==digest,'sealed input drift: '+name)
+-    source_checks.verify(require_no_runtime=no_runtime)
++    source_checks.verify(require_no_runtime=no_runtime, require_no_owner=prelaunch)
+     return json.loads((P/'CONFIG.json').read_text())
+ 
+ def clean(receipts,label,wanted):
+--- SDK007/guarded_runner.py
++++ SDK008/guarded_runner.py
+@@ -183,6 +183,9 @@
+                 record.update(started=True, pid=process.pid, ownedPGID=process.pid)
+                 owned = process_custody.Custody(process.pid, self.root, self.receipts / (label + '.ownership.jsonl'))
+                 record['ownedBirthIdentity'] = owned.known[process.pid]
++                process_custody.event(self.receipts / (label + '.ownership.jsonl'),
++                    {'event': 'commandStart', 'identity': owned.known[process.pid],
++                     'argv': list(argv), 'cwd': str(cwd), 'timeoutSeconds': timeout})
+             if self.interrupts.received:
+                 raise RunnerInterrupted('interrupted during owned process launch')
+             while process.poll() is None:
+--- SDK007/source_checks.py
++++ SDK008/source_checks.py
+@@ -10,7 +10,13 @@
+ J=lambda p:json.loads(p.read_text())
+ PREVIOUS='86af87df1cbb10b688a8edc6f080775860ebdcc3799880120273d8adad7c5266'
+ 
+-def verify(*, require_no_runtime=True):
++def fresh_roots(config, *, require_no_runtime, require_no_owner):
++    if require_no_runtime:
++        assert not Path(config['runtimeRoot']).exists(), 'fresh runtime root required'
++    if require_no_owner:
++        assert not Path(config['runtimeRoot']+'-owner').exists(), 'fresh owner directory required before launch'
++
++def verify(*, require_no_runtime=True, require_no_owner=False):
+     old=P.with_name('owned-page-sdk-qualification-006')
+     assert H(old/'SOURCE-READY.json')==PREVIOUS
+     ready=J(old/'SOURCE-READY.json')
+@@ -25,7 +31,7 @@
+              'qualify.py','guarded_runner.py','test_preparation.py'}
+     for name,digest in ready['files'].items():
+         if name not in changed:assert H(P/name)==digest,name
+-    normalize=lambda s:s.replace('owned-page-sdk-qualification-007','owned-page-sdk-qualification-006')
++    normalize=lambda s:s.replace('owned-page-sdk-qualification-008','owned-page-sdk-qualification-006')
+     assert normalize((P/'CONFIG.json').read_text())==(old/'CONFIG.json').read_text()
+     assert normalize((P/'COMMANDS.json').read_text())==(old/'COMMANDS.json').read_text()
+     tests=normalize((P/'test_preparation.py').read_text()).replace("'ownedDescendantsGone':True,",'')
+@@ -35,9 +41,7 @@
+     assert set(before)==set(after)
+     assert {n for n in before if before[n]!=after[n]}=={'source_packet','clean','main'}
+     c=J(P/'CONFIG.json')
+-    if require_no_runtime:
+-        assert not Path(c['runtimeRoot']).exists()
+-        assert not Path(c['runtimeRoot']+'-owner').exists()
++    fresh_roots(c, require_no_runtime=require_no_runtime, require_no_owner=require_no_owner)
+     return {'sourceOnly':True,'predecessorSeal':PREVIOUS,'productSourcesChanged':False,
+             'allLimitsUnchanged':True,'allCommandsOnlyOwnedPathsChanged':True,
+             'old43PureChecksPreserved':True,'original26And9Preserved':True,
+--- SDK007/test_preparation.py
++++ SDK008/test_preparation.py
+@@ -217,7 +217,7 @@
+ 
+     def test_actual003_log_is_pinned_and_never_authorizes004_path(self):
+         raw=(P/'fixtures/runtime-output-directory-003.log').read_bytes()
+-        old=self.expected.replace('owned-page-sdk-qualification-007','owned-page-sdk-qualification-003')
++        old=self.expected.replace('owned-page-sdk-qualification-008','owned-page-sdk-qualification-003')
+         self.assertEqual(len(raw),373)
+         self.assertEqual(qualify.H(P/'fixtures/runtime-output-directory-003.log'),'0e42556c168321944c89ed9f35071d0b5d9e8879a0f76d3dd8138f62981054cc')
+         self.assertEqual(qualify.runtime_output_directory(raw,old),old)
+--- SDK007/detached_owner.py
++++ SDK008/detached_owner.py
+@@ -1,6 +1,7 @@
+ """One detached SDK007 owner; no scheduler, respawn, or arbitrary command API."""
+ import argparse
+ import json
++import hashlib
+ import os
+ from pathlib import Path
+ import resource
+@@ -46,7 +47,8 @@
+             sys.stderr = os.fdopen(os.dup(2), 'w', buffering=1)
+             os.environ['SDK007_OWNER_DIRECTORY'] = str(directory)
+             owner = {'nonce': nonce, 'identity': custody.identity(os.getpid()),
+-                     'description': description, 'startedMonotonic': started,
++                     'description': description, 'executable': str(Path(sys.executable).resolve()),
++                     'argv': list(sys.argv), 'startedMonotonic': started,
+                      'overallDeadline': started + overall_seconds}
+             exclusive(directory / 'OWNER.json', owner)
+             code, error = 1, None
+@@ -54,7 +56,18 @@
+                 code = body()
+             except BaseException as caught:
+                 error = {'type': type(caught).__name__, 'message': str(caught)}
++            result_path = Path(description['runtimeRoot']) / 'receipts/RESULT.json'
++            result_hash = None
++            if result_path.exists():
++                if result_path.is_symlink() or not result_path.is_file():
++                    raise RuntimeError('terminal result is not an owned regular file')
++                digest = hashlib.sha256()
++                with result_path.open('rb') as source:
++                    for chunk in iter(lambda: source.read(1024 * 1024), b''):
++                        digest.update(chunk)
++                result_hash = digest.hexdigest()
+             exclusive(directory / 'TERMINAL.json', {'nonce': nonce,
++                      'resultPath': str(result_path), 'resultSHA256': result_hash,
+                       'identity': owner['identity'], 'exitCode': code, 'error': error,
+                       'completedMonotonic': time.monotonic()})
+             os._exit(code if isinstance(code, int) and 0 <= code <= 255 else 1)
+@@ -129,7 +142,7 @@
+     parser.add_argument('--source-ready-sha256', required=True)
+     args = parser.parse_args()
+     import qualify
+-    config = qualify.source_packet(args.source_ready_sha256, no_runtime=True)
++    config = qualify.source_packet(args.source_ready_sha256, no_runtime=True, prelaunch=True)
+     root = Path(config['runtimeRoot'])
+     directory = root.with_name(root.name + '-owner')
+     def body():
+--- SDK007/test_lifecycle.py
++++ SDK008/test_lifecycle.py
+@@ -5,12 +5,15 @@
+ import signal
+ import tempfile
+ import time
++from types import SimpleNamespace
+ import unittest
+ from unittest.mock import patch
+ 
+ import detached_owner as owner
+ import guarded_runner as guard
+ import process_custody as pc
++import qualify
++import source_checks
+ 
+ P=Path(__file__).resolve().parent
+ 
+@@ -138,6 +141,46 @@
+         self.assertEqual(g.violation(good|{'freeBytes':good['freeBytes']-1}),'disk floor')
+         self.assertEqual(g.violation(good|{'packetBytes':good['packetBytes']+1}),'artifact ceiling')
+         self.assertEqual(g.violation(good|{'logBytes':good['logBytes']+1}),'artifact ceiling')
++    def test_actual_detached_entry_creates_owner_then_authenticates_before_staging(self):
++        root=self.root/'runtime';directory=root.with_name(root.name+'-owner')
++        config={'runtimeRoot':str(root),'proposedLimits':{'overallSeconds':10}}
++        calls=[];seal='a'*64
++        class StagingReached(Exception):pass
++        def packet(expected,*,no_runtime=False,prelaunch=False):
++            self.assertEqual(expected,seal)
++            calls.append((no_runtime,prelaunch,directory.exists()))
++            source_checks.fresh_roots(config,require_no_runtime=no_runtime,require_no_owner=prelaunch)
++            return config
++        def launch(directory,body,description,*,overall_seconds):
++            directory.mkdir()
++            control=SimpleNamespace(owner={'description':description},check=lambda phase:None)
++            with patch.object(owner,'Control',return_value=control), \
++                 patch.object(Path,'mkdir',side_effect=StagingReached):
++                return body()  # Actual qualify.main must reach runtime creation after authentication.
++        with patch.object(qualify,'source_packet',side_effect=packet), \
++             patch.object(owner,'launch',side_effect=launch), \
++             patch.object(owner.sys,'argv',['detached_owner.py','--reviewed-sdk-owned-page-qualification','--source-ready-sha256',seal]), \
++             self.assertRaises(StagingReached):
++            owner.main()
++        self.assertEqual(calls,[(True,True,False),(True,False,True)])
++        self.assertFalse(root.exists())
++    def test_owner_directory_allowed_only_after_prelaunch_and_runtime_always_fresh(self):
++        root=self.root/'runtime';directory=root.with_name(root.name+'-owner')
++        config={'runtimeRoot':str(root)};directory.mkdir()
++        with self.assertRaisesRegex(AssertionError,'before launch'):
++            source_checks.fresh_roots(config,require_no_runtime=True,require_no_owner=True)
++        source_checks.fresh_roots(config,require_no_runtime=True,require_no_owner=False)
++        root.mkdir()
++        with self.assertRaisesRegex(AssertionError,'runtime root'):
++            source_checks.fresh_roots(config,require_no_runtime=True,require_no_owner=False)
++    def test_qualifier_refuses_unowned_direct_entry_before_runtime_creation(self):
++        root=self.root/'runtime';config={'runtimeRoot':str(root)}
++        with patch.object(qualify,'source_packet',return_value=config), \
++             patch.object(owner,'Control',return_value=SimpleNamespace(owner=None)), \
++             patch.object(owner.sys,'argv',['qualify.py','--reviewed-sdk-owned-page-qualification','--source-ready-sha256','a'*64]), \
++             self.assertRaisesRegex(ValueError,'authenticated detached owner required'):
++            qualify.main()
++        self.assertFalse(root.exists())
+ 
+ 
+ if __name__=='__main__':unittest.main()
+--- SDK007/smoke_lifecycle.py
++++ SDK008/smoke_lifecycle.py
+@@ -13,7 +13,7 @@
+ import process_custody as pc
+ 
+ P=Path(__file__).resolve().parent
+-SMOKE=P.parents[1]/'validation/owned-page-sdk007-lifecycle-smoke-002'
++SMOKE=P.parents[1]/'validation/owned-page-sdk008-lifecycle-smoke-001'
+ 
+ 
+ def wait_for(predicate, deadline, description):
+@@ -67,7 +67,7 @@
+             result['error']={'type':type(error).__name__,'message':str(error)}
+             result['expectedStop']=str(error)=='authorized owner stop requested'
+         finally:
+-            owner.exclusive(root/'OWNER-RESULT.json',result)
++            owner.exclusive(root/'receipts/RESULT.json',result)
+     return 1  # The commanded stop is intentionally a qualification failure.
+ 
+ 
+@@ -125,7 +125,7 @@
+         wait_for(terminal.exists,deadline,'owner terminal receipt')
+         wait_for(lambda:not pc.same(owner_record['identity'],pc.identity(owner_record['identity']['pid'])),deadline,'detached owner exit')
+         receipt=json.loads((root/'receipts/synthetic.json').read_text())
+-        stop=json.loads((root/'OWNER-RESULT.json').read_text())
++        stop=json.loads((root/'receipts/RESULT.json').read_text())
+         if not stop['expectedStop'] or receipt['success'] or receipt['primaryError']['message']!='authorized owner stop requested':
+             raise RuntimeError('first stop was not preserved as terminal failure')
+         cleanup=receipt['cleanup']

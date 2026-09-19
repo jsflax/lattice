@@ -1,0 +1,14 @@
+{
+  "utc": "2026-09-19T13:37:48.527212+00:00",
+  "source": "0706257cbaf0b23e0f8ebeeba34ec4f7b234f030",
+  "tree": "12b932471c32b513d7a13fa13bc0b2ea943393a2",
+  "branch": "codex/owned-page-sdk070-source-20260919",
+  "remoteBranchAbsent": true,
+  "workflowHeaders": {
+    ".github/workflows/ci.yml": "name: CI\n\n# Strict consumer verifies committed dependency bindings and complete lock integrity.\n# Build and test outcomes remain independent qualification gates.\n\n# Single source of truth for the test gates. `release.yml` calls this\n# workflow (workflow_call) instead of copy-pasting the jobs, so the gates\n# cannot drift between the push/PR path and the release path.\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  workflow_call:\n",
+    ".github/workflows/development.yml": "name: Development Core integration\n\n# This edited development graph is supplementary evidence. Ordinary versioned\n# CI and release preflight remain unchanged and separately required.\non:\n  push:\n    branches: [codex/perf-refinement-20260918]\n  workflow_dispatch:\n\npermissions:\n  contents: read\n",
+    ".github/workflows/docs.yml": "name: Docs\n\n# Build the DocC catalog (Sources/Lattice/Lattice.docc) and deploy it to\n# GitHub Pages at https://jsflax.github.io/lattice/documentation/lattice/.\n# Runs on main pushes that can change the rendered docs (the catalog, doc\n# comments in Lattice sources, the manifest) and on demand.\non:\n  push:\n    branches: [main]\n    paths:\n      - \"Sources/Lattice/**\"\n      - \"Package.swift\"\n      - \".github/workflows/docs.yml\"\n  workflow_dispatch:\n\npermissions:\n  contents: read\n  pages: write\n  id-token: write\n\n# One Pages deployment at a time; a newer push supersedes an in-flight one.\nconcurrency:\n  group: pages\n  cancel-in-progress: true\n",
+    ".github/workflows/release.yml": "name: Release\n\non:\n  push:\n    tags: ['[0-9]+.[0-9]+.[0-9]+']\n\npermissions:\n  contents: write\n"
+  },
+  "intent": "Publish exact previously source-reviewed private opt-in SDK source for authenticated future hosted fetch; no workflow dispatch/release/merge"
+}

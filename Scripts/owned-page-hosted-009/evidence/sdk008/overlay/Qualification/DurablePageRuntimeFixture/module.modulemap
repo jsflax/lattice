@@ -1,0 +1,6 @@
+module DurablePageRuntimeFixture {
+  requires cplusplus
+  header "runtime_fixture.hpp"
+    header "edge_fixture.hpp"
+  export *
+}

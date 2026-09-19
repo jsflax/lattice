@@ -1,0 +1,194 @@
+--- sdk008/qualify.py
++++ hosted009/qualify.py
+@@ -15,6 +15,7 @@
+ import runtime_oracles
+ import sdk_test_oracles
+ import source_checks
++import hosted_binding as hosted
+ 
+ P=Path(__file__).resolve().parent
+ H=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+@@ -32,18 +33,15 @@
+     return expected
+ 
+ def source_packet(expected, *, no_runtime=False, prelaunch=False):
+-    require(re.fullmatch(r'[0-9a-f]{64}',expected or '') and H(P/'SOURCE-READY.json')==expected,'reviewed source seal required')
+-    value=json.loads((P/'SOURCE-READY.json').read_text())
+-    required={'qualify.py','source_checks.py','sdk_test_oracles.py','runtime_oracles.py','build_proof.py',
+-              'guarded_runner.py','CONFIG.json','COMMANDS.json','EXPECTED-TESTS.json','SDK-SOURCE-MANIFEST.json',
+-              'process_custody.py','detached_owner.py','CORE-SOURCE-MANIFEST.json','EXTERNAL-INPUTS.json','Package.resolved.original','overlay/Package.swift',
+-              'overlay/Qualification/OwnedPageQualificationRuntime/main.swift'}
+-    required |= {'overlay/Qualification/DurablePageRuntimeFixture/'+x for x in ['runtime_fixture.cpp','runtime_fixture.hpp','edge_fixture.hpp','module.modulemap']}
+-    require(required<=set(value['files']),'runtime input omitted from seal')
+-    for name,digest in value['files'].items():
+-        path=P/name;require(path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(P) and H(path)==digest,'sealed input drift: '+name)
+-    source_checks.verify(require_no_runtime=no_runtime, require_no_owner=prelaunch)
+-    return json.loads((P/'CONFIG.json').read_text())
++    return hosted.source_packet(expected, no_runtime=no_runtime, prelaunch=prelaunch)
++
++class HostedRunner(guard.GuardedRunner):
++    def measure(self, log):
++        sample = super().measure(log)
++        # Include fetched source, packet, bootstrap evidence and detached owner,
++        # once each, within the unchanged 8 GiB ceiling.
++        sample['packetBytes'] = guard.allocated(hosted.root_context()[0])
++        return sample
+ 
+ def clean(receipts,label,wanted):
+     value=json.loads((receipts/(label+'.json')).read_text());cleanup=value['cleanup']
+@@ -129,13 +127,13 @@
+     require(owner.owner is not None and owner.owner['description'].get('sourceReadySHA256')==args.source_ready_sha256
+             and owner.owner['description'].get('runtimeRoot')==str(root),'authenticated detached owner required')
+     owner.check('before-stage')
+-    require(root.is_relative_to(P.parents[2]) and not root.exists() and root.resolve()==root,'fresh exact owned runtime root required')
++    require(root == hosted.root_context()[0]/'run' and not root.exists() and root.resolve()==root,'fresh exact hosted runtime root required')
+     root.mkdir();receipts=root/'receipts';receipts.mkdir()
+     for name in ['tmp','scratch','cache','config','security','module-cache','test-logs','data/frt1']:(root/name).mkdir(parents=True)
+     env={x:os.environ[x] for x in ('HOME','USER','LOGNAME') if x in os.environ}
+     env.update(PATH='/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin',LANG='en_US.UTF-8',LC_ALL='en_US.UTF-8',**config['ownedEnvironment'])
+     resource.setrlimit(resource.RLIMIT_CORE,(0,0))
+-    planned={x['label']:x for x in json.loads((P/'COMMANDS.json').read_text())};observed={};proof=None;proof_hash=None;staged=False;edited=False
++    planned={x['label']:x for x in hosted.commands(hosted.root_context()[0])};observed={};proof=None;proof_hash=None;staged=False;edited=False
+     expected=json.loads((P/'EXPECTED-TESTS.json').read_text());sdk=root/'SDK';core=root/'Core'
+     sdk_files=json.loads((P/'SDK-SOURCE-MANIFEST.json').read_text());core_files=json.loads((P/'CORE-SOURCE-MANIFEST.json').read_text())
+     original_pins=guard.pins(P/'Package.resolved.original');derived=dict(sdk_files)
+@@ -144,10 +142,12 @@
+     result={'success':False,'scope':config['scope'],'primaryError':None,'evidenceErrors':[],'sourceReadySHA256':args.source_ready_sha256,
+             'SDKCommit':config['sdkCommit'],'SDKTree':config['sdkTree'],'privateCoreManifestSHA256':config['privateCoreSourceManifestSHA256'],
+             'nativeFRT0OwnerQualified':False,'iOSQualified':False,'publicActivation':False,'performanceClaimed':False,
+-            'physicalCxxBackendAsyncAccepted':False,'oldCompiledOutputCredited':False,'cases':{}}
++            'physicalCxxBackendAsyncAccepted':False,'oldCompiledOutputCredited':False,'cases':{},
++            'hostedContextSHA256':H(hosted.root_context()[0]/'HOSTED-CONTEXT.json'),
++            'hostedToolIdentityIsSDK008LocalIdentity':False}
+     limits=config['proposedLimits']
+     with guard.Interrupts() as interrupts:
+-        runner=guard.GuardedRunner(root,receipts,env,interrupts,free_floor=limits['freeFloorBytes'],packet_ceiling=limits['packetCeilingBytes'],
++        runner=HostedRunner(root,receipts,env,interrupts,free_floor=limits['freeFloorBytes'],packet_ceiling=limits['packetCeilingBytes'],
+             log_ceiling=limits['logCeilingBytes'],overall_seconds=limits['overallSeconds'],reserve=limits['reserveSeconds'])
+         def run(label, command=None):
+             command=planned[label] if command is None else command
+@@ -156,6 +156,9 @@
+             clean(receipts,label,command);return log
+         def sources():
+             source_packet(args.source_ready_sha256)
++            if result.get('remoteSources'):
++                files_at(Path(config['sdkSource']),sdk_files)
++                files_at(Path(config['privateCoreSource']),core_files)
+             if staged:
+                 files_at(sdk,derived,edit=core if edited else None,mutable_lock=edited)
+                 files_at(core,core_files)
+@@ -189,6 +192,7 @@
+             guard.save_json(receipts/(label+'-proof.json'),rows)
+         try:
+             sample=runner.measure(receipts/'stage.log');require(runner.violation(sample) is None,'initial resource refusal')
++            result['remoteSources']=hosted.fetch_sources(config,root,run,files_at,guard.save_json)
+             began=time.monotonic()
+             for destination,origin,manifest in [(sdk,Path(config['sdkSource']),sdk_files),(core,Path(config['privateCoreSource']),core_files)]:
+                 destination.mkdir()
+--- sdk008/source_checks.py
++++ hosted009/source_checks.py
+@@ -1,51 +1,18 @@
+-"""SDK007 source custody; no subprocess, compiler, resolver, database or network."""
+-from pathlib import Path
+-import ast
+-import hashlib
+-import importlib.util
+-import json
++"""Source-only hosted preservation checks; never evaluate historical absolute paths."""
++import hosted_binding as binding
+ 
+-P=Path(__file__).resolve().parent
+-H=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+-J=lambda p:json.loads(p.read_text())
+-PREVIOUS='86af87df1cbb10b688a8edc6f080775860ebdcc3799880120273d8adad7c5266'
+ 
+ def fresh_roots(config, *, require_no_runtime, require_no_owner):
++    from pathlib import Path
+     if require_no_runtime:
+         assert not Path(config['runtimeRoot']).exists(), 'fresh runtime root required'
+     if require_no_owner:
+         assert not Path(config['runtimeRoot']+'-owner').exists(), 'fresh owner directory required before launch'
+ 
+-def verify(*, require_no_runtime=True, require_no_owner=False):
+-    old=P.with_name('owned-page-sdk-qualification-006')
+-    assert H(old/'SOURCE-READY.json')==PREVIOUS
+-    ready=J(old/'SOURCE-READY.json')
+-    for name,digest in ready['files'].items():
+-        q=old/name
+-        assert q.is_file() and not q.is_symlink() and H(q)==digest,name
+-    spec=importlib.util.spec_from_file_location('sdk006_source',old/'source_checks.py')
+-    prior=importlib.util.module_from_spec(spec);spec.loader.exec_module(prior)
+-    prior.verify(require_no_runtime=False)
+-    changed={'ACCEPTANCE.md','COMMANDS.json','CONFIG.json','README.md','SOURCE-CHECKS.json',
+-             'SOURCE-DELTA.json','SUCCESSOR.patch','PURE-CHECKS.log','source_checks.py',
+-             'qualify.py','guarded_runner.py','test_preparation.py'}
+-    for name,digest in ready['files'].items():
+-        if name not in changed:assert H(P/name)==digest,name
+-    normalize=lambda s:s.replace('owned-page-sdk-qualification-008','owned-page-sdk-qualification-006')
+-    assert normalize((P/'CONFIG.json').read_text())==(old/'CONFIG.json').read_text()
+-    assert normalize((P/'COMMANDS.json').read_text())==(old/'COMMANDS.json').read_text()
+-    tests=normalize((P/'test_preparation.py').read_text()).replace("'ownedDescendantsGone':True,",'')
+-    assert tests==(old/'test_preparation.py').read_text(),'old cases preserved; only receipt fixture/path changed'
+-    extract=lambda p:{n.name:ast.get_source_segment(p.read_text(),n) for n in ast.parse(p.read_text()).body if isinstance(n,(ast.FunctionDef,ast.ClassDef))}
+-    before,after=extract(old/'qualify.py'),extract(P/'qualify.py')
+-    assert set(before)==set(after)
+-    assert {n for n in before if before[n]!=after[n]}=={'source_packet','clean','main'}
+-    c=J(P/'CONFIG.json')
+-    fresh_roots(c, require_no_runtime=require_no_runtime, require_no_owner=require_no_owner)
+-    return {'sourceOnly':True,'predecessorSeal':PREVIOUS,'productSourcesChanged':False,
+-            'allLimitsUnchanged':True,'allCommandsOnlyOwnedPathsChanged':True,
+-            'old43PureChecksPreserved':True,'original26And9Preserved':True,
+-            'sourceCounts':c['sourceCounts'],'runtimeAbsent':not Path(c['runtimeRoot']).exists(),
+-            'executionAdmitted':False}
+ 
+-if __name__=='__main__':print(json.dumps(verify(),indent=2,sort_keys=True))
++def verify(**_):
++    proof = binding.preservation_check()
++    return {'sourceOnly': True, 'SDK008SealSHA256': proof['SDK008SealSHA256'],
++            'original26And9Preserved': True, 'allLimitsUnchanged': True,
++            'allCompilerAndTestCommandsOnlyOwnedPathsChanged': True,
++            'historicalAbsolutePathsExecuted': False, 'executionAdmitted': False}
+--- sdk008/test_preparation.py
++++ hosted009/test_preparation.py
+@@ -23,10 +23,9 @@
+         path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text);return path
+     def test_source_custody_and_all_oracles_unchanged(self):
+         source_checks.verify()
+-        config=json.loads((P/'CONFIG.json').read_text());old=Path(config['failedStandaloneSwift9Packet'])/'qualify.py'
+-        a=old.read_text();b=(P/'runtime_oracles.py').read_text()
+-        extract=lambda text:{n.name:ast.get_source_segment(text,n) for n in ast.parse(text).body if isinstance(n,ast.FunctionDef)}
+-        for name in ['analyze_runtime','physical_postimages']:self.assertEqual(extract(a)[name],extract(b)[name])
++        old=P/'evidence/sdk008'
++        for name in ['runtime_oracles.py','sdk_test_oracles.py','EXPECTED-TESTS.json']:
++            self.assertEqual(qualify.H(old/name),qualify.H(P/name))
+     def proof_fixture(self):
+         r=self.root;sdk=r/'SDK';core=r/'Core';scratch=r/'scratch';scratch.mkdir()
+         core_source=self.write(core/'Sources/LatticeCore/src/owner.cpp');self.write(core/'Sources/LatticeSwiftCppBridge/src/empty.hpp')
+@@ -217,7 +216,7 @@
+ 
+     def test_actual003_log_is_pinned_and_never_authorizes004_path(self):
+         raw=(P/'fixtures/runtime-output-directory-003.log').read_bytes()
+-        old=self.expected.replace('owned-page-sdk-qualification-008','owned-page-sdk-qualification-003')
++        old=str(Path(json.loads((P/'evidence/sdk008/CONFIG.json').read_text())['runtimeRoot'])/json.loads((P/'CONFIG.json').read_text())['expectedNativeBinRelative']).replace('owned-page-sdk-qualification-008','owned-page-sdk-qualification-003')
+         self.assertEqual(len(raw),373)
+         self.assertEqual(qualify.H(P/'fixtures/runtime-output-directory-003.log'),'0e42556c168321944c89ed9f35071d0b5d9e8879a0f76d3dd8138f62981054cc')
+         self.assertEqual(qualify.runtime_output_directory(raw,old),old)
+--- sdk008/test_lifecycle.py
++++ hosted009/test_lifecycle.py
+@@ -142,7 +142,7 @@
+         self.assertEqual(g.violation(good|{'packetBytes':good['packetBytes']+1}),'artifact ceiling')
+         self.assertEqual(g.violation(good|{'logBytes':good['logBytes']+1}),'artifact ceiling')
+     def test_actual_detached_entry_creates_owner_then_authenticates_before_staging(self):
+-        root=self.root/'runtime';directory=root.with_name(root.name+'-owner')
++        root=self.root/'run';directory=root.with_name(root.name+'-owner')
+         config={'runtimeRoot':str(root),'proposedLimits':{'overallSeconds':10}}
+         calls=[];seal='a'*64
+         class StagingReached(Exception):pass
+@@ -159,6 +159,7 @@
+                 return body()  # Actual qualify.main must reach runtime creation after authentication.
+         with patch.object(qualify,'source_packet',side_effect=packet), \
+              patch.object(owner,'launch',side_effect=launch), \
++             patch.object(qualify.hosted,'root_context',return_value=(root.parent,{})), \
+              patch.object(owner.sys,'argv',['detached_owner.py','--reviewed-sdk-owned-page-qualification','--source-ready-sha256',seal]), \
+              self.assertRaises(StagingReached):
+             owner.main()

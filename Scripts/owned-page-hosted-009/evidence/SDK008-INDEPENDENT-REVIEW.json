@@ -1,0 +1,108 @@
+{
+  "reviewer": "sdk_composition_review",
+  "reviewedUTC": "2026-09-19T11:02:13.927892+00:00",
+  "sourceAccepted": true,
+  "findings": [],
+  "scope": "SDK008 source and retained Python lifecycle smoke acceptance only; no native qualification or resource admission.",
+  "sourceReadySHA256": "ae5b0be1e40832a1130be59d544e10556e8430fc6c180d77a46754d2f202d90a",
+  "sealedInputsRehashed": 41,
+  "externalInputsRehashed": 157,
+  "sourceFilesRehashed": {
+    "SDK": 256,
+    "Core": 919
+  },
+  "resolvedFinding": {
+    "id": "SDK007-DETACHED-ENTRY-001",
+    "originalReceipt": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/owned-page-sdk-qualification-007-review/FINDING-001.json",
+    "sha256": "eb809dcbe1a80f1c87f60cedc5f5ee96b1813d89a9889fa17ee68f5c4657304c",
+    "resolution": "The launcher requires fresh runtime and owner roots before forking. The real qualifier requires a fresh runtime while permitting the just-created owner root, then verifies the current PID/birth owner and exact source seal/runtime description before mkdir. Pure tests follow the actual detached main/body/qualify.main path and separately reject direct unowned entry and reused roots."
+  },
+  "preservation": {
+    "configAndAllCommandBytesIdenticalAfterOwnedPathNormalization": true,
+    "sdkCommit": "0706257cbaf0b23e0f8ebeeba34ec4f7b234f030",
+    "sdkTree": "12b932471c32b513d7a13fa13bc0b2ea943393a2",
+    "privateCoreSourceManifestSHA256": "76d473d772eaa5ff3523e32cb7cc46a0ed4a71e0c94cc3aa37a04e1fe437f091",
+    "unchangedDependencies": 34,
+    "unchangedFakeInvocations": 26,
+    "unchangedDirectCases": 9,
+    "allSixOverlayFilesUnchanged": true,
+    "compilerProofAndTestOraclesUnchanged": true,
+    "limits": {
+      "buildSeconds": 5400,
+      "focusedTestsSeconds": 300,
+      "freeFloorBytes": 12884901888,
+      "jobs": 2,
+      "logCeilingBytes": 536870912,
+      "overallSeconds": 9000,
+      "packetCeilingBytes": 8589934592,
+      "reserveSeconds": 600,
+      "resolveSeconds": 600,
+      "runtime9Seconds": 30
+    },
+    "nativeRuntimeAndOwnerAbsentAtReview": true
+  },
+  "lifecycleReview": [
+    "The one-shot double fork creates an independent session, closes inherited descriptors and publishes an OS birth identity acknowledgement. Initial fork reap and owner acknowledgement are bounded to the launch deadline; uncertain state refuses a relaunch.",
+    "Command ownership begins with verified direct parentage, then retains macOS PID/birth identities for observed descendants across distinct groups/reparenting. Each signal revalidates that identity. Path-only matches only create ambiguity and can never authorize signals.",
+    "Source cleanup targets known PIDs individually, escalates TERM/KILL under existing deadlines, and refuses success without original-group absence, leader reaping, observed-identity absence and no ambiguous candidates/errors/signals. No process-name or path-wide kill was introduced.",
+    "Command-start evidence is fsynced and bounded and records only own argv/cwd/timeout/identity. OWNER records executable/argv. TERMINAL binds the saved RESULT bytes. Environment reads are not introduced.",
+    "The original overall clock starts before detachment; owner output/evidence count toward existing packet/log caps. STOP validates nonce and identity. Exceptions preserve the first failure without automatic retry."
+  ],
+  "independentPureChecks": {
+    "command": [
+      "python3",
+      "-B",
+      "-m",
+      "unittest",
+      "-v",
+      "test_preparation",
+      "test_build_proof_005",
+      "test_lifecycle"
+    ],
+    "exitCode": 0,
+    "passed": 65,
+    "originalChecks": 43,
+    "lifecycleChecks": 22,
+    "capBoundaryAssertions": 4,
+    "logPath": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/owned-page-sdk-qualification-008-review/PURE-CHECKS.log",
+    "logSHA256": "02828217e2c706355ceaed301ba52ed8892c93d31cd7fa70ff31bd3bb46d2e8e",
+    "noSubprocessCompilerNativeSQLiteOrNetworkInTests": true
+  },
+  "savedSmokeReview": {
+    "assessmentPath": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/preparation/owned-page-sdk008-lifecycle-review/ASSESSMENT.json",
+    "assessmentSHA256": "9865e79ae2986f6d0fb4e025cbf6b579de3c1852b77cc7ef0b533162f14b99be",
+    "sourceReadySHA256": "ae5b0be1e40832a1130be59d544e10556e8430fc6c180d77a46754d2f202d90a",
+    "smokeRoot": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/validation/owned-page-sdk008-lifecycle-smoke-001",
+    "resultSHA256": "cdc5fc35cc861cf02a5ee0da1088354a661cce154eb941742e03c5d55990ef04",
+    "ownerAndSmokeFilesRehashed": 15,
+    "seconds": 1.6359182500018505,
+    "allThreeHistoricalSmokesCombinedSeconds": 11.044229500002984,
+    "ownerSurvivedLauncherTermination": true,
+    "observedDescendants": 3,
+    "separateGroups": 3,
+    "foreignControlSurvived": true,
+    "firstStopPreservedAsFailure": true,
+    "commandStartFieldsAndOrderVerified": true,
+    "ownerExecutableAndArgvVerified": true,
+    "terminalResultHashVerified": true,
+    "savedIdentityAbsenceObservationsVerified": true,
+    "reviewerPerformedNewLiveProcessChecks": false
+  },
+  "limitations": [
+    "Discovery is sampled: closure proves absence of observed owned birth identities and no ambiguous exact-runtime-path candidates, not discovery of every possible pathless orphan between snapshots.",
+    "The saved smoke exercises Python descendants and POSIX launcher termination. It does not establish native Swift/compiler lifecycle behavior or survival of host-wide force termination, SIGKILL, machine loss or disk failure.",
+    "Native SDK 26+9 execution, source-to-binary proof and full result/owner terminal acceptance remain unqualified. Earlier SDK006 failure and held SDK007 source remain preserved.",
+    "No physical asynchronous CxxBackend, native FRT0, iOS, public activation, release or performance credit is granted.",
+    "Final SOURCE-READY remains immutable with its pre-smoke pending field; the separately hash-bound final smoke assessment supplies the later evidence."
+  ],
+  "performed": {
+    "sourceAndSavedEvidenceReads": true,
+    "pureTests": true,
+    "newProcessSmoke": false,
+    "network": false,
+    "compilerNativeSQLite": false,
+    "launch": false
+  },
+  "nativeQualificationAccepted": false,
+  "resourceAdmissionGranted": false
+}
