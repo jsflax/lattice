@@ -55,11 +55,17 @@
     "EXPECTED-TESTS.json": "63062cbe4485b68d253a34bfe3cb7fe2a9762903550b51bf696a970b6fda3ef4",
     "Package.resolved.original": "24bb7874d828d115788a90f10356b9ca64ef77b445b06e31cc5d6a81d869d21e",
     "SDK-SOURCE-MANIFEST.json": "9a0267f5627184c053f8b989dad8142c532890171bacc914da468804b178464c",
-    "build_proof.py": "2747f8719068a7c91048a67f45aa93ad287f6e672ca8101472e85e73e23537ad",
     "detached_owner.py": "e21fb6a41c0945ad1117002b4782f23e5ca86878add7520f789f98c6d5175ed8",
     "guarded_runner.py": "7273a57b7a186bf083e686dc9f44089768103978c233c2b1106093a57cb4362c",
     "process_custody.py": "8696157c76a02ca07c68508af4502bc1e2d88d3fc06351bd7c091aa922edeb1d",
     "runtime_oracles.py": "ca40cbcfe63eb7462bc844e775c0ba8f2600479d89b95a502d9d46bb21859866",
     "sdk_test_oracles.py": "b578979a2a293b5ef42378ab3253f777412d454a90e5132053b12fff5ffd6a75"
+  },
+  "reviewedChanges": {
+    "build_proof.py": {
+      "afterSHA256": "6c6433ee1d4c36ae7768f418481a263aaab08016700c893a319af0d644558b07",
+      "beforeSHA256": "2747f8719068a7c91048a67f45aa93ad287f6e672ca8101472e85e73e23537ad",
+      "reason": "Recognize the exact test-bundle loader rpath operand in its existing typed linker-option context; all response custody checks retained."
+    }
   }
 }

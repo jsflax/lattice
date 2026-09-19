@@ -51,6 +51,11 @@ def preservation_check():
     require(H(P/'evidence/SDK008-INDEPENDENT-REVIEW.json') == proof['SDK008ReviewSHA256'], 'SDK008 review drift')
     for name, digest in proof['reusedExactFiles'].items():
         require(H(regular(P/name)) == digest == original['files'][name], 'reviewed runtime source changed: ' + name)
+    changes = proof['reviewedChanges']
+    require(set(changes) == {'build_proof.py'}, 'only the reviewed linker operand parser may differ')
+    for name, change in changes.items():
+        require(change['beforeSHA256'] == original['files'][name] and
+                H(regular(P/name)) == change['afterSHA256'], 'reviewed parser change drift')
     for source in (old/'overlay').rglob('*'):
         if source.is_file():
             require(H(P/'overlay'/source.relative_to(old/'overlay')) == H(source), 'qualification overlay changed')

@@ -42,9 +42,10 @@ def native_arguments(argv, scratch):
             if not arg.startswith('@'):
                 output.append(arg); continue
             # This exact token is the consumed operand of a Darwin linker
-            # rpath option, not a compiler response file. No other @ spelling
+            # rpath option (plain or Swift test-bundle root), not a response file.
+            # No other @ spelling
             # or context is exempt from the owned-response rules below.
-            if arg == '@loader_path' and values[max(0, index - 3):index] == ['-Xlinker', '-rpath', '-Xlinker']:
+            if arg in ('@loader_path', '@loader_path/../../../') and values[max(0, index - 3):index] == ['-Xlinker', '-rpath', '-Xlinker']:
                 output.append(arg); continue
             path = Path(arg[1:])
             assert path.is_absolute(), 'native response path must be explicit'
