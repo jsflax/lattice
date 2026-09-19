@@ -337,6 +337,7 @@ private final class ExternalWriteLock: @unchecked Sendable {
         proc.standardError = FileHandle.nullDevice
         stdoutPipe.fileHandleForReading.readabilityHandler = { [seen, timing] h in
             let d = h.availableData
+            if d.isEmpty { h.readabilityHandler = nil; return }
             if !d.isEmpty {
                 let now = DispatchTime.now().uptimeNanoseconds
                 let markers = seen.withLock { value in
