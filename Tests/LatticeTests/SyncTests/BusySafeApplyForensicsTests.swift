@@ -376,6 +376,148 @@ private func rowCount(inChannelFile url: URL) throws -> (rows: Int, audit: Int) 
 @Suite("BusySafeApplyForensics", .serialized, .timeLimit(.minutes(10)))
 final class BusySafeApplyForensicsTests: BaseTest {
 
+    // A copied reference image produced before any client can change ACK
+    // bookkeeping. No managed result/model crosses into a socket callback.
+    private func quantumReference(_ url: URL, count: Int) throws -> Data {
+        let seed = try Lattice(for: [SimpleSyncObject.self], configuration:
+            SyncRelayApplyPolicy.configuration(fileURL: url, storeConfiguration: nil))
+        try seed.add(contentsOf: (0..<count).map { SimpleSyncObject(value: $0, floatValue: Float($0)) })
+        return try JSONEncoder().encode(ServerSentEvent.auditLog(Array(seed.eventsAfter(globalId: nil))))
+    }
+
+    private func quantumRows(_ frame: Data) throws -> [[String: Any]] {
+        let root = try #require(JSONSerialization.jsonObject(with: frame) as? [String: Any])
+        try #require(root["kind"] as? String == "auditLog")
+        return try #require(root["auditLog"] as? [[String: Any]])
+    }
+
+    private func quantumCanonical(_ rows: [[String: Any]]) throws -> Data {
+        try JSONSerialization.data(withJSONObject: rows, options: [.sortedKeys])
+    }
+
+    private func quantumAssertPages(_ client: ForensicClient, expected: [[String: Any]]) throws {
+        let pages = try client.receivedFrames.map { try quantumRows($0) }
+        #expect(pages.allSatisfy { !$0.isEmpty && $0.count <= 100 })
+        let rows = pages.flatMap { $0 }
+        // Compare every field in exact audit order, rather than accepting a
+        // final row count that could hide skipped/duplicated boundary entries.
+        #expect(try quantumCanonical(rows) == quantumCanonical(expected))
+        #expect(client.entries == expected.count)
+        #expect(client.nacks.isEmpty && client.rejected.isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [100, 101, 201])
+    func catchUpQuantumPreservesEveryFieldAndCursorBoundary(count: Int) async throws {
+        let setup = LockedBox(0)
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
+            didFinishAsyncSetup: { setup.withLock { $0 += 1 } }, didCloseConnection: {})
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
+            channelId: "quantum-\(String.random(length: 8))", ingressHooks: hooks)
+        defer { RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path) }
+        do {
+            let expected = try quantumRows(quantumReference(harness.channelFileURL, count: count))
+            try #require(expected.count == count)
+            let whole = ForensicClient(label: "quantum-full", autoAck: false, captureFrames: true)
+            try await harness.connect(whole)
+            // didFinish runs after the native catch-up owner has been cleared;
+            // the client count separately proves arrival through the socket.
+            try #require(await poll(timeout: 10) {
+                setup.withLock { $0 == 1 } && whole.entries >= count
+            })
+            try quantumAssertPages(whole, expected: expected)
+
+            let checkpoint = try #require(expected[99]["globalId"] as? String)
+            let checkpointID = try #require(UUID(uuidString: checkpoint))
+            let resumedExpected = Array(expected.dropFirst(100))
+            let resumedCount = resumedExpected.count
+            let resumed = ForensicClient(label: "quantum-resume", autoAck: false, captureFrames: true)
+            try await harness.connect(resumed, lastEventId: checkpointID)
+            try #require(await poll(timeout: 10) {
+                setup.withLock { $0 == 2 } && resumed.entries >= resumedCount
+            })
+            try quantumAssertPages(resumed, expected: resumedExpected)
+            if resumedExpected.isEmpty {
+                // An empty download count alone also fits failed setup. A
+                // real acknowledged upload proves the resumed route is live.
+                let entries = try makeUploadEntries(
+                    donorPath: "donor-quantum-\(String.random(length: 8)).sqlite", value: -100)
+                let id = try #require(entries.first?.globalId)
+                try await resumed.socket!.send(Array(buffer: frame(entries)))
+                try #require(await poll(timeout: 10) { resumed.ackTime(for: id) != nil })
+                #expect(resumed.entries == 0)
+                #expect(resumed.nacks.isEmpty && resumed.rejected.isEmpty)
+            }
+            await harness.shutdown_keepingStorage()
+        } catch {
+            await harness.shutdown_keepingStorage()
+            throw error
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func catchUpQuantumPreservesNoHistoryValuesAndDeletedRows() async throws {
+        let setup = LockedBox(false)
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
+            didFinishAsyncSetup: { setup.withLock { $0 = true } }, didCloseConnection: {})
+        let harness = try await ForensicsRelayHarness(schema: [StreamedMessage.self],
+            channelId: "quantum-nohistory-\(String.random(length: 8))", ingressHooks: hooks)
+        defer { RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path) }
+        do {
+            let finalText = "final streamed value\n雪"
+            let reference: (wire: Data, stored: Data) = try {
+                let seed = try Lattice(for: [StreamedMessage.self], configuration:
+                    SyncRelayApplyPolicy.configuration(fileURL: harness.channelFileURL, storeConfiguration: nil))
+                let kept = StreamedMessage(); kept.author = "before"; kept.text = "initial"
+                let removed = StreamedMessage(); removed.author = "deleted"; removed.text = "initial"
+                try seed.add(kept); try seed.add(removed)
+                seed.transaction {
+                    for index in 0..<260 { kept.text = "intermediate-\(index)" }
+                    kept.author = "after"; kept.text = finalText
+                    removed.text = "must not be replayed onto a deleted row"
+                }
+                #expect(seed.delete(removed))
+                let raw = Array(seed.eventsAfter(globalId: nil))
+                // Positive fixture checks: late-binding really changes UPDATE
+                // payloads, while the durable NoHistory values stay omitted.
+                let updates = raw.filter { $0.operation == .update && $0.changedFieldsNames?.contains("text") == true }
+                try #require(updates.count > 256)
+                #expect(updates.allSatisfy { row in
+                    guard let value = row.changedFields["text"] else { return true }
+                    if case .null = value { return true }; return false
+                })
+                return (try JSONEncoder().encode(ServerSentEvent.auditLog(seed.lateBindNoHistory(raw))),
+                        try JSONEncoder().encode(ServerSentEvent.auditLog(raw)))
+            }()
+            let expected = try quantumRows(reference.wire)
+            let expectedCount = expected.count
+            try #require(expectedCount > 256)
+            let client = ForensicClient(label: "quantum-nohistory", autoAck: false, captureFrames: true)
+            try await harness.connect(client)
+            try #require(await poll(timeout: 10) {
+                setup.withLock { $0 } && client.entries >= expectedCount
+            })
+            try quantumAssertPages(client, expected: expected)
+
+            // Actual receiver application verifies the final app-visible
+            // values and deletion in addition to complete wire equivalence.
+            let receiver = try Lattice(for: [StreamedMessage.self], configuration:
+                .init(fileURL: harness.storageURL.appending(path: "quantum-receiver.sqlite")))
+            for bytes in client.receivedFrames { _ = try receiver.receive(bytes) }
+            let rows = receiver.objects(StreamedMessage.self).snapshot()
+            try #require(rows.count == 1)
+            #expect(rows[0].author == "after" && rows[0].text == finalText)
+            await harness.shutdown_keepingStorage()
+            let source = try Lattice(for: [StreamedMessage.self], configuration:
+                SyncRelayApplyPolicy.configuration(fileURL: harness.channelFileURL, storeConfiguration: nil))
+            let after = try JSONEncoder().encode(ServerSentEvent.auditLog(Array(source.eventsAfter(globalId: nil))))
+            #expect(try quantumCanonical(quantumRows(after)) == quantumCanonical(quantumRows(reference.stored)),
+                    "paging and NoHistory late-binding must not rewrite source history")
+        } catch {
+            await harness.shutdown_keepingStorage()
+            throw error
+        }
+    }
+
     /// These shapes follow Core's actual decoder precedence, not `kind`.
     /// In particular an audit array (even empty) wins over an ack array;
     /// a non-array auditLog does not win in a mount without write policy.

@@ -35,6 +35,12 @@ private enum RelayCatchUpStep: Sendable {
 /// Native owner and the SAME results/count for an entire catch-up. No model or
 /// query facade crosses into a control callback; only copied bytes and scalars do.
 private final class RelayCatchUpReadState {
+    // Catch-up and apply share one synchronous turn per channel file. Yield
+    // between smaller pages so one history page does not monopolize that lane.
+    // This bounds entries per turn, not elapsed time or encoded bytes; one
+    // large entry and managed-field encoding still need their full lifetime.
+    // 100 also aligns with the existing legacy ACK mutation chunk.
+    private static let entriesPerTurn = 100
     let lattice: Lattice
     private let input: RelayConnectionSetupInput
     private var checkedFloor = false
@@ -96,7 +102,7 @@ private final class RelayCatchUpReadState {
             }
             guard let events else { preconditionFailure("catch-up query was not initialized") }
             if offset < count {
-                let end = min(count, offset + 1000)
+                let end = offset + min(count - offset, Self.entriesPerTurn)
                 let page: [AuditLog]
                 if let diagnostic = input.diagnostic {
                     diagnostic.record(.catchUpPageMaterializeBegin, span: pageSpan, count: end - offset)
