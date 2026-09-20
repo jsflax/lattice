@@ -399,10 +399,12 @@ enum RelayProcessedFrame: Sendable {
 /// immutable values; complete legacy fan-out uses its original upstream buffer.
 func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChannel,
                               policy: SyncWritePolicy?, revocation: RevocationFlag,
-                              diagnostic: ACKPathConnection?, needsFanOut: Bool) -> RelayProcessedFrame {
+                              diagnostic: ACKPathConnection?, needsFanOut: Bool,
+                              admissionSpan: UInt64 = 0) -> RelayProcessedFrame {
     guard !revocation.isRevoked else { return .revoked }
+    diagnostic?.record(.frameParseBegin, span: admissionSpan, bytes: data.count)
     let frame = RelayFrame(data)
-    let span = diagnostic?.record(frame.root == nil ? .frameMalformed : .frameParsed,
+    let span = diagnostic?.record(frame.root == nil ? .frameMalformed : .frameParsed, span: admissionSpan,
                                   bytes: frame.byteCount, count: frame.requestedIds.count,
                                   matching: frame.requestedIds) ?? 0
     if let policy, let reason = policy.violation(inFrame: frame) {

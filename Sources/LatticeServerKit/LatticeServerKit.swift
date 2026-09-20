@@ -96,6 +96,12 @@ enum ACKPathStage: Int, Codable, Sendable {
     case catchUpSendBegin, catchUpSendReturn, pushPumpScheduled, pushPumpTaskStarted
     case pushPageBegin, pushPageEnd, pushSendBegin, pushSendReturn, pushClientFirstBinaryProcessed
     case applyAdmissionRequested, applyAdmissionRejected
+    // Append-only request/page intervals. Body return is not lane release.
+    case applyAdmissionReserved, applyInputCopyBegin, applyInputCopyEnd
+    case applyInputPrepared, applyPoolSubmit, applyWorkerEntered, frameParseBegin
+    case catchUpPageRequested, catchUpPageWorkerEntered, catchUpPageMaterializeBegin
+    case catchUpPageMaterializeEnd, catchUpPageBindingEnd, catchUpPageEncodingEnd, catchUpPageBodyReturned
+    case applyWorkerBodyReturned
 
     var isSetupStage: Bool {
         switch self {
@@ -109,7 +115,10 @@ enum ACKPathStage: Int, Codable, Sendable {
              .watchOpenBegin, .watchOpenEnd, .watchInstallRequested, .watchInstallEntered,
              .watchObserverRegistered, .watchSubscribePublished, .watchActivated,
              .catchUpTaskStarted, .catchUpReadBegin, .catchUpReadEnd,
-             .catchUpSendBegin, .catchUpSendReturn:
+             .catchUpSendBegin, .catchUpSendReturn,
+             .catchUpPageRequested, .catchUpPageWorkerEntered, .catchUpPageMaterializeBegin,
+             .catchUpPageMaterializeEnd, .catchUpPageBindingEnd, .catchUpPageEncodingEnd,
+             .catchUpPageBodyReturned:
             return true
         default: return false
         }
@@ -135,6 +144,17 @@ struct ACKPathConnection: Sendable {
     }
 
     func containsWarmID(_ ids: [UUID]) -> Bool? { recorder.containsWarmID(ids) }
+}
+
+/// Immutable request identity, never a connection's mutable latest-frame slot.
+/// Nil at ordinary mounts; retained only by the already bounded admission job.
+/// A zero span means recorder admission failed, so it cannot establish matching.
+struct ACKPathAdmission: Sendable {
+    let connection: ACKPathConnection
+    let span: UInt64
+    func record(_ stage: ACKPathStage, bytes: Int = 0, result: Bool? = nil) {
+        connection.record(stage, span: span, bytes: bytes, result: result)
+    }
 }
 
 /// No transport, encoding, formatting, filesystem access, await or task runs
@@ -1051,12 +1071,17 @@ extension Lattice {
                     // publication. The box is immutable throughout the request;
                     // only the file's admitted worker performs this apply.
                     let applyOwner = UnsafeSendableBox(lattice)
-                    ackPath?.record(.applyAdmissionRequested, bytes: ingressFrame.byteCount)
+                    let admissionSpan = ackPath?.record(.applyAdmissionRequested, bytes: ingressFrame.byteCount) ?? 0
+                    let admissionDiagnostic: ACKPathAdmission?
+                    if let ackPath { admissionDiagnostic = .init(connection: ackPath, span: admissionSpan) }
+                    else { admissionDiagnostic = nil }
                     do {
-                        try await applyAdmission.withAdmission(for: applyKey, frame: ingressFrame, operation: { data in
+                        try await applyAdmission.withAdmission(for: applyKey, frame: ingressFrame,
+                                                               diagnostic: admissionDiagnostic, operation: { data in
                             processRelayApplyOnWorker(data: data, lattice: applyOwner.value, channel: channel,
                                                       policy: writePolicy, revocation: state.revocation,
-                                                      diagnostic: ackPath, needsFanOut: watchManager == nil)
+                                                      diagnostic: ackPath, needsFanOut: watchManager == nil,
+                                                      admissionSpan: admissionSpan)
                         }, completion: { processed in
                             let frame: RelayAppliedFrame
                             switch processed {

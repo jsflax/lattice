@@ -50,7 +50,9 @@ private final class RelayCatchUpReadState {
         self.probe = probe
     }
 
-    func next() -> RelayCatchUpStep {
+    func next(pageSpan: UInt64) -> RelayCatchUpStep {
+        // Body return precedes capture destruction and the pool's lane release.
+        defer { input.diagnostic?.record(.catchUpPageBodyReturned, span: pageSpan) }
         guard !input.socket.isClosed, !input.state.revocation.isRevoked else { return .stopped }
         do {
             if !checkedFloor {
@@ -83,11 +85,11 @@ private final class RelayCatchUpReadState {
                 }
             }
             if events == nil {
-                input.diagnostic?.record(.catchUpReadBegin)
+                input.diagnostic?.record(.catchUpReadBegin, span: pageSpan)
                 let captured = lattice.eventsAfter(globalId: input.lastEventId)
                 count = captured.count
                 events = captured
-                input.diagnostic?.record(.catchUpReadEnd, count: count)
+                input.diagnostic?.record(.catchUpReadEnd, span: pageSpan, count: count)
                 if count > 0 {
                     print(">>> Bringing channel \(input.channel.id) connection up to date with \(count) events")
                 }
@@ -95,8 +97,19 @@ private final class RelayCatchUpReadState {
             guard let events else { preconditionFailure("catch-up query was not initialized") }
             if offset < count {
                 let end = min(count, offset + 1000)
-                let page = lattice.lateBindNoHistory(Array(events[offset..<end]))
+                let page: [AuditLog]
+                if let diagnostic = input.diagnostic {
+                    diagnostic.record(.catchUpPageMaterializeBegin, span: pageSpan, count: end - offset)
+                    let materialized = Array(events[offset..<end])
+                    diagnostic.record(.catchUpPageMaterializeEnd, span: pageSpan, count: materialized.count)
+                    page = lattice.lateBindNoHistory(materialized)
+                    diagnostic.record(.catchUpPageBindingEnd, span: pageSpan, count: page.count)
+                } else {
+                    page = lattice.lateBindNoHistory(Array(events[offset..<end]))
+                }
                 let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
+                input.diagnostic?.record(.catchUpPageEncodingEnd, span: pageSpan,
+                                          bytes: encoded.count, count: page.count)
                 probe?.capture(page: page, route: .catchup)
                 offset = end
                 return .page(encoded, count: page.count, last: page.last?.primaryKey)
@@ -269,12 +282,18 @@ private final class RelayCatchUpReadState {
         guard let native else { preconditionFailure("catch-up lost its native owner") }
         phase = .reading
         let hasSubscription = subscription != nil
+        let diagnostic = input.diagnostic
+        let pageSpan = diagnostic?.record(.catchUpPageRequested) ?? 0
         RelayExecutionPool.io.submitRequired(for: input.applyKey) {
+            diagnostic?.record(.catchUpPageWorkerEntered, span: pageSpan)
             let prepared: RelayCatchUpStep
             if let state = native.valueIfPresent {
                 state.hasSubscription = hasSubscription
-                prepared = state.next()
-            } else { prepared = .stopped }
+                prepared = state.next(pageSpan: pageSpan)
+            } else {
+                diagnostic?.record(.catchUpPageBodyReturned, span: pageSpan)
+                prepared = .stopped
+            }
             Task { @RelayControlActor in self.prepared(prepared) }
         }
     }

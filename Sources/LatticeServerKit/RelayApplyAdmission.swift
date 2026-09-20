@@ -80,27 +80,31 @@ final class RelayApplyAdmission: Sendable {
     /// Its return is the settlement boundary, not a socket write acknowledgement.
     func withAdmission<Value: Sendable>(
         for key: String, buffer: ByteBuffer,
+        diagnostic: ACKPathAdmission? = nil,
         operation: @escaping @Sendable (Data) -> Value,
         completion: @escaping @Sendable (Value) async -> Void
     ) async throws {
-        try await withAdmission(for: key, source: .buffer(buffer), operation: operation, completion: completion)
+        try await withAdmission(for: key, source: .buffer(buffer), diagnostic: diagnostic, operation: operation, completion: completion)
     }
 
     func withAdmission<Value: Sendable>(
         for key: String, frame: RelayIngressFrame,
+        diagnostic: ACKPathAdmission? = nil,
         operation: @escaping @Sendable (Data) -> Value,
         completion: @escaping @Sendable (Value) async -> Void
     ) async throws {
-        try await withAdmission(for: key, source: .ingress(frame), operation: operation, completion: completion)
+        try await withAdmission(for: key, source: .ingress(frame), diagnostic: diagnostic, operation: operation, completion: completion)
     }
 
     private func withAdmission<Value: Sendable>(
         for key: String, source: RelayApplyInput,
+        diagnostic: ACKPathAdmission?,
         operation: @escaping @Sendable (Data) -> Value,
         completion: @escaping @Sendable (Value) async -> Void
     ) async throws {
-        let job = RelayApplyAdmissionJob(key: key, inputBytes: source.byteCount)
+        let job = RelayApplyAdmissionJob(key: key, inputBytes: source.byteCount, diagnostic: diagnostic)
         try state.reserve(job)
+        diagnostic?.record(.applyAdmissionReserved, bytes: job.inputBytes)
         let state = state
         let beforeCopy = beforeCopyForTesting
         let beforeOperation = beforeOperationForTesting
@@ -115,15 +119,19 @@ final class RelayApplyAdmission: Sendable {
                 // A preparing job cannot settle until this publication. Its
                 // cancellation can race copying but cannot invoke native work.
                 var input: Data?
-                if state.needsCopy(job) {
+                let copyNeeded = state.needsCopy(job)
+                diagnostic?.record(.applyInputCopyBegin, bytes: job.inputBytes)
+                if copyNeeded {
                     input = source.makeOwnedCopy()
                 } else { input = Data() }
+                diagnostic?.record(.applyInputCopyEnd, bytes: input!.count, result: copyNeeded)
                 state.installPreparedInput(job, input: input!, operation: { input in
                     beforeOperation?()
                     let value = operation(input)
                     return { continuation.resume(returning: value) }
                 }, reject: { error in continuation.resume(throwing: error) })
                 input = nil
+                diagnostic?.record(.applyInputPrepared, bytes: job.inputBytes)
                 state.preparationFinished(job)
             }
             // Running cancellation never replaces a committed/partial value.
@@ -170,6 +178,7 @@ private final class RelayApplyAdmissionJob: @unchecked Sendable {
     enum Phase: Equatable { case preparing, queued, submitted, running, publishing, releasing, settled }
     let key: String
     let inputBytes: Int
+    let diagnostic: ACKPathAdmission?
     var phase: Phase = .preparing
     var cancellation: RelayApplyAdmissionError?
     var input: Data?
@@ -179,7 +188,9 @@ private final class RelayApplyAdmissionJob: @unchecked Sendable {
     var consumerPublicationFinished = false
     var publicationWaiter: CheckedContinuation<Void, Never>?
 
-    init(key: String, inputBytes: Int) { self.key = key; self.inputBytes = inputBytes }
+    init(key: String, inputBytes: Int, diagnostic: ACKPathAdmission?) {
+        self.key = key; self.inputBytes = inputBytes; self.diagnostic = diagnostic
+    }
 }
 
 private final class RelayApplyAdmissionState: @unchecked Sendable {
@@ -265,6 +276,7 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
 
     private func submit(_ job: RelayApplyAdmissionJob?) {
         guard let job else { return }
+        job.diagnostic?.record(.applyPoolSubmit, bytes: job.inputBytes)
         guard pool.submit(for: job.key, { self.execute(job) }) else {
             lock.lock()
             precondition(job.phase == .submitted)
@@ -286,6 +298,7 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
 
     private func execute(_ job: RelayApplyAdmissionJob) {
         defer { signalTransitionForTesting() }
+        job.diagnostic?.record(.applyWorkerEntered, bytes: job.inputBytes)
         lock.lock()
         precondition(job.phase == .submitted)
         if let cancelled = job.cancellation {
@@ -303,6 +316,8 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
         job.operation = nil // Work holds the closure through unlock and execution.
         lock.unlock()
         var completion: RelayApplyCompletion? = work!.operation(work!.input)
+        // Native body returned; capture destruction, publication and lane release follow.
+        job.diagnostic?.record(.applyWorkerBodyReturned, bytes: job.inputBytes)
         work = nil // Release native owner/parse captures on IO, outside locks.
         lock.lock()
         precondition(job.phase == .running)
