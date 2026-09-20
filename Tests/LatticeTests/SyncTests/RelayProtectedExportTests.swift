@@ -12,6 +12,21 @@ import LatticeServerExportTestSupport
     var name: String = ""
 }
 private enum ExportFixtureError: Error { case refused, injected }
+
+/// Publish setup failure as well as success before the controller waits on an
+/// IO rendezvous. Only a scalar fixture error crosses to the event loop; the
+/// original error unwinds on the IO call stack.
+private func exportFixturePrepare<T>(_ entered: EventLoopPromise<Void>,
+                                     _ body: () throws -> T) throws -> T {
+    do {
+        let value = try body()
+        entered.succeed(())
+        return value
+    } catch {
+        entered.fail(ExportFixtureError.refused)
+        throw error
+    }
+}
 private struct ExportFacts: Sendable, Equatable {
     let originals: Int64, claimed: Int64, stamps: Int64
 }
@@ -98,6 +113,11 @@ private final class ExportFixture: @unchecked Sendable {
         cell.store = store
         if protected {
             guard lattice.server_export_test_support.enroll(store.cxxLatticeRef, std.string("RelayExportFixtureItem")) == 0 else {
+                // The wrapper deliberately erases arbitrary factory errors.
+                // Record the native setup diagnostic here, on the owning IO
+                // lane, before another bridge call can clear it.
+                let message = String(lattice.last_bridge_error().pointee)
+                Issue.record("export fixture enrollment failed: \(String(decoding: message.utf8.prefix(768), as: UTF8.self))")
                 throw ExportFixtureError.refused
             }
         }
@@ -513,11 +533,14 @@ struct RelayProtectedExportTests {
                     }, makeLattice: {
                         withExtendedLifetime(factoryCapture) {}
                         if mode == 1 { throw ExportFixtureError.injected }
-                        let store = try fixture.makeStore(file: false, protected: true, names: ["real"])
                         if mode == 2 {
-                            entered.succeed(()); #expect(gate.wait(timeout: .now() + 5) == .success)
+                            let store = try exportFixturePrepare(entered) {
+                                try fixture.makeStore(file: false, protected: true, names: ["real"])
+                            }
+                            #expect(gate.wait(timeout: .now() + 5) == .success)
+                            return store
                         }
-                        return store
+                        return try fixture.makeStore(file: false, protected: true, names: ["real"])
                     })
             }
             let endpoint = try create()
@@ -532,6 +555,33 @@ struct RelayProtectedExportTests {
             #expect(service.snapshot.endpoints == 0)
             try await fixture.fence()
             #expect(fixture.outputs.withLockedValue { $0.isEmpty })
+        }
+    }
+
+    @Test func openingSetupFailureWakesControllerAndReleasesEndpointCredit() async throws {
+        try await run { fixture in
+            let limits = try limits(), service = try service(limits)
+            let entered = fixture.loop.makePromise(of: Void.self)
+            let endpoint = try RelayProtectedExport(forQualification: service, limits: limits,
+                pool: fixture.pool, key: fixture.key, sink: fixture.sink(), makeLattice: {
+                    try exportFixturePrepare(entered) { () throws -> Lattice in
+                        throw ExportFixtureError.injected
+                    }
+                })
+            fixture.endpoints.withLockedValue { $0.append(ExportWeakEndpoint(endpoint)) }
+            do {
+                try await entered.futureResult.get()
+                Issue.record("setup failure must not report entering the successful rendezvous")
+            } catch {
+                if case ExportFixtureError.refused = error {} else {
+                    Issue.record("setup rendezvous must receive only the scalar refusal")
+                }
+            }
+            await failed(endpoint.ready)
+            try await fixture.fence()
+            #expect(fixture.created.withLockedValue { $0 } == 0)
+            #expect(fixture.outputs.withLockedValue { $0.isEmpty })
+            #expect(service.snapshot.endpoints == 0 && service.snapshot.pages == 0)
         }
     }
 
