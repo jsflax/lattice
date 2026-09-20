@@ -7,10 +7,50 @@ import NIOConcurrencyHelpers
 private final class IngressCopyGate: Sendable {
     let entered = NIOLockedValueBox(false)
     let expired = NIOLockedValueBox(false)
-    let release = DispatchSemaphore(value: 0)
+    private let release = DispatchSemaphore(value: 0)
+    private let times = NIOLockedValueBox((entered: UInt64?.none, released: false, finished: false))
+    var held: Bool {
+        times.withLockedValue { value in
+            guard let entered = value.entered else { return false }
+            return !value.released && !value.finished
+                && DispatchTime.now().uptimeNanoseconds - entered < 5_000_000_000
+        }
+    }
+    func open() {
+        times.withLockedValue { $0.released = true }
+        release.signal()
+    }
     func block() {
+        times.withLockedValue { $0.entered = DispatchTime.now().uptimeNanoseconds }
         entered.withLockedValue { $0 = true }
-        expired.withLockedValue { $0 = release.wait(timeout: .now() + 5) != .success }
+        let timedOut = release.wait(timeout: .now() + 5) != .success
+        expired.withLockedValue { $0 = timedOut }
+        times.withLockedValue { $0.finished = true }
+    }
+}
+
+private final class IngressCopyCompletion: Sendable {
+    private struct State: Sendable {
+        var result: Result<Void, any Error>?
+        var waiter: CheckedContinuation<Result<Void, any Error>, Never>?
+    }
+    private let state = NIOLockedValueBox(State())
+    func finish(_ result: Result<Void, any Error>) {
+        let waiter = state.withLockedValue { value in
+            precondition(value.result == nil)
+            value.result = result
+            let waiter = value.waiter; value.waiter = nil; return waiter
+        }
+        waiter?.resume(returning: result)
+    }
+    func wait() async -> Result<Void, any Error> {
+        await withCheckedContinuation { continuation in
+            let ready = state.withLockedValue { value -> Result<Void, any Error>? in
+                if let result = value.result { return result }
+                precondition(value.waiter == nil); value.waiter = continuation; return nil
+            }
+            if let ready { continuation.resume(returning: ready) }
+        }
     }
 }
 
@@ -81,36 +121,78 @@ struct RelayIngressAdmissionTests {
         frames.removeAll()
     }
 
+    // The controller is a Swift task on a dedicated fixture executor. The
+    // synchronous copy gate runs on a separate owned IO worker, so it cannot
+    // occupy a cooperative executor needed to reach the concurrent seal.
+    private func withCopyController(_ body: @escaping @Sendable (@escaping @Sendable () -> Bool) async throws -> Void) async throws {
+        if #available(macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2, *) {
+            let executor = RelayApplyFixtureExecutor()
+            var primary: (any Error)?
+            do {
+                try await withTaskExecutorPreference(executor) { try await body { executor.isCurrent } }
+            } catch { primary = error }
+            await executor.shutdown()
+            #expect(executor.snapshot.liveWorkers == 0 && executor.snapshot.pending == 0)
+            if let primary { throw primary }
+        } else { try await body { true } }
+    }
+
     @Test func sealDuringCopyKeepsReservationUntilLastCaptureAndPayloadRelease() async throws {
-        let gate = IngressCopyGate()
-        let probe = NIOLockedValueBox<RelayIngressAccount?>(nil)
-        let releaseSnapshot = NIOLockedValueBox<RelayIngressSnapshot?>(nil)
-        let service = RelayIngressAdmission(beforeCopyForTesting: { gate.block() },
-            didReleasePayloadForTesting: {
-                // Reentering snapshot also proves destruction callbacks are off-lock.
-                releaseSnapshot.withLockedValue { $0 = probe.withLockedValue { $0?.snapshot } }
-            })
-        let account = service.makeAccount()
-        probe.withLockedValue { $0 = account }
-        defer { gate.release.signal(); probe.withLockedValue { $0 = nil } }
-        let retained = NIOLockedValueBox<RelayIngressFrame?>(nil)
-        let copy = Task.detached {
-            let frame = try account.copyFrame(ByteBuffer(bytes: Array(repeating: UInt8(4), count: 32)))
-            retained.withLockedValue { $0 = frame }
+        try await withCopyController { affinity in
+            #expect(affinity(), "copy-race controller must enter its fixture executor")
+            let pool = RelayExecutionPool(workerCount: 1, name: "relay.test.ingress-copy")
+            let gate = IngressCopyGate()
+            let probe = NIOLockedValueBox<RelayIngressAccount?>(nil)
+            let releaseSnapshot = NIOLockedValueBox<RelayIngressSnapshot?>(nil)
+            let service = RelayIngressAdmission(beforeCopyForTesting: { gate.block() },
+                didReleasePayloadForTesting: {
+                    // Reentering snapshot also proves destruction callbacks are off-lock.
+                    releaseSnapshot.withLockedValue { $0 = probe.withLockedValue { $0?.snapshot } }
+                })
+            let account = service.makeAccount()
+            probe.withLockedValue { $0 = account }
+            let retained = NIOLockedValueBox<RelayIngressFrame?>(nil)
+            let completion = IngressCopyCompletion()
+            let copiedOnWorker = NIOLockedValueBox(false)
+            pool.submitRequired(for: "copy") {
+                let result = Result<Void, any Error> {
+                    copiedOnWorker.withLockedValue { $0 = pool.isCurrentWorker }
+                    let frame = try account.copyFrame(ByteBuffer(bytes: Array(repeating: UInt8(4), count: 32)))
+                    retained.withLockedValue { $0 = frame }
+                }
+                completion.finish(result)
+            }
+            var primary: (any Error)?
+            do {
+                try await Self().until { gate.entered.withLockedValue { $0 } }
+                #expect(affinity(), "copy-race controller must resume its fixture executor")
+                try #require(gate.held, "copy must still be held when the seal is exercised")
+                #expect(account.snapshot.frames == 1 && account.snapshot.inputBytes == 32)
+                account.seal(.closed)
+                #expect(gate.held, "seal must finish before copy custody is released")
+                #expect(account.snapshot.frames == 1 && account.snapshot.inputBytes == 32)
+                gate.open()
+                try await completion.wait().get()
+                #expect(!gate.expired.withLockedValue { $0 })
+                #expect(copiedOnWorker.withLockedValue { $0 })
+                #expect(account.snapshot.frames == 1)
+                retained.withLockedValue { $0 = nil }
+                let atDestruction = try #require(releaseSnapshot.withLockedValue { $0 })
+                #expect(atDestruction.frames == 1 && atDestruction.inputBytes == 32)
+                #expect(atDestruction.firstReason == .closed)
+                #expect(service.snapshot.frames == 0 && service.snapshot.inputBytes == 0)
+            } catch { primary = error }
+            // Always release the gate and join the actual copy before stopping
+            // its worker, including the original failed/deadline path.
+            gate.open()
+            let copied = await completion.wait()
+            if primary == nil, case .failure(let error) = copied { primary = error }
+            retained.withLockedValue { $0 = nil }
+            probe.withLockedValue { $0 = nil }
+            await pool.shutdown()
+            #expect(pool.snapshot.liveWorkers == 0 && pool.snapshot.queued == 0 && pool.snapshot.running == 0)
+            if let primary { throw primary }
         }
-        try await until { gate.entered.withLockedValue { $0 } }
-        #expect(account.snapshot.frames == 1 && account.snapshot.inputBytes == 32)
-        account.seal(.closed)
-        #expect(account.snapshot.frames == 1 && account.snapshot.inputBytes == 32)
-        gate.release.signal()
-        try await copy.value
-        #expect(!gate.expired.withLockedValue { $0 })
-        #expect(account.snapshot.frames == 1)
-        retained.withLockedValue { $0 = nil }
-        let atDestruction = try #require(releaseSnapshot.withLockedValue { $0 })
-        #expect(atDestruction.frames == 1 && atDestruction.inputBytes == 32)
-        #expect(atDestruction.firstReason == .closed)
-        #expect(service.snapshot.frames == 0 && service.snapshot.inputBytes == 0)
     }
 
     @Test func smallSliceAndDetachedOutputsDoNotKeepAnIngressCharge() throws {
