@@ -27,7 +27,7 @@ private final class IntervalCompletion: Sendable {
     }
     func wait() async -> Bool {
         await withCheckedContinuation { continuation in
-            let ready = state.withLockedValue { value in
+            let ready = state.withLockedValue { value -> Bool? in
                 if let result = value.result { return result }
                 precondition(value.waiter == nil)
                 value.waiter = continuation
