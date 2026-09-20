@@ -192,6 +192,24 @@ private struct ApplyTestTask: Sendable {
 
 private enum ApplyFixtureError: Error { case cleanupUnconfirmed }
 
+/// Unstructured Tasks do not inherit withTaskExecutorPreference (SE-0417).
+/// Keep the old-OS fallback in ordinary closures; only the available factory
+/// captures the dedicated executor and explicitly binds each admitted task.
+private struct ApplyTestTaskFactory: Sendable {
+    typealias Outcome = Result<Void, any Error>
+    let request: @Sendable (@escaping @Sendable () async -> Outcome) -> Task<Outcome, Never>
+    let followup: @Sendable (@escaping @Sendable () async -> Void) -> Task<Void, Never>
+
+    static var ordinary: Self {
+        .init(request: { Task(operation: $0) }, followup: { Task(operation: $0) })
+    }
+    @available(macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2, *)
+    static func preferring(_ executor: RelayApplyFixtureExecutor) -> Self {
+        .init(request: { Task(executorPreference: executor, operation: $0) },
+              followup: { Task(executorPreference: executor, operation: $0) })
+    }
+}
+
 /// File-local ownership for this suite only. The cleanup task retains this
 /// fixture and every handle until it settles, even if the five-second observer
 /// reports unconfirmed cleanup. No cancellation is presented as thread cleanup.
@@ -200,6 +218,8 @@ private final class ApplyTestFixture: Sendable {
     let pool: RelayExecutionPool
     private let events: ApplyTestMilestones
     private let affinity: @Sendable () -> Bool
+    private let taskFactory: ApplyTestTaskFactory
+    private let cleanupTask = NIOLockedValueBox<Task<Void, Never>?>(nil)
     let fullySettled: ApplyTestSignal
     private let name: String
     private let gates: [ApplyTestGate]
@@ -216,13 +236,14 @@ private final class ApplyTestFixture: Sendable {
 
     init(name: String, service: RelayApplyAdmission, pool: RelayExecutionPool,
          gates: [ApplyTestGate], signals: [ApplyTestSignal], events: ApplyTestMilestones,
-         affinity: @escaping @Sendable () -> Bool) {
-        self.events = events; self.affinity = affinity; fullySettled = ApplyTestSignal(events: events)
+         affinity: @escaping @Sendable () -> Bool, taskFactory: ApplyTestTaskFactory) {
+        self.events = events; self.affinity = affinity; self.taskFactory = taskFactory
+        fullySettled = ApplyTestSignal(events: events)
         self.name = name; self.service = service; self.pool = pool; self.gates = gates; self.signals = signals
     }
     func start(_ label: String, _ operation: @escaping @Sendable () async throws -> Void) -> ApplyTestTask {
         let outcome = NIOLockedValueBox<Result<Void, any Error>?>(nil)
-        let task = Task<Result<Void, any Error>, Never> {
+        let task = taskFactory.request {
             #expect(self.affinity(), "request entered outside its fixture task executor")
             do {
                 try await operation()
@@ -235,8 +256,10 @@ private final class ApplyTestFixture: Sendable {
         }
         // Publish only after joining the actual request task. A flag written
         // inside its body would precede task termination and weaken .value.
-        let joined = Task {
+        let joined = taskFactory.followup {
+            #expect(self.affinity(), "join entered outside its fixture task executor")
             let result = await task.value
+            #expect(self.affinity(), "request join returned outside its fixture task executor")
             outcome.withLockedValue { $0 = result }
             self.events.signal()
         }
@@ -287,7 +310,8 @@ private final class ApplyTestFixture: Sendable {
         // One shared five-second observation window for all handles, drain and
         // shutdown, not a fresh timeout per join. The joined task is not cancelled
         // or forgotten when the observer expires; it retains self and its errors.
-        Task { [self] in
+        let cleanup = taskFactory.followup { [self] in
+            #expect(affinity(), "cleanup entered outside its fixture task executor")
             var errors: [String] = []
             for handle in handles {
                 cleanupState.withLockedValue { $0.phase = "joining \(handle.label)" }
@@ -302,6 +326,7 @@ private final class ApplyTestFixture: Sendable {
             await service.closeAdmissionAndDrain()
             cleanupState.withLockedValue { $0.phase = "pool shutdown" }
             await pool.shutdown()
+            #expect(affinity(), "actual cleanup returned outside its fixture task executor")
             let reportLate = cleanupState.withLockedValue {
                 $0.errors = errors; $0.confirmed = true; $0.phase = "settled"; return $0.observerReturned
             }
@@ -312,6 +337,7 @@ private final class ApplyTestFixture: Sendable {
                 print("RelayApply \(name) fixture cleanup settled after observer returned; task outcomes=\(errors); callbacks=\(callbacks)")
             }
         }
+        cleanupTask.withLockedValue { precondition($0 == nil); $0 = cleanup }
         let observed = await events.wait { self.cleanupState.withLockedValue { $0.confirmed } }
         let confirmed = cleanupState.withLockedValue { $0.observerReturned = true; return $0.confirmed }
         // Preserve the five-second observation even if this controller resumes
@@ -324,6 +350,14 @@ private final class ApplyTestFixture: Sendable {
             #expect(counts.operation == 0, Comment(rawValue: "\(observation.label): forbidden work executed"))
             #expect(counts.publication == 0, Comment(rawValue: "\(observation.label): forbidden work published"))
         }
+    }
+    // The settled signal describes completed work, not Task termination.
+    // Shutdown callers run outside the preference and join this actual task
+    // before stopping the executor that could still own its final continuation.
+    func waitForActualCleanup() async {
+        let task = cleanupTask.withLockedValue { $0 }
+        #expect(task != nil, "cleanup must be admitted before executor retirement")
+        await task?.value
     }
     var cleanupConfirmed: Bool { cleanupState.withLockedValue { $0.confirmed } }
     var cleanupErrors: [String] { cleanupState.withLockedValue { $0.errors } }
@@ -343,7 +377,7 @@ struct RelayApplyAdmissionTests {
             do {
                 try await withTaskExecutorPreference(executor) {
                     try await Self().runFixture(pool, service, gates: gates, signals: signals,
-                        name: name, events: events, affinity: { executor.isCurrent },
+                        name: name, events: events, affinity: { executor.isCurrent }, taskFactory: .preferring(executor),
                         retainUntilSettled: { value in retained.withLockedValue { $0 = value } }, body)
                 }
             } catch { primary = error }
@@ -352,8 +386,13 @@ struct RelayApplyAdmissionTests {
                 // Already reported a finite cleanup failure. Do not stop an
                 // executor that retained cleanup/request jobs may still use.
                 // One bounded custodian per fixture, outside its preference.
-                Task { await fixture.fullySettled.wait(); await executor.shutdown() }
+                Task(executorPreference: nil) {
+                    await fixture.fullySettled.wait()
+                    await fixture.waitForActualCleanup()
+                    await executor.shutdown()
+                }
             } else {
+                if let fixture { await fixture.waitForActualCleanup() }
                 await executor.shutdown()
                 #expect(executor.snapshot.liveWorkers == 0 && executor.snapshot.pending == 0)
             }
@@ -362,15 +401,17 @@ struct RelayApplyAdmissionTests {
             // Same body, gates, deadlines and product assertions on older OS;
             // only the optional dedicated-task-executor proof is unavailable.
             try await runFixture(pool, service, gates: gates, signals: signals,
-                name: name, events: events, affinity: { true }, retainUntilSettled: { _ in }, body)
+                name: name, events: events, affinity: { true }, taskFactory: .ordinary,
+                retainUntilSettled: { _ in }, body)
         }
     }
     private func runFixture(_ pool: RelayExecutionPool, _ service: RelayApplyAdmission,
                              gates: [ApplyTestGate] = [], signals: [ApplyTestSignal] = [],
                              name: String, events: ApplyTestMilestones, affinity: @escaping @Sendable () -> Bool,
+                             taskFactory: ApplyTestTaskFactory,
                              retainUntilSettled: @escaping @Sendable (ApplyTestFixture) -> Void,
                              _ body: @escaping @Sendable (ApplyTestFixture) async throws -> Void) async throws {
-        let fixture = ApplyTestFixture(name: name, service: service, pool: pool, gates: gates, signals: signals, events: events, affinity: affinity)
+        let fixture = ApplyTestFixture(name: name, service: service, pool: pool, gates: gates, signals: signals, events: events, affinity: affinity, taskFactory: taskFactory)
         retainUntilSettled(fixture)
         #expect(affinity(), "controller entered outside its fixture task executor")
         var primary: (any Error)?
