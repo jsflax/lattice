@@ -204,7 +204,7 @@ extension AttachTests {
         // Diverge the attached DB's PlainItem schema out-of-band; the
         // pre-attach validation reads columns through synced's live handle,
         // which sees the ALTER immediately (same file).
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: syncedPath)
+        let fileURL = try latticeTestTemporaryDirectory().appending(path: syncedPath)
         var db: OpaquePointer?
         #expect(sqlite3_open(fileURL.path, &db) == SQLITE_OK)
         #expect(sqlite3_exec(db, "ALTER TABLE PlainItem ADD COLUMN rogue TEXT", nil, nil, nil) == SQLITE_OK)
@@ -323,7 +323,7 @@ extension AttachTests {
 
         // Fresh handle over the same file (different backend identity).
         let l2Again = try Lattice(AttachMuseum.self, configuration: .init(
-            fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
+            fileURL: latticeTestTemporaryDirectory().appending(path: path)))
         try l1.detach(lattice: l2Again)
         #expect(l1.objects(AttachVenue.self).count == 0, "path-keyed detach must remove the schema too")
     }

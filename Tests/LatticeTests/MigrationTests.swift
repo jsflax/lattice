@@ -308,7 +308,7 @@ class MigrationTests: BaseTest {
 
         // Use a consistent path for both phases
         let dbPath = "migration_test.sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         // Clean up before and after
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
@@ -351,7 +351,7 @@ class MigrationTests: BaseTest {
 
         // Use a consistent path for both phases
         let dbPath = "migration_test_\(String.random(length: 32)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         // Clean up before and after
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
@@ -401,7 +401,7 @@ class MigrationTests: BaseTest {
         typealias M2Person = LinkMigrationV2.Person
 
         let dbPath = "migration_link_test.sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -459,7 +459,7 @@ class MigrationTests: BaseTest {
         typealias M2Player = LinkListMigrationV2.Player
 
         let dbPath = "migration_linklist_test.sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -528,7 +528,7 @@ class MigrationTests: BaseTest {
         typealias M2Document = VectorMigrationV2.Document
 
         let dbPath = "migration_vector_test.sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -585,7 +585,7 @@ class MigrationTests: BaseTest {
         typealias V2Route = GeoBoundsListAddV2.Route
 
         let dbPath = "migration_geobounds_list_add_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -634,7 +634,7 @@ class MigrationTests: BaseTest {
         typealias V2Journey = GeoBoundsListRemoveV2.Journey
 
         let dbPath = "migration_geobounds_list_remove_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -678,7 +678,7 @@ class MigrationTests: BaseTest {
         typealias V2Trip = GeoBoundsListPreserveV2.Trip
 
         let dbPath = "migration_geobounds_list_preserve_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -735,7 +735,7 @@ class MigrationTests: BaseTest {
         typealias V2Expedition = MultiGeoBoundsListV2.Expedition
 
         let dbPath = "migration_geobounds_multi_list_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -809,7 +809,7 @@ class MigrationTests: BaseTest {
         typealias V2Child = FKToLinkV2.Child
 
         let dbPath = "migration_fk_to_link_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -890,7 +890,7 @@ class MigrationTests: BaseTest {
         typealias V2Item = FKToListV2.Item
 
         let dbPath = "migration_fk_to_list_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -960,7 +960,7 @@ class MigrationTests: BaseTest {
         typealias V2Edge = FKToUUIDV2.Edge
 
         let dbPath = "migration_fk_to_uuid_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -1065,7 +1065,7 @@ class MigrationTests: BaseTest {
         typealias V2Edge = EdgeOnlyMigV2.Edge
 
         let dbPath = "migration_edge_only_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -1190,7 +1190,7 @@ class MigrationTests: BaseTest {
         typealias V2Edge = NewColLookupV2.Edge
 
         let dbPath = "migration_new_col_lookup_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -1322,7 +1322,7 @@ class MigrationTests: BaseTest {
         typealias V2Edge = EdgeOnlyMigV2.Edge
 
         let dbPath = "migration_partial_recovery_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
 
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
@@ -1439,7 +1439,7 @@ class MigrationTests: BaseTest {
         typealias M2Dog = MigrationV2.Dog
 
         let dbPath = "schema_guard_same_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
 
@@ -1481,7 +1481,7 @@ class MigrationTests: BaseTest {
         typealias M2Dog = MigrationV2.Dog
 
         let dbPath = "schema_guard_older_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
 
@@ -1534,7 +1534,7 @@ class MigrationTests: BaseTest {
         typealias M2Dog = MigrationV2.Dog
 
         let dbPath = "cache_eviction_\(String.random(length: 16)).sqlite"
-        let dbURL = FileManager.default.temporaryDirectory.appending(path: dbPath)
+        let dbURL = try latticeTestTemporaryDirectory().appending(path: dbPath)
         defer { try? Lattice.delete(for: .init(fileURL: dbURL)) }
         try? Lattice.delete(for: .init(fileURL: dbURL))
 
