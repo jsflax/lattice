@@ -77,18 +77,17 @@ jobs:
         run: |
           set -euo pipefail
           CORE_SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["coreCommit"])' "$TASK_ROOT/lattice/Scripts/development-core.json")"
-          PROBE_ARGUMENTS=()
+          DEVELOPMENT_ARGUMENTS=(--root "$TASK_ROOT" --core-sha "$CORE_SHA" --test-timeout "$TEST_TIMEOUT")
           if [[ "$SYNC_PROBE_QUALIFICATION" == 'true' ]]; then
-            PROBE_ARGUMENTS+=(--sync-probe-qualification)
+            DEVELOPMENT_ARGUMENTS+=(--sync-probe-qualification)
           fi
           if [[ "$RECOVERY_REFRESH_QUALIFICATION" == 'true' ]]; then
-            PROBE_ARGUMENTS+=(--recovery-refresh-qualification)
+            DEVELOPMENT_ARGUMENTS+=(--recovery-refresh-qualification)
           fi
           if [[ "$SYNC_FULL_CALIBRATION" == 'true' ]]; then
-            PROBE_ARGUMENTS+=(--sync-full-calibration)
+            DEVELOPMENT_ARGUMENTS+=(--sync-full-calibration)
           fi
-          python3 "$TASK_ROOT/lattice/Scripts/run-development.py" \
-            --root "$TASK_ROOT" --core-sha "$CORE_SHA" --test-timeout "$TEST_TIMEOUT" "${PROBE_ARGUMENTS[@]}"
+          python3 "$TASK_ROOT/lattice/Scripts/run-development.py" "${DEVELOPMENT_ARGUMENTS[@]}"
 
       - name: Retain development graph evidence, including failures
         timeout-minutes: 10
