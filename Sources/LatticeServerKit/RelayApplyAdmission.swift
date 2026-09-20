@@ -52,13 +52,13 @@ final class RelayApplyAdmission: Sendable {
     static let defaultMaxRequests = 64
     static let defaultMaxInputBytes = 64 * 1024 * 1024
     private let state: RelayApplyAdmissionState
-    private let beforeCopyForTesting: (@Sendable () -> Void)?
+    private let beforeCopyForTesting: (@Sendable () async -> Void)?
     private let beforeOperationForTesting: (@Sendable () -> Void)?
     private let didReserveForTesting: (@Sendable (RelayApplyTestCancellation) -> Void)?
 
     init(pool: RelayExecutionPool, maxRequests: Int = defaultMaxRequests,
          maxInputBytes: Int = defaultMaxInputBytes,
-         beforeCopyForTesting: (@Sendable () -> Void)? = nil,
+         beforeCopyForTesting: (@Sendable () async -> Void)? = nil,
          beforeOperationForTesting: (@Sendable () -> Void)? = nil,
          didReserveForTesting: (@Sendable (RelayApplyTestCancellation) -> Void)? = nil,
          afterResumeForTesting: (@Sendable () -> Void)? = nil) {
@@ -105,10 +105,13 @@ final class RelayApplyAdmission: Sendable {
         didReserveForTesting?(.init(cancel: { state.cancel(job) }))
         try await withTaskCancellationHandler {
             if Task.isCancelled { state.cancel(job) }
+            // Opt-in preparation rendezvous suspends test tasks; production's
+            // nil hook takes no additional suspension. Keep the job preparing
+            // and charged until the same publication below settles cancellation.
+            if let beforeCopy { await beforeCopy() }
             var value: Value? = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Value, any Error>) in
                 // A preparing job cannot settle until this publication. Its
                 // cancellation can race copying but cannot invoke native work.
-                beforeCopy?()
                 var input: Data?
                 if state.needsCopy(job) {
                     input = source.makeOwnedCopy()
