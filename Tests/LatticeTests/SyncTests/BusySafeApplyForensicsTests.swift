@@ -148,6 +148,42 @@ private extension NSLock {
     }
 }
 
+/// One test's bounded, payload-free progress evidence. Writes go directly to
+/// the runner's stderr file, so a buffered stdout tail is not a phase marker.
+/// No watchdog, task, timer, queue, socket or native owner is created/retained.
+/// A phase is an observation only, never proof of shutdown or cancellation.
+private final class ForensicIngressPhases: @unchecked Sendable {
+    enum Phase: String {
+        case testEntered, functionExit, poolBegin, poolReady, applyReady
+        case applicationMakeBegin, applicationMade, relayConfigureBegin, relayConfigured
+        case startupBegin, startupReturned, harnessReady, uploadsBegin, uploadsReady
+        case writerConnectBegin, writerConnected, peerConnectBegin, peerConnected, setupReady
+        case connectBegin, connectReturned, connectThrew, asyncSetupFinished, socketClosed
+        case firstSendBegin, firstSendReturned, firstApplyEntered, secondSendBegin, secondSendReturned
+        case secondEnvelopeRetained, overflowSendBegin, overflowSendReturned, socketCloseObserved
+        case applyGateEntered, applyGateReturned, gateReleased, secondFanoutObserved, admissionReleased
+        case assertionsFinished, applyDrainBegin, applyDrained, harnessShutdownBegin, harnessShutdownReturned
+        case applicationShutdownBegin, applicationShutdownReturned, poolShutdownBegin, poolShutdownReturned
+        case finalRowsChecked, catchEntered, testCompleted, captureLimit
+    }
+    private let id = UUID().uuidString
+    private let lock = NSLock()
+    private var sequence = 0
+    func record(_ requested: Phase) {
+        lock.lock()
+        guard sequence < 128 else { lock.unlock(); return }
+        sequence += 1
+        let number = sequence
+        lock.unlock()
+        let phase: Phase = number == 128 ? .captureLimit : requested
+        let bytes = Data("FORENSIC_INGRESS_PHASE id=\(id) seq=\(number) ns=\(DispatchTime.now().uptimeNanoseconds) phase=\(phase.rawValue)\n".utf8)
+        // No diagnostic lock is held across IO. Concurrent lines may arrive
+        // in a different order; seq identifies reservation order, not causality.
+        // A failed write supplies no evidence; it cannot settle the test.
+        try? FileHandle.standardError.write(contentsOf: bytes)
+    }
+}
+
 /// In-process relay running the REAL `configureSyncRelay`, one channel.
 private final class ForensicsRelayHarness: @unchecked Sendable {
     let app: Application
@@ -159,6 +195,7 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
     private let applyAdmission: RelayApplyAdmission?
     private let ingressAdmission: RelayIngressAdmission?
     private let ingressHooks: RelayIngressTestHooks?
+    private let phaseEvidence: ForensicIngressPhases?
 
     var channelFileURL: URL { storageURL.appending(path: channelFileName) }
 
@@ -170,7 +207,9 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
          applyAdmission: RelayApplyAdmission? = nil,
          ingressAdmission: RelayIngressAdmission? = nil,
          ingressHooks: RelayIngressTestHooks? = nil,
-         observerPush: SyncObserverPush? = nil) async throws {
+         observerPush: SyncObserverPush? = nil,
+         phaseEvidence: ForensicIngressPhases? = nil) async throws {
+        self.phaseEvidence = phaseEvidence
         self.ackPathRecorder = ackPathRecorder
         self.applyAdmission = applyAdmission
         self.ingressAdmission = ingressAdmission
@@ -182,7 +221,9 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
         try FileManager.default.createDirectory(at: storageURL, withIntermediateDirectories: true)
         var env = try Environment.detect()
         env.arguments = ["vapor"]
+        phaseEvidence?.record(.applicationMakeBegin)
         app = try await Application.make(env)
+        phaseEvidence?.record(.applicationMade)
         app.http.server.configuration.port = 0
         let fileName = channelFileName
         let id = channelId
@@ -206,6 +247,7 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
                 RelayIngressTesting.remove(ingressHooks, for: diagnosticMount)
             }
         }
+        phaseEvidence?.record(.relayConfigureBegin)
         Lattice.configureSyncRelay(
             on: app.routes, path: ["sync"], for: schema, storageURL: storageURL,
             observerPush: observerPush,
@@ -214,12 +256,16 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
                       let uid = UUID(uuidString: raw) else { throw Abort(.unauthorized) }
                 return SyncChannel(id: id, userId: uid, databaseFileName: fileName)
             })
+        phaseEvidence?.record(.relayConfigured)
+        phaseEvidence?.record(.startupBegin)
         try await app.startup()
+        phaseEvidence?.record(.startupReturned)
         guard let assigned = app.http.server.shared.localAddress?.port else {
             throw Abort(.internalServerError, reason: "no port")
         }
         port = assigned
         mountInitialized = true
+        phaseEvidence?.record(.harnessReady)
     }
 
     func removeACKPathRecorder() {
@@ -239,6 +285,7 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
         if let lastEventId { url += "?last-event-id=\(lastEventId.uuidString)" }
         let once = AtomicOnce()
         ackPath?.record(.connectBegin)
+        phaseEvidence?.record(.connectBegin)
         do {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
                 WebSocket.connect(to: url, headers: headers, configuration: config,
@@ -250,9 +297,11 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
                 }
             }
             ackPath?.record(.connectEnd)
+            phaseEvidence?.record(.connectReturned)
             return ackPath
         } catch {
             ackPath?.record(.connectError)
+            phaseEvidence?.record(.connectThrew)
             throw error
         }
     }
@@ -266,7 +315,9 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
     /// Shuts the relay down but leaves the channel file for inspection.
     func shutdown_keepingStorage() async {
         removeAdmissionHooks()
+        phaseEvidence?.record(.applicationShutdownBegin)
         try? await app.asyncShutdown()
+        phaseEvidence?.record(.applicationShutdownReturned)
     }
 
     private func removeAdmissionHooks() {
@@ -1422,67 +1473,112 @@ final class BusySafeApplyForensicsTests: BaseTest {
     /// two accepted frames in order, including after ordinary socket cleanup.
     @Test(.timeLimit(.minutes(1)))
     func liveIngressOverflowDrainsAcceptedWritesThroughSocketClose() async throws {
+        let phases = ForensicIngressPhases()
+        phases.record(.testEntered)
+        defer { phases.record(.functionExit) }
         let ingress = RelayIngressAdmission(limits: .init(connectionFrames: 2, connectionBytes: 1 << 20,
             processFrames: 4, processBytes: 2 << 20, frameBytes: 1 << 20))
+        phases.record(.poolBegin)
         let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.ingress-drain")
+        phases.record(.poolReady)
         let operations = LockedBox(0), entered = LockedBox(false), expired = LockedBox(false)
         let release = DispatchSemaphore(value: 0), setupCount = LockedBox(0), closedCount = LockedBox(0)
         let apply = RelayApplyAdmission(pool: pool, beforeOperationForTesting: {
             let first = operations.withLock { $0 += 1; return $0 == 1 }
             if first {
+                phases.record(.applyGateEntered)
                 entered.withLock { $0 = true }
                 expired.withLock { $0 = release.wait(timeout: .now() + 5) != .success }
+                phases.record(.applyGateReturned)
             }
         })
+        phases.record(.applyReady)
         let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
-            didFinishAsyncSetup: { setupCount.withLock { $0 += 1 } },
-            didCloseConnection: { closedCount.withLock { $0 += 1 } })
+            didFinishAsyncSetup: { setupCount.withLock { $0 += 1 }; phases.record(.asyncSetupFinished) },
+            didCloseConnection: { closedCount.withLock { $0 += 1 }; phases.record(.socketClosed) })
         let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
             channelId: "ingress-drain-\(String.random(length: 8))", applyAdmission: apply,
-            ingressAdmission: ingress, ingressHooks: hooks)
+            ingressAdmission: ingress, ingressHooks: hooks, phaseEvidence: phases)
         let writer = ForensicClient(label: "overflow-writer", autoAck: false)
         let peer = ForensicClient(label: "drain-peer", autoAck: false, captureFrames: true)
         do {
+            phases.record(.uploadsBegin)
             let uploads = try (701...703).map { value in
                 try makeUploadEntries(donorPath: "donor-ingress-\(value)-\(String.random(length: 8)).sqlite", value: value)
             }
             let ids = try uploads.map { try #require($0.first?.globalId) }
-            try await harness.connect(writer); try await harness.connect(peer)
+            phases.record(.uploadsReady)
+            phases.record(.writerConnectBegin)
+            try await harness.connect(writer);
+            phases.record(.writerConnected)
+            phases.record(.peerConnectBegin)
+            try await harness.connect(peer)
+            phases.record(.peerConnected)
             try #require(await poll(timeout: 5, { setupCount.withLock { $0 == 2 } }))
+            phases.record(.setupReady)
             let priorFrames = peer.receivedFrames.count
             let acceptedFrames = try uploads.prefix(2).map { try frame($0) }
+            phases.record(.firstSendBegin)
             try await writer.socket!.send(Array(buffer: acceptedFrames[0]))
+            phases.record(.firstSendReturned)
             try #require(await poll(timeout: 5, { entered.withLock { $0 } }))
+            phases.record(.firstApplyEntered)
+            phases.record(.secondSendBegin)
             try await writer.socket!.send(Array(buffer: acceptedFrames[1]))
+            phases.record(.secondSendReturned)
             try #require(await poll(timeout: 5, { ingress.snapshot.frames == 2 }))
+            phases.record(.secondEnvelopeRetained)
             #expect(ingress.snapshot.inputBytes == acceptedFrames.reduce(0) { $0 + $1.readableBytes })
+            phases.record(.overflowSendBegin)
             try await writer.socket!.send(Array(buffer: try frame(uploads[2])))
+            phases.record(.overflowSendReturned)
             try #require(await poll(timeout: 5, { writer.socket?.isClosed == true && closedCount.withLock { $0 == 1 } }))
+            phases.record(.socketCloseObserved)
             #expect(ingress.snapshot.frames == 2, "close must not return storage still owned by apply/stream")
             #expect(apply.snapshot.requests == 1)
             release.signal()
+            phases.record(.gateReleased)
             // The second fan-out is an ordered positive fence on this peer's
             // actual outbound stream, rather than a sleep/no-message check.
             try #require(await poll(timeout: 5, { peer.downloaded.contains(ids[1]) }))
+            phases.record(.secondFanoutObserved)
             try #require(await poll(timeout: 5, { ingress.snapshot.frames == 0 && apply.snapshot.requests == 0 }))
+            phases.record(.admissionReleased)
             #expect(peer.downloaded.contains(ids[0]) && !peer.downloaded.contains(ids[2]))
             #expect(Array(peer.receivedFrames.dropFirst(priorFrames)) == acceptedFrames.map { Data(buffer: $0) })
             #expect(ingress.snapshot.inputBytes == 0 && apply.snapshot.inputBytes == 0)
             #expect(operations.withLock { $0 } == 2)
             #expect(!expired.withLock { $0 })
+            phases.record(.assertionsFinished)
+            phases.record(.applyDrainBegin)
             await apply.closeAdmissionAndDrain()
+            phases.record(.applyDrained)
+            phases.record(.harnessShutdownBegin)
             await harness.shutdown_keepingStorage()
+            phases.record(.harnessShutdownReturned)
+            phases.record(.poolShutdownBegin)
             await pool.shutdown()
+            phases.record(.poolShutdownReturned)
             #expect(try rowCount(inChannelFile: harness.channelFileURL).rows == 2)
+            phases.record(.finalRowsChecked)
         } catch {
+            phases.record(.catchEntered)
             release.signal()
+            phases.record(.gateReleased)
+            phases.record(.applyDrainBegin)
             await apply.closeAdmissionAndDrain()
+            phases.record(.applyDrained)
+            phases.record(.harnessShutdownBegin)
             await harness.shutdown_keepingStorage()
+            phases.record(.harnessShutdownReturned)
+            phases.record(.poolShutdownBegin)
             await pool.shutdown()
+            phases.record(.poolShutdownReturned)
             RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
             throw error
         }
         RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+        phases.record(.testCompleted)
     }
 
     /// The gate itself: one key admits one holder at a time (FIFO), and two
