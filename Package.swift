@@ -97,6 +97,7 @@ let package = Package(
             name: "LatticeTests",
             dependencies: [
                 "CLatticeTestSQLite",
+                .product(name: "LatticeServerExportTestSupport", package: "LatticeCore"),
                 "Lattice",
                 "LatticeMCP",
                 "LatticeServerKit",
