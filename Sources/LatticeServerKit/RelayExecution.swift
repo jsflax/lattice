@@ -15,13 +15,21 @@ final class RelayExecutionPool: Sendable {
     static let io = RelayExecutionPool(workerCount: 2, name: "lattice.relay.io")
     static let stackSize = 8 << 20
     private let state: RelayExecutionState
+    private let workerIdentity: String
+    private static let workerIdentityKey = "lattice.relay.worker-identity"
 
     init(workerCount: Int, name: String) {
         precondition((1...8).contains(workerCount))
         state = RelayExecutionState(workerCount: workerCount)
+        let identity = UUID().uuidString
+        workerIdentity = identity
         for index in 0..<workerCount {
             let state = state
-            let thread = Thread { state.work() }
+            let thread = Thread {
+                Thread.current.threadDictionary[Self.workerIdentityKey] = identity
+                state.work()
+                Thread.current.threadDictionary.removeObject(forKey: Self.workerIdentityKey)
+            }
             thread.name = "\(name).\(index)"
             thread.stackSize = Self.stackSize
             thread.start()
@@ -43,6 +51,10 @@ final class RelayExecutionPool: Sendable {
     }
 
     var snapshot: RelayExecutionSnapshot { state.snapshot }
+    /// Synchronous diagnostic; verifies actual execution on this pool's worker.
+    var isCurrentWorker: Bool {
+        Thread.current.threadDictionary[Self.workerIdentityKey] as? String == workerIdentity
+    }
 
     /// Native work is synchronous. Callers arrange their completion callback;
     /// workers never wait for a socket promise or another Swift task.

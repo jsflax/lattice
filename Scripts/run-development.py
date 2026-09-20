@@ -420,6 +420,8 @@ def main():
     qualification = parser.add_mutually_exclusive_group()
     qualification.add_argument('--sync-probe-qualification', action='store_true',
                         help='Instrumented Core probe and SDK visibility fixtures only; not full suite or performance')
+    qualification.add_argument('--sync-full-calibration', action='store_true',
+                               help='Qualify the existing full loaded and quiet-only workloads in separate processes; not a performance experiment')
     qualification.add_argument('--recovery-refresh-qualification', action='store_true',
                                help='Recovery refresh and changed-field SDK cases only; not full suite or performance')
     args = parser.parse_args()
@@ -456,8 +458,11 @@ def main():
               'primaryError': None, 'evidenceErrors': [], 'releaseGraphAccepted': False,
               'overallSeconds': OVERALL_SECONDS, 'finalizationReserveSeconds': FINALIZATION_RESERVE}
     result['syncProbeQualification'] = args.sync_probe_qualification
+    result['syncFullCalibration'] = args.sync_full_calibration
     if args.sync_probe_qualification:
         result['scope'] = 'opt-in native origin / Swift importer / public visibility qualification only; no full-suite or performance acceptance'
+    elif args.sync_full_calibration:
+        result['scope'] = 'opt-in full workload calibration only; no A/A2/B, full-suite, performance or release acceptance'
     result['recoveryRefreshQualification'] = args.recovery_refresh_qualification
     if args.recovery_refresh_qualification:
         result['scope'] = 'targeted SDK recovery refresh and changed-field qualification only; not full-suite, release, iOS or performance acceptance'
@@ -500,7 +505,7 @@ def main():
             graph = runner.run('effective-graph-before', ['swift', 'package', *common, 'show-dependencies', '--format', 'json'], cwd=sdk)
             verify_graph(runner, 'graph-before', read_graph(graph), original, core, args.core_sha, root / 'scratch')
             probe_flags = []
-            if args.sync_probe_qualification:
+            if args.sync_probe_qualification or args.sync_full_calibration:
                 import sync_probe_qualification
                 probe_flags = sync_probe_qualification.FLAGS
                 test_started_at = time.time()
@@ -516,6 +521,9 @@ def main():
                            timeout=300, require_full_timeout=True)
                 sync_probe_qualification.qualify_sdk_log(sdk_probe_log, receipts)
                 sync_probe_qualification.qualify_public_receipts(root, receipts)
+            elif args.sync_full_calibration:
+                import sync_full_calibration
+                sync_full_calibration.run(runner, sdk, root, common, sdk_inputs, core_inputs)
             elif args.recovery_refresh_qualification:
                 import recovery_refresh_qualification
                 recovery_refresh_qualification.qualify(runner, sdk, core, root, common, args.test_timeout)

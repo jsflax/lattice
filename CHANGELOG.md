@@ -1,5 +1,28 @@
 # Changelog
 
+## Performance refinement - Unreleased
+
+- Enable typed projected snapshots and batches for native memory stores.
+  The first pull captures selected values and releases the writer before
+  consumer suspension. `ProjectionReadLimits.maxCaptureBytes` defaults to
+  32 MiB; capture-budget exhaustion reports a typed error. Retained batches
+  remain charged against a64 MiB per-parent ceiling. This coordinated
+  development feature requires the upcoming Core release and still awaits
+  full cross-platform qualification.
+
+- Reconcile the published Core 2.0.5 baseline and SDK 2.0.0 test fixes.
+  Core 2.0.5 supplies the scheduler-aware transport factory and persistent
+  Emscripten audit-delivery correction, but does not contain the broad
+  projection or bulk APIs. Development uses the exact Core source recorded
+  in `Scripts/development-core.json`; a compatible published broad Core
+  release and fresh SDK qualification are required before this work ships.
+- Virtual results use the logical model name to hydrate attached rows while
+  preserving their physical store route for identity and writes. Both the
+  parameter-pack and compatibility paths retain filtered, paged results.
+- Reject new cached Results reads after the shared native database closes,
+  including handles whose collection caches are retained by another wrapper.
+  Reads already in flight keep their existing lifetime contract.
+
 ## [2.0.0] - Unreleased
 
 LatticeCore dependency floor raised to `2.0.4` (audit-history hygiene,

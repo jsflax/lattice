@@ -806,6 +806,9 @@ actor SyncTests {
     /// a fresh client should still receive all current data on connect.
     @Test(.timeLimit(.minutes(5))) func test_ServerCompactionCatchUp() async throws {
         let lattice = localLattice1!
+        let stages = server.diagnostic
+        stages.record("server_compaction_test_begin")
+        defer { stages.emit(reason: "server_compaction_finished_or_unwound") }
 
         // Step 1: Write data and wait for it to arrive in the SERVER's DB.
         // The test server sends ACK before Task.detached DB persistence, so
@@ -815,12 +818,17 @@ actor SyncTests {
         var serverTask: Task<Void, any Error>?
         await withCheckedContinuation { continuation in
             serverTask = Task.detached {
+                stages.record("server_observer_open_begin")
                 let server = try Lattice(SimpleSyncObject.self, configuration: syncedConfig)
+                stages.record("server_observer_open_returned")
                 let changeStream = server.changeStream
+                stages.record("server_observer_stream_installed")
                 continuation.resume()
                 for try await changes in changeStream {
                     let resolved = changes.compactMap({ $0.resolve(isolation: nil, on: server) })
+                    stages.record("server_observer_batch", count: resolved.count)
                     if resolved.contains(where: { $0.tableName == "SimpleSyncObject" }) {
+                        stages.record("server_observer_matched")
                         break
                     }
                 }
@@ -828,11 +836,21 @@ actor SyncTests {
         }
 
         let obj = SimpleSyncObject(value: 555, floatValue: 5.5)
+        stages.record("server_compaction_write_begin")
         try lattice.add(obj)
+        stages.record("server_compaction_write_returned")
         try await serverTask?.value
+        stages.record("server_observer_await_returned")
 
         // Step 2: Force compact the server's audit log — replaces all history with INSERT snapshots
+        // Keep the original direct call: a queue fence here would hide any
+        // overlap with supported server receive/ACK work on the shared writer.
+        stages.record("server_force_compact_begin")
         let serverEntries = syncedLattice.forceCompactHistory()
+        // Read the thread-local sealed error before another bridge call or await.
+        let compactionError = syncedLattice.lastQueryError()
+        stages.record("server_force_compact_returned", count: Int(exactly: serverEntries),
+                      detail: compactionError.map { "bridge_error=" + $0 } ?? "bridge_error=none")
         #expect(serverEntries >= 1, "Server should create snapshot entries for existing objects")
 
         // Verify the server still has the data

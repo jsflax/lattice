@@ -66,6 +66,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// deterministic `id ASC` tiebreaker (`id ASC` alone when unsorted).
     /// `keysetSpec` is non-nil exactly when the shape keyset-pages.
     private struct ShapeDescriptor {
+        let hasAttachedStores: Bool
         let key: QueryShapeKey
         let whereSQL: String?
         /// Values bound to `whereSQL`'s placeholders, positionally. EMPTY when
@@ -85,20 +86,29 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// (`id INTEGER PRIMARY KEY AUTOINCREMENT` exists on every model table —
     /// it aliases the rowid, so the unsorted case adds no sorter, and an
     /// indexed sort column already yields (key, rowid) order from its
-    /// b-tree). `qualifyTiebreaker` disambiguates `id` on the bbox path,
-    /// whose R*Tree join exposes a second `id` column.
+    /// b-tree). Spatial queries qualify generated columns with the model's
+    /// quoted name, which is also the alias after group/distinct nesting.
     private func _effectiveOrderBySQL(qualifyTiebreaker: Bool) -> String {
-        let idColumn = qualifyTiebreaker ? "\(Element.entityName).id" : "id"
+        func quoted(_ identifier: String) -> String {
+            "\"" + identifier.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+        }
+        func spatialColumn(_ name: String) -> String {
+            quoted(Element.entityName) + "." + quoted(name)
+        }
+        let idColumn = qualifyTiebreaker ? spatialColumn("id") : "id"
         if let sc = _sortColumn {
             let dir = sc.order == .forward ? "ASC" : "DESC"
             if sc.name == "id" { return "\(idColumn) \(dir)" }
-            return "\(sc.name) \(dir), \(idColumn) ASC"
+            let sortColumn = qualifyTiebreaker ? spatialColumn(sc.name) : sc.name
+            return "\(sortColumn) \(dir), \(idColumn) ASC"
         }
         return "\(idColumn) ASC"
     }
 
     private var _descriptor: ShapeDescriptor {
-        if let memoized = _shapeMemo.withLockUnchecked({ $0 }) { return memoized }
+        let hasAttachedStores = _lattice.backend._hasAttachedStores
+        if let memoized = _shapeMemo.withLockUnchecked({ $0 }),
+           memoized.hasAttachedStores == hasAttachedStores { return memoized }
         // Build OUTSIDE the memo lock (leaf-lock rule — predicate
         // construction is pure string building, but keep the lock tiny).
         // Render channel (§ parameterization): the bbox shapes route through
@@ -115,20 +125,26 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         let orderBySQL: String? = _effectiveOrderBySQL(qualifyTiebreaker: boundsConstraint != nil)
         // Keyset paging needs a total order over stored `(col, id)` values:
         // grouped/distinct rows lack stable `(col, id)` identity and bbox
-        // shapes route through the R*Tree join — those page by OFFSET
+        // shapes have a separate spatial read route — those page by OFFSET
         // (§2.4/§4.5 carve-out), as do sorts on non-primitive columns.
-        let keysetSpec: KeysetSortSpec? = (groupByColumn == nil && distinctByColumn == nil && boundsConstraint == nil)
+        // `(sort, id)` is not a total order across attached physical stores.
+        // Keep those shapes on OFFSET until a source-aware anchor is used.
+        let keysetSpec: KeysetSortSpec? = (_lattice.backend._supportsQueryRowImages && !hasAttachedStores && groupByColumn == nil && distinctByColumn == nil && boundsConstraint == nil)
             ? KeysetSortSpec.resolve(for: Element.self, sortColumn: _sortColumn)
             : nil
         // Spatial constraints are folded into the key's whereSQL component:
         // the spec's shape key has no bbox slot, and two shapes differing
         // only in bounding box must not collide (see QueryShapeKey).
         var keyWhere = whereSQL
+        if hasAttachedStores {
+            keyWhere = (keyWhere ?? "") + "\u{1F}attached"
+        }
         if let b = boundsConstraint {
             let bboxFragment = "\u{1F}bbox(\(b.propertyName),\(b.minLat),\(b.maxLat),\(b.minLon),\(b.maxLon))"
             keyWhere = (keyWhere ?? "") + bboxFragment
         }
         let built = ShapeDescriptor(
+            hasAttachedStores: hasAttachedStores,
             key: QueryShapeKey(identityHash: _lattice.backend.identityHash,
                                table: Element.entityName,
                                whereSQL: keyWhere,
@@ -144,13 +160,47 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             orderBySQL: orderBySQL,
             keysetSpec: keysetSpec)
         return _shapeMemo.withLockUnchecked { memo in
-            if let existing = memo { return existing }
+            if let existing = memo, existing.hasAttachedStores == hasAttachedStores { return existing }
             memo = built
             return built
         }
     }
 
     private var _tuning: ResultsTuning { _lattice.configuration.resultsTuning }
+
+    /// Capture query values for the bounded projection executor without
+    /// filling a Results page, registering models, or changing live semantics.
+    internal var _projectionDescriptor: ProjectionQueryDescriptor {
+        get throws {
+            let schema = try ProjectionStoredSchema(Element.self)
+            let sort: ProjectionSort?
+            if let keyPathSort = sortStatement as? KeyPathSort<Element> {
+                sort = .init(column: keyPathSort.column,
+                             direction: keyPathSort.order == .forward ? .ascending : .descending)
+            } else if #available(iOS 17, macOS 14, tvOS 17, watchOS 10, *),
+                      let descriptor = sortStatement as? SortDescriptor<Element>, let keyPath = descriptor.keyPath {
+                guard let column = Element._storedColumn(for: keyPath) else {
+                    throw ProjectionReadError.invalidField("sort key path is not a stored scalar field")
+                }
+                sort = .init(column: column, direction: descriptor.order == .forward ? .ascending : .descending)
+            } else if sortStatement != nil {
+                throw ProjectionReadError.unsupportedShape("unrecognized sort comparator")
+            } else {
+                sort = nil
+            }
+            let captured = _descriptor
+            let bounds = boundsConstraint.map {
+                BoundsConstraintParam(column: $0.propertyName, minLat: $0.minLat, maxLat: $0.maxLat,
+                                      minLon: $0.minLon, maxLon: $0.maxLon)
+            }
+            return try ProjectionQueryDescriptor(
+                backend: _lattice.backend, schema: schema,
+                whereSQL: captured.whereSQL, parameters: captured.params, sort: sort,
+                orderBySQL: captured.orderBySQL ?? "id ASC", bounds: bounds,
+                groupBy: groupByColumn, distinctBy: distinctByColumn,
+                fetchLimit: _fetchLimit, hasAttachedStores: captured.hasAttachedStores)
+        }
+    }
 
     // MARK: Instance reuse (item A §1.6, Commit 7)
 
@@ -190,40 +240,24 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// into row-cache reads — reuse there would mutate the read semantics
     /// of instances the app already holds.
     private func _reuseOrHydrate(_ row: any ObjectBackend) -> Element {
-        let primaryKey = _primedPrimaryKey(of: row)
-        if primaryKey > 0,
+        defer { row._releaseQueryRowImage() }
+        let primaryKey = _boundPrimaryKey(of: row)
+        if primaryKey > 0, !_lattice.backend._hasAttachedStores,
            let reused = ModelInstanceRegistry.shared.lookup(databasePath: _dbPath,
                                                             tableName: Element.entityName,
                                                             primaryKey: primaryKey,
-                                                            backendIdentity: _lattice.backend.identityHash) as? Element {
+                                                            backendIdentity: _lattice.backend.identityHash,
+                                                            physicalRoute: row.tableName) as? Element {
             return reused   // the fetched handle is discarded
         }
-        // Hydrate with the row cache still ON: the primary-key reads inside
-        // `Model.init(dynamicObject:)` + registration serve from the primed
-        // handle (statement-free), halving the pre-Commit-7 per-row
-        // hydration cost (2 pk SELECTs → the one priming re-fetch above).
-        let element = Element(dynamicObject: row)
-        // Restore live-read semantics (§1.3 object path): the element wraps
-        // this very handle, and only `materialize()` may opt into snapshot
-        // reads.
-        row.disableRowCache()
-        return element
+        return Element(dynamicObject: row)
     }
 
-    /// Primary-key read of a freshly fetched row via row-cache priming: a
-    /// bare `getInt(named: "id")` on a live handle is a per-row SELECT
-    /// (§5's fill budget would grow by pageSize). Enabling the row cache
-    /// re-fetches the FULL row in ONE statement (the fetched handle carries
-    /// no hydrated values), after which `id` serves from the managed
-    /// handle's own `id_` member — so the pk read itself is free, and so is
-    /// every subsequent pk read while the handle stays primed. Idempotent:
-    /// an already-primed handle pays nothing. The handle is exclusively
-    /// ours at this point (pre-publication).
-    private func _primedPrimaryKey(of row: any ObjectBackend) -> Int64 {
-        if !row.isRowCacheEnabled {
-            row.enableRowCache()
-        }
-        return row.getInt(named: "id")
+    /// Identity belongs to the managed handle, not its mutable row values.
+    /// Alternate backends may use the ordinary getter as a compatibility
+    /// fallback; neither path changes explicit materialization semantics.
+    private func _boundPrimaryKey(of row: any ObjectBackend) -> Int64 {
+        row._managedPrimaryKey ?? row.getInt(named: "id")
     }
 
     private func _liveContext() -> (coordinator: GenerationCoordinator, shape: QueryShapeState, descriptor: ShapeDescriptor) {
@@ -307,13 +341,13 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// connection, so their reads see the transaction too.
     private func _inTxnRows(limit: Int64?, offset: Int64?, reuseInstances: Bool) -> [Element] {
         if let bounds = boundsConstraint {
-            let rows = _lattice.backend.objectsWithinBBox(
+            let rows = _lattice.backend._objectsWithinBBoxShape(
                 table: Element.entityName, geoColumn: bounds.propertyName,
                 minLat: bounds.minLat, maxLat: bounds.maxLat,
                 minLon: bounds.minLon, maxLon: bounds.maxLon,
                 where: whereStatement?.predicate,
                 orderBy: _effectiveOrderBySQL(qualifyTiebreaker: true),
-                limit: limit, offset: offset, groupBy: groupByColumn)
+                limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn)
             return reuseInstances ? rows.map { _reuseOrHydrate($0) }
                                   : rows.map { Element(dynamicObject: $0) }
         }
@@ -331,11 +365,11 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// spatial count, which the bridge already runs on the writer).
     private func _inTxnCount() -> Int {
         if let bounds = boundsConstraint {
-            return Int(_lattice.backend.countWithinBBox(
+            return Int(_lattice.backend._countWithinBBoxShape(
                 table: Element.entityName, geoColumn: bounds.propertyName,
                 minLat: bounds.minLat, maxLat: bounds.maxLat,
                 minLon: bounds.minLon, maxLon: bounds.maxLon,
-                where: whereStatement?.predicate))
+                where: whereStatement?.predicate, groupBy: groupByColumn, distinctBy: distinctByColumn))
         }
         return _lattice._writerTransactionCount(table: Element.entityName,
                                                 where: whereStatement?.predicate,
@@ -346,7 +380,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     private func _liveCount(_ descriptor: ShapeDescriptor) -> Int {
         _gatedLiveRead {
             if let bounds = boundsConstraint {
-                return Int(_lattice.backend.countWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: descriptor.whereSQL))
+                return Int(_lattice.backend._countWithinBBoxShape(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: descriptor.whereSQL, groupBy: groupByColumn, distinctBy: distinctByColumn))
             }
             return Int(_lattice.backend.count(table: Element.entityName, where: descriptor.whereSQL, groupBy: groupByColumn, distinctBy: distinctByColumn, params: descriptor.params))
         }
@@ -357,6 +391,10 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// then falls back to `_liveCount`. Never called for bbox shapes (the
     /// Commit-4 bridge has no bbox count-at form — bbox counts stay live).
     private func _generationCount(_ descriptor: ShapeDescriptor, generation: UInt64) -> Int? {
+        // A main-runloop pin may predate a background ATTACH. Its keeper
+        // never received the TEMP union views, so a new attached shape must
+        // count on the owning connection even while that old pin is held.
+        if descriptor.hasAttachedStores { return _liveCount(descriptor) }
         let counted = _lattice.backend.countAt(generation: generation,
                                                table: Element.entityName,
                                                where: descriptor.whereSQL,
@@ -443,9 +481,9 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                 // §1.6 (Commit 7): reuse the live registered instance when
                 // one exists — only rows the fetch actually returned are
                 // candidates (a captured id whose row died stays on the
-                // placeholder path below). The priming read is idempotent,
-                // so keying and reuse share one re-fetch.
-                byID[_primedPrimaryKey(of: row)] = _reuseOrHydrate(row)
+                // placeholder path below). Reading the bound key requires
+                // no SQL and does not toggle snapshot reads.
+                byID[_boundPrimaryKey(of: row)] = _reuseOrHydrate(row)
             }
             var rows: [Element] = []
             rows.reserveCapacity(ids.count)
@@ -498,7 +536,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             return PageFill(rows: rows, endAnchor: nil)
         }
 
-        let generation = forceLive ? 0 : ctx.generationID
+        let generation = (forceLive || descriptor.hasAttachedStores) ? 0 : ctx.generationID
         let offset = pageIndex * pageSize
         guard let spec = descriptor.keysetSpec else {
             guard let rows = _fillPageOffset(descriptor, generation: generation,
@@ -521,6 +559,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                 gapOffset = offset
             }
         }
+        var lastQueryAnchor: KeysetAnchor?
         guard let rows = _queryRows(where: KeysetSQL.conjoin(where: descriptor.whereSQL, resume: resume),
                                     params: descriptor.params,
                                     orderBy: descriptor.orderBySQL,
@@ -528,13 +567,16 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                     limit: Int64(pageSize),
                                     offset: gapOffset == 0 ? nil : Int64(gapOffset),
                                     groupBy: nil, distinctBy: nil,
-                                    reuseInstances: true) else {
+                                    reuseInstances: true,
+                                    captureQueryRows: { raw in
+                                        // Only the final SELECT row resumes this page.
+                                        // Capture before live-instance reuse, as before.
+                                        lastQueryAnchor = raw.last.flatMap { KeysetSQL.extractAnchor(from: $0, spec: spec) }
+                                    }) else {
             return nil
         }
         shape.noteFill(usedOffset: gapOffset != 0, usedKeyset: resume != nil || pageIndex == 0)
-        let endAnchor: KeysetAnchor? = rows.count == pageSize
-            ? rows.last.flatMap { KeysetSQL.extractAnchor(from: $0, spec: spec) }
-            : nil
+        let endAnchor: KeysetAnchor? = rows.count == pageSize ? lastQueryAnchor : nil
         return PageFill(rows: rows, endAnchor: endAnchor)
     }
 
@@ -575,7 +617,16 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                             generation: UInt64,
                             limit: Int64?, offset: Int64?,
                             groupBy: String?, distinctBy: String?,
-                            reuseInstances: Bool = false) -> [Element]? {
+                            reuseInstances: Bool = false,
+                            captureQueryRows: (([any ObjectBackend]) -> Void)? = nil) -> [Element]? {
+        func hydrate(_ rows: [any ObjectBackend]) -> [Element] {
+            // Position metadata belongs to this SELECT, even if a registered
+            // model is reused or a concurrent writer changes its live values.
+            captureQueryRows?(rows)
+            return reuseInstances
+                ? rows.map { _reuseOrHydrate($0) }
+                : rows.map { Element(dynamicObject: $0) }
+        }
         if generation != 0 {
             let rows = _lattice.backend.objectsAt(generation: generation,
                                                   table: Element.entityName,
@@ -584,9 +635,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                                   groupBy: groupBy, distinctBy: distinctBy,
                                                   params: params)
             if _lattice.backend.lastGenerationReadStale() { return nil }
-            return reuseInstances
-                ? rows.map { _reuseOrHydrate($0) }
-                : rows.map { Element(dynamicObject: $0) }
+            return hydrate(rows)
         }
         return _gatedLiveRead {
             let rows = _lattice.backend.objects(table: Element.entityName,
@@ -594,9 +643,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                                 limit: limit, offset: offset,
                                                 groupBy: groupBy, distinctBy: distinctBy,
                                                 params: params)
-            return reuseInstances
-                ? rows.map { _reuseOrHydrate($0) }
-                : rows.map { Element(dynamicObject: $0) }
+            return hydrate(rows)
         }
     }
 
@@ -608,18 +655,18 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                  offset: Int, limit: Int) -> [Element]? {
         if let bounds = boundsConstraint {
             if generation != 0 {
-                let rows = _lattice.backend.objectsWithinBBoxAt(
+                let rows = _lattice.backend._objectsWithinBBoxShapeAt(
                     generation: generation,
                     table: Element.entityName, geoColumn: bounds.propertyName,
                     minLat: bounds.minLat, maxLat: bounds.maxLat,
                     minLon: bounds.minLon, maxLon: bounds.maxLon,
                     where: descriptor.whereSQL, orderBy: descriptor.orderBySQL,
-                    limit: Int64(limit), offset: Int64(offset), groupBy: groupByColumn)
+                    limit: Int64(limit), offset: Int64(offset), groupBy: groupByColumn, distinctBy: distinctByColumn)
                 if _lattice.backend.lastGenerationReadStale() { return nil }
                 return rows.map { _reuseOrHydrate($0) }
             }
             return _gatedLiveRead {
-                _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: descriptor.whereSQL, orderBy: descriptor.orderBySQL, limit: Int64(limit), offset: Int64(offset), groupBy: groupByColumn).map { _reuseOrHydrate($0) }
+                _lattice.backend._objectsWithinBBoxShape(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: descriptor.whereSQL, orderBy: descriptor.orderBySQL, limit: Int64(limit), offset: Int64(offset), groupBy: groupByColumn, distinctBy: distinctByColumn).map { _reuseOrHydrate($0) }
             }
         }
         return _queryRows(where: descriptor.whereSQL, params: descriptor.params,
@@ -636,7 +683,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// and the invalidated placeholder exist to satisfy the non-optional
     /// `subscript`; an optional return expresses "no such element" directly).
     public func element(at index: Int) -> Element? {
-        guard index >= 0 else { return nil }
+        guard index >= 0, !_lattice.backend._isClosed else { return nil }
         // §4.1 in-txn carve-out: one writer-connection read at the
         // effective total order's index — no page-cache read (entries
         // predate the transaction) and no generation resolution.
@@ -693,6 +740,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// row return column defaults, never a crash). Rung (d) renders a blank
     /// row for one frame instead of aborting the process.
     public subscript(index: Int) -> Element {
+        guard !_lattice.backend._isClosed else { return Element.defaultValue }
         if let element = element(at: index) {
             return element
         }
@@ -733,6 +781,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     // the `id ASC` tiebreaker — so `snapshot()` order ≡ the keyset walk's
     // total order (pinned by the Commit-2 property matrix).
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
+        guard !_lattice.backend._isClosed else { return [] }
         LatticePerf.bump(.snapshots)
 
         // §4.1 in-txn carve-out: read-your-writes inside this thread's own
@@ -750,14 +799,14 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
         // If we have a bounds constraint, use the spatial query path
         if let bounds = boundsConstraint {
-            if ctx.generationID != 0 {
+            if ctx.generationID != 0 && !descriptor.hasAttachedStores {
                 if let rows = _bboxRowsAt(generation: ctx.generationID, bounds: bounds,
                                           whereSQL: descriptor.whereSQL, limit: limit, offset: offset) {
                     return rows
                 }
                 ctx = coordinator.resolveAfterStaleRead(failedGeneration: ctx.generationID,
                                                         table: Element.entityName)
-                if ctx.generationID != 0,
+                if ctx.generationID != 0, !descriptor.hasAttachedStores,
                    let rows = _bboxRowsAt(generation: ctx.generationID, bounds: bounds,
                                           whereSQL: descriptor.whereSQL, limit: limit, offset: offset) {
                     return rows
@@ -766,7 +815,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             return snapshotWithBounds(bounds, limit: limit, offset: offset)
         }
 
-        if ctx.generationID != 0 {
+        if ctx.generationID != 0 && !descriptor.hasAttachedStores {
             if let rows = _queryRows(where: descriptor.whereSQL, params: descriptor.params,
                                      orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false),
                                      generation: ctx.generationID,
@@ -776,7 +825,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             }
             ctx = coordinator.resolveAfterStaleRead(failedGeneration: ctx.generationID,
                                                     table: Element.entityName)
-            if ctx.generationID != 0,
+            if ctx.generationID != 0, !descriptor.hasAttachedStores,
                let rows = _queryRows(where: descriptor.whereSQL, params: descriptor.params,
                                      orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false),
                                      generation: ctx.generationID,
@@ -795,20 +844,20 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// bbox rows at a held generation; nil = stale sentinel.
     private func _bboxRowsAt(generation: UInt64, bounds: BoundsConstraint,
                              whereSQL: String?, limit: Int64?, offset: Int64?) -> [Element]? {
-        let rows = _lattice.backend.objectsWithinBBoxAt(
+        let rows = _lattice.backend._objectsWithinBBoxShapeAt(
             generation: generation,
             table: Element.entityName, geoColumn: bounds.propertyName,
             minLat: bounds.minLat, maxLat: bounds.maxLat,
             minLon: bounds.minLon, maxLon: bounds.maxLon,
             where: whereSQL, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: true),
-            limit: limit, offset: offset, groupBy: groupByColumn)
+            limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn)
         if _lattice.backend.lastGenerationReadStale() { return nil }
         return rows.map { Element(dynamicObject: $0) }
     }
 
     private func snapshotWithBounds(_ bounds: BoundsConstraint, limit: Int64?, offset: Int64?) -> [Element] {
         return _gatedLiveRead {
-            _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: whereStatement?.predicate, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: true), limit: limit, offset: offset, groupBy: groupByColumn).map { Element(dynamicObject: $0) }
+            _lattice.backend._objectsWithinBBoxShape(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: whereStatement?.predicate, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: true), limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn).map { Element(dynamicObject: $0) }
         }
     }
 
@@ -835,6 +884,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// (§4.1) — the id vector captured at the current epoch — hydrating per
     /// batch; rows deleted after capture are skipped.
     public func makeIterator() -> KeysetCursor<Element> {
+        guard !_lattice.backend._isClosed else { return KeysetCursor(nextBatch: { nil }) }
         // §4.1 in-txn carve-out: OFFSET-batched walk on the writer
         // connection. The keyset walk pins a generation hold (keeper) —
         // forbidden while this thread's transaction is open — and the
@@ -909,12 +959,16 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             if finished { return nil }
             let resume = anchor.map { KeysetSQL.resumePredicate(spec: spec, anchor: $0) }
             let whereSQL = KeysetSQL.conjoin(where: descriptor.whereSQL, resume: resume)
+            var anchors: [KeysetAnchor?] = []
+            let capture: ([any ObjectBackend]) -> Void = { raw in
+                anchors = raw.map { KeysetSQL.extractAnchor(from: $0, spec: spec) }
+            }
             var fetched = self._queryRows(where: whereSQL, params: descriptor.params,
                                           orderBy: descriptor.orderBySQL,
                                           generation: hold.id,
                                           limit: Int64(batchSize), offset: nil,
                                           groupBy: nil, distinctBy: nil,
-                                          reuseInstances: true)
+                                          reuseInstances: true, captureQueryRows: capture)
             if fetched == nil {
                 // Generation force-retired mid-walk (TTL, threshold
                 // eviction, lifecycle — §3): transparently re-pin at the
@@ -928,13 +982,13 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                           generation: hold.id,
                                           limit: Int64(batchSize), offset: nil,
                                           groupBy: nil, distinctBy: nil,
-                                          reuseInstances: true)
+                                          reuseInstances: true, captureQueryRows: capture)
                     ?? self._queryRows(where: whereSQL, params: descriptor.params,
                                        orderBy: descriptor.orderBySQL,
                                        generation: 0,
                                        limit: Int64(batchSize), offset: nil,
                                        groupBy: nil, distinctBy: nil,
-                                       reuseInstances: true)
+                                       reuseInstances: true, captureQueryRows: capture)
             }
             var rows = fetched ?? []
             if rows.count < batchSize {
@@ -943,20 +997,18 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                 hold.release()
                 return rows.isEmpty ? nil : rows
             }
-            // Full batch: resume from the LAST delivered row. A boundary row
-            // deleted between the fill and the anchor read cannot anchor
-            // (extractAnchor refuses dead rows rather than fabricating a
-            // NULL anchor) — TRIM it and resume from the nearest anchorable
-            // predecessor instead: trimmed rows are re-fetched by the next
-            // batch if still live, so nothing is skipped and nothing is
-            // delivered twice.
+            // Full batch: use the position captured by its SELECT. Later
+            // edits/deletes and reused materialized models cannot change it.
+            // An unavailable image is never replaced by a fabricated NULL;
+            // trim to the last captured anchor as a conservative fallback.
             var end: KeysetAnchor? = nil
-            while let last = rows.last {
-                if let extracted = KeysetSQL.extractAnchor(from: last, spec: spec) {
+            while !rows.isEmpty {
+                if let extracted = anchors.last.flatMap({ $0 }) {
                     end = extracted
                     break
                 }
                 rows.removeLast()
+                if !anchors.isEmpty { anchors.removeLast() }
             }
             guard let end else {
                 // The entire batch died mid-flight (heavy churn): ending the
@@ -1097,6 +1149,9 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
 
     public var endIndex: Int {
+        // A read racing close can repopulate a coordinator after registry
+        // eviction. Native lifetime, rather than cached epoch, is authoritative.
+        guard !_lattice.backend._isClosed else { return 0 }
         // §4.1 in-txn carve-out: writer-connection count, bypassing both
         // the epoch-cached count (whose entries predate the transaction's
         // writes — property-setter writes inside the block do not bump the

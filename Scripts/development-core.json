@@ -1,5 +1,5 @@
 {
-  "scope": "Targeted SDK recovery refresh qualification through exact edited Core; not full-suite, release, iOS or performance acceptance",
-  "coreCommit": "d30a45d285a6c874d4d4e3f690fafd0438ab6247",
-  "coreTree": "674b2fb2cb76645e2f79479d091f64fae3e7b638"
+  "scope": "Explicit combined relay, recovery and performance development graph. Native probe, SDK smoke, full suite, recovery and performance qualifications remain separate gates; not a release graph.",
+  "coreCommit": "26ccaa3e78dde03475e50c0db0bf579434a56485",
+  "coreTree": "a7cc2e5ac635efbe454470464675edfb3e564beb"
 }

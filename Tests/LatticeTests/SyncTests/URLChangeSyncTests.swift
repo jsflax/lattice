@@ -5,6 +5,7 @@ import Testing
 import Lattice
 import Vapor
 
+
 /// Regression tests for the WSS URL-change handover scenario.
 ///
 /// Background: each `lattice_db` opened with a `wssEndpoint` competes for an
@@ -172,18 +173,52 @@ actor URLChangeSyncTests {
         // kicked, race a "did A1 disconnect within a write round-trip" probe
         // against an actual successful write through A1.
         let latticeA2 = try Lattice(SimpleSyncObject.self, configuration: configA)
+        let receiverConfiguration = serverConfigA
+        let ready = AsyncThrowingStream<Void, any Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let writeArrived: Task<Void, any Error> = Task.detached {
-            let serverLattice = try Lattice(for: [SimpleSyncObject.self],
-                                            configuration: self.serverConfigA)
-            for try await changes in serverLattice.changeStream {
-                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
-                let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
-                if touched, serverLattice.objects(SimpleSyncObject.self)
-                    .first(where: { $0.value == 42 }) != nil { break }
+            do {
+                try Task.checkCancellation()
+                let serverLattice = try Lattice(for: [SimpleSyncObject.self],
+                                                configuration: receiverConfiguration)
+                // Construction installs the observer before readiness is published.
+                let changeStream = serverLattice.changeStream
+                ready.continuation.yield(())
+                ready.continuation.finish()
+                for try await changes in changeStream {
+                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
+                    let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
+                    if touched, serverLattice.objects(SimpleSyncObject.self)
+                        .first(where: { $0.value == 42 }) != nil {
+                        break
+                    }
+                }
+                try Task.checkCancellation()
+            } catch {
+                ready.continuation.finish(throwing: error)
+                throw error
             }
         }
-        try latticeA1.add(SimpleSyncObject(value: 42, floatValue: 4.2))
-        try await writeArrived.value
+        defer {
+            writeArrived.cancel(); ready.continuation.finish()
+        }
+        do {
+            try await withTaskCancellationHandler {
+                for try await _ in ready.stream { break }
+                try Task.checkCancellation()
+                try latticeA1.add(SimpleSyncObject(value: 42, floatValue: 4.2))
+                try await writeArrived.value
+                try Task.checkCancellation()
+            } onCancel: {
+                writeArrived.cancel()
+                ready.continuation.finish(throwing: CancellationError())
+            }
+        } catch {
+            // Join on readiness/write failures too, preserving the original error.
+            writeArrived.cancel()
+            ready.continuation.finish()
+            _ = await writeArrived.result
+            throw error
+        }
 
         #expect(latticeA1.isSyncConnected, "A1 must NOT be kicked by same-URL A2")
         _ = latticeA2  // suppress unused warning — keep alive through the test

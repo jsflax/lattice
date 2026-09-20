@@ -102,7 +102,7 @@ public final class _VirtualResultsCompat<Element>: VirtualResults, ObservableObj
 
         for row in cxxResults {
             for type in modelTypes {
-                if type.entityName == row.tableName {
+                if type.entityName == row.logicalModelTableName {
                     objects.append(type.init(dynamicObject: row) as! Element)
                     break
                 }

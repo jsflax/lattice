@@ -6,6 +6,25 @@ import xml.etree.ElementTree as ET
 
 FLAGS = ['-Xcxx', '-DLATTICE_SYNC_COMMIT_PROBE', '-Xcc', '-DLATTICE_SYNC_COMMIT_PROBE',
          '-Xswiftc', '-DLATTICE_SYNC_COMMIT_PROBE']
+NATIVE_CASES = {
+    'AnotherPhysicalOwnerOnSameThreadCannotFillTheReceipt',
+    'AnotherThreadCannotFillFinishOrAdmitTheOwnerScope',
+    'BookkeepingAfterARecordedWriteDoesNotCreateAnotherSample',
+    'ExactConnectionAndMainSchemaAreRequiredAtRecordBoundary',
+    'ExactWriteIsInvisibleBeforeCommitAndRecordedBeforeInvalidation',
+    'FailedBeginCannotAdmitASampleAndNextAttemptCanCommit',
+    'NoOpCommitDoesNotBecomeAnInsertSample',
+    'QueuedOldObserverCannotMoveOrRelabelTheNativeTimestamp',
+    'RealDeferredConstraintCommitFailureHasNoPostcommitRecord',
+    'RollbackDisarmsBeforeAnUnrelatedLaterCommit',
+    'SamePathReentrantSuccessorCannotRearmOrReplaceTheOrigin',
+    'SwiftBridgeAdapterUsesTheSameClockAndOwner',
+    'UnsupportedClosedAndUnownedTransactionsAreRefused',
+    'WrongFinishCannotStealScopeAndFinishCannotBeReused',
+    'EnrolledGeneratedWriteAndSuccessorPreserveProducerProvenance',
+    'ActualProtectedClaimAndDetachedCallbackCannotReplaceConsumedOrigin',
+    'PrivateInstallCannotArmAndRollbackDoesNotContaminatePublicSuccessor',
+}
 SDK_CASES = {'smallPublicVisibilityQualification',
              'lateReadCannotRepairDeadlineOrCompleteAnotherIdentity',
              'duplicateCallbacksCannotInflateCoverageAndDiagnosticsStayBounded',
@@ -17,8 +36,8 @@ SMOKE = dict(writerCount=2, opsPerWriter=3, payloadBytes=2048, cadenceNS=40_000_
 
 def expected_tests(source):
     names = re.findall(r'TEST_F\(SyncCommitProbe,\s*(\w+)\)', source)
-    if len(names) != 14 or len(set(names)) != 14:
-        raise ValueError('reviewed probe source must contain exactly fourteen named tests')
+    if len(names) != len(NATIVE_CASES) or set(names) != NATIVE_CASES:
+        raise ValueError('reviewed probe source must contain exactly the seventeen named tests')
     return set(names)
 
 
@@ -26,7 +45,7 @@ def check_native_xml(xml, expected):
     report = ET.fromstring(xml)
     cases = report.findall('.//testcase')
     names = [case.get('name') for case in cases]
-    if len(cases) != 14 or len(set(names)) != 14 or set(names) != expected:
+    if expected != NATIVE_CASES or len(cases) != len(NATIVE_CASES) or set(names) != expected:
         raise ValueError('actual native test identities do not equal reviewed probe inventory')
     for case in cases:
         if case.get('classname') != 'SyncCommitProbe' or case.get('status') != 'run' or case.get('result') != 'completed':
@@ -34,6 +53,15 @@ def check_native_xml(xml, expected):
         if case.findall('failure') or case.findall('skipped') or case.findall('error'):
             raise ValueError('native probe failure/skip/error retained in XML')
     return {'count': len(cases), 'names': sorted(names), 'allExecutedWithoutFailure': True}
+
+
+def check_native_summary(summary):
+    names = summary.get('names', [])
+    if (type(summary.get('count')) is not int or summary['count'] != len(NATIVE_CASES)
+            or summary.get('allExecutedWithoutFailure') is not True
+            or not isinstance(names, list) or len(names) != len(NATIVE_CASES)
+            or any(not isinstance(name, str) for name in names) or set(names) != NATIVE_CASES):
+        raise ValueError('all seventeen exact native probe results are required before full calibration')
 
 
 def qualify_native(runner, core, root, compiler_input_proof):

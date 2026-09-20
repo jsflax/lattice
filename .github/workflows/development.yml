@@ -13,6 +13,11 @@ on:
         required: false
         default: false
 
+      sync_full_calibration:
+        description: 'Calibrate the existing full loaded and quiet-only profiles in fresh processes; mutually exclusive with other qualification modes; not a performance experiment'
+        type: boolean
+        required: false
+        default: false
       recovery_refresh_qualification:
         description: 'Qualify recovery refresh and changed-field SDK tests only; not full-suite, release or performance acceptance'
         type: boolean
@@ -45,6 +50,7 @@ jobs:
       DEVELOPMENT_LEG: ${{ matrix.leg }}
       TEST_TIMEOUT: ${{ matrix.testTimeout }}
       SYNC_PROBE_QUALIFICATION: ${{ inputs.sync_probe_qualification || false }}
+      SYNC_FULL_CALIBRATION: ${{ inputs.sync_full_calibration || false }}
       RECOVERY_REFRESH_QUALIFICATION: ${{ inputs.recovery_refresh_qualification || false }}
     steps:
       - name: Install Linux prerequisites
@@ -78,6 +84,9 @@ jobs:
           if [[ "$RECOVERY_REFRESH_QUALIFICATION" == 'true' ]]; then
             PROBE_ARGUMENTS+=(--recovery-refresh-qualification)
           fi
+          if [[ "$SYNC_FULL_CALIBRATION" == 'true' ]]; then
+            PROBE_ARGUMENTS+=(--sync-full-calibration)
+          fi
           python3 "$TASK_ROOT/lattice/Scripts/run-development.py" \
             --root "$TASK_ROOT" --core-sha "$CORE_SHA" --test-timeout "$TEST_TIMEOUT" "${PROBE_ARGUMENTS[@]}"
 
@@ -91,6 +100,8 @@ jobs:
             ${{ env.TASK_ROOT }}/receipts
             ${{ env.TASK_ROOT }}/test-logs
             ${{ env.TASK_ROOT }}/visibility-smoke/receipts.json
+            ${{ env.TASK_ROOT }}/visibility-full-loaded/receipts.json
+            ${{ env.TASK_ROOT }}/visibility-full-quiet-only/receipts.json
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14

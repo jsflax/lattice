@@ -6,13 +6,19 @@ import Foundation
 internal final class TransactionFailureScope {
     private static let key = "Lattice.TransactionFailureScope"
     private let previous: TransactionFailureScope?
+    private let ownerIdentity: Int64
     private(set) var firstError: String?
 
     static var isActive: Bool {
         Thread.current.threadDictionary[key] is TransactionFailureScope
     }
 
-    init() {
+    static func isOwned(by identity: Int64) -> Bool {
+        (Thread.current.threadDictionary[key] as? TransactionFailureScope)?.ownerIdentity == identity
+    }
+
+    init(ownerIdentity: Int64) {
+        self.ownerIdentity = ownerIdentity
         let dictionary = Thread.current.threadDictionary
         previous = dictionary[Self.key] as? TransactionFailureScope
         dictionary[Self.key] = self

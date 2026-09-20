@@ -239,11 +239,26 @@ public struct DistanceEntry: Sendable, Equatable {
 public protocol ObjectBackend: AnyObject, Sendable {
 
     // Identity / metadata
+    /// Physical table route used by this handle for identity and persistence.
     var tableName: String { get }
+    /// Schema model name used to select a Swift model type. This can differ
+    /// from the physical route for rows read through attached-store unions.
+    var logicalModelTableName: String { get }
     var lattice: (any LatticeBackend)? { get }   // CROSS-REF; nil when unmanaged
     /// Cheap managed-check (no backend boxing) — `lattice != nil` without
     /// allocating the boxed handle. Used by the per-add guards.
     var hasLattice: Bool { get }
+    /// Bound row identity without a database read or a materialization-mode
+    /// change. This identifies the handle; it does not prove the row still
+    /// exists. Nil lets alternate backends retain their existing fallback.
+    var _managedPrimaryKey: Int64? { get }
+
+    /// Value captured by the collection SELECT, independent of live property
+    /// reads and explicit materialization. Nil means absent or unavailable;
+    /// `.null` means the query actually returned SQL NULL. Never issues SQL.
+    func _queryRowValue(named name: String) -> ColumnValue?
+    /// Discard transient query metadata before publishing a model to callers.
+    func _releaseQueryRowImage()
 
     // Presence / nullability
     func hasValue(named name: String) -> Bool
@@ -290,6 +305,10 @@ public protocol ObjectBackend: AnyObject, Sendable {
 }
 
 public extension ObjectBackend {
+    var logicalModelTableName: String { tableName }
+    var _managedPrimaryKey: Int64? { nil }
+    func _queryRowValue(named name: String) -> ColumnValue? { nil }
+    func _releaseQueryRowImage() {}
     func enableRowCache() {}
     func disableRowCache() {}
     func refreshRowCache() {}
@@ -337,6 +356,12 @@ public protocol LatticeBackend: AnyObject, Sendable {
     // Identity / diagnostics
     var identityHash: Int64 { get }   // stable cache key (per-config Lattice instance)
     var path: String { get }
+    /// Live handle topology; local row IDs are not globally unique while
+    /// another store is attached. No SQL or stale value-copy bookkeeping.
+    var _hasAttachedStores: Bool { get }
+    /// Collection handles retain the original SELECT values until model
+    /// construction. Backends without that guarantee use OFFSET pagination.
+    var _supportsQueryRowImages: Bool { get }
 
     // CRUD
     // All three insert paths `throw` for contract stability. Today only
@@ -347,6 +372,9 @@ public protocol LatticeBackend: AnyObject, Sendable {
     func add(_ object: any ObjectBackend) throws
     func addPreservingGlobalId(_ object: any ObjectBackend, globalId: UUID) throws
     func addBulk(_ objects: [any ObjectBackend]) throws
+    /// Requires this handle's active checked writer transaction. Returns the
+    /// number of unique physical rows; any partial failure throws.
+    func applySelectedMutations(_ objects: [any ObjectBackend], operations: [BulkMutationOperation]) throws -> Int
     @discardableResult func remove(_ object: any ObjectBackend) -> Bool
 
     // Fetch single
@@ -630,6 +658,11 @@ public protocol LatticeBackend: AnyObject, Sendable {
 // matching, so the ergonomic optionals live in an extension that forwards.
 
 extension LatticeBackend {
+    public var _hasAttachedStores: Bool { false }
+    public var _supportsQueryRowImages: Bool { false }
+    public func applySelectedMutations(_ objects: [any ObjectBackend], operations: [BulkMutationOperation]) throws -> Int {
+        throw BulkUpdateError.unsupportedBackend
+    }
     public func beginTransactionChecked() throws {
         beginTransaction()
         if let error = lastQueryError() { throw LatticeError.transactionError(error) }

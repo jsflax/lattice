@@ -66,6 +66,10 @@ private typealias CxxByteVector = lattice.ByteVector
 }
 
 extension LatticeBackend {
+    /// The native instance owns close state; distinct Swift wrappers can share
+    /// it. Cached collection paths must check that state before returning data.
+    var _isClosed: Bool { (self as? CxxBackend)?.ref.isClosed() ?? false }
+
     /// The underlying C++ `swift_lattice_ref`. Used by the paths that drive the
     /// C++ surface directly (object-observer registration, `attach`, nearest
     /// queries). Available on every OS: below the FRT floor the ref is a
@@ -88,6 +92,31 @@ extension LatticeBackend {
     /// non-C++ backends.
     func setOnQueryError(_ handler: (@Sendable (String) -> Void)?) {
         (self as? CxxBackend)?.setOnQueryError(handler)
+    }
+
+    // All public Lattice constructors use CxxBackend. Keep the public backend
+    // protocol's existing spatial requirements source compatible; these internal
+    // routes carry the complete shape to Core. Alternate backends injected by
+    // internal tests retain their existing spatial behavior.
+    func _objectsWithinBBoxShape(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?) -> [any ObjectBackend] {
+        if let backend = self as? CxxBackend {
+            return backend.objectsWithinBBoxShape(table: table, geoColumn: geoColumn, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: whereClause, orderBy: orderBy, limit: limit, offset: offset, groupBy: groupBy, distinctBy: distinctBy)
+        }
+        return objectsWithinBBox(table: table, geoColumn: geoColumn, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: whereClause, orderBy: orderBy, limit: limit, offset: offset, groupBy: groupBy)
+    }
+
+    func _countWithinBBoxShape(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, groupBy: String?, distinctBy: String?) -> Int64 {
+        if let backend = self as? CxxBackend {
+            return backend.countWithinBBoxShape(table: table, geoColumn: geoColumn, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: whereClause, groupBy: groupBy, distinctBy: distinctBy)
+        }
+        return countWithinBBox(table: table, geoColumn: geoColumn, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: whereClause)
+    }
+
+    func _objectsWithinBBoxShapeAt(generation: UInt64, table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?) -> [any ObjectBackend] {
+        if let backend = self as? CxxBackend {
+            return backend.objectsWithinBBoxShapeAt(generation: generation, table: table, geoColumn: geoColumn, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: whereClause, orderBy: orderBy, limit: limit, offset: offset, groupBy: groupBy, distinctBy: distinctBy)
+        }
+        return objectsWithinBBoxAt(generation: generation, table: table, geoColumn: geoColumn, minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: whereClause, orderBy: orderBy, limit: limit, offset: offset, groupBy: groupBy)
     }
 }
 
@@ -116,8 +145,24 @@ final class CxxObjectBackend: ObjectBackend, @unchecked Sendable {
     @inlinable init(_ ref: CxxDynamicObjectRef) { self.ref = ref }
 
     var tableName: String { String(ref.getTableName()) }
+    var logicalModelTableName: String { String(ref.getModelTableName()) }
     var lattice: (any LatticeBackend)? { _optLatticeRef(ref.lattice).map { CxxBackend($0) } }
     @inlinable var hasLattice: Bool { ref.is_managed() }
+    @inlinable var _managedPrimaryKey: Int64? {
+        let identity = Int64(ref.managedPrimaryKey())
+        return identity == 0 ? nil : identity
+    }
+
+    func _queryRowValue(named name: String) -> ColumnValue? {
+        let column = std.string(name)
+        guard ref.queryRowValueType(named: column) >= 0 else { return nil }
+        let value = ref.queryRowValue(named: column)
+        // A sealed copy failure must never be mistaken for a stored NULL.
+        guard String(ref.lastQueryErrorMessage()).isEmpty else { return nil }
+        return ColumnValue(value)
+    }
+
+    func _releaseQueryRowImage() { ref.releaseQueryRowImage() }
 
     @inlinable func hasValue(named name: String) -> Bool { ref.hasValue(named: std.string(name)) }
     func setNull(named name: String) {
@@ -287,6 +332,36 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
 
     var identityHash: Int64 { Int64(ref.hash_value()) }
     var path: String { String(ref.path()) }
+    var _hasAttachedStores: Bool { ref.hasAttachedStores() }
+    var _supportsQueryRowImages: Bool { true }
+
+    func applySelectedMutations(_ objects: [any ObjectBackend], operations: [BulkMutationOperation]) throws -> Int {
+        var batch = lattice.selected_mutation_batch()
+        func checkFailure() throws {
+            if let message = reportQueryFailureIfAny() {
+                throw BulkUpdateError.database(message)
+            }
+        }
+        for object in objects {
+            guard let cxx = object as? CxxObjectBackend else {
+                throw BulkUpdateError.invalidTarget("object belongs to another backend")
+            }
+            batch.addObject(cxx.ref)
+            try checkFailure()
+        }
+        for operation in operations {
+            switch operation {
+            case .setDate(let column, let seconds):
+                batch.set(column: std.string(column), value: lattice.column_value_from_double(seconds))
+            case .incrementInt64(let column, let delta):
+                batch.incrementInt64(column: std.string(column), by: delta)
+            }
+            try checkFailure()
+        }
+        let count = Int(ref.applySelectedMutations(batch))
+        try checkFailure()
+        return count
+    }
 
     // Neutral → C++ helpers
     @inline(__always) private func optStr(_ s: String?) -> lattice.OptionalString {
@@ -363,7 +438,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         reportQueryFailureIfAny()
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
-        for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
+        for i in 0..<res.size() { out.append(CxxObjectBackend(_requireRef(CxxDynamicObjectRef.wrapManaged(res[i])))) }
         return out
     }
     func unionObjects(tables: [String], where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, params: [QueryParameter]) -> [any ObjectBackend] {
@@ -521,6 +596,21 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     }
     func countWithinBBox(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?) -> Int64 {
         let n = Int64(ref.countWithinBBox(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause)))
+        reportQueryFailureIfAny()
+        return n
+    }
+
+    func objectsWithinBBoxShape(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?) -> [any ObjectBackend] {
+        let res = ref.objectsWithinBBoxShape(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause), orderBy: optStr(orderBy), limit: optInt(limit), offset: optInt(offset), groupBy: optStr(groupBy), distinctBy: optStr(distinctBy))
+        reportQueryFailureIfAny()
+        var out: [any ObjectBackend] = []
+        out.reserveCapacity(res.size())
+        for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
+        return out
+    }
+
+    func countWithinBBoxShape(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, groupBy: String?, distinctBy: String?) -> Int64 {
+        let n = Int64(ref.countWithinBBoxShape(table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause), groupBy: optStr(groupBy), distinctBy: optStr(distinctBy)))
         reportQueryFailureIfAny()
         return n
     }
@@ -787,7 +877,7 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         let res = ref.objects_at(generation, std.string(table), optStr(whereClause), optStr(orderBy), optInt(limit), optInt(offset), optStr(groupBy), optStr(distinctBy), columnValues(params))
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
-        for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
+        for i in 0..<res.size() { out.append(CxxObjectBackend(_requireRef(CxxDynamicObjectRef.wrapManaged(res[i])))) }
         return out
     }
 
@@ -797,6 +887,14 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
 
     func objectsWithinBBoxAt(generation: UInt64, table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?) -> [any ObjectBackend] {
         let res = ref.objectsWithinBBoxAt(generation: generation, table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause), orderBy: optStr(orderBy), limit: optInt(limit), offset: optInt(offset), groupBy: optStr(groupBy))
+        var out: [any ObjectBackend] = []
+        out.reserveCapacity(res.size())
+        for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }
+        return out
+    }
+
+    func objectsWithinBBoxShapeAt(generation: UInt64, table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?, distinctBy: String?) -> [any ObjectBackend] {
+        let res = ref.objectsWithinBBoxShapeAt(generation: generation, table: std.string(table), geoColumn: std.string(geoColumn), minLat: minLat, maxLat: maxLat, minLon: minLon, maxLon: maxLon, where: optStr(whereClause), orderBy: optStr(orderBy), limit: optInt(limit), offset: optInt(offset), groupBy: optStr(groupBy), distinctBy: optStr(distinctBy))
         var out: [any ObjectBackend] = []
         out.reserveCapacity(res.size())
         for i in 0..<res.size() { out.append(CxxObjectBackend(CxxDynamicObjectRef.wrap(CxxDynamicObject(res[i]).make_shared()))) }

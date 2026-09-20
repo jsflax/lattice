@@ -47,19 +47,23 @@ private final class ForensicClient: @unchecked Sendable {
     /// Reproduce the client engine's per-page ack (the server-side write burst).
     let autoAck: Bool
     let label: String
+    private let captureFrames: Bool
 
     private var ackedIds: Set<UUID> = []
     private var ackFrameCount = 0
     private var catchUpPages = 0
     private var catchUpEntries = 0
+    private var downloadedIds: Set<UUID> = []
     private var ackArrival: [UUID: DispatchTime] = [:]
     private var nackArrival: [UUID: DispatchTime] = [:]
     private var nackReasons: [String] = []
     private var rejections: [String] = []
+    private var capturedFrames: [Data] = []
 
-    init(label: String, autoAck: Bool) {
+    init(label: String, autoAck: Bool, captureFrames: Bool = false) {
         self.label = label
         self.autoAck = autoAck
+        self.captureFrames = captureFrames
     }
 
     func attach(_ ws: WebSocket, ackPath: ACKPathConnection? = nil) {
@@ -69,6 +73,7 @@ private final class ForensicClient: @unchecked Sendable {
             ackPath?.record(.clientBinaryEntered, bytes: bb.readableBytes)
             let now = DispatchTime.now()
             let data = Data(buffer: bb)
+            if self.captureFrames { self.lock.withLock { self.capturedFrames.append(data) } }
             guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                   let kind = root["kind"] as? String else {
                 ackPath?.record(.clientDecodeError)
@@ -103,6 +108,7 @@ private final class ForensicClient: @unchecked Sendable {
                 self.lock.lock()
                 self.catchUpPages += 1
                 self.catchUpEntries += logs.count
+                self.downloadedIds.formUnion(ids)
                 self.lock.unlock()
                 // The write burst: the real client acks every applied page,
                 // and the relay turns each ack into a write transaction on
@@ -128,9 +134,11 @@ private final class ForensicClient: @unchecked Sendable {
     func nackTime(for id: UUID) -> DispatchTime? { lock.withLock { nackArrival[id] } }
     var pages: Int { lock.withLock { catchUpPages } }
     var entries: Int { lock.withLock { catchUpEntries } }
+    var downloaded: Set<UUID> { lock.withLock { downloadedIds } }
     var ackFrames: Int { lock.withLock { ackFrameCount } }
     var rejected: [String] { lock.withLock { rejections } }
     var nacks: [String] { lock.withLock { nackReasons } }
+    var receivedFrames: [Data] { lock.withLock { capturedFrames } }
 }
 
 private extension NSLock {
@@ -148,6 +156,9 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
     let channelId: String
     let channelFileName: String
     private let ackPathRecorder: ACKPathRecorder?
+    private let applyAdmission: RelayApplyAdmission?
+    private let ingressAdmission: RelayIngressAdmission?
+    private let ingressHooks: RelayIngressTestHooks?
 
     var channelFileURL: URL { storageURL.appending(path: channelFileName) }
 
@@ -155,8 +166,15 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
     /// fault (`_applyFaultForTesting`): suites run in parallel, so a fault must
     /// only fire for its own channel.
     init(schema: [any Lattice.Model.Type], channelId: String = "forensics",
-         ackPathRecorder: ACKPathRecorder? = nil) async throws {
+         ackPathRecorder: ACKPathRecorder? = nil,
+         applyAdmission: RelayApplyAdmission? = nil,
+         ingressAdmission: RelayIngressAdmission? = nil,
+         ingressHooks: RelayIngressTestHooks? = nil,
+         observerPush: SyncObserverPush? = nil) async throws {
         self.ackPathRecorder = ackPathRecorder
+        self.applyAdmission = applyAdmission
+        self.ingressAdmission = ingressAdmission
+        self.ingressHooks = ingressHooks
         self.channelId = channelId
         self.channelFileName = "\(channelId).sqlite"
         storageURL = FileManager.default.temporaryDirectory
@@ -171,13 +189,26 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
         let diagnosticMount = storageURL
         var mountInitialized = false
         if let ackPathRecorder { ACKPathDiagnostics.install(ackPathRecorder, for: diagnosticMount) }
+        if let applyAdmission { RelayApplyAdmissionTesting.install(applyAdmission, for: diagnosticMount) }
+        if let ingressAdmission { RelayIngressAdmissionTesting.install(ingressAdmission, for: diagnosticMount) }
+        if let ingressHooks { RelayIngressTesting.install(ingressHooks, for: diagnosticMount) }
         defer {
             if !mountInitialized, let ackPathRecorder {
                 ACKPathDiagnostics.remove(ackPathRecorder, for: diagnosticMount)
             }
+            if !mountInitialized, let applyAdmission {
+                RelayApplyAdmissionTesting.remove(applyAdmission, for: diagnosticMount)
+            }
+            if !mountInitialized, let ingressAdmission {
+                RelayIngressAdmissionTesting.remove(ingressAdmission, for: diagnosticMount)
+            }
+            if !mountInitialized, let ingressHooks {
+                RelayIngressTesting.remove(ingressHooks, for: diagnosticMount)
+            }
         }
         Lattice.configureSyncRelay(
             on: app.routes, path: ["sync"], for: schema, storageURL: storageURL,
+            observerPush: observerPush,
             channelExtractor: { req in
                 guard let raw = req.headers.first(name: "X-Test-User"),
                       let uid = UUID(uuidString: raw) else { throw Abort(.unauthorized) }
@@ -227,13 +258,50 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
     }
 
     func shutdown() async {
+        removeAdmissionHooks()
         try? await app.asyncShutdown()
         try? FileManager.default.removeItem(at: storageURL)
     }
 
     /// Shuts the relay down but leaves the channel file for inspection.
     func shutdown_keepingStorage() async {
+        removeAdmissionHooks()
         try? await app.asyncShutdown()
+    }
+
+    private func removeAdmissionHooks() {
+        if let applyAdmission { RelayApplyAdmissionTesting.remove(applyAdmission, for: storageURL) }
+        if let ingressAdmission { RelayIngressAdmissionTesting.remove(ingressAdmission, for: storageURL) }
+        if let ingressHooks { RelayIngressTesting.remove(ingressHooks, for: storageURL) }
+    }
+}
+
+private final class ForensicSetupGate: Sendable {
+    private struct State {
+        var released = false
+        var entered = 0
+        var waiters: [CheckedContinuation<Void, Never>] = []
+    }
+    private let state = NIOLockedValueBox(State())
+    var entered: Int { state.withLockedValue { $0.entered } }
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let ready = state.withLockedValue { value in
+                value.entered += 1
+                if value.released { return true }
+                value.waiters.append(continuation)
+                return false
+            }
+            if ready { continuation.resume() }
+        }
+    }
+    func release() {
+        let waiters = state.withLockedValue { value in
+            value.released = true
+            let waiters = value.waiters; value.waiters.removeAll()
+            return waiters
+        }
+        for waiter in waiters { waiter.resume() }
     }
 }
 
@@ -298,87 +366,6 @@ private func poisonedFrame(_ entries: [AuditLog], poisonTable: String) throws ->
     return (Array(try JSONSerialization.data(withJSONObject: root)), poisonId)
 }
 
-/// Holds a real SQLite write lock on the channel file from ANOTHER PROCESS,
-/// so the relay's `BEGIN IMMEDIATE` genuinely gets SQLITE_BUSY (rather than
-/// the same-connection transaction race an in-process holder would produce).
-private final class ExternalWriteLock: @unchecked Sendable {
-    private let proc = Process()
-    private let stdinPipe = Pipe()
-    private let stdoutPipe = Pipe()
-    private let seen = LockedBox("")
-    private let releasedOnce = AtomicOnce()
-    private let timing = LockedBox(Timing())
-
-    struct Timing: Sendable {
-        var heldObservedNS: UInt64?
-        var releaseRequestedNS: UInt64?
-        var releaseObservedNS: UInt64?
-        var processExitObservedNS: UInt64?
-        var exitStatus: Int32?
-        var exitedNormally = false
-
-        // A conservative interval: acquisition was already confirmed and
-        // no COMMIT had yet been requested. Pipe delivery can be delayed,
-        // so releaseObservedNS is an upper bound, not the COMMIT instant.
-        func confirmsHeld(at time: UInt64) -> Bool {
-            guard let heldObservedNS, heldObservedNS <= time else { return false }
-            return releaseRequestedNS.map { time < $0 } ?? true
-        }
-    }
-
-    var timingSnapshot: Timing { timing.withLock { $0 } }
-    var isRunning: Bool { proc.isRunning }
-
-    init(path: String) throws {
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        proc.arguments = [path]
-        proc.standardInput = stdinPipe
-        proc.standardOutput = stdoutPipe
-        proc.standardError = FileHandle.nullDevice
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [seen, timing] h in
-            let d = h.availableData
-            if !d.isEmpty {
-                let now = DispatchTime.now().uptimeNanoseconds
-                let markers = seen.withLock { value in
-                    value += String(decoding: d, as: UTF8.self)
-                    return (value.contains("LOCKHELD"), value.contains("LOCKRELEASED"))
-                }
-                timing.withLock { value in
-                    if markers.0, value.heldObservedNS == nil { value.heldObservedNS = now }
-                    if markers.1, value.releaseObservedNS == nil { value.releaseObservedNS = now }
-                }
-            }
-        }
-        try proc.run()
-        // Without bail, sqlite3 can print LOCKHELD after a failed BEGIN.
-        stdinPipe.fileHandleForWriting.write(Data(".bail on\nBEGIN IMMEDIATE;\nSELECT 'LOCKHELD';\n".utf8))
-    }
-
-    func waitUntilHeld(timeout: TimeInterval) async -> Bool {
-        await poll(timeout: timeout) { [timing] in
-            timing.withLock { $0.heldObservedNS != nil }
-        }
-    }
-
-    /// Idempotent: the tests release as soon as they have their answer and
-    /// again in a deadline task, whichever comes first.
-    func release() {
-        guard releasedOnce.tryFire() else { return }
-        timing.withLock { $0.releaseRequestedNS = DispatchTime.now().uptimeNanoseconds }
-        if proc.isRunning {
-            stdinPipe.fileHandleForWriting.write(Data("COMMIT;\nSELECT 'LOCKRELEASED';\n.quit\n".utf8))
-        }
-        try? stdinPipe.fileHandleForWriting.close()
-        proc.waitUntilExit()
-        timing.withLock {
-            $0.processExitObservedNS = DispatchTime.now().uptimeNanoseconds
-            $0.exitStatus = proc.terminationStatus
-            $0.exitedNormally = proc.terminationReason == .exit
-        }
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
-    }
-}
-
 /// Rows present in the channel file, read with a throwaway handle after the
 /// relay has been shut down.
 private func rowCount(inChannelFile url: URL) throws -> (rows: Int, audit: Int) {
@@ -388,6 +375,114 @@ private func rowCount(inChannelFile url: URL) throws -> (rows: Int, audit: Int) 
 
 @Suite("BusySafeApplyForensics", .serialized, .timeLimit(.minutes(10)))
 final class BusySafeApplyForensicsTests: BaseTest {
+
+    /// These shapes follow Core's actual decoder precedence, not `kind`.
+    /// In particular an audit array (even empty) wins over an ack array;
+    /// a non-array auditLog does not win in a mount without write policy.
+    @Test(arguments: [
+        (#"{"kind":"ack","ack":[]}"#, true),
+        (#"{"kind":"auditLog","ack":[]}"#, true),
+        (#"{"ack":["id",7,null]}"#, true),
+        (#"{"ack":[],"replayRequest":true}"#, true),
+        (#"{"auditLog":null,"ack":[]}"#, true),
+        (#"{"auditLog":{},"ack":[]}"#, true),
+        (#"{"auditLog":[],"ack":[]}"#, false),
+        (#"{"kind":"ack","auditLog":[{}],"ack":[]}"#, false),
+        (#"{"kind":"ack","ack":"id"}"#, false),
+        (#"{"replayRequest":true}"#, false),
+        (#"{"kind":"ack"}"#, false),
+        (#"{"unknown":true}"#, false),
+        (#"[]"#, false),
+        (#"{"#, false)
+    ])
+    func acknowledgmentClassificationPreservesCoreDecoderPrecedence(_ json: String, _ expected: Bool) {
+        #expect(RelayFrame(Data(json.utf8)).isAcknowledgment == expected)
+    }
+
+    /// A later upload on the same sender is an ordered witness: its arrival
+    /// on the peer's socket follows every earlier possible ACK fanout. The
+    /// negative assertion does not depend on sleeping for an absent message.
+    @Test(.timeLimit(.minutes(1)))
+    func downloadAcknowledgmentsStayLocalWithoutChangingUploadOrReplayFanout() async throws {
+        let setupCount = LockedBox(0)
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
+                                         didFinishAsyncSetup: { setupCount.withLock { $0 += 1 } })
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
+            channelId: "ack-local-\(String.random(length: 8))", ingressHooks: hooks)
+        let sender = ForensicClient(label: "ack-sender", autoAck: false)
+        let peer = ForensicClient(label: "ack-peer", autoAck: false, captureFrames: true)
+        do {
+            let seeded = try seedSummary(harness.channelFileURL, count: 1)
+            let seedID = try #require(seeded.tail)
+            try await harness.connect(sender)
+            try await harness.connect(peer)
+            try #require(await poll(timeout: 5, {
+                setupCount.withLock { $0 == 2 }
+                    && sender.downloaded.contains(seedID) && peer.downloaded.contains(seedID)
+            }))
+            do {
+                let before = try Lattice(for: [SimpleSyncObject.self],
+                                         configuration: .init(fileURL: harness.channelFileURL))
+                let seed = try #require(before.objects(AuditLog.self)
+                    .where { $0.globalId == seedID }.snapshot(limit: 1).first)
+                #expect(!seed.isSynchronized, "the fixture must need real ACK bookkeeping")
+            }
+            let prior = peer.receivedFrames.count
+            // All of these are ACKs to Core. `kind`, non-string ACK values,
+            // malformed auditLog fields and replayRequest do not change that.
+            let acknowledgmentObjects: [[String: Any]] = [
+                ["kind": "ack", "ack": [seedID.uuidString]],
+                ["kind": "auditLog", "ack": [seedID.uuidString]],
+                ["ack": [seedID.uuidString, 7, NSNull()]],
+                ["ack": [], "replayRequest": true],
+                ["auditLog": NSNull(), "ack": [seedID.uuidString]],
+                ["auditLog": [:], "ack": [seedID.uuidString]]
+            ]
+            for object in acknowledgmentObjects {
+                let bytes = try JSONSerialization.data(withJSONObject: object)
+                try await sender.socket!.send(Array(bytes))
+            }
+            // Unknown/replay behavior is deliberately unchanged, and an empty
+            // auditLog array still takes precedence over the ack field.
+            let forwarded = [
+                Data(#"{"kind":"unknown","unknown":true}"#.utf8),
+                Data(#"{"kind":"replayRequest","replayRequest":true}"#.utf8),
+                Data(#"{"kind":"ack","auditLog":[],"ack":[]}"#.utf8)
+            ]
+            for bytes in forwarded { try await sender.socket!.send(Array(bytes)) }
+
+            let entries = try makeUploadEntries(
+                donorPath: "donor-ack-marker-\(String.random(length: 8)).sqlite", value: 901)
+            let markerID = try #require(entries.first?.globalId)
+            var marker = try #require(JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(ServerSentEvent.auditLog(entries))) as? [String: Any])
+            marker["kind"] = "ack" // Core must still apply the auditLog array.
+            marker["ack"] = [seedID.uuidString]
+            let markerBytes = try JSONSerialization.data(withJSONObject: marker)
+            try await sender.socket!.send(Array(markerBytes))
+            try #require(await poll(timeout: 5, {
+                peer.receivedFrames.contains(markerBytes) && sender.ackTime(for: markerID) != nil
+            }))
+            #expect(Array(peer.receivedFrames.dropFirst(prior)) == forwarded + [markerBytes],
+                    "ACK-only frames stay local; other healthy frames keep their exact bytes/order")
+            #expect(sender.ackTime(for: markerID) != nil, "the mixed frame is a real applied upload")
+
+            await harness.shutdown_keepingStorage()
+            let stored = try Lattice(for: [SimpleSyncObject.self],
+                                     configuration: .init(fileURL: harness.channelFileURL))
+            let seededAudit = try #require(stored.objects(AuditLog.self)
+                .where { $0.globalId == seedID }.snapshot(limit: 1).first)
+            #expect(seededAudit.isSynchronized, "the ACK still performs native receive bookkeeping")
+            #expect(stored.objects(SimpleSyncObject.self).count == 2)
+        } catch {
+            await harness.shutdown_keepingStorage()
+            RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+            throw error
+        }
+        RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+        // Existing IO teardown may still own a final native reference; keep
+        // the fixture directory until process exit, like the adjacent tests.
+    }
 
     // MARK: - (1) The bounded busy budget
 
@@ -742,94 +837,110 @@ final class BusySafeApplyForensicsTests: BaseTest {
 
         // Another process takes the write lock and holds it.
         let lock = try ExternalWriteLock(path: harness.channelFileURL.path)
-        defer { lock.release() }
-        try #require(await lock.waitUntilHeld(timeout: 30), "external lock never engaged")
-        // Deadline release, so a regression can't hang the suite.
-        let deadlineRelease = Task { [lock] in
-            try? await Task.sleep(nanoseconds: UInt64(holdSeconds * 1e9))
-            lock.release()
+        var deadlineRelease: Task<ExternalWriteLock.ReleaseResult, Never>?
+        do {
+            try #require(await lock.waitUntilHeld(timeout: 30), "external lock never engaged")
+            // Deadline release, so a regression can't hang the suite.
+            deadlineRelease = Task { [lock] in
+                try? await Task.sleep(nanoseconds: UInt64(holdSeconds * 1e9))
+                return await lock.release()
+            }
+
+            try #require(lock.isRunning, "external lock holder exited before the upload")
+            let t0 = DispatchTime.now()
+            try await uploader.socket!.send(uploadBytes)
+            let sendReturnedNS = DispatchTime.now().uptimeNanoseconds
+
+            // The headline: an answer arrives while the lock is STILL HELD.
+            let nacked = await poll(timeout: holdSeconds) { uploader.nackTime(for: uploadId) != nil }
+            let answerObservedNS = DispatchTime.now().uptimeNanoseconds
+            let nackTime = uploader.nackTime(for: uploadId)
+            let nackMs = nackTime.map {
+                Double($0.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
+            }
+            let ackBeforeRelease = uploader.ackTime(for: uploadId)
+            reachedLatencyCheck = true
+            if !(nackMs ?? .infinity < 9_000) {
+                capturedFailure = recorder?.closeSnapshot(partial: true)
+            } else {
+                _ = recorder?.closeSnapshot(partial: false)
+            }
+            let releaseResult = await lock.release()
+            deadlineRelease?.cancel()
+            if let deadlineRelease {
+                let deadlineResult = await deadlineRelease.value
+                #expect(deadlineResult == releaseResult, "all release callers share the same completion")
+            }
+            #expect(releaseResult.success, Comment(rawValue: "external lock release: \(releaseResult.failures)"))
+            try #require(releaseResult.cleanupComplete, "external child cleanup is incomplete")
+            let timing = releaseResult.timing
+            let sendBeganWhileLocked = timing.confirmsHeld(at: t0.uptimeNanoseconds)
+            let sendReturnedWhileLocked = timing.confirmsHeld(at: sendReturnedNS)
+            let nackedWhileLocked = nackTime.map {
+                timing.confirmsHeld(at: $0.uptimeNanoseconds)
+            } ?? false
+            let ackedWhileLocked = ackBeforeRelease.map {
+                timing.confirmsHeld(at: $0.uptimeNanoseconds)
+            } ?? false
+
+            // Nothing may be applied after the fact either: the relay dropped the
+            // frame deliberately and told the client to resend it.
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            let ackedEventually = uploader.ackTime(for: uploadId) != nil
+            let fannedOut = await poll(timeout: 3) { peer.pages > peerPagesBefore }
+
+            if let recorder, capturedFailure != nil {
+                print("DIAGNOSTIC ContendedApplyFailure: test=\(recorder.testRunID) send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) nack_callback_ns=\(nackTime.map { String($0.uptimeNanoseconds) } ?? "NONE") answer_observed_ns=\(answerObservedNS) frozen_before_post_answer_waits=true")
+            }
+            print("""
+            FORENSIC lock-contention: hold_s=\(holdSeconds) nacked=\(nacked) \
+            send_began_while_locked=\(sendBeganWhileLocked) send_returned_while_locked=\(sendReturnedWhileLocked) \
+            nacked_while_locked=\(nackedWhileLocked) \
+            held_observed_ns=\(timing.heldObservedNS.map { String($0) } ?? "NONE") \
+            send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) \
+            answer_observed_ns=\(answerObservedNS) \
+            release_requested_ns=\(timing.releaseRequestedNS.map { String($0) } ?? "NONE") \
+            release_observed_ns=\(timing.releaseObservedNS.map { String($0) } ?? "NONE") \
+            process_exit_observed_ns=\(timing.processExitObservedNS.map { String($0) } ?? "NONE") \
+            holder_exit_status=\(timing.exitStatus.map { String($0) } ?? "NONE") holder_exited_normally=\(timing.exitedNormally) \
+            nack_ms=\(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER") \
+            acked_while_locked=\(ackedWhileLocked) acked_eventually=\(ackedEventually) \
+            nacks=\(uploader.nacks.count) fanned_out_to_peer=\(fannedOut) \
+            reason=\(uploader.nacks.first ?? "-")
+            """)
+
+            #expect(timing.exitedNormally && timing.exitStatus == 0, "the external lock holder must complete its confirmed transaction successfully")
+            #expect(sendBeganWhileLocked, "the upload send must begin while the confirmed external write lock is held")
+            #expect(nackedWhileLocked, "the nack must be observed before the external lock is released")
+            #expect(nacked, "a contended apply must answer with a nack, not silence")
+            #expect(nackMs ?? .infinity < 9_000,
+                    Comment(rawValue: "the nack took \(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER")ms — "
+                    + "the relay is parking again instead of failing fast"))
+            #expect(!ackedWhileLocked, "nothing can be acked while the write lock is held elsewhere")
+            #expect(!ackedEventually, "a nacked frame is dropped, not applied behind the client's back")
+            #expect(!fannedOut, "a frame the relay could not store must never reach a peer")
+            #expect(uploader.nacks.first?.contains("SQLITE") == true
+                    || uploader.nacks.first?.contains("no-throw-shortfall") == true,
+                    "the nack must name the SQLite classification: \(uploader.nacks.first ?? "-")")
+
+            await harness.shutdown_keepingStorage()
+            let counts = try rowCount(inChannelFile: harness.channelFileURL)
+            print("FORENSIC lock-contention server state: rows=\(counts.rows)")
+            #expect(counts.rows == 1, "only the warmup row is durable; the nacked upload is not")
+            try? FileManager.default.removeItem(at: harness.storageURL)
+        } catch {
+            // Preserve the original setup/send/assertion error. Cancellation only
+            // wakes the hold task; both paths still join the same disposal result.
+            deadlineRelease?.cancel()
+            let releaseResult = await lock.release()
+            if let deadlineRelease {
+                let deadlineResult = await deadlineRelease.value
+                #expect(deadlineResult == releaseResult)
+            }
+            #expect(releaseResult.success && releaseResult.cleanupComplete,
+                    Comment(rawValue: "cleanup after primary failure: \(releaseResult.failures)"))
+            throw error
         }
-
-        defer { deadlineRelease.cancel() }
-        try #require(lock.isRunning, "external lock holder exited before the upload")
-        let t0 = DispatchTime.now()
-        try await uploader.socket!.send(uploadBytes)
-        let sendReturnedNS = DispatchTime.now().uptimeNanoseconds
-
-        // The headline: an answer arrives while the lock is STILL HELD.
-        let nacked = await poll(timeout: holdSeconds) { uploader.nackTime(for: uploadId) != nil }
-        let answerObservedNS = DispatchTime.now().uptimeNanoseconds
-        let nackTime = uploader.nackTime(for: uploadId)
-        let nackMs = nackTime.map {
-            Double($0.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
-        }
-        let ackBeforeRelease = uploader.ackTime(for: uploadId)
-        reachedLatencyCheck = true
-        if !(nackMs ?? .infinity < 9_000) {
-            capturedFailure = recorder?.closeSnapshot(partial: true)
-        } else {
-            _ = recorder?.closeSnapshot(partial: false)
-        }
-        lock.release()
-        deadlineRelease.cancel()
-        // If the deadline won release admission, it owns process reaping.
-        // Await it before treating release completion as cleanup evidence.
-        await deadlineRelease.value
-        let timing = lock.timingSnapshot
-        let sendBeganWhileLocked = timing.confirmsHeld(at: t0.uptimeNanoseconds)
-        let sendReturnedWhileLocked = timing.confirmsHeld(at: sendReturnedNS)
-        let nackedWhileLocked = nackTime.map {
-            timing.confirmsHeld(at: $0.uptimeNanoseconds)
-        } ?? false
-        let ackedWhileLocked = ackBeforeRelease.map {
-            timing.confirmsHeld(at: $0.uptimeNanoseconds)
-        } ?? false
-
-        // Nothing may be applied after the fact either: the relay dropped the
-        // frame deliberately and told the client to resend it.
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
-        let ackedEventually = uploader.ackTime(for: uploadId) != nil
-        let fannedOut = await poll(timeout: 3) { peer.pages > peerPagesBefore }
-
-        if let recorder, capturedFailure != nil {
-            print("DIAGNOSTIC ContendedApplyFailure: test=\(recorder.testRunID) send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) nack_callback_ns=\(nackTime.map { String($0.uptimeNanoseconds) } ?? "NONE") answer_observed_ns=\(answerObservedNS) frozen_before_post_answer_waits=true")
-        }
-        print("""
-        FORENSIC lock-contention: hold_s=\(holdSeconds) nacked=\(nacked) \
-        send_began_while_locked=\(sendBeganWhileLocked) send_returned_while_locked=\(sendReturnedWhileLocked) \
-        nacked_while_locked=\(nackedWhileLocked) \
-        held_observed_ns=\(timing.heldObservedNS.map { String($0) } ?? "NONE") \
-        send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) \
-        answer_observed_ns=\(answerObservedNS) \
-        release_requested_ns=\(timing.releaseRequestedNS.map { String($0) } ?? "NONE") \
-        release_observed_ns=\(timing.releaseObservedNS.map { String($0) } ?? "NONE") \
-        process_exit_observed_ns=\(timing.processExitObservedNS.map { String($0) } ?? "NONE") \
-        holder_exit_status=\(timing.exitStatus.map { String($0) } ?? "NONE") holder_exited_normally=\(timing.exitedNormally) \
-        nack_ms=\(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER") \
-        acked_while_locked=\(ackedWhileLocked) acked_eventually=\(ackedEventually) \
-        nacks=\(uploader.nacks.count) fanned_out_to_peer=\(fannedOut) \
-        reason=\(uploader.nacks.first ?? "-")
-        """)
-
-        #expect(timing.exitedNormally && timing.exitStatus == 0, "the external lock holder must complete its confirmed transaction successfully")
-        #expect(sendBeganWhileLocked, "the upload send must begin while the confirmed external write lock is held")
-        #expect(nackedWhileLocked, "the nack must be observed before the external lock is released")
-        #expect(nacked, "a contended apply must answer with a nack, not silence")
-        #expect(nackMs ?? .infinity < 9_000,
-                Comment(rawValue: "the nack took \(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER")ms — "
-                + "the relay is parking again instead of failing fast"))
-        #expect(!ackedWhileLocked, "nothing can be acked while the write lock is held elsewhere")
-        #expect(!ackedEventually, "a nacked frame is dropped, not applied behind the client's back")
-        #expect(!fannedOut, "a frame the relay could not store must never reach a peer")
-        #expect(uploader.nacks.first?.contains("SQLITE") == true
-                || uploader.nacks.first?.contains("no-throw-shortfall") == true,
-                "the nack must name the SQLite classification: \(uploader.nacks.first ?? "-")")
-
-        await harness.shutdown_keepingStorage()
-        let counts = try rowCount(inChannelFile: harness.channelFileURL)
-        print("FORENSIC lock-contention server state: rows=\(counts.rows)")
-        #expect(counts.rows == 1, "only the warmup row is durable; the nacked upload is not")
-        try? FileManager.default.removeItem(at: harness.storageURL)
     }
 
     // MARK: - (4) Retry ladder — deterministic
@@ -955,44 +1066,326 @@ final class BusySafeApplyForensicsTests: BaseTest {
 
     // MARK: - (6) Per-file serialization
 
+    @Test(.timeLimit(.minutes(1)))
+    func blockedApplyLeavesIndependentWatchSocketAndControlActorProgressing() async throws {
+        // Use the actual process IO pool so the watcher's native page shares
+        // precisely the same two workers as the blocked apply.
+        let pool = RelayExecutionPool.io
+        let gate = DispatchSemaphore(value: 0)
+        let entered = LockedBox(false), gateExpired = LockedBox(false), actorProgress = LockedBox(false)
+        let setupCount = LockedBox(0)
+        let service = RelayApplyAdmission(pool: pool, beforeOperationForTesting: {
+            #expect(pool.isCurrentWorker)
+            entered.withLock { $0 = true }
+            let expired = gate.wait(timeout: .now() + 5) != .success
+            gateExpired.withLock { $0 = expired }
+        })
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
+                                         didFinishAsyncSetup: { setupCount.withLock { $0 += 1 } })
+        let blocked = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
+            channelId: "blocked-\(String.random(length: 8))", applyAdmission: service, ingressHooks: hooks)
+        let watched = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
+            channelId: "watch-\(String.random(length: 8))", ingressHooks: hooks,
+            observerPush: SyncObserverPush(reconcileInterval: nil))
+        let uploader = ForensicClient(label: "blocked", autoAck: false)
+        let observer = ForensicClient(label: "independent-watch", autoAck: false)
+        do {
+            try await blocked.connect(uploader)
+            try await watched.connect(observer)
+            try #require(await poll(timeout: 5, { setupCount.withLock { $0 == 2 } }))
+            let entries = try makeUploadEntries(donorPath: "donor-blocked-\(String.random(length: 8)).sqlite", value: 501)
+            let uploadID = try #require(entries.first?.globalId)
+            try await uploader.socket!.send(Array(buffer: try frame(entries)))
+            try #require(await poll(timeout: 5, { entered.withLock { $0 } }))
+            await Task { @RelayControlActor in actorProgress.withLock { $0 = true } }.value
+            #expect(actorProgress.withLock { $0 })
+            let written = LockedBox<Result<UUID, any Error>?>(nil)
+            let watchURL = watched.channelFileURL
+            pool.submitRequired(for: FileWatchManager.canonicalKey(for: watchURL)) {
+                let result = Result { () throws -> UUID in
+                    #expect(pool.isCurrentWorker)
+                    let lattice = try Lattice(for: [SimpleSyncObject.self],
+                        configuration: SyncRelayApplyPolicy.configuration(fileURL: watchURL, storeConfiguration: nil))
+                    try lattice.add(SimpleSyncObject(value: 502, floatValue: 502))
+                    return try #require(Array(lattice.eventsAfter(globalId: nil)).last?.globalId)
+                }
+                written.withLock { $0 = result }
+            }
+            try #require(await poll(timeout: 5, { written.withLock { $0 != nil } }))
+            let watchID = try #require(written.withLock { $0 }).get()
+            try #require(await poll(timeout: 5, { observer.downloaded.contains(watchID) }))
+            #expect(service.snapshot.running == 1, "watch delivery must precede blocked apply release")
+            #expect(pool.snapshot.startedWorkers == 2)
+            #expect(!gateExpired.withLock { $0 })
+            gate.signal()
+            try #require(await poll(timeout: 5, { uploader.ackTime(for: uploadID) != nil }))
+            await service.closeAdmissionAndDrain()
+            await blocked.shutdown_keepingStorage()
+            await watched.shutdown_keepingStorage()
+        } catch {
+            gate.signal()
+            await service.closeAdmissionAndDrain()
+            await blocked.shutdown_keepingStorage()
+            await watched.shutdown_keepingStorage()
+            RelayCheckpointGovernor.shared.unregister(storePath: blocked.channelFileURL.path)
+            RelayCheckpointGovernor.shared.unregister(storePath: watched.channelFileURL.path)
+            throw error
+        }
+        // Never stop the process pool: unrelated mounts/watch groups own it.
+        RelayCheckpointGovernor.shared.unregister(storePath: blocked.channelFileURL.path)
+        RelayCheckpointGovernor.shared.unregister(storePath: watched.channelFileURL.path)
+        // Existing watcher teardown owns final native release; retain these
+        // fixture directories until process exit rather than unlinking mid-close.
+    }
+
+    /// Actual mounted relay: a bounded service refuses a second frame before
+    /// receive while the first owns its file. Cancelling that running request
+    /// uses the task-cancellation state transition and preserves its real ACK,
+    /// stored row and peer fan-out. Unit tests also cancel the real Swift task.
+    @Test(.timeLimit(.minutes(1)))
+    func nativeAdmissionOverloadAndRunningCancellationPreserveActualRelayResults() async throws {
+        let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.actual-admission")
+        let entered = LockedBox(false), workerVerified = LockedBox(false), gateExpired = LockedBox(false)
+        let release = DispatchSemaphore(value: 0)
+        let cancellation = LockedBox<RelayApplyTestCancellation?>(nil)
+        let ingress = RelayIngressAdmission()
+        let setupCount = LockedBox(0)
+        let service = RelayApplyAdmission(pool: pool, maxRequests: 1, maxInputBytes: 1 << 20,
+            beforeOperationForTesting: {
+                workerVerified.withLock { $0 = pool.isCurrentWorker }
+                entered.withLock { $0 = true }
+                let expired = release.wait(timeout: .now() + 5) != .success
+                gateExpired.withLock { $0 = expired }
+            }, didReserveForTesting: { handle in cancellation.withLock { $0 = handle } })
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
+                                         didFinishAsyncSetup: { setupCount.withLock { $0 += 1 } })
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
+            channelId: "admission-\(String.random(length: 8))", applyAdmission: service,
+            ingressAdmission: ingress, ingressHooks: hooks)
+        let first = ForensicClient(label: "admitted", autoAck: false)
+        let rejected = ForensicClient(label: "overloaded", autoAck: false)
+        let peer = ForensicClient(label: "peer", autoAck: false)
+        do {
+            try await harness.connect(first)
+            try await harness.connect(rejected)
+            try await harness.connect(peer)
+            try #require(await poll(timeout: 5, { setupCount.withLock { $0 == 3 } }))
+            let acceptedEntries = try makeUploadEntries(
+                donorPath: "donor-admitted-\(String.random(length: 8)).sqlite", value: 401)
+            let rejectedEntries = try makeUploadEntries(
+                donorPath: "donor-refused-\(String.random(length: 8)).sqlite", value: 402)
+            let acceptedID = try #require(acceptedEntries.first?.globalId)
+            let rejectedID = try #require(rejectedEntries.first?.globalId)
+            try await first.socket!.send(Array(buffer: try frame(acceptedEntries)))
+            try #require(await poll(timeout: 5, { entered.withLock { $0 } }))
+            #expect(workerVerified.withLock { $0 })
+            #expect(service.snapshot.running == 1)
+            try #require(cancellation.withLock { $0 }).cancel()
+            try await rejected.socket!.send(Array(buffer: try frame(rejectedEntries)))
+            try #require(await poll(timeout: 5, { rejected.socket?.isClosed == true }))
+            #expect(rejected.ackTime(for: rejectedID) == nil)
+            #expect(rejected.nackTime(for: rejectedID) == nil)
+            #expect(!peer.downloaded.contains(rejectedID))
+            #expect(service.snapshot.requests == 1)
+            release.signal()
+            try #require(await poll(timeout: 5, { first.ackTime(for: acceptedID) != nil }))
+            try #require(await poll(timeout: 5, { peer.downloaded.contains(acceptedID) }))
+            #expect(first.nackTime(for: acceptedID) == nil)
+            #expect(!peer.downloaded.contains(rejectedID))
+            #expect(!gateExpired.withLock { $0 })
+            await service.closeAdmissionAndDrain()
+            #expect(service.snapshot.requests == 0 && service.snapshot.inputBytes == 0)
+            try #require(await poll(timeout: 5, { ingress.snapshot.frames == 0 }))
+            #expect(ingress.snapshot.inputBytes == 0)
+            await harness.shutdown_keepingStorage()
+            await pool.shutdown()
+            let counts = try rowCount(inChannelFile: harness.channelFileURL)
+            #expect(counts.rows == 1, "only the admitted upload may reach receive")
+        } catch {
+            release.signal()
+            await service.closeAdmissionAndDrain()
+            await harness.shutdown_keepingStorage()
+            await pool.shutdown()
+            RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+            try? FileManager.default.removeItem(at: harness.storageURL)
+            throw error
+        }
+        cancellation.withLock { $0 = nil }
+        RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+        try? FileManager.default.removeItem(at: harness.storageURL)
+    }
+
+    /// The global application-storage budget covers two connections before
+    /// authorization/open. Refusing A discards A's unopened backlog without
+    /// uncharging B, and B transfers its original envelope into the live stream.
+    @Test(.timeLimit(.minutes(1)))
+    func processIngressOverflowBeforeOpenPreservesOtherConnections() async throws {
+        let gate = ForensicSetupGate(), setupCount = LockedBox(0), bufferedCount = LockedBox(0)
+        let ingress = RelayIngressAdmission(limits: .init(connectionFrames: 2, connectionBytes: 1 << 20,
+            processFrames: 2, processBytes: 2 << 20, frameBytes: 1 << 20))
+        let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.ingress-preopen")
+        let apply = RelayApplyAdmission(pool: pool)
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: { await gate.wait() },
+            didBufferFrame: { _ in bufferedCount.withLock { $0 += 1 } },
+            didFinishAsyncSetup: { setupCount.withLock { $0 += 1 } })
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
+            channelId: "ingress-preopen-\(String.random(length: 8))", applyAdmission: apply,
+            ingressAdmission: ingress, ingressHooks: hooks)
+        let refused = ForensicClient(label: "preopen-refused", autoAck: false)
+        let survivor = ForensicClient(label: "preopen-survivor", autoAck: false)
+        do {
+            let discarded = try makeUploadEntries(
+                donorPath: "donor-ingress-discard-\(String.random(length: 8)).sqlite", value: 601)
+            let retained = try makeUploadEntries(
+                donorPath: "donor-ingress-retain-\(String.random(length: 8)).sqlite", value: 602)
+            let discardedID = try #require(discarded.first?.globalId)
+            let retainedID = try #require(retained.first?.globalId)
+            let retainedFrame = try frame(retained)
+            try await harness.connect(refused); try await harness.connect(survivor)
+            try #require(await poll(timeout: 5, { gate.entered == 2 }))
+            try await refused.socket!.send(Array(buffer: try frame(discarded)))
+            try await survivor.socket!.send(Array(buffer: retainedFrame))
+            try #require(await poll(timeout: 5, { bufferedCount.withLock { $0 == 2 } }))
+            #expect(ingress.snapshot.frames == 2 && apply.snapshot.requests == 0)
+            // An empty frame still consumes the third process frame slot.
+            try await refused.socket!.send([UInt8]())
+            try #require(await poll(timeout: 5, { refused.socket?.isClosed == true }))
+            try #require(await poll(timeout: 5, { ingress.snapshot.frames == 1 }))
+            #expect(ingress.snapshot.inputBytes == retainedFrame.readableBytes)
+            #expect(apply.snapshot.requests == 0)
+            gate.release()
+            try #require(await poll(timeout: 5, { setupCount.withLock { $0 == 2 } }))
+            try #require(await poll(timeout: 5, { survivor.ackTime(for: retainedID) != nil }))
+            try #require(await poll(timeout: 5, { ingress.snapshot.frames == 0 }))
+            #expect(ingress.snapshot.inputBytes == 0)
+            #expect(refused.ackTime(for: discardedID) == nil)
+            await apply.closeAdmissionAndDrain()
+            await harness.shutdown_keepingStorage()
+            await pool.shutdown()
+            #expect(try rowCount(inChannelFile: harness.channelFileURL).rows == 1)
+        } catch {
+            gate.release()
+            _ = await poll(timeout: 5, { setupCount.withLock { $0 == 2 } })
+            await apply.closeAdmissionAndDrain()
+            await harness.shutdown_keepingStorage()
+            await pool.shutdown()
+            RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+            throw error
+        }
+        RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+    }
+
+    /// A live connection fills its two-envelope budget while apply is gated.
+    /// The third frame closes ingress; finish(.finished) must still drain the
+    /// two accepted frames in order, including after ordinary socket cleanup.
+    @Test(.timeLimit(.minutes(1)))
+    func liveIngressOverflowDrainsAcceptedWritesThroughSocketClose() async throws {
+        let ingress = RelayIngressAdmission(limits: .init(connectionFrames: 2, connectionBytes: 1 << 20,
+            processFrames: 4, processBytes: 2 << 20, frameBytes: 1 << 20))
+        let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.ingress-drain")
+        let operations = LockedBox(0), entered = LockedBox(false), expired = LockedBox(false)
+        let release = DispatchSemaphore(value: 0), setupCount = LockedBox(0), closedCount = LockedBox(0)
+        let apply = RelayApplyAdmission(pool: pool, beforeOperationForTesting: {
+            let first = operations.withLock { $0 += 1; return $0 == 1 }
+            if first {
+                entered.withLock { $0 = true }
+                expired.withLock { $0 = release.wait(timeout: .now() + 5) != .success }
+            }
+        })
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
+            didFinishAsyncSetup: { setupCount.withLock { $0 += 1 } },
+            didCloseConnection: { closedCount.withLock { $0 += 1 } })
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
+            channelId: "ingress-drain-\(String.random(length: 8))", applyAdmission: apply,
+            ingressAdmission: ingress, ingressHooks: hooks)
+        let writer = ForensicClient(label: "overflow-writer", autoAck: false)
+        let peer = ForensicClient(label: "drain-peer", autoAck: false, captureFrames: true)
+        do {
+            let uploads = try (701...703).map { value in
+                try makeUploadEntries(donorPath: "donor-ingress-\(value)-\(String.random(length: 8)).sqlite", value: value)
+            }
+            let ids = try uploads.map { try #require($0.first?.globalId) }
+            try await harness.connect(writer); try await harness.connect(peer)
+            try #require(await poll(timeout: 5, { setupCount.withLock { $0 == 2 } }))
+            let priorFrames = peer.receivedFrames.count
+            let acceptedFrames = try uploads.prefix(2).map { try frame($0) }
+            try await writer.socket!.send(Array(buffer: acceptedFrames[0]))
+            try #require(await poll(timeout: 5, { entered.withLock { $0 } }))
+            try await writer.socket!.send(Array(buffer: acceptedFrames[1]))
+            try #require(await poll(timeout: 5, { ingress.snapshot.frames == 2 }))
+            #expect(ingress.snapshot.inputBytes == acceptedFrames.reduce(0) { $0 + $1.readableBytes })
+            try await writer.socket!.send(Array(buffer: try frame(uploads[2])))
+            try #require(await poll(timeout: 5, { writer.socket?.isClosed == true && closedCount.withLock { $0 == 1 } }))
+            #expect(ingress.snapshot.frames == 2, "close must not return storage still owned by apply/stream")
+            #expect(apply.snapshot.requests == 1)
+            release.signal()
+            // The second fan-out is an ordered positive fence on this peer's
+            // actual outbound stream, rather than a sleep/no-message check.
+            try #require(await poll(timeout: 5, { peer.downloaded.contains(ids[1]) }))
+            try #require(await poll(timeout: 5, { ingress.snapshot.frames == 0 && apply.snapshot.requests == 0 }))
+            #expect(peer.downloaded.contains(ids[0]) && !peer.downloaded.contains(ids[2]))
+            #expect(Array(peer.receivedFrames.dropFirst(priorFrames)) == acceptedFrames.map { Data(buffer: $0) })
+            #expect(ingress.snapshot.inputBytes == 0 && apply.snapshot.inputBytes == 0)
+            #expect(operations.withLock { $0 } == 2)
+            #expect(!expired.withLock { $0 })
+            await apply.closeAdmissionAndDrain()
+            await harness.shutdown_keepingStorage()
+            await pool.shutdown()
+            #expect(try rowCount(inChannelFile: harness.channelFileURL).rows == 2)
+        } catch {
+            release.signal()
+            await apply.closeAdmissionAndDrain()
+            await harness.shutdown_keepingStorage()
+            await pool.shutdown()
+            RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+            throw error
+        }
+        RelayCheckpointGovernor.shared.unregister(storePath: harness.channelFileURL.path)
+    }
+
     /// The gate itself: one key admits one holder at a time (FIFO), and two
     /// keys make progress concurrently — the property that keeps a busy
     /// channel from stalling every other channel in the process.
     @Test func fileApplyGateSerializesPerKeyAndKeepsKeysIndependent() async throws {
-        let key = "/tmp/forensics-gate-\(String.random(length: 8)).sqlite"
+        let key = "forensics-gate-\(String.random(length: 8))"
+        let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.apply-fifo")
+        let service = RelayApplyAdmission(pool: pool)
         let inside = LockedBox(0)
         let peak = LockedBox(0)
-        await withTaskGroup(of: Void.self) { group in
+        try await withThrowingTaskGroup(of: Void.self) { group in
             for _ in 0..<16 {
                 group.addTask {
-                    await withApplyLock(key) {
+                    try await service.withAdmission(for: key, buffer: ByteBuffer(), operation: { _ in
                         let now = inside.withLock { $0 += 1; return $0 }
                         peak.withLock { $0 = max($0, now) }
                         Thread.sleep(forTimeInterval: 0.005)
                         inside.withLock { $0 -= 1 }
-                    }
+                    }, completion: { _ in })
                 }
             }
+            try await group.waitForAll()
         }
         #expect(peak.withLock { $0 } == 1, "one apply slot per channel file")
         #expect(inside.withLock { $0 } == 0)
-        #expect(await FileApplyGate.shared.isHeld(key) == false, "the slot must be released")
-        #expect(await FileApplyGate.shared.queueDepth(forKey: key) == 0)
+        #expect(service.snapshot.requests == 0, "the slot must be released")
+        #expect(service.snapshot.queued == 0)
 
-        // Independence: A holds key1 and waits for B to enter key2. If
-        // different files shared a queue, B could never signal.
         let otherKey = key + ".other"
         let bEntered = LockedBox(false)
-        async let a: Void = withApplyLock(key) {
+        async let a: Void = service.withAdmission(for: key, buffer: ByteBuffer(), operation: { _ in
             let deadline = Date().addingTimeInterval(3)
             while Date() < deadline && !bEntered.withLock({ $0 }) {
                 Thread.sleep(forTimeInterval: 0.01)
             }
-        }
+        }, completion: { _ in })
         try await Task.sleep(nanoseconds: 50_000_000)
-        await withApplyLock(otherKey) { bEntered.withLock { $0 = true } }
-        await a
+        try await service.withAdmission(for: otherKey, buffer: ByteBuffer(), operation: { _ in
+            bEntered.withLock { $0 = true }
+        }, completion: { _ in })
+        try await a
         #expect(bEntered.withLock { $0 }, "two channel files must apply concurrently")
+        await service.closeAdmissionAndDrain()
+        await pool.shutdown()
     }
 
     /// End to end: many connections uploading at once on ONE channel file all

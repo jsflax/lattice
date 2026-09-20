@@ -333,12 +333,12 @@ private enum PreparedPushPage: Sendable {
         let revocation: RevocationFlag
         let probe: ObserverSendBoundaryProbe?
         let diagnostic: ACKPathConnection?
-        let continuation: CheckedContinuation<PushSubscription?, Never>
+        let completion: @RelayControlActor @Sendable (PushSubscription?) -> Void
     }
     var waiters: [Waiter] = []
     func fail() {
         let pending = waiters; waiters = []
-        for waiter in pending { waiter.continuation.resume(returning: nil) }
+        for waiter in pending { waiter.completion(nil) }
     }
 }
 
@@ -441,39 +441,51 @@ private enum PreparedPushPage: Sendable {
                    socket: WebSocket, revocation: RevocationFlag,
                    sendBoundaryProbe: ObserverSendBoundaryProbe? = nil,
                    setupDiagnostic: ACKPathConnection? = nil) async -> PushSubscription? {
+        await withCheckedContinuation { continuation in
+            subscribe(fileURL: fileURL, context: context, socket: socket,
+                      revocation: revocation, sendBoundaryProbe: sendBoundaryProbe,
+                      setupDiagnostic: setupDiagnostic) { subscription in
+                continuation.resume(returning: subscription)
+            }
+        }
+    }
+
+    /// Internal relay setup avoids resuming an intermediate generic async
+    /// waiter. Existing async callers retain their API and cancellation contract.
+    /// A callback cannot cancel an open shared by other pending subscribers.
+    func subscribe(fileURL: URL, context: MountPushContext,
+                   socket: WebSocket, revocation: RevocationFlag,
+                   sendBoundaryProbe: ObserverSendBoundaryProbe? = nil,
+                   setupDiagnostic: ACKPathConnection? = nil,
+                   completion: @escaping @RelayControlActor @Sendable (PushSubscription?) -> Void) {
         setupDiagnostic?.record(.watchSubscribeEntered)
         let canonicalScope = actorDiagnostics.begin(.subscribeCanonicalization)
         actorDiagnostics.phase(canonicalScope, .canonicalization)
         let key = Self.canonicalKey(for: fileURL)
         actorDiagnostics.end(canonicalScope)
-        // Only external waiters suspend. Open/install/publication itself is
-        // driven by explicit control-actor completions, independent of a
-        // generic-executor continuation hop. A cancelled waiter does not
-        // cancel an open shared with other subscribing connections.
-        return await withCheckedContinuation { continuation in
-            let waiter = PendingWatchOpen.Waiter(context: context, socket: socket,
-                                                revocation: revocation, probe: sendBoundaryProbe,
-                                                diagnostic: setupDiagnostic, continuation: continuation)
-            let scope = actorDiagnostics.begin(.resolveGroupSetup, group: groups[key]?.diagnosticGroupID)
-            if let group = groups[key] {
-                actorDiagnostics.end(scope)
-                continuation.resume(returning: publish(waiter, key: key, group: group))
-            } else if let pending = creating[key] {
-                pending.waiters.append(waiter)
-                actorDiagnostics.end(scope)
-            } else {
-                let pending = PendingWatchOpen()
-                pending.waiters.append(waiter)
-                creating[key] = pending
-                opensStarted[key, default: 0] += 1
-                setupDiagnostic?.record(.watchOpenScheduled)
-                actorDiagnostics.end(scope)
-                Task { @RelayControlActor [weak self] in
-                    setupDiagnostic?.record(.watchOpenTaskStarted)
-                    guard let self else { pending.fail(); return }
-                    self.startOpen(pending, key: key, fileURL: fileURL, context: context,
-                                   probe: sendBoundaryProbe, diagnostic: setupDiagnostic)
-                }
+        let waiter = PendingWatchOpen.Waiter(context: context, socket: socket,
+                                            revocation: revocation, probe: sendBoundaryProbe,
+                                            diagnostic: setupDiagnostic, completion: completion)
+        let scope = actorDiagnostics.begin(.resolveGroupSetup, group: groups[key]?.diagnosticGroupID)
+        if let group = groups[key] {
+            actorDiagnostics.end(scope)
+            let subscription = publish(waiter, key: key, group: group)
+            completion(subscription)
+        } else if let pending = creating[key] {
+            pending.waiters.append(waiter)
+            actorDiagnostics.end(scope)
+        } else {
+            let pending = PendingWatchOpen()
+            pending.waiters.append(waiter)
+            creating[key] = pending
+            opensStarted[key, default: 0] += 1
+            setupDiagnostic?.record(.watchOpenScheduled)
+            actorDiagnostics.end(scope)
+            Task { @RelayControlActor [weak self] in
+                setupDiagnostic?.record(.watchOpenTaskStarted)
+                guard let self else { pending.fail(); return }
+                self.startOpen(pending, key: key, fileURL: fileURL, context: context,
+                               probe: sendBoundaryProbe, diagnostic: setupDiagnostic)
             }
         }
     }
@@ -811,10 +823,10 @@ private enum PreparedPushPage: Sendable {
                 pending.waiters = []
                 self.actorDiagnostics.end(scope)
                 let publications = waiters.map { waiter in
-                    (waiter.continuation, self.publish(waiter, key: key, group: group))
+                    (waiter.completion, self.publish(waiter, key: key, group: group))
                 }
-                for (continuation, subscription) in publications {
-                    continuation.resume(returning: subscription)
+                for (completion, subscription) in publications {
+                    completion(subscription)
                 }
             }
         }
