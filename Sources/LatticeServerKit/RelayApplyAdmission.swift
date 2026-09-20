@@ -61,11 +61,13 @@ final class RelayApplyAdmission: Sendable {
          beforeCopyForTesting: (@Sendable () async -> Void)? = nil,
          beforeOperationForTesting: (@Sendable () -> Void)? = nil,
          didReserveForTesting: (@Sendable (RelayApplyTestCancellation) -> Void)? = nil,
-         afterResumeForTesting: (@Sendable () -> Void)? = nil) {
+         afterResumeForTesting: (@Sendable () -> Void)? = nil,
+         didTransitionForTesting: (@Sendable () -> Void)? = nil) {
         precondition(maxRequests > 0 && maxRequests <= RelayApplyAdmission.defaultMaxRequests)
         precondition(maxInputBytes >= 0 && maxInputBytes <= RelayApplyAdmission.defaultMaxInputBytes)
         state = RelayApplyAdmissionState(pool: pool, maxRequests: maxRequests,
-                                         maxInputBytes: maxInputBytes, afterResumeForTesting: afterResumeForTesting)
+                                         maxInputBytes: maxInputBytes, afterResumeForTesting: afterResumeForTesting,
+                                         didTransitionForTesting: didTransitionForTesting)
         self.beforeCopyForTesting = beforeCopyForTesting
         self.beforeOperationForTesting = beforeOperationForTesting
         self.didReserveForTesting = didReserveForTesting
@@ -127,6 +129,7 @@ final class RelayApplyAdmission: Sendable {
             // Running cancellation never replaces a committed/partial value.
             // Keep the request charge through governor and ACK/fan-out decisions.
             await completion(value!)
+            state.signalTransitionForTesting()
             withExtendedLifetime(value) {}
             value = nil
             await withCheckedContinuation { state.publicationFinished(job, waiter: $0) }
@@ -185,6 +188,7 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
     private let maxRequests: Int
     private let maxInputBytes: Int
     private let afterResumeForTesting: (@Sendable () -> Void)?
+    private let didTransitionForTesting: (@Sendable () -> Void)?
     private var jobs: [ObjectIdentifier: RelayApplyAdmissionJob] = [:]
     private var files: [String: [RelayApplyAdmissionJob]] = [:]
     private var inputBytes = 0
@@ -192,12 +196,15 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
     private var drainWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(pool: RelayExecutionPool, maxRequests: Int, maxInputBytes: Int,
-         afterResumeForTesting: (@Sendable () -> Void)?) {
+         afterResumeForTesting: (@Sendable () -> Void)?,
+         didTransitionForTesting: (@Sendable () -> Void)?) {
         self.pool = pool; self.maxRequests = maxRequests; self.maxInputBytes = maxInputBytes
         self.afterResumeForTesting = afterResumeForTesting
+        self.didTransitionForTesting = didTransitionForTesting
     }
 
     func reserve(_ job: RelayApplyAdmissionJob) throws {
+        defer { signalTransitionForTesting() }
         lock.lock(); defer { lock.unlock() }
         guard !closed else { throw RelayApplyAdmissionError.shutdown }
         guard job.inputBytes >= 0, jobs.count < maxRequests,
@@ -225,6 +232,7 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
     }
 
     func preparationFinished(_ job: RelayApplyAdmissionJob) {
+        defer { signalTransitionForTesting() }
         lock.lock()
         precondition(job.phase == .preparing)
         job.phase = .queued
@@ -277,6 +285,7 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
     }
 
     private func execute(_ job: RelayApplyAdmissionJob) {
+        defer { signalTransitionForTesting() }
         lock.lock()
         precondition(job.phase == .submitted)
         if let cancelled = job.cancellation {
@@ -313,6 +322,7 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
     }
 
     func cancel(_ job: RelayApplyAdmissionJob) {
+        defer { signalTransitionForTesting() }
         lock.lock()
         switch job.phase {
         case .preparing, .submitted:
@@ -349,6 +359,7 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
     }
 
     func publicationFinished(_ job: RelayApplyAdmissionJob, waiter: CheckedContinuation<Void, Never>) {
+        defer { signalTransitionForTesting() }
         lock.lock()
         precondition(job.phase == .publishing)
         precondition(!job.consumerPublicationFinished)
@@ -361,6 +372,7 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
     }
 
     private func workerPublicationFinished(_ job: RelayApplyAdmissionJob) {
+        defer { signalTransitionForTesting() }
         lock.lock()
         precondition(job.phase == .publishing && !job.workerPublicationFinished)
         job.workerPublicationFinished = true
@@ -381,6 +393,7 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
     }
 
     private func finishRelease(_ job: RelayApplyAdmissionJob) {
+        defer { signalTransitionForTesting() }
         lock.lock()
         precondition(job.phase == .releasing)
         job.phase = .settled
@@ -396,6 +409,7 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
     }
 
     func close(waiter: CheckedContinuation<Void, Never>) {
+        defer { signalTransitionForTesting() }
         lock.lock()
         closed = true
         drainWaiters.append(waiter)
@@ -410,6 +424,10 @@ private final class RelayApplyAdmissionState: @unchecked Sendable {
         for job in pending { cancel(job) }
         for waiter in waiters { waiter.resume() }
     }
+
+    // Opt-in fixture notification only, always after releasing the state lock.
+    // The callback may take a snapshot; it must not block or mutate admission.
+    func signalTransitionForTesting() { didTransitionForTesting?() }
 
     var snapshot: RelayApplyAdmissionSnapshot {
         lock.lock(); defer { lock.unlock() }

@@ -7,6 +7,59 @@ import NIOConcurrencyHelpers
 import Darwin
 #endif
 
+private final class ApplyTestMilestones: Sendable {
+    struct Observation: Sendable {
+        let satisfied: Bool
+        let held: Bool
+        let observedNS: UInt64
+        let deadlineNS: UInt64
+    }
+    private final class Waiter: Sendable {
+        let predicate: @Sendable () -> Bool
+        let held: @Sendable () -> Bool
+        let deadline: UInt64
+        let continuation: CheckedContinuation<Observation, Never>
+        init(predicate: @escaping @Sendable () -> Bool, held: @escaping @Sendable () -> Bool,
+             deadline: UInt64, continuation: CheckedContinuation<Observation, Never>) {
+            self.predicate = predicate; self.held = held; self.deadline = deadline; self.continuation = continuation
+        }
+    }
+    private let pending = NIOLockedValueBox<Waiter?>(nil)
+    // Every invocation comes from an actual admission/gate/task/cleanup change.
+    // Predicates and continuation resumes run outside both leaf locks.
+    func signal() {
+        guard let waiter = pending.withLockedValue({ $0 }) else { return }
+        if waiter.predicate() {
+            let held = waiter.held()
+            let now = DispatchTime.now().uptimeNanoseconds
+            finish(waiter, .init(satisfied: now < waiter.deadline, held: held,
+                                 observedNS: now, deadlineNS: waiter.deadline))
+        }
+    }
+    private func finish(_ waiter: Waiter, _ result: Observation) {
+        let selected = pending.withLockedValue { current in
+            guard current === waiter else { return false }
+            current = nil; return true
+        }
+        if selected { waiter.continuation.resume(returning: result) }
+    }
+    func wait(holding: @escaping @Sendable () -> Bool = { true },
+              predicate: @escaping @Sendable () -> Bool) async -> Observation {
+        await withCheckedContinuation { continuation in
+            let waiter = Waiter(predicate: predicate, held: holding,
+                deadline: DispatchTime.now().uptimeNanoseconds + 5_000_000_000,
+                continuation: continuation)
+            pending.withLockedValue { precondition($0 == nil); $0 = waiter }
+            signal() // install-before-sample closes the registration race
+            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(5)) { [weak self, weak waiter] in
+                guard let self, let waiter else { return }
+                self.finish(waiter, .init(satisfied: false, held: false,
+                    observedNS: DispatchTime.now().uptimeNanoseconds, deadlineNS: waiter.deadline))
+            }
+        }
+    }
+}
+
 private final class ApplyTestGate: Sendable {
     struct State: Sendable {
         var enteredNS: UInt64?
@@ -24,6 +77,8 @@ private final class ApplyTestGate: Sendable {
         var waiter: CheckedContinuation<Void, Never>?
     }
     private let state = NIOLockedValueBox(Storage())
+    private let events: ApplyTestMilestones
+    init(events: ApplyTestMilestones) { self.events = events }
     private let release = DispatchSemaphore(value: 0)
     var snapshot: State { state.withLockedValue { $0.facts } }
     func open() {
@@ -36,15 +91,18 @@ private final class ApplyTestGate: Sendable {
         }
         release.signal()
         waiter?.resume()
+        events.signal()
     }
     // Only genuine synchronous IO-worker operations use this blocking gate.
     func block() {
         state.withLockedValue { $0.facts.enteredNS = DispatchTime.now().uptimeNanoseconds }
+        events.signal()
         let timedOut = release.wait(timeout: .now() + 5) != .success
         state.withLockedValue {
             $0.facts.timedOut = timedOut
             $0.facts.finishedNS = DispatchTime.now().uptimeNanoseconds
         }
+        events.signal()
     }
     // Preparation runs on a Swift task. Suspend it without occupying that
     // cooperative executor. Cancellation deliberately does not open this gate:
@@ -62,6 +120,7 @@ private final class ApplyTestGate: Sendable {
                 value.waiter = continuation
                 return true
             }
+            events.signal()
             if waiting {
                 DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(5)) { [weak self] in
                     self?.preparationDeadlineExpired()
@@ -78,6 +137,7 @@ private final class ApplyTestGate: Sendable {
             return waiter
         }
         waiter?.resume()
+        events.signal()
     }
 }
 
@@ -87,6 +147,8 @@ private final class ApplyTestSignal: Sendable {
         var waiter: CheckedContinuation<Void, Never>?
     }
     private let state = NIOLockedValueBox(State())
+    private let events: ApplyTestMilestones
+    init(events: ApplyTestMilestones) { self.events = events }
     func signal() {
         let waiter = state.withLockedValue { value in
             value.signalled = true
@@ -98,6 +160,7 @@ private final class ApplyTestSignal: Sendable {
     // Deliberately not task-cancellable: tests must verify actual settlement,
     // rather than cancelled AsyncStream.next returning before the release gate.
     func wait() async {
+        events.signal()
         await withCheckedContinuation { continuation in
             let ready = state.withLockedValue { value in
                 if value.signalled { return true }
@@ -135,6 +198,9 @@ private enum ApplyFixtureError: Error { case cleanupUnconfirmed }
 private final class ApplyTestFixture: Sendable {
     let service: RelayApplyAdmission
     let pool: RelayExecutionPool
+    private let events: ApplyTestMilestones
+    private let affinity: @Sendable () -> Bool
+    let fullySettled: ApplyTestSignal
     private let name: String
     private let gates: [ApplyTestGate]
     private let signals: [ApplyTestSignal]
@@ -149,23 +215,33 @@ private final class ApplyTestFixture: Sendable {
     private let cleanupState = NIOLockedValueBox(CleanupState())
 
     init(name: String, service: RelayApplyAdmission, pool: RelayExecutionPool,
-         gates: [ApplyTestGate], signals: [ApplyTestSignal]) {
+         gates: [ApplyTestGate], signals: [ApplyTestSignal], events: ApplyTestMilestones,
+         affinity: @escaping @Sendable () -> Bool) {
+        self.events = events; self.affinity = affinity; fullySettled = ApplyTestSignal(events: events)
         self.name = name; self.service = service; self.pool = pool; self.gates = gates; self.signals = signals
     }
     func start(_ label: String, _ operation: @escaping @Sendable () async throws -> Void) -> ApplyTestTask {
         let outcome = NIOLockedValueBox<Result<Void, any Error>?>(nil)
         let task = Task<Result<Void, any Error>, Never> {
-            do { try await operation(); return .success(()) }
-            catch { return .failure(error) }
+            #expect(self.affinity(), "request entered outside its fixture task executor")
+            do {
+                try await operation()
+                #expect(self.affinity(), "real admission/close returned outside its fixture executor")
+                return .success(())
+            } catch {
+                #expect(self.affinity(), "real admission rejection returned outside its fixture executor")
+                return .failure(error)
+            }
         }
         // Publish only after joining the actual request task. A flag written
         // inside its body would precede task termination and weaken .value.
         let joined = Task {
             let result = await task.value
             outcome.withLockedValue { $0 = result }
+            self.events.signal()
         }
         let handle = ApplyTestTask(label: label, task: task, joined: joined, outcome: outcome)
-        tasks.withLockedValue { $0.append(handle) }
+        tasks.withLockedValue { precondition($0.count < 8, "bounded fixture request inventory"); $0.append(handle) }
         return handle
     }
     func forbidCallbacks(_ label: String) -> ApplyUnexpectedCallbacks {
@@ -182,12 +258,15 @@ private final class ApplyTestFixture: Sendable {
     }
     func until(_ label: String, holding gate: ApplyTestGate? = nil,
                details: @escaping @Sendable () -> String = { "" }, _ predicate: @escaping @Sendable () -> Bool) async throws {
-        let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
-        while !predicate() {
-            try #require(DispatchTime.now().uptimeNanoseconds < deadline,
-                         Comment(rawValue: "\(label): bounded state wait expired; \(details()); \(diagnostic)"))
-            try await Task.sleep(nanoseconds: 1_000_000)
+        let observed = await events.wait(holding: { gate?.snapshot.held ?? true }, predicate: predicate)
+        try #require(observed.satisfied,
+                     Comment(rawValue: "\(label): bounded milestone expired; observed=\(observed); \(details()); \(diagnostic)"))
+        if gate != nil {
+            try #require(observed.held,
+                         Comment(rawValue: "\(label): prerequisite gate was not held at the milestone; observed=\(observed); \(details()); \(diagnostic)"))
         }
+        // Historical custody is insufficient for the next cancel/close action.
+        // Preserve the baseline's live gate proof when the controller resumes.
         if let gate {
             try #require(gate.snapshot.held,
                          Comment(rawValue: "\(label): prerequisite gate no longer held; \(details()); \(diagnostic)"))
@@ -208,7 +287,6 @@ private final class ApplyTestFixture: Sendable {
         // One shared five-second observation window for all handles, drain and
         // shutdown, not a fresh timeout per join. The joined task is not cancelled
         // or forgotten when the observer expires; it retains self and its errors.
-        let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
         Task { [self] in
             var errors: [String] = []
             for handle in handles {
@@ -227,19 +305,18 @@ private final class ApplyTestFixture: Sendable {
             let reportLate = cleanupState.withLockedValue {
                 $0.errors = errors; $0.confirmed = true; $0.phase = "settled"; return $0.observerReturned
             }
+            events.signal()
+            fullySettled.signal()
             if reportLate {
                 let callbacks = unexpected.withLockedValue { $0 }.map { "\($0.label)=\($0.snapshot)" }
                 print("RelayApply \(name) fixture cleanup settled after observer returned; task outcomes=\(errors); callbacks=\(callbacks)")
             }
         }
-        while !cleanupState.withLockedValue({ $0.confirmed }) && DispatchTime.now().uptimeNanoseconds < deadline {
-            // Cleanup observation must also progress after task cancellation;
-            // Task.sleep would immediately throw and turn this into a spin loop.
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(1)) { continuation.resume() }
-            }
-        }
-        return cleanupState.withLockedValue { $0.observerReturned = true; return $0.confirmed }
+        let observed = await events.wait { self.cleanupState.withLockedValue { $0.confirmed } }
+        let confirmed = cleanupState.withLockedValue { $0.observerReturned = true; return $0.confirmed }
+        // Preserve the five-second observation even if this controller resumes
+        // after late cleanup has completed. Late settlement is custody, not a pass.
+        return observed.satisfied && confirmed
     }
     func assertCallbackOracles() {
         for observation in unexpected.withLockedValue({ $0 }) {
@@ -248,6 +325,7 @@ private final class ApplyTestFixture: Sendable {
             #expect(counts.publication == 0, Comment(rawValue: "\(observation.label): forbidden work published"))
         }
     }
+    var cleanupConfirmed: Bool { cleanupState.withLockedValue { $0.confirmed } }
     var cleanupErrors: [String] { cleanupState.withLockedValue { $0.errors } }
     var cleanupDiagnostic: String { cleanupState.withLockedValue { "phase=\($0.phase) outcomes=\($0.errors)" } }
 }
@@ -256,8 +334,45 @@ private final class ApplyTestFixture: Sendable {
 struct RelayApplyAdmissionTests {
     private func withFixture(_ pool: RelayExecutionPool, _ service: RelayApplyAdmission,
                              gates: [ApplyTestGate] = [], signals: [ApplyTestSignal] = [],
-                             name: String = #function, _ body: (ApplyTestFixture) async throws -> Void) async throws {
-        let fixture = ApplyTestFixture(name: name, service: service, pool: pool, gates: gates, signals: signals)
+                             events: ApplyTestMilestones, name: String = #function,
+                             _ body: @escaping @Sendable (ApplyTestFixture) async throws -> Void) async throws {
+        if #available(macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2, *) {
+            let executor = RelayApplyFixtureExecutor()
+            let retained = NIOLockedValueBox<ApplyTestFixture?>(nil)
+            var primary: (any Error)?
+            do {
+                try await withTaskExecutorPreference(executor) {
+                    try await Self().runFixture(pool, service, gates: gates, signals: signals,
+                        name: name, events: events, affinity: { executor.isCurrent },
+                        retainUntilSettled: { value in retained.withLockedValue { $0 = value } }, body)
+                }
+            } catch { primary = error }
+            let fixture = retained.withLockedValue { $0 }
+            if let fixture, !fixture.cleanupConfirmed {
+                // Already reported a finite cleanup failure. Do not stop an
+                // executor that retained cleanup/request jobs may still use.
+                // One bounded custodian per fixture, outside its preference.
+                Task { await fixture.fullySettled.wait(); await executor.shutdown() }
+            } else {
+                await executor.shutdown()
+                #expect(executor.snapshot.liveWorkers == 0 && executor.snapshot.pending == 0)
+            }
+            if let primary { throw primary }
+        } else {
+            // Same body, gates, deadlines and product assertions on older OS;
+            // only the optional dedicated-task-executor proof is unavailable.
+            try await runFixture(pool, service, gates: gates, signals: signals,
+                name: name, events: events, affinity: { true }, retainUntilSettled: { _ in }, body)
+        }
+    }
+    private func runFixture(_ pool: RelayExecutionPool, _ service: RelayApplyAdmission,
+                             gates: [ApplyTestGate] = [], signals: [ApplyTestSignal] = [],
+                             name: String, events: ApplyTestMilestones, affinity: @escaping @Sendable () -> Bool,
+                             retainUntilSettled: @escaping @Sendable (ApplyTestFixture) -> Void,
+                             _ body: @escaping @Sendable (ApplyTestFixture) async throws -> Void) async throws {
+        let fixture = ApplyTestFixture(name: name, service: service, pool: pool, gates: gates, signals: signals, events: events, affinity: affinity)
+        retainUntilSettled(fixture)
+        #expect(affinity(), "controller entered outside its fixture task executor")
         var primary: (any Error)?
         do { try await body(fixture) } catch { primary = error }
         let confirmed = await fixture.cleanup()
@@ -295,10 +410,11 @@ struct RelayApplyAdmissionTests {
     }
 
     @Test func countAndOwnedInputCapsIncludeDelayedPublication() async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.apply-caps")
-        let service = RelayApplyAdmission(pool: pool, maxRequests: 2, maxInputBytes: 4)
-        let hold = ApplyTestSignal(), holdEmpty = ApplyTestSignal(), actual = NIOLockedValueBox<Int?>(nil)
-        try await withFixture(pool, service, signals: [hold, holdEmpty]) { fixture in
+        let service = RelayApplyAdmission(pool: pool, maxRequests: 2, maxInputBytes: 4, didTransitionForTesting: { events.signal() })
+        let hold = ApplyTestSignal(events: events), holdEmpty = ApplyTestSignal(events: events), actual = NIOLockedValueBox<Int?>(nil)
+        try await withFixture(pool, service, signals: [hold, holdEmpty], events: events) { fixture in
             let first = fixture.start("first") {
                 try await service.withAdmission(for: "A", buffer: ByteBuffer(bytes: [1, 2, 3, 4]),
                     operation: { $0.count }, completion: { count in actual.withLockedValue { $0 = count }; await hold.wait() })
@@ -320,9 +436,10 @@ struct RelayApplyAdmissionTests {
     }
 
     @Test func smallSliceBecomesOwnedBytesAndRunsOnTheExistingWorker() async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.apply-copy")
-        let service = RelayApplyAdmission(pool: pool, maxRequests: 1, maxInputBytes: 32)
-        try await withFixture(pool, service) { fixture in
+        let service = RelayApplyAdmission(pool: pool, maxRequests: 1, maxInputBytes: 32, didTransitionForTesting: { events.signal() })
+        try await withFixture(pool, service, events: events) { fixture in
             var backing = ByteBufferAllocator().buffer(capacity: 1 << 20)
             backing.writeRepeatingByte(42, count: 1 << 20)
             let slice = try #require(backing.getSlice(at: 1024, length: 32))
@@ -355,13 +472,14 @@ struct RelayApplyAdmissionTests {
     }
 
     @Test func slowCopyKeepsItsFIFOPositionWhileAnotherFileProgresses() async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.apply-prepare")
-        let gate = ApplyTestGate(), copies = NIOLockedValueBox(0)
+        let gate = ApplyTestGate(events: events), copies = NIOLockedValueBox(0)
         let service = RelayApplyAdmission(pool: pool, beforeCopyForTesting: {
             if copies.withLockedValue({ $0 += 1; return $0 }) == 1 { await gate.waitForPreparation() }
-        })
+        }, didTransitionForTesting: { events.signal() })
         let order = NIOLockedValueBox<[Int]>([]), facts = NIOLockedValueBox((worker: false, noOvertake: false))
-        try await withFixture(pool, service, gates: [gate]) { fixture in
+        try await withFixture(pool, service, gates: [gate], events: events) { fixture in
             let first = fixture.start("first") {
                 try await service.withAdmission(for: "A", buffer: ByteBuffer(bytes: [1]),
                     operation: { _ in order.withLockedValue { $0.append(1) } }, completion: { _ in })
@@ -387,10 +505,11 @@ struct RelayApplyAdmissionTests {
     }
 
     @Test func queuedCancellationRemovesOnlyItsRequestAndPreservesFollowingOrder() async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.apply-queued")
-        let service = RelayApplyAdmission(pool: pool)
-        let gate = ApplyTestGate(), order = NIOLockedValueBox<[Int]>([])
-        try await withFixture(pool, service, gates: [gate]) { fixture in
+        let service = RelayApplyAdmission(pool: pool, didTransitionForTesting: { events.signal() })
+        let gate = ApplyTestGate(events: events), order = NIOLockedValueBox<[Int]>([])
+        try await withFixture(pool, service, gates: [gate], events: events) { fixture in
             let first = fixture.start("first") {
                 try await service.withAdmission(for: "A", buffer: ByteBuffer(bytes: [1]), operation: { _ in
                     gate.block(); order.withLockedValue { $0.append(1) }
@@ -420,10 +539,11 @@ struct RelayApplyAdmissionTests {
     }
 
     @Test func submittedCancellationKeepsATombstoneUntilItsIOTurn() async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 1, name: "relay.test.apply-tombstone")
-        let gate = ApplyTestGate()
-        let service = RelayApplyAdmission(pool: pool, maxRequests: 1, maxInputBytes: 1)
-        try await withFixture(pool, service, gates: [gate]) { fixture in
+        let gate = ApplyTestGate(events: events)
+        let service = RelayApplyAdmission(pool: pool, maxRequests: 1, maxInputBytes: 1, didTransitionForTesting: { events.signal() })
+        try await withFixture(pool, service, gates: [gate], events: events) { fixture in
             pool.submitRequired(for: "occupied") { gate.block() }
             try await fixture.until("occupied worker entered", holding: gate) { gate.snapshot.enteredNS != nil }
             let forbidden = fixture.forbidCallbacks("submitted cancelled")
@@ -444,11 +564,12 @@ struct RelayApplyAdmissionTests {
     }
 
     @Test func runningCancellationPreservesResultAndDrainWaitsForPublication() async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.apply-running")
-        let service = RelayApplyAdmission(pool: pool)
-        let gate = ApplyTestGate(), publishing = ApplyTestSignal()
+        let service = RelayApplyAdmission(pool: pool, didTransitionForTesting: { events.signal() })
+        let gate = ApplyTestGate(events: events), publishing = ApplyTestSignal(events: events)
         let actual = NIOLockedValueBox<Int?>(nil), drained = NIOLockedValueBox(false)
-        try await withFixture(pool, service, gates: [gate], signals: [publishing]) { fixture in
+        try await withFixture(pool, service, gates: [gate], signals: [publishing], events: events) { fixture in
             let request = fixture.start("running request") {
                 try await service.withAdmission(for: "A", buffer: ByteBuffer(bytes: [9]), operation: { _ in
                     gate.block(); return 41
@@ -473,10 +594,11 @@ struct RelayApplyAdmissionTests {
     }
 
     @Test func cancellationDuringPreparingNeverRunsAndClosesCleanly() async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.apply-copy-cancel")
-        let gate = ApplyTestGate()
-        let service = RelayApplyAdmission(pool: pool, beforeCopyForTesting: { await gate.waitForPreparation() })
-        try await withFixture(pool, service, gates: [gate]) { fixture in
+        let gate = ApplyTestGate(events: events)
+        let service = RelayApplyAdmission(pool: pool, beforeCopyForTesting: { await gate.waitForPreparation() }, didTransitionForTesting: { events.signal() })
+        try await withFixture(pool, service, gates: [gate], events: events) { fixture in
             let forbidden = fixture.forbidCallbacks("cancelled preparation")
             let request = fixture.start("cancelled preparation") {
                 try await service.withAdmission(for: "A", buffer: ByteBuffer(bytes: [9]),
@@ -492,9 +614,10 @@ struct RelayApplyAdmissionTests {
     }
 
     @Test func stoppedWorkerPoolRejectsWithoutLeavingAReservation() async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 1, name: "relay.test.apply-stopped")
-        let service = RelayApplyAdmission(pool: pool)
-        try await withFixture(pool, service) { fixture in
+        let service = RelayApplyAdmission(pool: pool, didTransitionForTesting: { events.signal() })
+        try await withFixture(pool, service, events: events) { fixture in
             let stop = fixture.start("stop empty pool") { await pool.shutdown() }
             try await fixture.value(stop)
             try await rejected(fixture, bytes: [1], expected: .shutdown)
@@ -504,12 +627,13 @@ struct RelayApplyAdmissionTests {
 
     @Test(arguments: [false, true])
     func pendingSubmittedShutdownKeepsItsChargeAndFirstStopReason(cancelFirst: Bool) async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 1, name: "relay.test.apply-pending-stop")
-        let gate = ApplyTestGate(), cancellation = NIOLockedValueBox<RelayApplyTestCancellation?>(nil)
+        let gate = ApplyTestGate(events: events), cancellation = NIOLockedValueBox<RelayApplyTestCancellation?>(nil)
         let service = RelayApplyAdmission(pool: pool, maxRequests: 1, maxInputBytes: 1,
-            didReserveForTesting: { handle in cancellation.withLockedValue { $0 = handle } })
+            didReserveForTesting: { handle in cancellation.withLockedValue { $0 = handle } }, didTransitionForTesting: { events.signal() })
         let drained = NIOLockedValueBox(false), returned = NIOLockedValueBox(false)
-        try await withFixture(pool, service, gates: [gate]) { fixture in
+        try await withFixture(pool, service, gates: [gate], events: events) { fixture in
             pool.submitRequired(for: "occupied") { gate.block() }
             try await fixture.until("occupied worker entered", holding: gate) { gate.snapshot.enteredNS != nil }
             let forbidden = fixture.forbidCallbacks("pending shutdown cancelFirst=\(cancelFirst)")
@@ -539,10 +663,11 @@ struct RelayApplyAdmissionTests {
     }
 
     @Test func pendingPreparationShutdownWaitsForCopySettlement() async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.apply-preparing-stop")
-        let gate = ApplyTestGate(), drained = NIOLockedValueBox(false)
-        let service = RelayApplyAdmission(pool: pool, beforeCopyForTesting: { await gate.waitForPreparation() })
-        try await withFixture(pool, service, gates: [gate]) { fixture in
+        let gate = ApplyTestGate(events: events), drained = NIOLockedValueBox(false)
+        let service = RelayApplyAdmission(pool: pool, beforeCopyForTesting: { await gate.waitForPreparation() }, didTransitionForTesting: { events.signal() })
+        try await withFixture(pool, service, gates: [gate], events: events) { fixture in
             let forbidden = fixture.forbidCallbacks("preparing shutdown")
             let request = fixture.start("preparing shutdown") {
                 try await service.withAdmission(for: "A", buffer: ByteBuffer(bytes: [9]),
@@ -563,10 +688,11 @@ struct RelayApplyAdmissionTests {
     }
 
     @Test func pendingQueuedShutdownRejectsWithoutDiscardingItsRunningPredecessor() async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.apply-queued-stop")
-        let service = RelayApplyAdmission(pool: pool)
-        let gate = ApplyTestGate(), drained = NIOLockedValueBox(false), firstResult = NIOLockedValueBox<Int?>(nil)
-        try await withFixture(pool, service, gates: [gate]) { fixture in
+        let service = RelayApplyAdmission(pool: pool, didTransitionForTesting: { events.signal() })
+        let gate = ApplyTestGate(events: events), drained = NIOLockedValueBox(false), firstResult = NIOLockedValueBox<Int?>(nil)
+        try await withFixture(pool, service, gates: [gate], events: events) { fixture in
             let first = fixture.start("running predecessor") {
                 try await service.withAdmission(for: "A", buffer: ByteBuffer(bytes: [1]), operation: { _ in
                     gate.block(); return 17
@@ -594,12 +720,13 @@ struct RelayApplyAdmissionTests {
     }
 
     @Test func resumedInputAliasStaysChargedUntilWorkerAndConsumerBothRelease() async throws {
+        let events = ApplyTestMilestones()
         let pool = RelayExecutionPool(workerCount: 2, name: "relay.test.apply-publication")
-        let gate = ApplyTestGate()
+        let gate = ApplyTestGate(events: events)
         let service = RelayApplyAdmission(pool: pool, maxRequests: 1, maxInputBytes: 3,
-                                          afterResumeForTesting: { gate.block() })
+                                          afterResumeForTesting: { gate.block() }, didTransitionForTesting: { events.signal() })
         let consumed = NIOLockedValueBox(false), returned = NIOLockedValueBox(false), exactBytes = NIOLockedValueBox(false)
-        try await withFixture(pool, service, gates: [gate]) { fixture in
+        try await withFixture(pool, service, gates: [gate], events: events) { fixture in
             let request = fixture.start("input alias") {
                 // Return an alias, but record only its equality result in the
                 // consumer: the test must not retain another Data alias.
