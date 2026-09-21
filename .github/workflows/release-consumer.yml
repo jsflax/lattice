@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TASK_ROOT="$HOME/localdev/lattice-core207-release-consumer-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ADOPTION_LEG}"
+          TASK_ROOT="$HOME/localdev/lattice-release-consumer-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ADOPTION_LEG}"
           test ! -e "$TASK_ROOT"
           mkdir -p "$TASK_ROOT/tmp"
           echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
