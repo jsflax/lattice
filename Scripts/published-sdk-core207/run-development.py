@@ -418,8 +418,8 @@ def load_binding(path):
             or binding.get('sdkCommit') != '0461b210aa028f3c4bb6165fed895e0f4385b565'
             or binding.get('sdkTree') != 'a1faa2850ebf2bf7dca152feffa461a24755a154'
             or binding.get('sdkVersion') != '2.0.0'
-            or binding.get('coreVersion') != '2.0.6'):
-        raise ValueError('qualification is limited to published SDK2.0.0 and Core2.0.6')
+            or binding.get('coreVersion') != '2.0.7'):
+        raise ValueError('qualification is limited to published SDK2.0.0 and maintenance Core2.0.7 candidate')
     for key in ('coreCommit', 'coreTree'):
         if not isinstance(binding.get(key), str) or not SHA.fullmatch(binding[key]):
             raise ValueError('unbound exact maintenance Core identity: ' + key)

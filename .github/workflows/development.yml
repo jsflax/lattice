@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TASK_ROOT="$HOME/localdev/lattice-published-sdk-core206-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DEVELOPMENT_LEG}"
+          TASK_ROOT="$HOME/localdev/lattice-published-sdk-core207-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DEVELOPMENT_LEG}"
           test ! -e "$TASK_ROOT"
           mkdir -p "$TASK_ROOT/tmp"
           echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
@@ -51,8 +51,8 @@ jobs:
           test "$(git -C "$TASK_ROOT/tools" rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git -C "$TASK_ROOT/tools" status --porcelain=v1 --untracked-files=all)"
           mkdir "$TASK_ROOT/qualification-inputs"
-          cp "$TASK_ROOT/tools/Scripts/published-sdk-core206/"*.py "$TASK_ROOT/qualification-inputs/"
-          cp "$TASK_ROOT/tools/Scripts/published-sdk-core206/binding.json" "$TASK_ROOT/qualification-inputs/"
+          cp "$TASK_ROOT/tools/Scripts/published-sdk-core207/"*.py "$TASK_ROOT/qualification-inputs/"
+          cp "$TASK_ROOT/tools/Scripts/published-sdk-core207/binding.json" "$TASK_ROOT/qualification-inputs/"
           cp "$TASK_ROOT/tools/.github/workflows/development.yml" "$TASK_ROOT/qualification-inputs/"
           git -C "$TASK_ROOT/tools" show --no-patch --format='%H %T' HEAD > "$TASK_ROOT/qualification-inputs/workflow-source.txt"
 
@@ -60,9 +60,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -B "$TASK_ROOT/tools/Scripts/published-sdk-core206/run-development.py" \
+          python3 -B "$TASK_ROOT/tools/Scripts/published-sdk-core207/run-development.py" \
             --root "$TASK_ROOT" \
-            --binding "$TASK_ROOT/tools/Scripts/published-sdk-core206/binding.json" \
+            --binding "$TASK_ROOT/tools/Scripts/published-sdk-core207/binding.json" \
             --test-timeout "$TEST_TIMEOUT"
 
       - name: Retain exact source, graph, test and failure evidence
@@ -70,7 +70,7 @@ jobs:
         if: always() && env.TASK_ROOT != ''
         uses: actions/upload-artifact@v4
         with:
-          name: published-sdk-core206-${{ matrix.leg }}-attempt-${{ github.run_attempt }}
+          name: published-sdk-core207-${{ matrix.leg }}-attempt-${{ github.run_attempt }}
           path: |
             ${{ env.TASK_ROOT }}/receipts
             ${{ env.TASK_ROOT }}/test-logs

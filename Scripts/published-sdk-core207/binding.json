@@ -1,7 +1,7 @@
 {
-  "coreCommit": "db6bf8b97d7af22db4c1224f17bbdea80a43cc57",
-  "coreTree": "781cf09659a06475d88c1f33122c2130142e93c1",
-  "coreVersion": "2.0.6",
+  "coreCommit": "0a31bb88ae06b26a6b28db83d7e5477a8cac5d72",
+  "coreTree": "ff0bff48d606849cb8787d665866ff1b02bb9fa1",
+  "coreVersion": "2.0.7",
   "schema": 1,
   "sdkBindingsSHA256": "f957586c36b54349dbc856441043f922d536e1535499954258b99f9639c44295",
   "sdkCommit": "0461b210aa028f3c4bb6165fed895e0f4385b565",
