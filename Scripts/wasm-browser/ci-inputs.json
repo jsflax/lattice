@@ -8,7 +8,7 @@
   "artifactSHA256": null,
   "jsRepository": "https://github.com/jsflax/LatticeJS.git",
   "jsCommit": "d811adcdfbb39d09afbe82564be48cde0553a92e",
-  "runtimePacketSealSHA256": "4c080b65a518a1127e4b3fa505599f804a498c50d0793b793d41de5f88df7ead",
+  "runtimePacketSealSHA256": "8b02c0b945fcad3a18759fc09b430dcb0fe6886f5cc1f781bbc7be3dbdceb6c6",
   "node": {
     "version": "20.18.0",
     "archive": "node-v20.18.0-linux-x64.tar.xz",
@@ -19,8 +19,8 @@
   },
   "artifactInputReady": false,
   "jsTree": "286282e3e3bde4c5c2e8f45d97136bd4c12bbe95",
-  "coreCommit": "db6bf8b97d7af22db4c1224f17bbdea80a43cc57",
-  "coreTree": "781cf09659a06475d88c1f33122c2130142e93c1",
+  "coreCommit": "0a31bb88ae06b26a6b28db83d7e5477a8cac5d72",
+  "coreTree": "ff0bff48d606849cb8787d665866ff1b02bb9fa1",
   "builderRunnerSHA256": "8590dfa8d46cdc385ae4d91925275a3331e1941b8e50795d2a07412412252588",
-  "builderConfigSHA256": "1f9d91d01d1f68ecca7b8ee46ae00d329e3082fd16a6336baebfce47d928c96c"
+  "builderConfigSHA256": "03a5711b82582fb18ecb75d0202b4ab7d7248b5a94bdd742959c1d85ba4dd170"
 }

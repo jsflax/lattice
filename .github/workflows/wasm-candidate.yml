@@ -1,4 +1,4 @@
-name: Core2.0.6 / published JS1.1.1 compatibility builder (partial)
+name: Core2.0.7 candidate / published JS1.1.1 compatibility builder (partial)
 # Install with all reviewed companion files in Scripts/wasm-candidate/.
 # This is a supplementary gate, not browser or release qualification.
 on:
@@ -17,7 +17,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TASK_ROOT="$HOME/localdev/lattice-wasm-compat-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TASK_ROOT="$HOME/localdev/lattice-core207-wasm-compat-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           test ! -e "$TASK_ROOT"
           mkdir -p "$TASK_ROOT/tmp"
           echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"

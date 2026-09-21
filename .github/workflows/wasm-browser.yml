@@ -1,4 +1,4 @@
-name: Core2.0.6 / published JS1.1.1 isolated Chromium (partial)
+name: Core2.0.7 candidate / published JS1.1.1 isolated Chromium (partial)
 # Consumes the authenticated corrected candidate archive; historical A remains failed.
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TASK_ROOT="$HOME/localdev/lattice-wasm-browser-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          TASK_ROOT="$HOME/localdev/lattice-core207-wasm-browser-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           test ! -e "$TASK_ROOT"
           mkdir -p "$TASK_ROOT/tmp" "$TASK_ROOT/bootstrap-receipts"
           echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
