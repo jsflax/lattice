@@ -175,6 +175,7 @@ struct SyncPublicVisibilityTests {
     }
 
     private func run(mode: String, profile: String, parameters p: SyncVisibilityParameters) async throws {
+        let logging = try SyncMeasurementLogging.installIfRequested()
         let directory = try directory(mode: mode), runID = UUID().uuidString
         let started = SyncVisibilityClock.now()
         var expected: [SyncVisibilityExpected] = []
@@ -208,6 +209,7 @@ struct SyncPublicVisibilityTests {
         for key in ["SDK_REVISION", "CORE_REVISION", "BUILD_ID", "HOST_ID", "RUN_GROUP", "RUN_ORDER", "LOGGING"] {
             metadata[key] = env["LATTICE_SYNC_VISIBILITY_" + key] ?? "unspecified"
         }
+        if let logging { metadata.merge(logging) { _, installed in installed } }
         var overhead: [String: UInt64] = [:]
         do {
             if mode == "full" {
@@ -282,6 +284,10 @@ struct SyncPublicVisibilityTests {
         if let relay { await relay.shutdown(recorder: recorder) }
         writers.removeAll(); clients.removeAll(); relay = nil
         await pool.shutdown()
+        if logging != nil {
+            do { try SyncMeasurementLogging.finish(metadata: &metadata) }
+            catch { recorder.error("logging verification: \(error)") }
+        }
         let (receipts, counters, errors) = recorder.snapshot()
         let originsValid = !SyncVisibilityClock.hasProbe || validOrigins(receipts)
         let complete = errors.isEmpty && originsValid && counters.unknownOperation == 0 && counters.valueMismatch == 0
