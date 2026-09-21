@@ -1,5 +1,5 @@
 {
-  "scope": "Explicit combined relay, recovery and performance development graph. Native probe, SDK smoke, full suite, recovery and performance qualifications remain separate gates; not a release graph.",
-  "coreCommit": "0f011f7a8d5914c0b6e9960299c66e513cd31375",
-  "coreTree": "e694242617035a1f8819f05906f1e6202f6a3a87"
+  "scope": "Explicit combined recovery/discovery and 100-entry catch-up development graph with reviewed measurement logging. Hosted native/SDK, automatic recovery, full-suite and matched performance gates remain separate; not a release graph.",
+  "coreCommit": "c87d5575b39933e53450962a30196b049c222fe9",
+  "coreTree": "ad5b4770dfd32b023aff7d84b19a6cfa31eb5cbe"
 }
