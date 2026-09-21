@@ -24,7 +24,7 @@ def command(success=True, **overrides):
 
 
 METADATA = dict(SDK_REVISION='a' * 40, CORE_REVISION='b' * 40, BUILD_ID='build',
-                HOST_ID='host', RUN_GROUP='calibration:run', LOGGING='declared existing logging')
+                HOST_ID='host', RUN_GROUP='calibration:run', **c.sync_measurement_logging.ATTESTATION)
 
 
 class CalibrationTests(unittest.TestCase):
