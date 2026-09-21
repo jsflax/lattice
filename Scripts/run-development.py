@@ -417,6 +417,11 @@ def main():
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--core-sha', required=True)
     parser.add_argument('--test-timeout', type=int, choices=(1800, 5400), required=True)
+    qualification = parser.add_mutually_exclusive_group()
+    qualification.add_argument('--sync-probe-qualification', action='store_true',
+                        help='Instrumented Core probe and SDK visibility fixtures only; not full suite or performance')
+    qualification.add_argument('--sync-full-calibration', action='store_true',
+                               help='Qualify the existing full loaded and quiet-only workloads in separate processes; not a performance experiment')
     args = parser.parse_args()
     root = args.root.resolve(strict=True)
     allowed = (Path.home() / 'localdev').resolve(strict=True)
@@ -433,8 +438,13 @@ def main():
                SWIFT_MODULECACHE_PATH=str(root / 'module-cache'),
                SWIFTPM_MODULECACHE_OVERRIDE=str(root / 'module-cache'),
                LATTICE_TEST_LOG_PATH=str(root / 'test-logs/native.log'),
+               LATTICE_QUALIFICATION_ROOT=str(root),
+               LATTICE_QUALIFICATION_LOG_DIRECTORY=str(root / 'test-logs'),
                LATTICE_ACK_PATH_DIAGNOSTICS='1', LATTICE_OBSERVER_WORKER_DIAGNOSTICS='1',
                PYTHONDONTWRITEBYTECODE='1')
+    if args.sync_probe_qualification:
+        env.update(LATTICE_SYNC_VISIBILITY_PERF='0',
+                   LATTICE_SYNC_VISIBILITY_RUN_DIR=str(root / 'visibility-smoke'))
     result = {'scope': 'development source override only; not release qualification',
               'coreCommit': args.core_sha, 'sdkCommit': sdk_sha,
               'runnerOS': platform.platform(), 'machine': platform.machine(), 'cpuCount': os.cpu_count(),
@@ -443,6 +453,12 @@ def main():
               'scriptSHA256': digest(Path(__file__)), 'success': False,
               'primaryError': None, 'evidenceErrors': [], 'releaseGraphAccepted': False,
               'overallSeconds': OVERALL_SECONDS, 'finalizationReserveSeconds': FINALIZATION_RESERVE}
+    result['syncProbeQualification'] = args.sync_probe_qualification
+    result['syncFullCalibration'] = args.sync_full_calibration
+    if args.sync_probe_qualification:
+        result['scope'] = 'opt-in native origin / Swift importer / public visibility qualification only; no full-suite or performance acceptance'
+    elif args.sync_full_calibration:
+        result['scope'] = 'opt-in full workload calibration only; no A/A2/B, full-suite, performance or release acceptance'
     original = sdk_inputs = core_inputs = None
     primary = None
     test_started_at = None
@@ -481,12 +497,29 @@ def main():
             runner.run('edit-core', ['swift', 'package', *common, 'edit', 'LatticeCore', '--path', str(core)], cwd=sdk)
             graph = runner.run('effective-graph-before', ['swift', 'package', *common, 'show-dependencies', '--format', 'json'], cwd=sdk)
             verify_graph(runner, 'graph-before', read_graph(graph), original, core, args.core_sha, root / 'scratch')
-            build = runner.run('build-tests', ['swift', 'build', *common, '--force-resolved-versions', '--build-tests', '-j', '2', '-v'], cwd=sdk, timeout=5400)
+            probe_flags = []
+            if args.sync_probe_qualification or args.sync_full_calibration:
+                import sync_probe_qualification
+                probe_flags = sync_probe_qualification.FLAGS
+                test_started_at = time.time()
+                sync_probe_qualification.qualify_native(runner, core, root, compiler_input_proof)
+            build = runner.run('build-tests', ['swift', 'build', *common, *probe_flags, '--force-resolved-versions', '--build-tests', '-j', '2', '-v'], cwd=sdk, timeout=5400)
             save_json(receipts / 'compiler-input-proof.json', compiler_input_proof(build, core))
             # Do not shorten or silently consume the original platform test allowance.
             test_started_at = time.time()
-            runner.run('full-test', ['swift', 'test', *common, '--force-resolved-versions', '--skip-build'], cwd=sdk,
-                       timeout=args.test_timeout, require_full_timeout=True)
+            if args.sync_probe_qualification:
+                sdk_probe_log = runner.run('sdk-probe-fixtures', ['swift', 'test', *common, *probe_flags,
+                           '--force-resolved-versions', '--skip-build', '--filter',
+                           'SyncPublicVisibilityTests|SyncVisibilityRecorderTests'], cwd=sdk,
+                           timeout=300, require_full_timeout=True)
+                sync_probe_qualification.qualify_sdk_log(sdk_probe_log, receipts)
+                sync_probe_qualification.qualify_public_receipts(root, receipts)
+            elif args.sync_full_calibration:
+                import sync_full_calibration
+                sync_full_calibration.run(runner, sdk, root, common, sdk_inputs, core_inputs)
+            else:
+                runner.run('full-test', ['swift', 'test', *common, '--force-resolved-versions', '--skip-build'], cwd=sdk,
+                           timeout=args.test_timeout, require_full_timeout=True)
             graph = runner.run('effective-graph-after', ['swift', 'package', *common, 'show-dependencies', '--format', 'json'], cwd=sdk)
             verify_graph(runner, 'graph-after', read_graph(graph), original, core, args.core_sha, root / 'scratch')
             final_sdk = authenticate_repository(runner, 'sdk-final', sdk, sdk_sha, allowed_changes=('Package.resolved',))
@@ -517,6 +550,17 @@ def main():
                     if before != after:
                         raise ValueError('unapproved non-Core dependency drift')
                     shutil.copyfile(sdk / 'Package.resolved', receipts / 'Package.resolved.final')
+                if args.sync_probe_qualification and (root / 'visibility-smoke/receipts.json').is_file():
+                    def visibility_postmortem():
+                        command = json.loads((receipts / 'sdk-probe-fixtures.json').read_text())
+                        cleanup = command.get('cleanup', {})
+                        if (command.get('started') is not True or cleanup.get('leaderReaped') is not True
+                                or cleanup.get('groupGone') is not True):
+                            raise ValueError('postmortem requires proved SDK process exit')
+                        runner.run('sync-visibility-postmortem-command', ['python3',
+                                   str(sdk / 'Scripts/sync_visibility_postmortem.py'), '--root', str(root)],
+                                   cwd=sdk, timeout=30, require_full_timeout=True)
+                    evidence('post-exit visibility copied-store report', visibility_postmortem)
                 if platform.system() == 'Darwin' and test_started_at is not None and primary is not None:
                     def crash_evidence():
                         import development_crashes

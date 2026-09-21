@@ -1,5 +1,5 @@
 {
-  "scope": "Prepublication development graph only; published Core 2.0.5 is the baseline, not the provider of broad APIs or a release-qualified graph",
-  "coreCommit": "917602ee2c9d77a2c0ce6777f792792bef1b00f8",
-  "coreTree": "a3dc117c35f88efcb5e252042ed365256c579d61"
+  "scope": "Relay baseline A measurement-only graph: SDK production Sources/Package/pins remain 4b035c18063cf0f74ba8a7549c907e1d88c58e24; Core a05 is the original opt-in causal-probe child of 917602ee2c9d77a2c0ce6777f792792bef1b00f8. Exactly 14 original native cases are required. This is not the separate published SDK2.0.0/Core2.0.5 upgrade comparison or performance/release acceptance.",
+  "coreCommit": "a05fd480236430ab0d707ed0201d3edbef299de5",
+  "coreTree": "dd9dae612a7fb22e17b0d9378dadbf4ff85a68b0"
 }
