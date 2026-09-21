@@ -1,25 +1,22 @@
 {
   "files": {
-    "BOUND-PREPARATION.json": "40967074067dd586d1764c9a594e9bf00b8480991038b598d5de4cfe7a99365f",
-    "DISPATCH-PLAN.json": "d9c88d062a25bb534795a0cdb851cc0f0b4ee82d8beb1331a9e7126407bc2b5b",
+    "DISPATCH-PLAN.json": "1d77850c841d2ffaab7ab5a1e53b006c9607e3d78e92800c1a066895a0852650",
     "OBSERVED-SDK-PINS.json": "351f0670dc38dfbe4911f2b0ebd01e25193a66d9a989ab3f8e51861c63c0e177",
-    "README.md": "1ec80a95859dc2db0c19d325470137091ff56d7532b8b9940209d71b91b7b7a2",
-    "config.json": "497d8f2de44d476cad3782c4c78637666d52a73e0df59b0809b6cd498602ce2a",
-    "consumer/Package.swift": "00b59f84abfe6750fc14f76fe5c6bd0ef65a6fe4ddcd126073ad7c94e4bf08c0",
+    "README.md": "1c312f185d4f084614a38f677d73e83d21dc4f1274a233a4cf27cd8f7e7c6344",
+    "UNBOUND-PREPARATION.json": "624f3d732fe4e60038bc45fb6470982de9dca325cf105a0ab8354a55d282ed37",
+    "config.json": "0e1b3bde623e74f2abcba26f5256642b0ed753f61b1c51aeec0718d221098ab4",
+    "consumer/Package.swift": "f1e6d923d996a5353cd14ff3a7cb2755703ca73b20ab9fad98a55612338eb5b8",
     "consumer/Sources/ReleaseConsumer/Consumer.swift": "33a5a4ca6e7f83991e5f23dec80a2b1d57ee10c114317e805e0a94ec5f6c1c9e",
     "consumer/Sources/ReleaseConsumer/Models.swift": "64729289a09af0d0fa9931851bab2afd7d542e53b2b7cef35cd2f34be9751b6f",
     "guarded_runner.py": "c31626b5a02692663d5c28bacecc61db474eee640a9d2c8bf947b0e68fd41b71",
-    "publication/core-release-receipt.json": "29f1e312d6ac26b3f65604654db6878c3ce8dc62000324a3698575089d9fdd63",
-    "publication/core-release-run.json": "0b2595216b2249732a84915cf11557d52ae105b30aca5b8ca155da9d5c75594c",
-    "publication/core-release.json": "eb498837f4f7a2dc73b8e00d456aeb3ed79aa7f7e1fdfc2b2660334f50cb3e01",
     "publication/sdk-release-run.json": "9aa16984eea0f05e4c1b3f6a05737c746d9d7d2c210728363f65206195183e8c",
     "publication/sdk-release.json": "a4e65bedd024913bd91a52e80932b6044fd4423f0b9cbabb0df1aa343f01cd20",
     "publication/upstream-binding.json": "2b9dfba78dcb6f6df37698c1c0bcf695e5c73cdaba0274343b6577c9b5d61ddd",
-    "publication-inputs.json": "0e25f253e8a60b95d5e7655698cddc513d6ed357d4004266328742617f7efc3a",
-    "qualify-ios.py": "a7f2236be95e87a3578c0c9721fe3a8e471b02e84fc58fe5e4dfaaff42ba38f4",
+    "publication-inputs.json": "48c6b306d7c21cfa42f7a66dd17a7178d44b0f8b58ea174d4f8175b908fdb38f",
+    "qualify-ios.py": "10812ac0d0c1306d19567d9ffd3f43ed9ebfcd7ff975eb58f962e21611727339",
     "qualify.py": "fac698cf64a009d0f36a8f7456c5f82f14a31657b9b5fa9ff2d7d24dacf883e0",
-    "test_validate.py": "b79598053e55bb98ca030a88711794d862a50043cd299ba1c2adc08b1eaa1164",
-    "validate.py": "f138e33c0e4004cff4a94bb5dcbc2358c163b297411bdc293eb37b90633fe73e"
+    "test_validate.py": "ceb87c83bf832c949f17f7a74c81abd40f005e0588cdf7575cb429ff4a7fcf4d",
+    "validate.py": "ad5a236013995eca62f580dabdf807298b73d7768bb563c13daeefc7c6d22c09"
   },
   "schemaVersion": 1
 }

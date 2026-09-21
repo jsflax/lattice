@@ -1,4 +1,4 @@
-name: Core2.0.6 published consumer and iOS adoption
+name: Core2.0.7 published consumer and iOS adoption
 on:
   workflow_dispatch:
 permissions:
@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: ${{ matrix.minutes }}
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      PACKET_SEAL_SHA256: 44e573c551656652fee19bd83769c1b471b59ec10a33c79affc983cf3fb4a9a9
+      PACKET_SEAL_SHA256: 0991a580f2613fa08d6a9b062b7b7b3522dc89bad97e734ffdcb38fafe309e56
       ADOPTION_LEG: ${{ matrix.leg }}
       QUALIFIER: ${{ matrix.script }}
     steps:
@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TASK_ROOT="$HOME/localdev/lattice-release-consumer-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ADOPTION_LEG}"
+          TASK_ROOT="$HOME/localdev/lattice-core207-release-consumer-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ADOPTION_LEG}"
           test ! -e "$TASK_ROOT"
           mkdir -p "$TASK_ROOT/tmp"
           echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
@@ -63,7 +63,7 @@ jobs:
         timeout-minutes: 4
         uses: actions/upload-artifact@v4
         with:
-          name: core206-adoption-${{ matrix.leg }}-${{ github.run_attempt }}
+          name: core207-adoption-${{ matrix.leg }}-${{ github.run_attempt }}
           path: |
             ${{ env.TASK_ROOT }}/WORKFLOW-SOURCE.json
             ${{ env.TASK_ROOT }}/tools/Scripts/release-consumer

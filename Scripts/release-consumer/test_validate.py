@@ -107,7 +107,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(self.expected, before)
         self.assertEqual({k: x for k, x in derived.items() if k != 'latticecore'},
                          {k: x for k, x in before.items() if k != 'latticecore'})
-        self.assertEqual(derived['latticecore']['state'], {'revision': 'c' * 40, 'version': '2.0.6'})
+        self.assertEqual(derived['latticecore']['state'], {'revision': 'c' * 40, 'version': '2.0.7'})
         derived['latticecore']['state']['revision'] = 'f' * 40
         self.assertEqual(self.expected, before)
 

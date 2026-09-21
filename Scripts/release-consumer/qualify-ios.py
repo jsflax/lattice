@@ -30,7 +30,7 @@ def overlay_lock(original, expected, binding):
     result = copy.deepcopy(original)
     for pin in result['pins']:
         if pin['identity'] == 'latticecore':
-            pin['state'] = {'revision': binding['core']['commit'], 'version': '2.0.6'}
+            pin['state'] = {'revision': binding['core']['commit'], 'version': '2.0.7'}
     check.require(check.pins(result) == check.consumer_expected_pins(expected, binding),
                   'overlay changed more than the exact published Core state')
     check.require({k: v for k, v in result.items() if k != 'pins'} ==

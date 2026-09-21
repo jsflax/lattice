@@ -9,8 +9,8 @@ SHA = re.compile(r'[0-9a-f]{40}\Z')
 HASH = re.compile(r'[0-9a-f]{64}\Z')
 REPOS = {'sdk': 'https://github.com/jsflax/lattice.git',
          'core': 'https://github.com/jsflax/LatticeCore.git'}
-TAGS = {'sdk': '2.0.0', 'core': '2.0.6'}
-REVIEWED_CORE_TREE = '781cf09659a06475d88c1f33122c2130142e93c1'
+TAGS = {'sdk': '2.0.0', 'core': '2.0.7'}
+REVIEWED_CORE_TREE = 'ff0bff48d606849cb8787d665866ff1b02bb9fa1'
 SDK_CORE_STATE = {'revision': '99e4bc89389d14072e6ab9b658db49a49a3573f5', 'version': '2.0.4'}
 ACCEPTANCE = ('success', 'publicationAuthenticated', 'graphAccepted', 'consumerBuildPassed',
               'writerPassed', 'reopenPassed', 'consumerAccepted')

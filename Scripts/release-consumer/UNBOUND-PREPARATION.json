@@ -1,0 +1,10 @@
+{
+  "sourceBase": "d1110e9c07bf1c0b6116ad91e16487de2da9156c",
+  "reviewedCoreCandidate": "0a31bb88ae06b26a6b28db83d7e5477a8cac5d72",
+  "reviewedCoreTree": "ff0bff48d606849cb8787d665866ff1b02bb9fa1",
+  "sdk": "0461b210aa028f3c4bb6165fed895e0f4385b565",
+  "publicationAuthenticated": false,
+  "dispatchReady": false,
+  "priorMechanism": "/Users/jason/localdev/lattice-perf-refinement-20260917/execution/qualification-core206-published-consumer-001",
+  "scope": "Version/binding-only preparation; unchanged persistence/iOS runtime oracles"
+}

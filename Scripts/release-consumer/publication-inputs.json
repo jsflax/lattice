@@ -1,7 +1,7 @@
 {
   "schema": "lattice.clean-consumer-publication-inputs/1",
-  "publicationQualified": true,
-  "dispatchReady": true,
+  "publicationQualified": false,
+  "dispatchReady": false,
   "sdk": {
     "repository": "https://github.com/jsflax/lattice.git",
     "tag": "2.0.0",
@@ -20,16 +20,16 @@
   },
   "core": {
     "repository": "https://github.com/jsflax/LatticeCore.git",
-    "tag": "2.0.6",
-    "commit": "9918baf3f464cb03deb4df36dd7faf43cf0d7a91",
-    "tree": "781cf09659a06475d88c1f33122c2130142e93c1",
-    "releaseObjectSHA256": "eb498837f4f7a2dc73b8e00d456aeb3ed79aa7f7e1fdfc2b2660334f50cb3e01",
-    "releaseEvidenceSHA256": "0b2595216b2249732a84915cf11557d52ae105b30aca5b8ca155da9d5c75594c",
-    "releaseWorkflowRun": 35459520778,
-    "releaseReceiptSHA256": "29f1e312d6ac26b3f65604654db6878c3ce8dc62000324a3698575089d9fdd63",
+    "tag": "2.0.7",
+    "commit": null,
+    "tree": null,
+    "releaseObjectSHA256": null,
+    "releaseEvidenceSHA256": null,
+    "releaseWorkflowRun": null,
+    "releaseReceiptSHA256": null,
     "releaseObjectFile": "publication/core-release.json",
     "releaseEvidenceFile": "publication/core-release-run.json",
-    "releaseWorkflowAttempt": 1,
+    "releaseWorkflowAttempt": null,
     "releaseReceiptFile": "publication/core-release-receipt.json"
   },
   "sdkExpectedPinCount": 34,
@@ -341,5 +341,5 @@
       }
     }
   ],
-  "publicationNote": "Actual stable Core 2.0.6 release392166487, public commit9918baf3f464cb03deb4df36dd7faf43cf0d7a91, release run35459520778 attempt1 and downloaded receipt authenticated by root. Consumer/iOS runtime checks remain pending; separate final review and dispatch admission required."
+  "publicationNote": "Core 2.0.7 publication is not bound. Actual stable release, successful release workflow/receipt and peeled public tag/tree evidence are required before a reviewed bound successor may dispatch. No old Core release record qualifies this candidate."
 }
