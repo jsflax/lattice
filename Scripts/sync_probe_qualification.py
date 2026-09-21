@@ -3,6 +3,7 @@
 Never ordinary, performance, upgrade-comparison or release acceptance.
 """
 import json
+import sync_measurement_logging
 from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
@@ -98,6 +99,7 @@ def qualify_public_receipts(root, receipts):
     with (receipts / 'public-visibility-qualification.json').open('x') as output:
         json.dump({'inputSHA256': digest, 'analysis': result,
                    'processBoundary': 'test command exited; not proof every transport/cache owner was destroyed before process exit'}, output, indent=2)
+    sync_measurement_logging.require_metadata(data.get('metadata'))
     if (not result['validCompleteRun'] or result['clock'] != evaluate_sync.NATIVE_CLOCK
             or result['mode'] != 'smoke' or result['profile'] != 'loaded'
             or result['effectiveParameters'] != SMOKE or result['receiptCount'] != 10):

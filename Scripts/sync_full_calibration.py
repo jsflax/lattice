@@ -5,6 +5,7 @@ GuardedRunner owns each process, timeout, resource limit and cleanup receipt.
 """
 import hashlib
 import json
+import sync_measurement_logging
 import os
 from pathlib import Path
 import platform
@@ -105,18 +106,18 @@ def make_binding(root, sdk_inputs, core_inputs, graph, toolchain, build, native,
     for key in ('GITHUB_REPOSITORY', 'GITHUB_JOB', 'DEVELOPMENT_LEG'):
         if not re.fullmatch(r'[A-Za-z0-9_./-]+', env.get(key, '')):
             raise ValueError('missing actual workflow execution identity: ' + key)
-    # These inspected environment controls affect this exact fixture/library.
-    # Record inherited values, including absence; do not silently change logging.
-    logging = {key: normalize(env[key]) if key in env else None for key in (
-        'LOG_LEVEL', 'LATTICE_LOG_LEVEL', 'LATTICE_DUMP_SQL', 'LATTICE_TEST_LOG_PATH',
-        'LATTICE_ACK_PATH_DIAGNOSTICS', 'LATTICE_OBSERVER_WORKER_DIAGNOSTICS')}
-    logging['policy'] = 'existing runner environment; exact source defaults when absent; no fixture log setter'
+    sync_measurement_logging.require_controls(env)
+    logging = {'policy': sync_measurement_logging.POLICY,
+               'nativeLevel': 'fixture sets off; start/end readback required',
+               'nativeSink': 'fixture nil FILE setter selects stderr; no sink getter',
+               'swiftLogging': 'LOG_LEVEL absent; pinned library defaults retained',
+               'ordinaryDiagnosticControls': 'observer-worker=0;ack-path=0;sql-dump=absent'}
     group = ':'.join(['calibration'] + [env[key] for key in (
         'GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_JOB', 'DEVELOPMENT_LEG')])
     metadata = {'SDK_REVISION': sdk_inputs['commit'], 'CORE_REVISION': core_inputs['commit'],
                 'BUILD_ID': 'sha256:' + fingerprint(configuration),
                 'HOST_ID': 'sha256:' + fingerprint(host), 'RUN_GROUP': group,
-                'LOGGING': json.dumps(logging, sort_keys=True, separators=(',', ':'))}
+                'LOGGING': sync_measurement_logging.POLICY}
     return {'scope': SCOPE, 'performanceAccepted': False, 'buildConfiguration': configuration,
             'hostFacts': host, 'loggingPolicy': logging, 'metadata': metadata}
 
@@ -145,6 +146,7 @@ def profile_plan(root, binding, original_env):
             raise ValueError('full profile needs an unused evidence directory: ' + str(directory))
         metadata = dict(binding['metadata'], RUN_ORDER=f'{order}:{profile}')
         env = {key: value for key, value in original_env.items() if not key.startswith(PREFIX)}
+        env = sync_measurement_logging.apply_environment(env)
         env.update({PREFIX + key: value for key, value in metadata.items()})
         env.update({PREFIX + 'PERF': '1', PREFIX + 'PROFILE': profile,
                     PREFIX + 'RUN_DIR': str(directory)})
@@ -164,10 +166,13 @@ def analyze_profile(data, profile, metadata):
     metadata_matches = all(analysis['metadata'].get(key) == value for key, value in metadata.items())
     if not analysis['validCompleteRun'] or not contract_matches:
         violations.append('full profile did not prove every unchanged expected operation with native origins')
+    logging_matches = sync_measurement_logging.metadata_valid(analysis['metadata'])
+    if not logging_matches:
+        violations.append('measurement logging setup/readback attestation missing or contradictory')
     if not metadata_matches:
         violations.append('declared metadata differs from inspected graph/build/host/run/logging binding')
     return {'analysis': analysis, 'violations': violations, 'qualified': not violations,
-            'evidenceUsable': contract_matches and metadata_matches,
+            'evidenceUsable': contract_matches and metadata_matches and logging_matches,
             'scope': SCOPE, 'performanceAccepted': False, 'experimentAccepted': False}
 
 

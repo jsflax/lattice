@@ -442,6 +442,9 @@ def main():
                LATTICE_QUALIFICATION_LOG_DIRECTORY=str(root / 'test-logs'),
                LATTICE_ACK_PATH_DIAGNOSTICS='1', LATTICE_OBSERVER_WORKER_DIAGNOSTICS='1',
                PYTHONDONTWRITEBYTECODE='1')
+    if args.sync_probe_qualification or args.sync_full_calibration:
+        import sync_measurement_logging
+        env = sync_measurement_logging.apply_environment(env)
     if args.sync_probe_qualification:
         env.update(LATTICE_SYNC_VISIBILITY_PERF='0',
                    LATTICE_SYNC_VISIBILITY_RUN_DIR=str(root / 'visibility-smoke'))
