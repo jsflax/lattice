@@ -1,0 +1,10 @@
+{
+  "ref": "refs/tags/2.0.7",
+  "node_id": "REF_kwDOQ0ULrq9yZWZzL3RhZ3MvMi4wLjc",
+  "url": "https://api.github.com/repos/jsflax/LatticeCore/git/refs/tags/2.0.7",
+  "object": {
+    "sha": "eb9a99c5d3945108ab9d9d0d39622616d82f3586",
+    "type": "commit",
+    "url": "https://api.github.com/repos/jsflax/LatticeCore/git/commits/eb9a99c5d3945108ab9d9d0d39622616d82f3586"
+  }
+}

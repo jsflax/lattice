@@ -1,0 +1,40 @@
+{
+  "sha": "eb9a99c5d3945108ab9d9d0d39622616d82f3586",
+  "node_id": "C_kwDOQ0ULrtoAKGViOWE5OWM1ZDM5NDUxMDhhYjlkOWQwZDM5NjIyNjE2ZDgyZjM1ODY",
+  "url": "https://api.github.com/repos/jsflax/LatticeCore/git/commits/eb9a99c5d3945108ab9d9d0d39622616d82f3586",
+  "html_url": "https://github.com/jsflax/LatticeCore/commit/eb9a99c5d3945108ab9d9d0d39622616d82f3586",
+  "author": {
+    "name": "Jason Flax",
+    "email": "jsflax@gmail.com",
+    "date": "2026-09-21T21:19:10Z"
+  },
+  "committer": {
+    "name": "GitHub",
+    "email": "noreply@github.com",
+    "date": "2026-09-21T21:19:10Z"
+  },
+  "tree": {
+    "sha": "ff0bff48d606849cb8787d665866ff1b02bb9fa1",
+    "url": "https://api.github.com/repos/jsflax/LatticeCore/git/trees/ff0bff48d606849cb8787d665866ff1b02bb9fa1"
+  },
+  "message": "Merge pull request #20 from jsflax/codex/core-global-id-release-20260921\n\nPrepare 2.0.7 global row identity maintenance release",
+  "parents": [
+    {
+      "sha": "9918baf3f464cb03deb4df36dd7faf43cf0d7a91",
+      "url": "https://api.github.com/repos/jsflax/LatticeCore/git/commits/9918baf3f464cb03deb4df36dd7faf43cf0d7a91",
+      "html_url": "https://github.com/jsflax/LatticeCore/commit/9918baf3f464cb03deb4df36dd7faf43cf0d7a91"
+    },
+    {
+      "sha": "0a31bb88ae06b26a6b28db83d7e5477a8cac5d72",
+      "url": "https://api.github.com/repos/jsflax/LatticeCore/git/commits/0a31bb88ae06b26a6b28db83d7e5477a8cac5d72",
+      "html_url": "https://github.com/jsflax/LatticeCore/commit/0a31bb88ae06b26a6b28db83d7e5477a8cac5d72"
+    }
+  ],
+  "verification": {
+    "verified": true,
+    "reason": "valid",
+    "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJqsZ9OCRC1aQ7uu5UhlAAAqTsQAD7k6ZpkHIKdpXJeH+CcTyJg\nr2V7ZsLH6lUBehpJwI1t75PJu0+oqeyHMnqCFOAD0li0hktDnfGThWN6VP2W4e3n\nXVV5eLjsox4Wrz2AF0WZgGZ4hLdX7axptnF2b51rQkcdNgmPUqXrJBg5OU5GR+1R\nD6kqracefwDPh67MRPZVNBgfqUyu+mMvDj6vq041nOhTVRtCzTD7vUGpYFg00HgS\nchfE1VqMjk9z1xvaOrM94KiIv4CiDyqsiDAFag377RxlW7TzvlN+zCcvy4LV5ieJ\nYTjnDh8uSOzPPuWM5moh1Io2r1ksDoOILEQjEp9PxrsUEK9kwb2vBCAKdeT+i6hd\n6gQk6L9KyGsiHJiRx5r5xV0lsFrqpfzI4QC1PdsDisuTeEkAw3X7kuhj4B1lKZwc\no2S3+vr0Enz2SSkMDei0AJQ394c/8NtXR08gJwoAIZf+M8nGtjNvAy5U+P6rycu6\ndbNw57zT3vtLBRu7yCOvWryGl0e94jYaUfxq+2Rbv5m1M6Ldz0Ir+qGmtwJvw5rs\n3Aftq11pS3uBplimETKvmDDpT4yOSYis3PnY2EH93UZJHFIE1DJ560WupPiA/nI6\nCpRBSuHBC8PhvrIej//yJPTQz7KODq/2BTACgN4QAFGOIIvo5eQoLmceVP9cWyvG\nKW/0XyA1RniUFebHuTfh\n=j8Eb\n-----END PGP SIGNATURE-----\n",
+    "payload": "tree ff0bff48d606849cb8787d665866ff1b02bb9fa1\nparent 9918baf3f464cb03deb4df36dd7faf43cf0d7a91\nparent 0a31bb88ae06b26a6b28db83d7e5477a8cac5d72\nauthor Jason Flax <jsflax@gmail.com> 1790025550 -0400\ncommitter GitHub <noreply@github.com> 1790025550 -0400\n\nMerge pull request #20 from jsflax/codex/core-global-id-release-20260921\n\nPrepare 2.0.7 global row identity maintenance release",
+    "verified_at": "2026-09-21T21:19:11Z"
+  }
+}

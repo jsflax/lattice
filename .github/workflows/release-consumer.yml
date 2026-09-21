@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: ${{ matrix.minutes }}
     env:
       PYTHONDONTWRITEBYTECODE: '1'
-      PACKET_SEAL_SHA256: 0991a580f2613fa08d6a9b062b7b7b3522dc89bad97e734ffdcb38fafe309e56
+      PACKET_SEAL_SHA256: a8977ba258230f6b70763ccc7a2196869ccb0911268d8a8789ffd28fad87909a
       ADOPTION_LEG: ${{ matrix.leg }}
       QUALIFIER: ${{ matrix.script }}
     steps:

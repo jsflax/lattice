@@ -1,0 +1,10 @@
+{
+  "artifacts": {},
+  "candidateDigest": "304833982ab754f51b635cf1e16b8ef6bdb875bce5ba5ea70bfbf8e79b02125b",
+  "createdAt": "2026-09-21T21:25:37.092874+00:00",
+  "runAttempt": "1",
+  "schemaVersion": 1,
+  "sourceSha": "eb9a99c5d3945108ab9d9d0d39622616d82f3586",
+  "state": "validated-and-packaged",
+  "workflowRun": "https://github.com/jsflax/LatticeCore/actions/runs/35656538973"
+}
