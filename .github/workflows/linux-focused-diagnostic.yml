@@ -40,10 +40,10 @@ jobs:
           EVIDENCE="$RUNNER_TEMP/wrapper-focused-diagnostic"
           mkdir -p "$EVIDENCE"
           export EVIDENCE
-          git rev-parse HEAD > "$EVIDENCE/checkout-sha.stdout"
-          git rev-parse 'HEAD^{tree}' > "$EVIDENCE/checkout-tree.txt"
-          git status --porcelain > "$EVIDENCE/checkout-status.txt"
-          git diff --name-only 7f1028ebfa9e5b4776a1aa6636a086107ca5de0a HEAD > "$EVIDENCE/source-delta.txt"
+          git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD > "$EVIDENCE/checkout-sha.stdout"
+          git -c safe.directory="$GITHUB_WORKSPACE" rev-parse 'HEAD^{tree}' > "$EVIDENCE/checkout-tree.txt"
+          git -c safe.directory="$GITHUB_WORKSPACE" status --porcelain > "$EVIDENCE/checkout-status.txt"
+          git -c safe.directory="$GITHUB_WORKSPACE" diff --name-only 7f1028ebfa9e5b4776a1aa6636a086107ca5de0a HEAD > "$EVIDENCE/source-delta.txt"
           python3 - <<'PY'
           import os
           from pathlib import Path
