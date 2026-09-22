@@ -23,8 +23,9 @@ package final class RecoveryRelayNativeResult: @unchecked Sendable {
     package let error: String?
     package var publishable: Bool { value.publishable() }
     fileprivate init(_ value: lattice.relay_recovery_result) {
-        self.value = value; status = value.statusCode()
-        let raw = value.ids()
+        var ownedValue = value
+        let raw = ownedValue.takeIDs()
+        self.value = ownedValue; status = ownedValue.statusCode()
         var ids: [UUID] = []; ids.reserveCapacity(Int(raw.size()))
         for index in 0..<raw.size() { if let id = UUID(uuidString: String(raw[index])) { ids.append(id) } }
         self.ids = ids
