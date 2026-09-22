@@ -49,7 +49,7 @@ def proc_identity(pid):
     row = parse_proc_stat(pid, Path(f'/proc/{pid}/stat').read_text())
     row['uid'] = Path(f'/proc/{pid}').stat().st_uid
     try: row['executable'] = os.readlink(f'/proc/{pid}/exe')
-    except OSError: row['executable'] = None
+    except (FileNotFoundError, ProcessLookupError): row['executable'] = None
     return row
 
 
@@ -61,7 +61,7 @@ def current_process(row):
     try:
         current = proc_identity(row['pid'])
         return current if generation(current) == generation(row) else None
-    except (OSError, ValueError): return None
+    except (FileNotFoundError, ProcessLookupError): return None
 
 
 def same_process(row):
@@ -72,6 +72,18 @@ def live_processes(known):
     # A child exiting between two /proc reads is normal, not a cleanup failure.
     return [current for row in known.values()
             if (current := current_process(row)) is not None and current['state'] != 'Z']
+
+
+def record_remaining_processes(known, report):
+    remaining = []
+    for row in known.values():
+        try:
+            if same_process(row): remaining.append(row)
+        except BaseException as error:
+            report['errors'].append(f'remaining identity PID {row["pid"]}: '+brief(error))
+            # An unreadable identity is unresolved custody, never proof of exit.
+            remaining.append({**row, 'closureIdentityUnavailable': True})
+    report['remainingOwned'] = remaining
 
 
 def children(pid):
@@ -368,7 +380,7 @@ def run(workspace, directory):
                     report['groupsAfterJoin'] = [{'pgid': pgid, 'present': group_present(pgid)}
                         for pgid in sorted({row['pgid'] for row in known.values()})]
                 except BaseException as error: report['errors'].append('closure observation: '+brief(error))
-                report['remainingOwned'] = [r for r in known.values() if same_process(r)]
+                record_remaining_processes(known, report)
     report['descendants'] = list(known.values());report['exitCode'] = rootcode
     report['stopReason'] = reason
     if not reason and not report['signals'] and rootcode == 0 and report['rootJoined'] and not report['remainingOwned'] and not any(row['present'] for row in report['groupsAfterJoin']) and not report['errors'] and not stopped:

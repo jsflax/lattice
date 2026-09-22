@@ -31,10 +31,31 @@ class ControlTests(unittest.TestCase):
 
     def test_child_exit_during_proc_observation_is_normal(self):
         old = {'pid':42,'startTicks':123,'uid':1000,'state':'S'}
-        with patch.object(control, 'proc_identity', side_effect=FileNotFoundError):
-            self.assertEqual(control.live_processes({42:old}), [])
+        for error in (FileNotFoundError, ProcessLookupError):
+            with patch.object(control, 'proc_identity', side_effect=error):
+                self.assertEqual(control.live_processes({42:old}), [])
         with patch.object(control, 'proc_identity', return_value={**old,'state':'Z'}):
             self.assertEqual(control.live_processes({42:old}), [])
+
+    def test_denied_or_malformed_identity_is_not_process_absence(self):
+        old = {'pid':42,'startTicks':123,'uid':1000,'state':'S'}
+        for error in (PermissionError('denied'), ValueError('malformed stat'),
+                      AssertionError('short stat'), OSError('unexpected read failure')):
+            with self.subTest(error=type(error).__name__), patch.object(control, 'proc_identity', side_effect=error):
+                with self.assertRaises(type(error)): control.current_process(old)
+
+    def test_final_identity_failure_is_preserved_in_serializable_result(self):
+        old = {'pid':42,'startTicks':123,'uid':1000,'state':'S'}
+        for error in (PermissionError('denied'), ValueError('malformed stat')):
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory(dir=SCRATCH) as d:
+                report = {'errors':[], 'remainingOwned':[]}
+                with patch.object(control, 'proc_identity', side_effect=error):
+                    control.record_remaining_processes({42:old},report)
+                path = Path(d)/'RESULT.json'; control.write(path,report)
+                saved = json.loads(path.read_text())
+                self.assertIn(type(error).__name__,saved['errors'][0])
+                self.assertTrue(saved['remainingOwned'][0]['closureIdentityUnavailable'])
+                self.assertEqual(saved['remainingOwned'][0]['startTicks'],123)
 
     def test_missing_debugger_does_not_claim_a_stack_or_launch_process(self):
         with patch.object(control.shutil,'which',return_value=None), patch.object(control.subprocess,'Popen') as spawn:
