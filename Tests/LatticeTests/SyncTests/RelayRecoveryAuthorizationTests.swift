@@ -507,7 +507,8 @@ private struct RelayAuthenticatedReadyTests {
             let q = try readyRequest(description, originals: upload)
             let offer = try await a.ready(readyOffer(q, descriptor: description))
             let offered = try readyObject(offer); #expect(offered["leaseAvailable"] as? Bool == true)
-            let count = try #require(Int(#require(offered["frames"] as? String)))
+            let framesRaw = try #require(offered["frames"] as? String)
+            let count = try #require(Int(framesRaw))
             var kinds: [String] = [], found: [String] = []
             for index in 0..<count {
                 let frame = try readyObject(await a.readyFrame(readyRead(offer, index: index)))
