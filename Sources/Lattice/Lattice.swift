@@ -1590,8 +1590,9 @@ public struct Lattice {
         // closes — the core close additionally retires its whole read pool
         // ahead of connection teardown; a reopened database mints a new
         // identityHash and a fresh coordinator.
-        GenerationCoordinatorRegistry.evict(identityHash: backend.identityHash)
-        backend.close()
+        GenerationCoordinatorRegistry.close(identityHash: backend.identityHash) {
+            backend.close()
+        }
     }
 
     /// Retire every open read generation now (item A §3.6): force-COMMIT

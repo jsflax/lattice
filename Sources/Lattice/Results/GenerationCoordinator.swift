@@ -1403,6 +1403,16 @@ enum GenerationCoordinatorRegistry {
         }
     }
 
+    /// Retire current generations before closing, then discard any replacement
+    /// coordinator minted by a concurrent reader while the backend was still
+    /// open. Otherwise its cached count/rows can outlive the backend close.
+    /// Neither eviction holds the registry lock while calling the backend.
+    static func close(identityHash: Int64, backendClose: () -> Void) {
+        evict(identityHash: identityHash)
+        backendClose()
+        evict(identityHash: identityHash)
+    }
+
     /// Tear down and remove the coordinator for a closing backend.
     static func evict(identityHash: Int64) {
         let coordinator: GenerationCoordinator? = lock.withLockUnchecked { state in
