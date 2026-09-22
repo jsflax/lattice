@@ -1,5 +1,5 @@
 {
-  "scope": "Explicit authenticated relay source development graph. Requires the paired Core bridge; upstream application authorization only. Receiver trusted transport, continuous producer/controller integration, automatic recovery, hosted qualification and performance remain separate. Not a public release graph.",
-  "coreCommit": "8d4dbe3244152d19c7ccfcf6810548ccff300f54",
-  "coreTree": "8e15ffc4ecb7441898041f00657f6e64b59e33bc"
+  "scope": "Explicit authenticated relay development graph composed onto the qualified scheduler handoff correction. Upstream registered-peer authorization plus recipient publication gate only. Receiver trusted transport, continuous producer/controller integration, automatic recovery, runtime/performance qualification and public release remain separate.",
+  "coreCommit": "81138b153db5410d9f76ea43164ae8bbe36c2f5a",
+  "coreTree": "071a1ee0cad98acc1939d467341311d55f41a260"
 }
