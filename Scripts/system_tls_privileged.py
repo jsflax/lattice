@@ -43,21 +43,31 @@ def group_present(pgid):
         return False
 
 
-def retire(process, deadline):
+def retire(process, deadline, terminal=None):
     result = {'groupGone': process is None, 'leaderReaped': process is None, 'signals': [], 'errors': []}
     if process is None:
         return result
-    # The Popen child creates a fresh session. Keep its leader unreaped until
-    # the final group signal so its PID/PGID cannot be reassigned meanwhile.
-    for number in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(process.pid, number)
-            result['signals'].append(int(number))
-        except ProcessLookupError:
-            break
-        except BaseException as error:
-            result['errors'].append({'type': type(error).__name__, 'message': str(error)})
-            break
+    if terminal is not None:
+        # Only the exact owned child's nonreaping WEXITED observation selects
+        # this branch. Reap that child below, then observe absence only: its
+        # numeric PGID can be reused, so never signal it after reaping. A live
+        # descendant, a permission error, or the original deadline still fails.
+        if (terminal.si_pid != process.pid or
+                terminal.si_code not in (os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED)):
+            result['errors'].append({'type': 'ValueError', 'message': 'terminal observation is not the owned child'})
+            return result
+    else:
+        # Active/cancelled work retains its unreaped session leader through
+        # the final group signal, preventing PID/PGID reuse during signalling.
+        for number in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(process.pid, number)
+                result['signals'].append(int(number))
+            except ProcessLookupError:
+                break
+            except BaseException as error:
+                result['errors'].append({'type': type(error).__name__, 'message': str(error)})
+                break
     try:
         remaining = deadline - time.monotonic()
         if remaining > 0:
@@ -65,7 +75,7 @@ def retire(process, deadline):
             result['leaderReaped'] = True
         while time.monotonic() < deadline:
             if not group_present(process.pid):
-                result['groupGone'] = True
+                result['groupGone'] = time.monotonic() <= deadline
                 break
             time.sleep(0.02)
     except BaseException as error:
@@ -118,7 +128,7 @@ def supervise(request_path):
     record = {'nonce': state['nonce'], 'requestSHA256': trust.sha(raw), 'argv': argv,
               'deadline': deadline, 'retirementDeadline': retirement, 'started': False,
               'success': False, 'primaryError': None, 'supervisorPID': os.getpid()}
-    process = None; received = []
+    process = None; terminal = None; received = []
     def interrupted(number, _frame): received.append(number)
     previous = {number: signal.signal(number, interrupted) for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
     try:
@@ -126,10 +136,16 @@ def supervise(request_path):
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, start_new_session=True)
         record.update(started=True, pid=process.pid, ownedPGID=process.pid)
         # waitid WNOWAIT observes completion without releasing the leader PID.
-        # poll()/wait() must not reap it before its group has been retired.
+        # Keep the exact terminal observation for absence-only retirement;
+        # active work must retain the leader until its final group signal.
         while True:
             status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
             if status is not None:
+                if (status.si_pid != process.pid or
+                        status.si_code not in (os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED)):
+                    raise RuntimeError('terminal observation is not the owned child')
+                terminal = status
+                record['terminalObservation'] = {'pid': status.si_pid, 'code': status.si_code, 'status': status.si_status}
                 if status.si_code != os.CLD_EXITED or status.si_status != 0:
                     raise RuntimeError('privileged TLS command failed')
                 break
@@ -145,7 +161,7 @@ def supervise(request_path):
         # its cooperative owner has the outer runner's five-second TERM grace.
         cleanup_deadline = min(retirement, time.monotonic() + RETIRE_SECONDS)
         record['cleanupDeadline'] = cleanup_deadline
-        record['cleanup'] = retire(process, cleanup_deadline)
+        record['cleanup'] = retire(process, cleanup_deadline, terminal)
         if process is not None: record['exitCode'] = process.returncode
         record['receivedSignals'] = received
         record['success'] = (record['started'] and record['primaryError'] is None and not received and

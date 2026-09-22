@@ -55,7 +55,7 @@ class PrivilegedLifecycle(unittest.TestCase):
         def waitid(*_args):
             if mode == 'signal': handlers[signal.SIGTERM](signal.SIGTERM, None); return None
             if mode in ('timeout', 'eof'): return None
-            return SimpleNamespace(si_code=1, si_status=7 if mode == 'nonzero' else 0)
+            return SimpleNamespace(si_pid=process.pid, si_code=1, si_status=7 if mode == 'nonzero' else 0)
         def launch(argv, **kwargs):
             events.append(('launch', argv, kwargs)); return process
         def register(number, handler):
@@ -73,7 +73,7 @@ class PrivilegedLifecycle(unittest.TestCase):
                 (helper.os, 'read', lambda *_: b''), (helper.os, 'fstat', lambda _: SimpleNamespace(st_size=0)),
                 (helper.signal, 'signal', register),
                 (helper, 'write_receipt', lambda path, value, *_: trust.save(path, value)),
-                (helper.os, 'CLD_EXITED', 1), (helper.os, 'P_PID', 1),
+                (helper.os, 'CLD_EXITED', 1), (helper.os, 'CLD_KILLED', 2), (helper.os, 'CLD_DUMPED', 3), (helper.os, 'P_PID', 1),
                 (helper.os, 'WEXITED', 4), (helper.os, 'WNOHANG', 1), (helper.os, 'WNOWAIT', 16),
             ]:
                 stack.enter_context(patch.object(target, name, value, create=True))
@@ -81,11 +81,13 @@ class PrivilegedLifecycle(unittest.TestCase):
             outcome = helper.supervise(self.path)
         return outcome, json.loads((self.root / 'receipts' / (self.name + '-result.json')).read_text()), events
 
-    def test_completed_command_still_retires_descendants_before_reaping(self):
+    def test_completed_command_reaps_before_absence_without_destructive_signal(self):
         ok, record, events = self.execute()
         self.assertTrue(ok); self.assertEqual(record['exitCode'], 0)
         before_wait = events[:next(i for i, item in enumerate(events) if item[0] == 'wait')]
-        self.assertEqual([item[2] for item in before_wait if item[0] == 'signal'], [signal.SIGTERM, signal.SIGKILL])
+        self.assertEqual([item[2] for item in before_wait if item[0] == 'signal'], [])
+        self.assertEqual([item[2] for item in events if item[0] == 'signal'], [0])
+        self.assertEqual(record['terminalObservation'], {'pid': 707, 'code': 1, 'status': 0})
         self.assertTrue(record['cleanup']['groupGone']); self.assertTrue(record['cleanup']['leaderReaped'])
         self.assertEqual(events[0][1], [trust.SECURITY, 'remove-trusted-cert', '-d', str(self.root / 'private/trusted-ca.pem')])
         self.assertTrue(events[0][2]['start_new_session'])
