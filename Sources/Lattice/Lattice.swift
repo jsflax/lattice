@@ -851,7 +851,12 @@ public struct Lattice {
     internal init(isolation: isolated (any Actor)? = #isolation,
                   for schema: [any Model.Type],
                   configuration: Configuration = defaultConfiguration,
-                  isSynchronizing: Bool) throws {
+                  isSynchronizing: Bool,
+                  continuousProducer: ContinuousProducerPolicy? = nil) throws {
+        // Refuse migration before allocating callback contexts or opening a file.
+        if continuousProducer != nil && configuration.migration != nil {
+            throw ContinuousProducerError.migrationUnsupported
+        }
         // Register Swift network factory on first use
         Self.registerNetworkFactoryIfNeeded()
 
@@ -903,7 +908,16 @@ public struct Lattice {
         var error = lattice.cxx_error()
         let createdRef: lattice.swift_lattice_ref
 
-        if let migration = configuration.migration {
+        if let continuousProducer {
+            var result = lattice.continuous_result()
+            createdRef = lattice.swift_lattice_ref.createContinuous(
+                swiftConfig: configuration.cxxConfiguration(isolation: isolation), schemas: cxxSchemas,
+                policy: try continuousProducer.native(), result: &result)
+            let settlement = ContinuousProducerSettlement(result)
+            guard settlement.phase == .committed, !settlement.hasError, createdRef.isValid() else {
+                throw ContinuousProducerError.open(settlement)
+            }
+        } else if let migration = configuration.migration {
             // Find the target version from migration dict (highest key)
             let targetVersion = migration.keys.max() ?? 1
 
@@ -977,6 +991,15 @@ public struct Lattice {
                 for schema: [any Model.Type],
                 configuration: Configuration = defaultConfiguration) throws {
         try self.init(isolation: isolation, for: schema, configuration: configuration, isSynchronizing: false)
+    }
+
+    /// Explicit fresh-only activation through the actual retained Swift owner.
+    /// Existing stores are never migrated, relabeled or overwritten here.
+    public init(isolation: isolated (any Actor)? = #isolation,
+                for schema: [any Model.Type], configuration: Configuration,
+                continuousProducer: ContinuousProducerPolicy) throws {
+        try self.init(isolation: isolation, for: schema, configuration: configuration,
+                      isSynchronizing: false, continuousProducer: continuousProducer)
     }
 
     internal var schema: _Schema?
