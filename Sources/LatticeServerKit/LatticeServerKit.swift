@@ -663,13 +663,29 @@ public struct SyncSchemaHandshake: Sendable {
 final class RevocationFlag: @unchecked Sendable {
     private let lock = NIOLock()
     private var revoked = false
-    var isRevoked: Bool { lock.withLock { revoked } }
-    func revoke() { lock.withLock { revoked = true } }
+    private var recovery: RecoveryRelayLifetime?
+    var isRevoked: Bool {
+        let (revoked, recovery) = lock.withLock { (self.revoked, self.recovery) }
+        return revoked || (recovery?.retiredOrExpired ?? false)
+    }
+    var hasRecovery: Bool { lock.withLock { recovery != nil } }
+    func filterRecoveryPage(_ page: [AuditLog]) -> [AuditLog] {
+        let cell = lock.withLock { recovery }
+        return cell?.filter(page) ?? page
+    }
+    func bindRecovery(_ cell: RecoveryRelayLifetime) {
+        let stopped = lock.withLock { recovery = cell; return revoked }
+        if stopped { cell.stop() }
+    }
+    func revoke() {
+        let cell = lock.withLock { revoked = true; return recovery }
+        cell?.stop()
+    }
 }
 
 @RelayControlActor final class SocketManager {
     nonisolated init() {}
-    struct Entry {
+    struct Entry: Sendable {
         let socket: WebSocket
         let userId: UUID
         let revocation: RevocationFlag
@@ -683,6 +699,11 @@ final class RevocationFlag: @unchecked Sendable {
         channels[channelId, default: []]
             .filter { !$0.revocation.isRevoked }
             .map(\.socket)
+    }
+
+    func recoveryRecipients(channelId: String, excluding: WebSocket) -> [Entry] {
+        reap(channelId: channelId)
+        return channels[channelId, default: []].filter { $0.socket !== excluding && !$0.revocation.isRevoked }
     }
 
     func connectionCount(channelId: String) -> Int {
@@ -738,6 +759,10 @@ final class RevocationFlag: @unchecked Sendable {
         }
     }
 
+    func disconnectEveryConnection() {
+        for entries in channels.values { for entry in entries { entry.revocation.revoke(); forceClose(entry.socket) } }
+    }
+
     /// Politely close, then drop the transport if the peer never answers:
     /// `pingInterval` starts server-side pings whose unanswered-pong path
     /// closes the channel outright.
@@ -759,9 +784,22 @@ public struct SyncRelayHandle: Sendable {
     /// public surface.
     let pushManager: FileWatchManager?
 
-    init(manager: SocketManager, pushManager: FileWatchManager? = nil) {
+    private let recoveryMount: RecoveryRelayMount?
+
+    init(manager: SocketManager, pushManager: FileWatchManager? = nil, recoveryMount: RecoveryRelayMount? = nil) {
         self.manager = manager
         self.pushManager = pushManager
+        self.recoveryMount = recoveryMount
+    }
+
+    var recoverySessionCount: Int { recoveryMount?.sessionCount ?? 0 }
+
+    /// Retire this recovery mount. Existing admitted effects settle truthfully;
+    /// no further setup, apply, catch-up or observer publication is authorized.
+    public func retireRecoveryAuthorization() async {
+        guard let recoveryMount else { return }
+        recoveryMount.retire()
+        await manager.disconnectEveryConnection()
     }
 
     /// Kick one user's live connections on a channel (membership removal).
@@ -855,6 +893,23 @@ extension Lattice {
         observerPush: SyncObserverPush? = nil,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) -> SyncRelayHandle {
+        configureSyncRelayImpl(on: routes, path: path, for: schema, storageURL: storageURL,
+            writePolicy: writePolicy, handshake: handshake, storeConfiguration: storeConfiguration,
+            observerPush: observerPush, recoveryMount: nil, channelExtractor: channelExtractor)
+    }
+
+    static func configureSyncRelayImpl(
+        on routes: any RoutesBuilder,
+        path: [PathComponent] = ["sync"],
+        for schema: [any Lattice.Model.Type],
+        storageURL: URL,
+        writePolicy: SyncWritePolicy? = nil,
+        handshake: SyncSchemaHandshake? = nil,
+        storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
+        observerPush: SyncObserverPush? = nil,
+        recoveryMount: RecoveryRelayMount?,
+        channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
+    ) -> SyncRelayHandle {
         let sockets = SocketManager()
         let ackPathRecorder = ACKPathDiagnostics.recorder(for: storageURL)
         let ingressHooks = RelayIngressTesting.hooks(for: storageURL)
@@ -908,6 +963,10 @@ extension Lattice {
             // key on `busyTimeoutMs`, so the first open of a file installs the
             // budget every later aliased handle runs with.
             let state = ConnectionRelayState(ingress: ingressAdmission.makeAccount())
+            if let recoveryMount {
+                do { state.recovery = try RecoveryRelayConnection(mount: recoveryMount, request: req, socket: ws, revocation: state.revocation) }
+                catch { state.sealIngress(.setupRefused, socket: ws); ws.close(code: .policyViolation, promise: nil); return }
+            }
 
             // Handlers go live IMMEDIATELY — synchronously on the socket's
             // event loop, BEFORE any await (handshake, extractor, open). The
@@ -925,6 +984,10 @@ extension Lattice {
             }
             ws.onBinary { [ackPath] ws, bb in
                 ackPath?.record(.binaryEntered, bytes: bb.readableBytes)
+                if state.recovery != nil && bb.readableBytes > 1_048_576 {
+                    state.sealIngress(.applyRefused, socket: ws, stopQueued: true)
+                    ws.close(code: .policyViolation, promise: nil); return
+                }
                 // Revoked or refused: consume and discard. Never apply,
                 // never ack, never fan out, never buffer.
                 guard !state.revocation.isRevoked, !state.isRefused else {
@@ -1081,8 +1144,9 @@ extension Lattice {
                             processRelayApplyOnWorker(data: data, lattice: applyOwner.value, channel: channel,
                                                       policy: writePolicy, revocation: state.revocation,
                                                       diagnostic: ackPath, needsFanOut: watchManager == nil,
-                                                      admissionSpan: admissionSpan)
+                                                      admissionSpan: admissionSpan, recovery: state.recovery)
                         }, completion: { processed in
+                            if let recovery = state.recovery, !recovery.lifetime.publishable { return }
                             let frame: RelayAppliedFrame
                             switch processed {
                             case .revoked:
@@ -1091,11 +1155,15 @@ extension Lattice {
                             case .refused(let reason):
                                 print(">>> Sync frame rejected on \(channel.id): \(reason)")
                                 if let encoded = try? JSONEncoder().encode(ServerSentEvent.rejected(reason: reason)) {
-                                    ws.send(ByteBuffer(data: encoded))
+                                    if let recovery = state.recovery { recovery.send(encoded) }
+                                    else { ws.send(ByteBuffer(data: encoded)) }
                                 }
                                 return
                             case .applied(let applied): frame = applied
                             }
+                            // Retain the counted native handoff through ACK/fan-out
+                            // scheduling. The native token is payload-free.
+                            guard frame.recoveryResult?.publishable != false else { return }
                             let outcome = frame.outcome
                             let frameSpan = frame.span
                             ackPath?.record(.applyGateReturned, span: frameSpan, count: frame.requestedIds.count,
@@ -1122,7 +1190,8 @@ extension Lattice {
                                 if let encoded = try? JSONEncoder().encode(ServerSentEvent.ack(outcome.applied)) {
                                     ackPath?.record(.ackEncodeEnd, span: frameSpan, bytes: encoded.count)
                                     ackPath?.record(.ackSendBegin, span: frameSpan, bytes: encoded.count)
-                                    ws.send(ByteBuffer(data: encoded))
+                                    if let recovery = state.recovery { recovery.send(encoded, result: frame.recoveryResult) }
+                                    else { ws.send(ByteBuffer(data: encoded)) }
                                     // Existing synchronous send-call return, not write completion.
                                     ackPath?.record(.ackSendReturn, span: frameSpan)
                                 } else {
@@ -1149,7 +1218,8 @@ extension Lattice {
                                     """)
                                 if let encoded = try? JSONEncoder().encode(
                                     ServerSentEvent.nack(ids: outcome.unapplied, reason: outcome.nackReason)) {
-                                    ws.send(ByteBuffer(data: encoded))
+                                    if let recovery = state.recovery { recovery.send(encoded, result: frame.recoveryResult) }
+                                    else { ws.send(ByteBuffer(data: encoded)) }
                                 }
                             } else if let error = outcome.lastError {
                                 if frame.malformed || frame.claimsUpload {
@@ -1206,6 +1276,16 @@ extension Lattice {
                             // Preserve upload/unknown/replay forwarding, including
                             // Core's auditLog-before-ack decoder precedence.
                             guard watchManager == nil, !frame.isAcknowledgment else { return }
+                            if let recovery = state.recovery {
+                                let recipients = await sockets.recoveryRecipients(channelId: channel.id, excluding: ws)
+                                let bytes: Data?
+                                if outcome.isComplete { bytes = Data(buffer: ingressFrame.makeLegacyFanoutBuffer()) }
+                                else { bytes = frame.partialFanOut }
+                                if let bytes, let result = frame.recoveryResult {
+                                    recovery.fanOut(bytes, to: recipients, result: result)
+                                }
+                                return
+                            }
                             let recipients = await sockets.sockets(channelId: channel.id).filter { $0 !== ws }
                             guard !recipients.isEmpty else { return }
                             let fanOut: ByteBuffer?
@@ -1238,9 +1318,15 @@ extension Lattice {
                 // setup/catch-up now advances through direct control callbacks;
                 // this task never awaits its native or socket completions.
                 let lastEventId = try? req.query.get(UUID?.self, at: "last-event-id")
+                let recoverySource: RecoveryRelayResolvedSource?
+                do { recoverySource = try recoveryMount?.resolve(channel) }
+                catch {
+                    state.sealIngress(.setupRefused, socket: ws)
+                    ws.close(code: .policyViolation, promise: nil); return
+                }
                 let input = RelayConnectionSetupInput(
                     schema: schema, storageURL: storageURL, fileURL: latticeURL,
-                    applyKey: applyKey, channel: channel, socket: ws, state: state,
+                    applyKey: applyKey, channel: channel, recoverySource: recoverySource, socket: ws, state: state,
                     sockets: sockets, watchManager: watchManager, pushContext: pushContext,
                     storeConfiguration: storeConfiguration, lastEventId: lastEventId,
                     processFrame: processFrame, diagnostic: ackPath,
@@ -1253,10 +1339,10 @@ extension Lattice {
 
             }
         }
-        routes.webSocket(path, maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 300 * 1024 * 1024),
+        routes.webSocket(path, maxFrameSize: WebSocketMaxFrameSize(integerLiteral: recoveryMount == nil ? 300 * 1024 * 1024 : 1_048_576),
                          shouldUpgrade: { $0.eventLoop.makeSucceededFuture(HTTPHeaders?.some([:])) },
                          onUpgrade: onUpgrade)
-        return SyncRelayHandle(manager: sockets, pushManager: watchManager)
+        return SyncRelayHandle(manager: sockets, pushManager: watchManager, recoveryMount: recoveryMount)
     }
 
     /// Personal-topology wrapper preserving the original API and on-disk
@@ -1308,6 +1394,7 @@ final class ConnectionRelayState: @unchecked Sendable {
         self.ingress = ingress
     }
     var lattice: Lattice?
+    var recovery: RecoveryRelayConnection? // assigned once on the upgrade event loop
     /// Installed at go-live: the frame processor bound to this connection's
     /// channel (handlers register before the channel is known).
     var process: ((WebSocket, RelayIngressFrame, Lattice) async -> Void)?
@@ -1328,6 +1415,7 @@ final class ConnectionRelayState: @unchecked Sendable {
     /// only an explicit stronger stop skips its queued remainder.
     func sealIngress(_ reason: RelayIngressStopReason, socket: WebSocket, stopQueued: Bool = false) {
         ingress.seal(reason)
+        recovery?.retire(for: nativeReleaseKey)
         isRefused = true
         if stopQueued { applyAdmissionStopped.revoke() }
         socket.eventLoop.execute {

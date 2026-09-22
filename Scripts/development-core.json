@@ -1,5 +1,5 @@
 {
-  "scope": "Explicit combined recovery/discovery and 100-entry catch-up development graph with reviewed measurement logging. Hosted native/SDK, automatic recovery, full-suite and matched performance gates remain separate; not a release graph.",
-  "coreCommit": "c87d5575b39933e53450962a30196b049c222fe9",
-  "coreTree": "ad5b4770dfd32b023aff7d84b19a6cfa31eb5cbe"
+  "scope": "Explicit authenticated relay source development graph. Requires the paired Core bridge; upstream application authorization only. Receiver trusted transport, continuous producer/controller integration, automatic recovery, hosted qualification and performance remain separate. Not a public release graph.",
+  "coreCommit": "8d4dbe3244152d19c7ccfcf6810548ccff300f54",
+  "coreTree": "8e15ffc4ecb7441898041f00657f6e64b59e33bc"
 }

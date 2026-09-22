@@ -11,6 +11,7 @@ struct RelayConnectionSetupInput: @unchecked Sendable {
     let fileURL: URL?
     let applyKey: String
     let channel: SyncChannel
+    let recoverySource: RecoveryRelayResolvedSource?
     let socket: WebSocket
     let state: ConnectionRelayState
     let sockets: SocketManager
@@ -104,21 +105,26 @@ private final class RelayCatchUpReadState {
             if offset < count {
                 let end = offset + min(count - offset, Self.entriesPerTurn)
                 let page: [AuditLog]
+                let sampledLast: Int64?
                 if let diagnostic = input.diagnostic {
                     diagnostic.record(.catchUpPageMaterializeBegin, span: pageSpan, count: end - offset)
                     let materialized = Array(events[offset..<end])
                     diagnostic.record(.catchUpPageMaterializeEnd, span: pageSpan, count: materialized.count)
-                    page = lattice.lateBindNoHistory(materialized)
+                    sampledLast = materialized.last?.primaryKey
+                    page = lattice.lateBindNoHistory(input.state.revocation.filterRecoveryPage(materialized))
                     diagnostic.record(.catchUpPageBindingEnd, span: pageSpan, count: page.count)
                 } else {
-                    page = lattice.lateBindNoHistory(Array(events[offset..<end]))
+                    let materialized = Array(events[offset..<end])
+                    sampledLast = materialized.last?.primaryKey
+                    page = lattice.lateBindNoHistory(input.state.revocation.filterRecoveryPage(materialized))
                 }
                 let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
                 input.diagnostic?.record(.catchUpPageEncodingEnd, span: pageSpan,
                                           bytes: encoded.count, count: page.count)
                 probe?.capture(page: page, route: .catchup)
+                let last = input.state.recovery == nil ? page.last?.primaryKey : sampledLast
                 offset = end
-                return .page(encoded, count: page.count, last: page.last?.primaryKey)
+                return .page(encoded, count: page.count, last: last)
             }
             if count == 0, let lastEventId = input.lastEventId, hasSubscription {
                 let boundary = lattice.objects(AuditLog.self)
@@ -136,7 +142,7 @@ private final class RelayCatchUpReadState {
 /// no self lease or reference from the socket state, hence no idle owner cycle.
 /// This does not move the external extractor or the existing async apply consumer.
 @RelayControlActor final class RelayConnectionSetup {
-    private enum Phase { case initial, opening, subscribing, goLive, reading, sending, finishing, finished }
+    private enum Phase { case initial, opening, authorizingRecovery, subscribing, goLive, reading, sending, finishing, finished }
     private let input: RelayConnectionSetupInput
     private var phase = Phase.initial
     private var native: UnsafeSendableBox<RelayCatchUpReadState>?
@@ -170,14 +176,20 @@ private final class RelayCatchUpReadState {
                 fileURL: input.fileURL, storeConfiguration: input.storeConfiguration)
             input.diagnostic?.record(.storeOpenBegin)
             let opened: UnsafeSendableBox<RelayCatchUpReadState>?
-            if let lattice = try? Lattice(isolation: nil, for: input.schema, configuration: configuration) {
+            let turn: RecoveryRelayAuthorizationTurn?
+            do {
+                let lattice = try Lattice(isolation: nil, for: input.schema, configuration: configuration)
+                if let recovery = input.state.recovery {
+                    guard let source = input.recoverySource else { throw SyncRecoveryConfigurationError.staleAuthorization }
+                    turn = try recovery.open(owner: lattice, channel: input.channel, source: source)
+                } else { turn = nil }
                 opened = UnsafeSendableBox(RelayCatchUpReadState(lattice: lattice, input: input, probe: probe))
                 input.diagnostic?.record(.storeOpenEnd)
-            } else {
-                opened = nil
+            } catch {
+                opened = nil; turn = nil
                 input.diagnostic?.record(.storeOpenFailure)
             }
-            Task { @RelayControlActor in self.opened(opened, probe: probe) }
+            Task { @RelayControlActor in self.opened(opened, turn: turn, probe: probe) }
         }
     }
 
@@ -185,7 +197,7 @@ private final class RelayCatchUpReadState {
         !input.socket.isClosed && !input.state.revocation.isRevoked && !input.state.isRefused
     }
 
-    private func opened(_ opened: UnsafeSendableBox<RelayCatchUpReadState>?, probe: ObserverSendBoundaryProbe?) {
+    private func opened(_ opened: UnsafeSendableBox<RelayCatchUpReadState>?, turn: RecoveryRelayAuthorizationTurn?, probe: ObserverSendBoundaryProbe?) {
         precondition(phase == .opening)
         native = opened
         guard opened != nil else {
@@ -196,6 +208,48 @@ private final class RelayCatchUpReadState {
             finish(); return
         }
         guard isLive else { finish(); return }
+        if let recovery = input.state.recovery, let turn {
+            phase = .authorizingRecovery
+            // External auth never runs while an IO worker or native lock is
+            // held. A closed connection retains its finite mount charge until
+            // this actual callback settles; close cannot recycle the budget.
+            Task.detached {
+                let answer: Result<Data, any Error>
+                do { answer = .success(try await recovery.authorize(turn)) }
+                catch { answer = .failure(error) }
+                Task { @RelayControlActor in self.authorizationReturned(answer, probe: probe) }
+            }
+            return
+        }
+        subscribe(probe: probe)
+    }
+
+    private func authorizationReturned(_ answer: Result<Data, any Error>, probe: ObserverSendBoundaryProbe?) {
+        precondition(phase == .authorizingRecovery)
+        guard isLive else { finish(); return }
+        switch answer {
+        case .failure(let error): fail(error)
+        case .success(let bytes):
+            let input = input
+            RelayExecutionPool.io.submitRequired(for: input.applyKey) {
+                let error: (any Error)?
+                do {
+                    guard let recovery = input.state.recovery else { throw SyncRecoveryConfigurationError.staleAuthorization }
+                    try recovery.finish(bytes); error = nil
+                } catch let failure { error = failure }
+                Task { @RelayControlActor in self.authorizationConsumed(error, probe: probe) }
+            }
+        }
+    }
+
+    private func authorizationConsumed(_ error: (any Error)?, probe: ObserverSendBoundaryProbe?) {
+        precondition(phase == .authorizingRecovery)
+        if let error { fail(error); return }
+        guard isLive else { finish(); return }
+        subscribe(probe: probe)
+    }
+
+    private func subscribe(probe: ObserverSendBoundaryProbe?) {
         phase = .subscribing
         if let manager = input.watchManager, let context = input.pushContext, let url = input.fileURL {
             input.diagnostic?.record(.watchSubscribeRequested)
@@ -326,7 +380,9 @@ private final class RelayCatchUpReadState {
         promise.futureResult.whenComplete { result in
             Task { @RelayControlActor in self.sent(result, isPage: pageCount != nil, last: last) }
         }
-        if let send = input.sendCatchUp { send(input.socket, bytes, promise) }
+        if let recovery = input.state.recovery {
+            recovery.send(bytes, promise: promise)
+        } else if let send = input.sendCatchUp { send(input.socket, bytes, promise) }
         else { input.socket.send(raw: bytes, opcode: .binary, promise: promise) }
     }
 
@@ -355,6 +411,7 @@ private final class RelayCatchUpReadState {
     private func finish(keepSubscription: Bool = false) {
         guard phase != .finishing, phase != .finished else { return }
         phase = .finishing
+        if !keepSubscription { input.state.recovery?.retire(for: input.applyKey) }
         if !keepSubscription, let sub = subscription {
             input.state.pushSubscription = nil
             input.watchManager?.unsubscribe(sub)

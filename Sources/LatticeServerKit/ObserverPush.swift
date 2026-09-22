@@ -695,7 +695,14 @@ private enum PreparedPushPage: Sendable {
             }
             // One page in flight. The next native read is admitted only from
             // the successful promise completion, preserving socket flow control.
-            sub.socket.send(raw: data, opcode: .binary, promise: promise)
+            if sub.revocation.hasRecovery {
+                sub.socket.eventLoop.execute {
+                    guard !sub.revocation.isRevoked, !sub.socket.isClosed else {
+                        promise.fail(SyncRecoveryConfigurationError.staleAuthorization); return
+                    }
+                    sub.socket.send(raw: data, opcode: .binary, promise: promise)
+                }
+            } else { sub.socket.send(raw: data, opcode: .binary, promise: promise) }
         }
     }
 
@@ -725,11 +732,12 @@ private enum PreparedPushPage: Sendable {
         let pipeline = sub.sendBoundaryProbe?.pipeline
         sub.setupDiagnostic?.record(.pushPageBegin, span: sub.diagnosticGroupID ?? 0)
         let pageRead = pipeline?.capture(.pageReadBegin, parent: pass, cursor: cursor)
-        let page = watcher.lattice.lateBindNoHistory(
-            watcher.lattice.eventsAfter(id: cursor).snapshot(limit: Int64(pageSize)))
+        let sampled = watcher.lattice.eventsAfter(id: cursor).snapshot(limit: Int64(pageSize))
+        let page = watcher.lattice.lateBindNoHistory(sub.revocation.filterRecoveryPage(sampled))
         let pageReadEnd = pipeline?.capture(.pageReadEnd, parent: pageRead, cursor: cursor, count: page.count)
         sub.setupDiagnostic?.record(.pushPageEnd, span: sub.diagnosticGroupID ?? 0, count: page.count)
-        guard !page.isEmpty, let last = page.last?.primaryKey else { return .empty }
+        let cursorPage = sub.revocation.hasRecovery ? sampled : page
+        guard !cursorPage.isEmpty, let last = cursorPage.last?.primaryKey else { return .empty }
         let encoding = pipeline?.capture(.encodeBegin, parent: pageReadEnd,
                                          cursor: cursor, count: page.count, lastPK: last)
         guard let encoded = try? JSONEncoder().encode(ServerSentEvent.auditLog(page)) else {

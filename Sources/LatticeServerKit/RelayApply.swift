@@ -256,6 +256,7 @@ struct RelayApplyOutcome: Sendable {
     var lastError: String?
     var errorClass: RelayApplyErrorClass = .containedChunkFailure
     var elapsedMs: Double = 0
+    var recoveryAcceptanceUnverified = false
 
     /// True when the frame was applied in full (or was a non-upload frame
     /// that completed without error) — the only state that fans out verbatim.
@@ -263,6 +264,11 @@ struct RelayApplyOutcome: Sendable {
 
     /// Human-readable nack reason, carrying the SQLite classification.
     var nackReason: String {
+        if recoveryAcceptanceUnverified {
+            return "Acceptance is unverified for \(unapplied.count) original IDs; effects may already be committed. "
+                + "Retain and retry the same identities for positive receipt lookup."
+                + (lastError.map { " \($0)" } ?? "")
+        }
         let detail = lastError.map { ": \($0)" } ?? " (apply returned a partial result without raising)"
         return "relay could not apply \(unapplied.count) entr\(unapplied.count == 1 ? "y" : "ies") "
             + "after \(attempts) attempt\(attempts == 1 ? "" : "s") "
@@ -387,6 +393,7 @@ struct RelayAppliedFrame: Sendable {
     let isAcknowledgment: Bool
     let span: UInt64
     let partialFanOut: Data?
+    var recoveryResult: RecoveryRelayNativeResult? = nil
 }
 
 enum RelayProcessedFrame: Sendable {
@@ -400,8 +407,9 @@ enum RelayProcessedFrame: Sendable {
 func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChannel,
                               policy: SyncWritePolicy?, revocation: RevocationFlag,
                               diagnostic: ACKPathConnection?, needsFanOut: Bool,
-                              admissionSpan: UInt64 = 0) -> RelayProcessedFrame {
+                              admissionSpan: UInt64 = 0, recovery: RecoveryRelayConnection? = nil) -> RelayProcessedFrame {
     guard !revocation.isRevoked else { return .revoked }
+    if recovery != nil && data.count > 1_048_576 { return .refused("recovery frame byte bound") }
     diagnostic?.record(.frameParseBegin, span: admissionSpan, bytes: data.count)
     let frame = RelayFrame(data)
     let span = diagnostic?.record(frame.root == nil ? .frameMalformed : .frameParsed, span: admissionSpan,
@@ -414,8 +422,25 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
     diagnostic?.record(.applyRequested, span: span, count: frame.requestedIds.count,
                        matching: frame.requestedIds)
     diagnostic?.record(.applyBodyEntered, span: span, matching: frame.requestedIds)
-    let outcome = applyWithRetry(lattice: lattice, data: data, frame: frame,
+    var outcome: RelayApplyOutcome
+    var recoveryResult: RecoveryRelayNativeResult?
+    if let recovery {
+        outcome = RelayApplyOutcome(); outcome.attempts = 1; outcome.recoveryAcceptanceUnverified = true
+        let started = DispatchTime.now().uptimeNanoseconds
+        do {
+            let actual = try recovery.receive(data)
+            if actual.status == 2 { return .revoked }
+            outcome.applied = actual.ids
+            if actual.status == 1 { recoveryResult = actual }
+            else { outcome.lastError = actual.error ?? "authenticated native apply outcome unavailable" }
+        } catch { outcome.lastError = String(describing: error) }
+        let accepted = Set(outcome.applied)
+        outcome.unapplied = frame.requestedIds.filter { !accepted.contains($0) }
+        outcome.elapsedMs = Double(DispatchTime.now().uptimeNanoseconds &- started) / 1e6
+    } else {
+        outcome = applyWithRetry(lattice: lattice, data: data, frame: frame,
                                  channelId: channel.id, userId: channel.userId)
+    }
     diagnostic?.record(.applyBodyReturned, span: span, count: frame.requestedIds.count,
                        applied: outcome.applied.count, missing: outcome.unapplied.count,
                        attempts: outcome.attempts, matching: outcome.applied)
@@ -426,5 +451,5 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
     return .applied(.init(outcome: outcome, byteCount: frame.byteCount,
                          requestedIds: frame.requestedIds, malformed: frame.root == nil,
                          claimsUpload: frame.claimsUpload, isAcknowledgment: frame.isAcknowledgment,
-                         span: span, partialFanOut: partial))
+                         span: span, partialFanOut: partial, recoveryResult: recoveryResult))
 }
