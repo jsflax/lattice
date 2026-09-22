@@ -13,6 +13,7 @@ import plistlib
 import re
 import stat
 import subprocess
+import sys
 import time
 
 MAX_BYTES = 16 * 2**20
@@ -47,7 +48,7 @@ def save(path, value):
         output.flush(); os.fsync(output.fileno())
 
 
-def hosted(root, env=None, system=None):
+def hosted(root, env=None, system=None, runner_home=None):
     env = os.environ if env is None else env
     system = platform.system() if system is None else system
     if env.get('GITHUB_ACTIONS') != 'true' or env.get('RUNNER_ENVIRONMENT') != 'github-hosted':
@@ -63,7 +64,7 @@ def hosted(root, env=None, system=None):
             raise ValueError('missing hosted job identity')
     if not re.fullmatch('[0-9a-f]{40}', env.get('GITHUB_SHA', '')):
         raise ValueError('missing exact SDK revision')
-    expected = Path.home() / 'localdev' / ('lattice-development-' + env['GITHUB_RUN_ID'] + '-' + env['GITHUB_RUN_ATTEMPT'] + '-' + expected_leg) / 'system-tls'
+    expected = (Path.home() if runner_home is None else runner_home) / 'localdev' / ('lattice-development-' + env['GITHUB_RUN_ID'] + '-' + env['GITHUB_RUN_ATTEMPT'] + '-' + expected_leg) / 'system-tls'
     root = Path(root)
     if root != expected or root.parent.resolve(strict=True) != expected.parent or root.is_symlink() or (root.exists() and root.resolve(strict=True) != expected):
         raise ValueError('TLS root differs from exact fresh hosted localdev root')
@@ -155,12 +156,31 @@ class Commands:
         prefix = self.root / 'receipts' / f'{self.phase}-{self.number:02}-{label}'
         log = prefix.with_suffix('.log')
         record = {'argv': argv, 'timeoutSeconds': 30, 'success': False}
-        process = None; primary = None
+        process = None; primary = None; privileged = None
         try:
             with log.open('xb') as output:
-                process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
-                record['pid'] = process.pid
                 until = time.monotonic() + 30
+                if argv[:3] == ['sudo', '-n', SECURITY]:
+                    import system_tls_privileged as helper
+                    if not hasattr(os, 'waitid'): raise RuntimeError('hosted privileged TLS supervision requires Python 3.13 or newer')
+                    armed = json.loads(read(self.root / 'ARMED.json'))
+                    if argv[2:] != helper.command(self.root, label, armed): raise ValueError('privileged TLS argv differs')
+                    retirement = until + helper.RETIRE_SECONDS
+                    if retirement > self.deadline: raise RuntimeError('original TLS reserve cannot admit privileged command cleanup')
+                    name = prefix.name + '-privileged'
+                    request = {'root': str(self.root), 'name': name, 'nonce': armed['state']['nonce'],
+                               'phase': self.phase, 'number': self.number, 'label': label,
+                               'deadline': until, 'retirementDeadline': retirement}
+                    request_path = self.root / 'receipts' / (name + '-request.json')
+                    save(request_path, request)
+                    privileged = (request_path, retirement)
+                    record['privilegedRequest'] = str(request_path)
+                    launch = ['sudo', '-n', '--preserve-env=' + helper.PRESERVED_ENV, sys.executable, '-I', '-B',
+                              str(Path(__file__).resolve().with_name('system_tls_privileged.py')), '--request', str(request_path)]
+                    process = subprocess.Popen(launch, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+                else:
+                    process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
+                record['pid'] = process.pid
                 while process.poll() is None:
                     if time.monotonic() >= until or log.stat().st_size > COMMAND_LOG_BYTES:
                         raise RuntimeError('TLS command exceeded time/output bound')
@@ -168,6 +188,9 @@ class Commands:
                 record['exitCode'] = process.returncode
                 if process.returncode != 0:
                     raise RuntimeError('TLS command failed: ' + label)
+                if privileged:
+                    proof = privileged_result(privileged[0])
+                    if not proof['success']: raise RuntimeError('privileged TLS command or cleanup failed')
             raw = read(log, COMMAND_LOG_BYTES)
             record['success'] = True
             return raw
@@ -178,7 +201,22 @@ class Commands:
         finally:
             failures = []
             try:
-                if process is not None and process.poll() is None:
+                if privileged:
+                    # Closing the ownership pipe cancels the root supervisor.
+                    # It owns signalling its root child; never kill only sudo
+                    # and leave that child outside this helper's authority.
+                    if process is not None:
+                        if process.stdin is not None: process.stdin.close()
+                        if process.poll() is None:
+                            remaining = privileged[1] - time.monotonic()
+                            if remaining <= 0: raise RuntimeError('privileged TLS retirement deadline exhausted')
+                            process.wait(timeout=remaining)
+                    record['privilegedCleanup'] = privileged_result(privileged[0])
+                    if process is None: raise RuntimeError('privileged TLS launch lacks retirement proof')
+                    import system_tls_privileged as helper
+                    record['privilegedWrapperGroupGone'] = not helper.group_present(process.pid)
+                    if not record['privilegedWrapperGroupGone']: raise RuntimeError('privileged TLS wrapper group is still live')
+                elif process is not None and process.poll() is None:
                     process.kill(); process.wait(timeout=2)
                 if log.exists():
                     record['logBytes'] = log.stat().st_size
@@ -192,6 +230,34 @@ class Commands:
                 record['success'] = False; failures.append({'type': type(error).__name__, 'message': str(error)})
                 print('TLS_COMMAND_RECEIPT_WRITE_FAILED', json.dumps(record), flush=True)
             if failures and primary is None: raise RuntimeError('TLS command evidence/cleanup failed')
+
+
+def privileged_result(request_path):
+    request_path = Path(request_path); raw = read(request_path, CERT_BYTES); request = json.loads(raw)
+    result = json.loads(read(request_path.with_name(request['name'] + '-result.json'), CERT_BYTES))
+    import system_tls_privileged as helper
+    armed = json.loads(read(Path(request['root']) / 'ARMED.json'))
+    if (result.get('requestSHA256') != sha(raw) or result.get('nonce') != request['nonce'] or
+            result.get('argv') != helper.command(Path(request['root']), request['label'], armed) or
+            result.get('deadline') != request['deadline'] or result.get('retirementDeadline') != request['retirementDeadline']):
+        raise ValueError('privileged TLS completion belongs to another request')
+    cleanup = result.get('cleanup', {})
+    if cleanup.get('groupGone') is not True or cleanup.get('leaderReaped') is not True or cleanup.get('errors'):
+        raise RuntimeError('privileged TLS command has no retirement proof')
+    return result
+
+
+def privileged_commands_gone(root):
+    paths = sorted((Path(root) / 'receipts').glob('*-privileged-request.json'))
+    if len(paths) > 120: raise RuntimeError('privileged TLS command inventory exceeds finite cap')
+    for path in paths:
+        proof = privileged_result(path)
+        request = json.loads(read(path, CERT_BYTES))
+        receipt = path.with_name(request['name'].removesuffix('-privileged') + '.json')
+        command = json.loads(read(receipt, 4 * CERT_BYTES))
+        if (command.get('privilegedRequest') != str(path) or command.get('privilegedCleanup') != proof or
+                command.get('privilegedWrapperGroupGone') is not True):
+            raise RuntimeError('privileged TLS wrapper has no bound retirement proof')
 
 
 def mac_snapshot(root, commands, name):
@@ -229,6 +295,8 @@ def replace_bundle(raw, metadata, nonce):
 
 
 def prepare(root, state, commands):
+    if state['platform'] == 'Darwin' and not hasattr(os, 'waitid'):
+        raise RuntimeError('hosted privileged TLS supervision requires Python 3.13 or newer before trust preparation')
     private = root / 'private'
     private.mkdir(mode=0o700, exist_ok=False)
     commands.run('openssl-version', ['openssl', 'version', '-a'])

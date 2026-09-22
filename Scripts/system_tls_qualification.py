@@ -99,17 +99,18 @@ def owned_commands_gone(runner):
             raise RuntimeError('cannot mutate trust/delete keys without TLS process retirement proof')
 
 
-def cleanup_command(runner, sdk, root):
+def cleanup_command(runner, sdk, root, attempt=1):
     """Narrow cleanup-only escape, never clears signals or resumes normal work."""
     trust.hosted(root)
     state = json.loads(trust.read(root / 'OWNERSHIP.json', 16384))
     if state['overallDeadline'] != runner.overall_deadline: raise ValueError('cleanup deadline differs from original runner')
     argv = ['python3', str(sdk / 'Scripts/system_tls_trust.py'), 'cleanup', '--root', str(root)]
-    label = 'system-tls-trust-cleanup'
+    if attempt not in (1, 2): raise ValueError('finite TLS cleanup attempts exhausted')
+    label = 'system-tls-trust-cleanup' + ('-retry' if attempt == 2 else '')
     log = runner.receipts / (label + '.log')
     record = {'argv': argv, 'cwd': str(sdk), 'started': False, 'success': False, 'cleanupOnly': True,
               'originalOverallDeadline': runner.overall_deadline, 'requestedTimeoutSeconds': CLEANUP_SECONDS,
-              'primaryError': None, 'evidenceErrors': []}
+              'primaryError': None, 'evidenceErrors': [], 'cleanupAttempt': attempt}
     process = output = None; primary = None
     started = time.monotonic(); deadline = min(started + CLEANUP_SECONDS, runner.overall_deadline - 12)
     try:
@@ -151,6 +152,28 @@ def cleanup_command(runner, sdk, root):
             runner.records.append({'label': label, 'success': record['success']})
     if primary is not None: raise primary
     if not record['success']: raise RuntimeError('TLS cleanup unqualified')
+
+
+def restore_trust(runner, sdk, tls, nonce):
+    failures = []
+    for attempt in (1, 2):
+        # A retry is cleanup only, within the same original absolute deadline.
+        # It is forbidden until every earlier ordinary and privileged process
+        # has a bound retirement proof. The first failure remains a failure.
+        try:
+            owned_commands_gone(runner)
+            trust.privileged_commands_gone(tls)
+        except BaseException as error:
+            failures.append(error_record(error)); break
+        try:
+            cleanup_command(runner, sdk, tls, attempt)
+            restored = json.loads(trust.read(tls / 'receipts/RESTORED.json', 16384))
+            if restored.get('success') is not True or restored.get('nonce') != nonce:
+                raise ValueError('missing exact TLS restoration receipt')
+            break
+        except BaseException as error:
+            failures.append(error_record(error))
+    return failures
 
 
 def qualify(runner, sdk, core, root, common):
@@ -196,13 +219,13 @@ def qualify(runner, sdk, core, root, common):
         with runner.interrupts.hold():
             try:
                 owned_commands_gone(runner)
+                trust.privileged_commands_gone(tls)
                 if (tls / 'ARMED.json').exists():
-                    cleanup_command(runner, sdk, tls)
-                    restored = json.loads(trust.read(tls / 'receipts/RESTORED.json', 16384))
-                    if restored.get('success') is not True or restored.get('nonce') != nonce: raise ValueError('missing exact TLS restoration receipt')
+                    errors.extend(restore_trust(runner, sdk, tls, nonce))
             except BaseException as error: errors.append(error_record(error))
             try:
                 owned_commands_gone(runner)
+                trust.privileged_commands_gone(tls)
                 for name in ('trusted-ca.key', 'trusted-leaf.key', 'unknown-ca.key', 'unknown-leaf.key'):
                     path = tls / 'private' / name
                     if path.exists():
