@@ -5,7 +5,7 @@ extension Lattice {
     /// not a TLS certificate, receipt, READY lease, or installation permission.
     /// Source binding also requires the actual system-verified WSS connection.
     public struct RecoverySourceExpectation: Sendable, Hashable {
-        public enum ConfigurationError: Error { case invalidEndpoint, invalidIdentity, invalidScope, invalidBounds }
+        public enum ConfigurationError: Swift.Error { case invalidEndpoint, invalidIdentity, invalidScope, invalidBounds }
         public enum Operation: String, Sendable, Codable, Hashable { case insert = "INSERT", update = "UPDATE", delete = "DELETE" }
         public struct Source: Sendable, Encodable, Hashable {
             public let authority: String, sourceID: String, epoch: String
