@@ -36,19 +36,27 @@ final class RelayIngressTestHooks: Sendable {
     // Exact-mount, payload-free observation after the real recipient decision.
     // Never changes admission and must not block the recipient event loop.
     let didRecoveryFanoutDecision: (@Sendable (Bool) -> Void)?
+    // Exact-mount correlation-only parking, outside leaf/SQL locks. The test
+    // owns bounded release; final real socket admission always runs afterward.
+    let parkRecoveryReadySend: (@Sendable (String, @escaping @Sendable () -> Void) -> Bool)?
+    let didRecoveryReadyDecision: (@Sendable (String, Bool) -> Void)?
 
     init(beforeAsyncSetup: @escaping @Sendable () async -> Void,
          didBufferFrame: @escaping @Sendable (Int) -> Void,
          didFinishAsyncSetup: @escaping @Sendable () -> Void,
          didCloseConnection: @escaping @Sendable () -> Void = {},
          sendCatchUp: (@Sendable (WebSocket, Data, EventLoopPromise<Void>) -> Void)? = nil,
-         didRecoveryFanoutDecision: (@Sendable (Bool) -> Void)? = nil) {
+         didRecoveryFanoutDecision: (@Sendable (Bool) -> Void)? = nil,
+         parkRecoveryReadySend: (@Sendable (String, @escaping @Sendable () -> Void) -> Bool)? = nil,
+         didRecoveryReadyDecision: (@Sendable (String, Bool) -> Void)? = nil) {
         self.beforeAsyncSetup = beforeAsyncSetup
         self.didBufferFrame = didBufferFrame
         self.didFinishAsyncSetup = didFinishAsyncSetup
         self.didCloseConnection = didCloseConnection
         self.sendCatchUp = sendCatchUp
         self.didRecoveryFanoutDecision = didRecoveryFanoutDecision
+        self.parkRecoveryReadySend = parkRecoveryReadySend
+        self.didRecoveryReadyDecision = didRecoveryReadyDecision
     }
 }
 
@@ -995,7 +1003,7 @@ extension Lattice {
             }
             ws.onBinary { [ackPath] ws, bb in
                 ackPath?.record(.binaryEntered, bytes: bb.readableBytes)
-                if state.recovery != nil && bb.readableBytes > 1_048_576 {
+                if state.recovery != nil && bb.readableBytes > 8_388_608 {
                     state.sealIngress(.applyRefused, socket: ws, stopQueued: true)
                     ws.close(code: .policyViolation, promise: nil); return
                 }
@@ -1150,16 +1158,30 @@ extension Lattice {
                     if let ackPath { admissionDiagnostic = .init(connection: ackPath, span: admissionSpan) }
                     else { admissionDiagnostic = nil }
                     do {
+                        // Actual source-wide capacity before the apply service
+                        // copies/queues input. Pre-auth ingress has its existing
+                        // separate process-wide pre-copy account.
+                        let recoveryCharge = try state.recovery?.reserveInput(bytes: ingressFrame.byteCount)
                         try await applyAdmission.withAdmission(for: applyKey, frame: ingressFrame,
                                                                diagnostic: admissionDiagnostic, operation: { data in
                             processRelayApplyOnWorker(data: data, lattice: applyOwner.value, channel: channel,
                                                       policy: writePolicy, revocation: state.revocation,
                                                       diagnostic: ackPath, needsFanOut: watchManager == nil,
-                                                      admissionSpan: admissionSpan, recovery: state.recovery)
+                                                      admissionSpan: admissionSpan, recovery: state.recovery,
+                                                      recoveryCharge: recoveryCharge)
                         }, completion: { processed in
                             if let recovery = state.recovery, !recovery.lifetime.publishable { return }
                             let frame: RelayAppliedFrame
                             switch processed {
+                            case .ready(let result):
+                                state.recovery?.sendReady(result, park: ingressHooks?.parkRecoveryReadySend,
+                                                          didDecision: ingressHooks?.didRecoveryReadyDecision)
+                                return
+                            case .recoveryRefused(let reason, let capacity):
+                                if let encoded = try? JSONEncoder().encode(ServerSentEvent.rejected(reason: reason)) {
+                                    state.recovery?.send(encoded, capacity: capacity)
+                                }
+                                return
                             case .revoked:
                                 ackPath?.record(.processRevoked)
                                 return
@@ -1351,7 +1373,7 @@ extension Lattice {
 
             }
         }
-        routes.webSocket(path, maxFrameSize: WebSocketMaxFrameSize(integerLiteral: recoveryMount == nil ? 300 * 1024 * 1024 : 1_048_576),
+        routes.webSocket(path, maxFrameSize: WebSocketMaxFrameSize(integerLiteral: recoveryMount == nil ? 300 * 1024 * 1024 : 8_388_608),
                          shouldUpgrade: { $0.eventLoop.makeSucceededFuture(HTTPHeaders?.some([:])) },
                          onUpgrade: onUpgrade)
         return SyncRelayHandle(manager: sockets, pushManager: watchManager, recoveryMount: recoveryMount)

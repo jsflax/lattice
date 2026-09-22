@@ -399,6 +399,8 @@ struct RelayAppliedFrame: Sendable {
 enum RelayProcessedFrame: Sendable {
     case revoked
     case refused(String)
+    case ready(RecoveryRelayNativeReadyResult)
+    case recoveryRefused(String, RecoveryRelayNativeCharge)
     case applied(RelayAppliedFrame)
 }
 
@@ -407,9 +409,19 @@ enum RelayProcessedFrame: Sendable {
 func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChannel,
                               policy: SyncWritePolicy?, revocation: RevocationFlag,
                               diagnostic: ACKPathConnection?, needsFanOut: Bool,
-                              admissionSpan: UInt64 = 0, recovery: RecoveryRelayConnection? = nil) -> RelayProcessedFrame {
+                              admissionSpan: UInt64 = 0, recovery: RecoveryRelayConnection? = nil,
+                              recoveryCharge: RecoveryRelayNativeCharge? = nil) -> RelayProcessedFrame {
     guard !revocation.isRevoked else { return .revoked }
-    if recovery != nil && data.count > 1_048_576 { return .refused("recovery frame byte bound") }
+    if let recovery {
+        guard data.count <= 8_388_608, let recoveryCharge else { return .refused("recovery source input admission required") }
+        do {
+            let result = try recovery.ready(data, charge: recoveryCharge)
+            if result.status == 1 { return .ready(result) }
+            if result.status == 2 { return .revoked }
+            if result.status != 0 { return .recoveryRefused(result.error ?? "recovery control outcome unavailable", recoveryCharge) }
+        } catch { return .recoveryRefused(String(describing: error), recoveryCharge) }
+        if data.count > 1_048_576 { return .recoveryRefused("recovery ordinary frame byte bound", recoveryCharge) }
+    }
     diagnostic?.record(.frameParseBegin, span: admissionSpan, bytes: data.count)
     let frame = RelayFrame(data)
     let span = diagnostic?.record(frame.root == nil ? .frameMalformed : .frameParsed, span: admissionSpan,

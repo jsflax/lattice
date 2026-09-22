@@ -13,6 +13,30 @@ package final class RecoveryRelayNativeStop: @unchecked Sendable {
     package var isLive: Bool { value.live() }
     package var isDrained: Bool { value.drained() }
     package func stop() { value.stop() }
+    package func reserveReady(bytes: Int) throws -> RecoveryRelayNativeCharge {
+        guard bytes > 0, bytes <= 8_388_608 else { throw RecoveryRelayNativeError.refused("recovery input bound") }
+        let charge = value.reserveReady(bytes: UInt64(bytes))
+        guard charge.valid() else { throw RecoveryRelayNativeError.refused("recovery source admission unavailable") }
+        return .init(charge)
+    }
+}
+/// Capacity only; safe to retain across the input queue and send completion.
+package final class RecoveryRelayNativeCharge: @unchecked Sendable {
+    fileprivate let value: lattice.relay_ready_charge
+    fileprivate init(_ value: lattice.relay_ready_charge) { self.value = value }
+}
+package final class RecoveryRelayNativeReadyResult: @unchecked Sendable {
+    private let value: lattice.relay_ready_result
+    package let status: Int32
+    package let data: Data
+    package let error: String?
+    package let requestID: String
+    package var publishable: Bool { value.publishable() }
+    fileprivate init(_ value: lattice.relay_ready_result) {
+        var owned = value; status = owned.statusCode(); requestID = String(owned.takeRequestID())
+        data = Data(String(owned.takeWire()).utf8); self.value = owned
+        let message = recoveryRelayMessage(); error = message.isEmpty ? nil : message
+    }
 }
 /// This portable result retains only copied IDs and a payload-free counted
 /// publication token. It may cross from the IO worker to its completion.
@@ -89,6 +113,13 @@ package final class RecoveryRelayNativeSetup {
             throw RecoveryRelayNativeError.refused("relay frame bound or retired setup")
         }
         return .init(value.receive(std.string(text)))
+    }
+    package func ready(_ data: Data, charge: RecoveryRelayNativeCharge) throws -> RecoveryRelayNativeReadyResult {
+        precondition(onIO())
+        guard data.count <= 8_388_608, let text = String(data: data, encoding: .utf8), let value else {
+            throw RecoveryRelayNativeError.refused("recovery control bound or retired setup")
+        }
+        return .init(value.ready(std.string(text), charge.value))
     }
     package func close() { precondition(onIO()); value?.closeOnIO(); value = nil }
 }

@@ -115,9 +115,33 @@ final class RecoveryRelayConnection: @unchecked Sendable {
         guard lifetime.publishable, let native else { throw SyncRecoveryConfigurationError.staleAuthorization }
         return try native.receive(data)
     }
+    func reserveInput(bytes: Int) throws -> RecoveryRelayNativeCharge { try lifetime.reserveReady(bytes: bytes) }
+    func ready(_ data: Data, charge: RecoveryRelayNativeCharge) throws -> RecoveryRelayNativeReadyResult {
+        precondition(RelayExecutionPool.io.isCurrentWorker)
+        guard lifetime.publishable, let native else { throw SyncRecoveryConfigurationError.staleAuthorization }
+        return try native.ready(data, charge: charge)
+    }
+    func sendReady(_ result: RecoveryRelayNativeReadyResult,
+                   park: (@Sendable (String, @escaping @Sendable () -> Void) -> Bool)? = nil,
+                   didDecision: (@Sendable (String, Bool) -> Void)? = nil) {
+        guard let socket else { return }
+        let lifetime = lifetime
+        let once = NIOLockedValueBox(false)
+        let enqueue: @Sendable () -> Void = {
+            guard once.withLockedValue({ used in if used { return false }; used = true; return true }) else { return }
+            socket.eventLoop.execute {
+                guard !socket.isClosed, lifetime.publishable, result.publishable else { didDecision?(result.requestID, false); return }
+                let promise = socket.eventLoop.makePromise(of: Void.self)
+                promise.futureResult.whenComplete { [self] _ in withExtendedLifetime((self, result)) {} }
+                socket.send(raw: result.data, opcode: .binary, promise: promise)
+                didDecision?(result.requestID, true)
+            }
+        }
+        if park?(result.requestID, enqueue) != true { enqueue() }
+    }
     /// Check on the actual socket event loop immediately before handoff. The
     /// payload-free native operation stays counted until this send settles.
-    func send(_ data: Data, result: RecoveryRelayNativeResult? = nil, promise supplied: EventLoopPromise<Void>? = nil) {
+    func send(_ data: Data, result: RecoveryRelayNativeResult? = nil, capacity: RecoveryRelayNativeCharge? = nil, promise supplied: EventLoopPromise<Void>? = nil) {
         guard let socket else { supplied?.fail(SyncRecoveryConfigurationError.staleAuthorization); return }
         let lifetime = lifetime
         socket.eventLoop.execute {
@@ -125,7 +149,7 @@ final class RecoveryRelayConnection: @unchecked Sendable {
             guard !socket.isClosed, lifetime.publishable, result?.publishable != false else {
                 promise.fail(SyncRecoveryConfigurationError.staleAuthorization); return
             }
-            promise.futureResult.whenComplete { [self] _ in withExtendedLifetime((self, result)) {} }
+            promise.futureResult.whenComplete { [self] _ in withExtendedLifetime((self, result, capacity)) {} }
             socket.send(raw: data, opcode: .binary, promise: promise)
         }
     }

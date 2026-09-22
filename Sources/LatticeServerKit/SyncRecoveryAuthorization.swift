@@ -74,6 +74,9 @@ public struct SyncRecoveryNamespace: Sendable, Codable {
     }
 }
 public enum SyncRecoveryDurability: Sendable { case walFull }
+/// Explicit persistent policy selection. Existing sources must reopen with
+/// exactly their enrolled profile; this never resizes or adopts a prior file.
+public enum SyncRecoveryReadyProfile: Sendable { case boundedV1, bounded48MiBV1 }
 public enum SyncRecoveryConfigurationError: Error, Sendable { case invalidBounds, ambiguousPolicy, invalidPeer, staleAuthorization }
 /// Explicit bounded-v1 source enrollment. The full registered model/relation
 /// closure is authoritative; a filtered scope label is not supported. Enrolling
@@ -82,9 +85,11 @@ public struct SyncRecoveryMountConfiguration: Sendable {
     let authority: String, sourceID: UUID, epoch: UUID, localNamespace: String, receiptNamespace: String
     let namespaces: [SyncRecoveryNamespace], models: [String]
     let maximumAuthorizationMilliseconds: Int64
+    let readyProfile: SyncRecoveryReadyProfile
     public init(authority: String, sourceID: UUID, epoch: UUID, localNamespace: String,
                 namespaces: [SyncRecoveryNamespace], receiptNamespace: String, models: [String],
-                durability: SyncRecoveryDurability, maximumAuthorizationMilliseconds: Int64) throws {
+                durability: SyncRecoveryDurability, maximumAuthorizationMilliseconds: Int64,
+                readyProfile: SyncRecoveryReadyProfile = .boundedV1) throws {
         func bounded(_ s: String, _ cap: Int) -> Bool { !s.isEmpty && s.utf8.count <= cap && !s.contains("\0") }
         guard bounded(authority, 256), bounded(localNamespace, 256), bounded(receiptNamespace, 256),
               (1...64).contains(namespaces.count), (1...16).contains(models.count),
@@ -97,6 +102,7 @@ public struct SyncRecoveryMountConfiguration: Sendable {
         self.authority = authority; self.sourceID = sourceID; self.epoch = epoch; self.localNamespace = localNamespace
         self.namespaces = namespaces; self.receiptNamespace = receiptNamespace; self.models = models
         self.maximumAuthorizationMilliseconds = maximumAuthorizationMilliseconds
+        self.readyProfile = readyProfile
     }
     func policy(_ upload: SyncWritePolicy?) throws -> Data {
         let tables = upload?.allowedOperations ?? [:]
@@ -110,12 +116,13 @@ public struct SyncRecoveryMountConfiguration: Sendable {
         let unlisted: String
         if let upload { switch upload.unlistedTables { case .allow: unlisted = "allow"; case .deny: unlisted = "deny" } }
         else { unlisted = "allow" }
-        let payload: [String: Any] = ["version": 1, "authority": authority, "sourceID": sourceID.uuidString.lowercased(),
+        var payload: [String: Any] = ["version": 1, "authority": authority, "sourceID": sourceID.uuidString.lowercased(),
             "epoch": epoch.uuidString.lowercased(), "localNamespace": localNamespace, "namespaces": ns,
             "receiptNamespace": receiptNamespace, "models": models, "walFull": true,
             "maximumAuthorizationMilliseconds": maximumAuthorizationMilliseconds,
             "upload": ["tables": masks, "unlisted": unlisted,
                        "maximumDeletes": upload?.maxDeletesPerFrame ?? 256]]
+        if case .bounded48MiBV1 = readyProfile { payload["readyProfile"] = "bounded48MiBV1" }
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         guard data.count <= 32_768 else { throw SyncRecoveryConfigurationError.invalidBounds }; return data
     }
@@ -186,6 +193,11 @@ final class RecoveryRelayLifetime: @unchecked Sendable {
     func stop() {
         let native = state.withLockedValue { s in s.stopped = true; return s.native }
         native?.stop()
+    }
+    func reserveReady(bytes: Int) throws -> RecoveryRelayNativeCharge {
+        let native = state.withLockedValue { s in !s.stopped && s.authorized ? s.native : nil }
+        guard let native else { throw SyncRecoveryConfigurationError.staleAuthorization }
+        return try native.reserveReady(bytes: bytes)
     }
 }
 final class RecoveryRelayMount: @unchecked Sendable {
