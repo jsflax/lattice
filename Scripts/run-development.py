@@ -424,11 +424,16 @@ def main():
                                help='Qualify the existing full loaded and quiet-only workloads in separate processes; not a performance experiment')
     qualification.add_argument('--recovery-refresh-qualification', action='store_true',
                                help='Recovery refresh and changed-field SDK cases only; not full suite or performance')
+    qualification.add_argument('--system-tls-qualification', action='store_true',
+                               help='Hosted stock-adapter TLS matrix with bounded system trust restoration; not full-suite or recovery acceptance')
     args = parser.parse_args()
     root = args.root.resolve(strict=True)
     allowed = (Path.home() / 'localdev').resolve(strict=True)
     if not root.is_relative_to(allowed) or root == allowed:
         raise ValueError('development root must be a child of ~/localdev')
+    if args.system_tls_qualification:
+        import system_tls_trust
+        system_tls_trust.hosted(root / 'system-tls')
     sdk_sha = os.environ.get('GITHUB_SHA', '')
     if not SHA.fullmatch(args.core_sha) or not SHA.fullmatch(sdk_sha):
         raise ValueError('Core and GITHUB_SHA inputs must be exact lower-case commit SHAs')
@@ -469,6 +474,9 @@ def main():
     result['recoveryRefreshQualification'] = args.recovery_refresh_qualification
     if args.recovery_refresh_qualification:
         result['scope'] = 'targeted SDK recovery refresh and changed-field qualification only; not full-suite, release, iOS or performance acceptance'
+    result['systemTLSQualification'] = args.system_tls_qualification
+    if args.system_tls_qualification:
+        result['scope'] = 'hosted stock TLS adapter component qualification only; not full-suite, recovery, performance or release acceptance'
     original = sdk_inputs = core_inputs = None
     primary = None
     test_started_at = None
@@ -498,6 +506,8 @@ def main():
             core_inputs = authenticate_repository(runner, 'core-initial', core, args.core_sha, initial=True)
             if core_inputs['tree'] != config['coreTree']:
                 raise ValueError('Core tree differs from committed development graph')
+            if args.system_tls_qualification and not (core / 'Sources/LatticeServerExportTestSupport/include/platform_tls_fixture.hpp').is_file():
+                raise ValueError('reviewed paired Core TLS fixture graph required before build')
             common = ['--package-path', str(sdk), '--scratch-path', str(root / 'scratch'),
                       '--cache-path', str(root / 'cache'), '--config-path', str(root / 'config'),
                       '--security-path', str(root / 'security'), '--disable-sandbox', '--disable-experimental-prebuilts']
@@ -527,6 +537,9 @@ def main():
             elif args.sync_full_calibration:
                 import sync_full_calibration
                 sync_full_calibration.run(runner, sdk, root, common, sdk_inputs, core_inputs)
+            elif args.system_tls_qualification:
+                import system_tls_qualification
+                system_tls_qualification.qualify(runner, sdk, core, root, common)
             elif args.recovery_refresh_qualification:
                 import recovery_refresh_qualification
                 recovery_refresh_qualification.qualify(runner, sdk, core, root, common, args.test_timeout)

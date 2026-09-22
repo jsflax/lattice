@@ -23,6 +23,11 @@ on:
         type: boolean
         required: false
         default: false
+      system_tls_qualification:
+        description: 'Hosted stock Apple/NIO TLS matrix with temporary fixture trust and mandatory cleanup; not recovery or release acceptance'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -52,6 +57,7 @@ jobs:
       SYNC_PROBE_QUALIFICATION: ${{ inputs.sync_probe_qualification || false }}
       SYNC_FULL_CALIBRATION: ${{ inputs.sync_full_calibration || false }}
       RECOVERY_REFRESH_QUALIFICATION: ${{ inputs.recovery_refresh_qualification || false }}
+      SYSTEM_TLS_QUALIFICATION: ${{ inputs.system_tls_qualification || false }}
     steps:
       - name: Install Linux prerequisites
         if: matrix.leg == 'linux'
@@ -87,6 +93,9 @@ jobs:
           if [[ "$SYNC_FULL_CALIBRATION" == 'true' ]]; then
             DEVELOPMENT_ARGUMENTS+=(--sync-full-calibration)
           fi
+          if [[ "$SYSTEM_TLS_QUALIFICATION" == 'true' ]]; then
+            DEVELOPMENT_ARGUMENTS+=(--system-tls-qualification)
+          fi
           python3 "$TASK_ROOT/lattice/Scripts/run-development.py" "${DEVELOPMENT_ARGUMENTS[@]}"
 
       - name: Retain development graph evidence, including failures
@@ -98,6 +107,7 @@ jobs:
           path: |
             ${{ env.TASK_ROOT }}/receipts
             ${{ env.TASK_ROOT }}/test-logs
+            ${{ env.TASK_ROOT }}/system-tls/receipts
             ${{ env.TASK_ROOT }}/visibility-smoke/receipts.json
             ${{ env.TASK_ROOT }}/visibility-full-loaded/receipts.json
             ${{ env.TASK_ROOT }}/visibility-full-quiet-only/receipts.json
