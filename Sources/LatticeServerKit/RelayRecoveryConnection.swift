@@ -16,7 +16,7 @@ final class RecoveryRelayConnection: @unchecked Sendable {
     let lifetime: RecoveryRelayLifetime
     let peer: SyncRecoveryPeerIdentity
     private let request: NIOLockedValueBox<Request?>
-    private weak var socket: WebSocket
+    private weak var socket: WebSocket?
     private let revocation: RevocationFlag
     private var native: RecoveryRelayNativeSetup? // IO only
     private var resolvedScope: SyncRecoveryIncomingScope? // IO only
