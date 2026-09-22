@@ -144,7 +144,8 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
                 didRecoveryReadyDecision: { id, allowed in registrations.readySendGate.decision(id, allowed) })
             RelayIngressTesting.install(hooks!, for: directory)
         } else { hooks = nil }
-        defer { if let hooks { RelayIngressTesting.remove(hooks, for: directory) } }
+        let hookDirectory = directory
+        defer { if let hooks { RelayIngressTesting.remove(hooks, for: hookDirectory) } }
         let relaySchema: [any Lattice.Model.Type] = registrations.mode == .readyLarge
             ? [SimpleSyncObject.self, RecoveryAuthorizationHiddenRow.self, RecoveryReadyPayloadRow.self]
             : [SimpleSyncObject.self, RecoveryAuthorizationHiddenRow.self]
