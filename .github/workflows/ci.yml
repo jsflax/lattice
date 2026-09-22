@@ -147,7 +147,9 @@ jobs:
         env:
           LATTICE_ACK_PATH_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
           LATTICE_OBSERVER_WORKER_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
-        run: swift test --force-resolved-versions
+        # Swift Testing defaults to parallel even when SwiftPM's help says otherwise.
+        # Bound stable test admission; each test's internal concurrency stays intact.
+        run: swift test --force-resolved-versions ${{ matrix.consumerLeg == 'linux-stable' && '--no-parallel' || '' }}
 
       - &after_test
         name: Capture and verify complete lock integrity after test

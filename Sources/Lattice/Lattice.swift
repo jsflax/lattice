@@ -42,7 +42,7 @@ extension Logger {
 }
 
 
-public enum LatticeError: Error {
+public enum LatticeError: LocalizedError {
     case missingLatticeContext
     case transactionError(String)
     case syncReceiveFailed(String)
@@ -60,6 +60,25 @@ public enum LatticeError: Error {
     /// The backend rejected an insert (constraint violation, closed handle,
     /// I/O failure). Carries the underlying database message.
     case addFailed(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingLatticeContext:
+            return "The operation requires a Lattice database context."
+        case .transactionError(let detail):
+            return detail.isEmpty ? "The database transaction failed." : "The database transaction failed: \(detail)"
+        case .syncReceiveFailed(let detail):
+            return detail.isEmpty ? "The database could not receive the update." : "The database could not receive the update: \(detail)"
+        case .attachFailed(let detail):
+            return detail.isEmpty ? "The database could not be attached." : "The database could not be attached: \(detail)"
+        case .detachFailed(let detail):
+            return detail.isEmpty ? "The database could not be detached." : "The database could not be detached: \(detail)"
+        case .alreadyManaged:
+            return "The object already belongs to a Lattice database."
+        case .addFailed(let detail):
+            return detail.isEmpty ? "The object could not be added to the database." : "The object could not be added to the database: \(detail)"
+        }
+    }
 }
 
 public struct IsolationWeakRef: @unchecked Sendable {
@@ -1571,8 +1590,9 @@ public struct Lattice {
         // closes — the core close additionally retires its whole read pool
         // ahead of connection teardown; a reopened database mints a new
         // identityHash and a fresh coordinator.
-        GenerationCoordinatorRegistry.evict(identityHash: backend.identityHash)
-        backend.close()
+        GenerationCoordinatorRegistry.close(identityHash: backend.identityHash) {
+            backend.close()
+        }
     }
 
     /// Retire every open read generation now (item A §3.6): force-COMMIT
