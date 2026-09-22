@@ -295,7 +295,7 @@ def install(root, armed, commands):
         if sha(read(BUNDLE)) != baseline['installedSHA256']: raise ValueError('Linux installed bytes differ')
     else:
         commands.run('install', ['sudo', '-n', SECURITY, 'add-trusted-cert', '-d', '-r', 'trustRoot', '-p', 'ssl', '-s', 'localhost', '-k', KEYCHAIN, str(root / 'private/trusted-ca.pem')])
-        actual = mac_snapshot(root, commands, 'installed')
+        actual = mac_snapshot(root, commands, 'installed-state')
         expected = logical_snapshot(baseline); stripped = logical_snapshot(actual)
         if stripped['certificates'].count(armed['caSHA256']) != 1: raise ValueError('unique fixture certificate missing')
         stripped['certificates'].remove(armed['caSHA256'])

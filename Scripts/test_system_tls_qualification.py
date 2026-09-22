@@ -99,6 +99,37 @@ class TrustClassification(Fixture):
             load.assert_not_called()
 
 
+class MacInstallReceipts(Fixture):
+    def test_inventory_and_completion_receipts_are_distinct_on_case_insensitive_volume(self):
+        (self.root / 'private').mkdir(); (self.root / 'receipts').mkdir()
+        certificate = b'fixture certificate bytes; no Security or OpenSSL execution'
+        (self.root / 'private/trusted-ca.pem').write_bytes(certificate)
+        baseline = {'certificates': ['existing-certificate'],
+                    'trust': {domain: {'inventory': {}} for domain in ('user', 'admin', 'system')},
+                    'selection': {'search': 'original-selection'}}
+        armed = {'state': {'platform': 'Darwin', 'nonce': 'owned'}, 'baseline': baseline,
+                 'caPEMSHA256': trust.sha(certificate), 'caSHA256': 'owned-certificate', 'caSHA1': 'OWNED'}
+        seen = set(); save = trust.save
+        def case_insensitive_save(path, value):
+            key = str(path).casefold()
+            if key in seen: raise FileExistsError(str(path))
+            seen.add(key); save(path, value)
+        def snapshot(root, commands, name):
+            actual = json.loads(json.dumps(baseline))
+            actual['certificates'].append('owned-certificate')
+            actual['trust']['admin']['inventory']['OWNED'] = {'policy': 'ssl'}
+            trust.save(root / 'receipts' / (name + '.json'), actual)
+            return actual
+        class Commands:
+            def run(self, label, argv): return b''
+        with patch.object(trust, 'save', side_effect=case_insensitive_save), patch.object(trust, 'mac_snapshot', side_effect=snapshot):
+            trust.install(self.root, armed, Commands())
+        records = [json.loads(path.read_text()) for path in (self.root / 'receipts').iterdir()]
+        self.assertEqual(len(records), 2)
+        self.assertEqual(sum(record.get('success') is True and record.get('nonce') == 'owned' for record in records), 1)
+        self.assertEqual(sum(record.get('certificates') == ['existing-certificate', 'owned-certificate'] for record in records), 1)
+
+
 class CaseInventory(Fixture):
     def config(self): return {'nonce': 'owned', 'trustedCertificateSHA256': 'trusted', 'unknownCertificateSHA256': 'unknown'}
     def events(self):

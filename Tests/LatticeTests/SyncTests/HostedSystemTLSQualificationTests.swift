@@ -36,7 +36,8 @@ private final class HostedTLSServer: @unchecked Sendable {
         var serverTLS: TLSConfiguration?
         if let certificate, let key {
             let chain = try NIOSSLCertificate.fromPEMFile(certificate).map { NIOSSLCertificateSource.certificate($0) }
-            var tls = TLSConfiguration.makeServerConfiguration(certificateChain: chain, privateKey: .file(key))
+            let privateKey = try NIOSSLPrivateKey(file: key, format: .pem)
+            var tls = TLSConfiguration.makeServerConfiguration(certificateChain: chain, privateKey: .privateKey(privateKey))
             tls.applicationProtocols = ["http/1.1"]
             serverTLS = tls
         }
