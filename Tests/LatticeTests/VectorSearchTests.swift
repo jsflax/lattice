@@ -780,9 +780,13 @@ class Vec0LockStormTests: BaseTest {
 
         let dims = 128
         let docCount = 5000
-        for i in 0..<docCount {
-            let embedding = (0..<dims).map { _ in Float.random(in: -1...1) }
-            try lattice.add(Document(title: "doc-\(i)", embedding: embedding))
+        // Seed the same corpus atomically; setup is not the standalone-insert
+        // benchmark measured below and should not pay 5,000 commit boundaries.
+        try lattice.transaction {
+            for i in 0..<docCount {
+                let embedding = (0..<dims).map { _ in Float.random(in: -1...1) }
+                try lattice.add(Document(title: "doc-\(i)", embedding: embedding))
+            }
         }
 
         let k = 1000

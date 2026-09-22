@@ -785,7 +785,7 @@
     "Tests/LatticeTests/LiveResultsGenerationReadTests.swift": "e7fdeba68b74377d3a459ae729c8a1b9377ae60bf89bbe8d100e6af144e54da9",
     "Tests/LatticeTests/LiveResultsGenerationTests.swift": "0275dab19f7ee330db8212165c966e5efabe11ec4d8df44d04b92194bc9de4bf",
     "Tests/LatticeTests/LiveResultsIdentityTests.swift": "b322a5b14a7326460c58227bd8a4f05493666c69aaef667cb1d283bb198488c9",
-    "Tests/LatticeTests/LiveResultsKeysetTests.swift": "5d4a54102707e02e6ef97a029f9d91bb7becb91f17a5031ff3a2f2424e5bcf16",
+    "Tests/LatticeTests/LiveResultsKeysetTests.swift": "00fb315e9d93ff854f0f8d607ba22f3ff6e345f909475e2ef71d205b30d90262",
     "Tests/LatticeTests/LiveResultsLifecycleSoakTests.swift": "8209c9900547b20f94f4bb7667a42ef4d3df39f69e799a8642fbd8da6cdda92e",
     "Tests/LatticeTests/LiveResultsTrapWatchdogTests.swift": "9ce61ef83df92975877f9dc2c76bccee826e816b942ce5e57b145c88fd804d11",
     "Tests/LatticeTests/MapKitCompat.swift": "38b4685ad51e3870646111044b1bfe58b89ab2c3c57fa8b935f8fa1ff4ff41ed",
@@ -847,8 +847,21 @@
     "Tests/LatticeTests/UnfilteredCollectionDeliveryTests.swift": "5c90658037dd1b2be90c3fee82cc617af8d65bb2a1f37b22b688e49ed4edeaa6",
     "Tests/LatticeTests/UnionTests.swift": "8f3b136e342ba6b0d1e38947f9b483de696ef5acd74394c87d2f8cbef6a72320",
     "Tests/LatticeTests/UpsertNotificationTests.swift": "eaa25f2b7b39a3c1463d36e5f62ac1e9c902e81a29f5a23b4300e66ba2ba76c9",
-    "Tests/LatticeTests/VectorSearchTests.swift": "9edb9198f193a875b6a12668dd69f95466a3865a63e02dec8aaeddb85aa41c39",
+    "Tests/LatticeTests/VectorSearchTests.swift": "be13bbbad142dc2e0f912c3062847744654d3686f53e406494c13217701c1a9f",
     "Tests/LatticeTests/VirtualLinkTests.swift": "48536b01c1e11d46078c015ad32133bf04d156e7540fe2ee55a231fed35c75a8",
     "Tests/LatticeTests/VirtualListTests.swift": "dfab4ef263320c61ee8275788e278cbf6095ad43843a3375959a008dc22fb955"
+  },
+  "sourceOverrides": {
+    "reason": "Fixture-only budget correction; function census and original retained-run provenance unchanged.",
+    "files": {
+      "Tests/LatticeTests/LiveResultsKeysetTests.swift": {
+        "baselineSHA256": "5d4a54102707e02e6ef97a029f9d91bb7becb91f17a5031ff3a2f2424e5bcf16",
+        "currentSHA256": "00fb315e9d93ff854f0f8d607ba22f3ff6e345f909475e2ef71d205b30d90262"
+      },
+      "Tests/LatticeTests/VectorSearchTests.swift": {
+        "baselineSHA256": "9edb9198f193a875b6a12668dd69f95466a3865a63e02dec8aaeddb85aa41c39",
+        "currentSHA256": "be13bbbad142dc2e0f912c3062847744654d3686f53e406494c13217701c1a9f"
+      }
+    }
   }
 }

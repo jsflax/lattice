@@ -301,7 +301,15 @@ class LiveResultsKeysetTests: BaseTest {
     /// any regression to per-row OFFSET reads, per-page extra statements, or
     /// O(depth) statement growth breaks the equality.
     @Test func deepScroll_jumpPaysOneOffsetStatement_thenKeyset() throws {
-        let lattice = try testLattice(KeysetItem.self)
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "keyset_budget_\(UUID().uuidString).sqlite")
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        var config = Lattice.Configuration(fileURL: url)
+        // Measure collection fills, not elapsed-time PRAGMA freshness probes.
+        // Cross-process belt behavior has its own dedicated tests; leaving its
+        // 500 ms timer enabled makes this exact SQL budget depend on host speed.
+        config.resultsTuning.crossProcessBeltIntervalMs = nil
+        let lattice = try Lattice(KeysetItem.self, configuration: config)
         try lattice.transaction {
             for i in 0..<3000 {
                 let item = KeysetItem()

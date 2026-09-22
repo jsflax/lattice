@@ -1,0 +1,34 @@
+{
+  "sourceParent": "39bffe46ee4bc359683a7b517ae7e08dc4c0cf3a",
+  "pureParserTests": {
+    "command": [
+      "python3",
+      "Scripts/test-linux-full-order-diagnostic.py",
+      "/Users/jason/localdev/orbital-shock-trooper/iterations/284-factory-cycles/lattice-linux-budget-correction-pure-1"
+    ],
+    "functions": 16,
+    "seconds": 0.009,
+    "exitCode": 0,
+    "directToolChunk": "a961e8",
+    "nativeInvocations": 0
+  },
+  "diffCheckExitCode": 0,
+  "files": {
+    "Tests/LatticeTests/LiveResultsKeysetTests.swift": "00fb315e9d93ff854f0f8d607ba22f3ff6e345f909475e2ef71d205b30d90262",
+    "Tests/LatticeTests/VectorSearchTests.swift": "be13bbbad142dc2e0f912c3062847744654d3686f53e406494c13217701c1a9f",
+    "Scripts/run-linux-full-order-diagnostic.py": "e01f5b433a91ce4d9123939a4de23a679401c3fffee939795efd94a44adb1a3e",
+    "Scripts/test-linux-full-order-diagnostic.py": "31f9428f70e6474353f37d0b685965a0d4f77fd3c11e6f4a288f768478b11845",
+    "Scripts/linux-full-order-census.json": "d2b4f7b976b9b545287ee8e768486dd876df59206316220119e17dc139644304"
+  },
+  "sourceTreeBytes": 1627574,
+  "sourceBudgetBytes": 8388608,
+  "unchangedBoundaries": [
+    "Sources/**",
+    "Package.swift",
+    "Package.resolved",
+    ".github/workflows/**",
+    "Scripts/run-linux-focused-diagnostic.py"
+  ],
+  "nativeValidation": "UNRUN",
+  "ciDispatch": false
+}

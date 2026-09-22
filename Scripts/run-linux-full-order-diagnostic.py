@@ -123,7 +123,19 @@ def qualify_native_events(rows, census):
             'parameterCases': len(cases_started), 'events': sum(row['kind']=='event' for row in rows)}
 
 
+def junit_function_key(native_key):
+    # ABI v0 top-level IDs use Module.function(); JUnit separates the module
+    # classname and function name. Suite-member IDs already have that slash.
+    if '/' in native_key:
+        return native_key
+    module, separator, name = native_key.partition('.')
+    assert separator and module and name, 'Malformed top-level native function ID'
+    return module + '/' + name
+
+
 def qualify_xml(directory, native):
+    expected = {junit_function_key(key): key for key in native['functionKeys']}
+    assert len(expected) == len(native['functionKeys']), 'Colliding JUnit function identities'
     populated = []
     for path in sorted(directory.glob('full*.xml')):
         assert path.stat().st_size <= MAX_FILE
@@ -133,13 +145,13 @@ def qualify_xml(directory, native):
         if not cases: continue
         populated.append(path.name)
         keys = [case.get('classname')+'/'+case.get('name') for case in cases]
-        assert len(keys) == len(set(keys)) and set(keys) == native['functionKeys']
+        assert len(keys) == len(set(keys)) and set(keys) == set(expected)
         skips = set()
         for key, case in zip(keys, cases):
             nodes = list(case)
             if nodes:
                 assert len(nodes) == 1 and nodes[0].tag == 'skipped'
-                skips.add(key)
+                skips.add(expected[key])
         assert skips == native['skips'], 'New or missing XML skip'
         summaries = [suite for suite in tree.iter('testsuite') if list(suite.iter('testcase'))]
         assert len(summaries) == 1

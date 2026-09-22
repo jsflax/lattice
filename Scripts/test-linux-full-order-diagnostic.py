@@ -104,7 +104,59 @@ class FullOrderTests(unittest.TestCase):
             path.write_bytes(ET.tostring(tree))
             with self.assertRaises(AssertionError):control.qualify_xml(Path(d),native)
 
-    def test_real_census_binds_unchanged_test_sources_and_known_skips(self):
+    def top_level_xml(self, directory, keys, skipped=()):
+        tree=ET.Element('testsuites')
+        suite=ET.SubElement(tree,'testsuite',tests=str(len(keys)-len(skipped)),
+                            skipped=str(len(skipped)),errors='0',failures='0')
+        for classname,name in keys:
+            case=ET.SubElement(suite,'testcase',classname=classname,name=name)
+            if (classname,name) in skipped:ET.SubElement(case,'skipped')
+        path=directory/'full-swift-testing.xml';path.write_bytes(ET.tostring(tree))
+        return path
+
+    def test_actual_top_level_spelling_reconciles_without_changing_member_ids(self):
+        # The five actual top-level IDs from the retained full native stream.
+        names=['deleteNoRelay_removesRowsAndWritesOnlyMarkedEntries()',
+               'deleteNoRelay_missingIdsAreCountedHonestly()',
+               'deleteNoRelay_emptyInputIsANoOp()',
+               'deleteNoRelay_restoresThePreexistingSyncDisabledState()',
+               'test_PrivateSet()']
+        native={'functionKeys':{'LatticeTests.'+name for name in names}
+                                | {'LatticeTests.MemberSuite/member()'},'skips':set()}
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as d:
+            path=self.top_level_xml(Path(d), [('LatticeTests',n) for n in names]
+                                      + [('LatticeTests.MemberSuite','member()')])
+            self.assertEqual(control.qualify_xml(Path(d),native),path.name)
+
+    def test_top_level_skip_still_requires_exact_native_skip_identity(self):
+        native={'functionKeys':{'Module.free()','Module.Suite/member()'},
+                'skips':{'Module.free()'}}
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as d:
+            path=self.top_level_xml(Path(d),[('Module','free()'),('Module.Suite','member()')],
+                                     skipped=[('Module','free()')])
+            self.assertEqual(control.qualify_xml(Path(d),native),path.name)
+            native['skips']={'Module.Suite/member()'}
+            with self.assertRaises(AssertionError):control.qualify_xml(Path(d),native)
+
+    def test_top_level_duplicate_missing_or_changed_xml_identity_cannot_pass(self):
+        native={'functionKeys':{'Module.first()','Module.second()'},'skips':set()}
+        invalid=[[('Module','first()'),('Module','first()')],
+                 [('Module','first()')],
+                 [('Module','first()'),('Other','second()')],
+                 [('Module','first()'),('Module.second()','')]]
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as d:
+            for rows in invalid:
+                with self.subTest(rows=rows):
+                    self.top_level_xml(Path(d),rows)
+                    with self.assertRaises(AssertionError):control.qualify_xml(Path(d),native)
+
+    def test_normalized_identity_collision_is_rejected(self):
+        native={'functionKeys':{'Module.free()','Module/free()'},'skips':set()}
+        with tempfile.TemporaryDirectory(dir=SCRATCH) as d:
+            self.top_level_xml(Path(d),[('Module','free()')])
+            with self.assertRaises(AssertionError):control.qualify_xml(Path(d),native)
+
+    def test_real_census_binds_declared_test_sources_and_known_skips(self):
         census,sources=control.expected_tests(Path(__file__).resolve().parent.parent)
         self.assertEqual(len(sources),107)
         self.assertEqual(census['functionCount'],census['executingFunctionCount']+len(census['inheritedSkipKeys']))
