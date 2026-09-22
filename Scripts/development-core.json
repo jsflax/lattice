@@ -1,5 +1,5 @@
 {
   "scope": "Development graph combining authenticated relay, physical platform attempts, continuous producer/export and retained Swift owners, with owned relay-ID bridge correction. Receiver source trust, controller activation, existing-store adoption, runtime and performance qualification remain incomplete. Not a public release graph.",
-  "coreCommit": "85fd66adfaeabef6ecfca3ef036455949c291555",
-  "coreTree": "6b7e86d2794d1eaab94a6ce1ad6db74203cc5be3"
+  "coreCommit": "b2dcbeaed8e776357d100365d55725dfa7c45407",
+  "coreTree": "2fd451a21a2ab8489923626517c6b1573adef655"
 }
