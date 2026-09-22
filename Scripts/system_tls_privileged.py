@@ -141,7 +141,11 @@ def supervise(request_path):
     except BaseException as error:
         record['primaryError'] = {'type': type(error).__name__, 'message': str(error)}
     finally:
-        record['cleanup'] = retire(process, retirement)
+        # Early caller cancellation cannot spend the unused work allowance:
+        # its cooperative owner has the outer runner's five-second TERM grace.
+        cleanup_deadline = min(retirement, time.monotonic() + RETIRE_SECONDS)
+        record['cleanupDeadline'] = cleanup_deadline
+        record['cleanup'] = retire(process, cleanup_deadline)
         if process is not None: record['exitCode'] = process.returncode
         record['receivedSignals'] = received
         record['success'] = (record['started'] and record['primaryError'] is None and not received and

@@ -11,6 +11,7 @@ from pathlib import Path
 import platform
 import plistlib
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -144,12 +145,48 @@ def logical_snapshot(snapshot):
             'selection': snapshot['selection']}
 
 
+class TrustInterrupted(RuntimeError):
+    pass
+
+
+class CommandInterrupts:
+    """Cooperative cancellation: never throw across process ownership capture.
+
+    The outer runner sends TERM and grants five seconds before KILL. A signal
+    handler only latches it; safe points stop normal work while command finally
+    retains the pipe, retires its privileged wrapper, and writes its receipt.
+    """
+    def __init__(self):
+        self.received = []
+        self.previous = {}
+
+    def handle(self, number, _frame):
+        name = signal.Signals(number).name
+        if name not in self.received: self.received.append(name)
+
+    def check(self):
+        if self.received: raise TrustInterrupted('TLS helper interrupted: ' + ','.join(self.received))
+
+    def __enter__(self):
+        for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            self.previous[number] = signal.signal(number, self.handle)
+        return self
+
+    def __exit__(self, *_):
+        for number, previous in self.previous.items(): signal.signal(number, previous)
+
+
 class Commands:
-    def __init__(self, root, phase, deadline):
+    def __init__(self, root, phase, deadline, interrupts=None):
         self.root, self.phase, self.deadline = Path(root), phase, deadline
         self.number = 0
+        self.interrupts = interrupts
+
+    def check_interruption(self):
+        if self.interrupts is not None: self.interrupts.check()
 
     def run(self, label, argv):
+        self.check_interruption()  # Before any request/child ownership exists.
         self.number += 1
         if self.number > 40 or time.monotonic() + 30 > self.deadline:
             raise RuntimeError('finite TLS command/deadline admission refused')
@@ -181,10 +218,15 @@ class Commands:
                 else:
                     process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
                 record['pid'] = process.pid
+                # No cancellation check between publishing a privileged
+                # request and retaining the actual Popen object above.
+                self.check_interruption()
                 while process.poll() is None:
+                    self.check_interruption()
                     if time.monotonic() >= until or log.stat().st_size > COMMAND_LOG_BYTES:
                         raise RuntimeError('TLS command exceeded time/output bound')
                     time.sleep(0.05)
+                self.check_interruption()
                 record['exitCode'] = process.returncode
                 if process.returncode != 0:
                     raise RuntimeError('TLS command failed: ' + label)
@@ -223,12 +265,18 @@ class Commands:
                     if record['logBytes'] <= COMMAND_LOG_BYTES: record['logSHA256'] = sha(read(log, COMMAND_LOG_BYTES))
                     else: failures.append({'message': 'oversized command log; digest not read'})
             except BaseException as error: failures.append({'type': type(error).__name__, 'message': str(error)})
+            record['receivedSignals'] = list(self.interrupts.received) if self.interrupts is not None else []
+            if record['receivedSignals']: record['success'] = False
             if failures: record['success'] = False
             record['evidenceErrors'] = failures
             try: save(prefix.with_suffix('.json'), record)
             except BaseException as error:
                 record['success'] = False; failures.append({'type': type(error).__name__, 'message': str(error)})
                 print('TLS_COMMAND_RECEIPT_WRITE_FAILED', json.dumps(record), flush=True)
+            # This also overrides a return already selected by the normal
+            # path if TERM arrived during cleanup or receipt construction.
+            # Preserve an earlier primary error instead of replacing it.
+            if primary is None: self.check_interruption()
             if failures and primary is None: raise RuntimeError('TLS command evidence/cleanup failed')
 
 
@@ -405,7 +453,7 @@ def cleanup(root, armed, commands):
     save(receipt, result)
 
 
-def main():
+def run_main(interrupts):
     parser = argparse.ArgumentParser()
     parser.add_argument('phase', choices=('prepare', 'install', 'cleanup'))
     parser.add_argument('--root', type=Path, required=True)
@@ -423,12 +471,19 @@ def main():
                 command_phase = f'cleanup-{attempt}'
                 break
         else: raise ValueError('finite cleanup attempts exhausted')
-    commands = Commands(args.root, command_phase, deadline)
+    interrupts.check()
+    commands = Commands(args.root, command_phase, deadline, interrupts)
     if args.phase == 'prepare': prepare(args.root, state, commands)
     else:
         armed = json.loads(read(args.root / 'ARMED.json'))
         if armed['state'] != state: raise ValueError('TLS armed state mismatch')
         (install if args.phase == 'install' else cleanup)(args.root, armed, commands)
+    interrupts.check()
+
+
+def main():
+    with CommandInterrupts() as interrupts:
+        run_main(interrupts)
 
 
 if __name__ == '__main__':
