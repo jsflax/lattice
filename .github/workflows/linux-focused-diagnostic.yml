@@ -1,0 +1,114 @@
+name: Linux focused stall diagnostic (temporary)
+
+# Exactly one diagnostic branch; no PR trigger and no required-gate changes.
+on:
+  push:
+    branches: [private/284-linux-focused-diagnostic]
+    paths:
+      - .github/workflows/linux-focused-diagnostic.yml
+      - Scripts/run-linux-focused-diagnostic.py
+      - Scripts/test-linux-focused-diagnostic.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Same immutable image digest reported by stable job106672035932.
+    # No added capabilities, privileged mode, ptrace-policy changes or sudo.
+    container: swift:6.3-noble@sha256:8de8ea332a61e961ead4ef41029c2552b18e1a70dd5942d25ecf7d8de2eec5b5
+    env:
+      CONSUMER_LEG: linux-focused-diagnostic
+      LATTICE_ACK_PATH_DIAGNOSTICS: '1'
+      LATTICE_OBSERVER_WORKER_DIAGNOSTICS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Install ordinary diagnostic tooling
+        run: apt-get update && apt-get install -y libsqlite3-dev sqlite3 python3 gdb
+
+      - name: Verify exact production baseline and retain tool metadata
+        shell: bash
+        run: |
+          set -eu
+          EVIDENCE="$RUNNER_TEMP/wrapper-focused-diagnostic"
+          mkdir -p "$EVIDENCE"
+          export EVIDENCE
+          git rev-parse HEAD > "$EVIDENCE/checkout-sha.stdout"
+          git rev-parse 'HEAD^{tree}' > "$EVIDENCE/checkout-tree.txt"
+          git status --porcelain > "$EVIDENCE/checkout-status.txt"
+          git diff --name-only 7f1028ebfa9e5b4776a1aa6636a086107ca5de0a HEAD > "$EVIDENCE/source-delta.txt"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p = Path(os.environ['EVIDENCE'])
+          allowed = {'.github/workflows/linux-focused-diagnostic.yml',
+                     'Scripts/run-linux-focused-diagnostic.py',
+                     'Scripts/test-linux-focused-diagnostic.py',
+                     'engineering/private/284-linux-focused-diagnostic/README.md'}
+          assert not (p/'checkout-status.txt').read_text()
+          delta = set((p/'source-delta.txt').read_text().splitlines())
+          assert delta and delta <= allowed, delta
+          PY
+          swift --version > "$EVIDENCE/swift-version.txt" 2>&1
+          swift build --help > "$EVIDENCE/build-help.txt" 2>&1
+          swift test --help > "$EVIDENCE/test-help.txt" 2>&1
+          gdb --version > "$EVIDENCE/gdb-version.txt" 2>&1
+          cat /proc/sys/kernel/yama/ptrace_scope > "$EVIDENCE/ptrace-scope.txt" 2>&1 || true
+          python3 Scripts/verify-wrapper-lock-integrity.py --phase baseline --evidence-dir "$EVIDENCE"
+          python3 Scripts/verify-wrapper-bindings.py --expected Scripts/wrapper-expected-bindings.json --resolved "$EVIDENCE/baseline/files/Package.resolved"
+          python3 Scripts/verify-wrapper-lock-integrity.py --phase before-build --evidence-dir "$EVIDENCE"
+
+      - name: Build the unchanged locked test graph
+        id: build
+        shell: bash
+        run: |
+          EVIDENCE="$RUNNER_TEMP/wrapper-focused-diagnostic"
+          printf '%s\0' swift build --force-resolved-versions --build-tests > "$EVIDENCE/build.argv.nul"
+          status=0
+          swift build --force-resolved-versions --build-tests > "$EVIDENCE/build.stdout" 2> "$EVIDENCE/build.stderr" || status=$?
+          printf '%s\n' "$status" > "$EVIDENCE/build.exit-code"
+          exit "$status"
+
+      - name: Verify lock integrity before the focused diagnostic
+        env:
+          CONSUMER_STEP_OUTCOMES: ${{ toJSON(steps) }}
+        shell: bash
+        run: |
+          set -eu
+          python3 Scripts/verify-wrapper-lock-integrity.py --phase after-build --evidence-dir "$RUNNER_TEMP/wrapper-focused-diagnostic"
+          python3 Scripts/verify-wrapper-lock-integrity.py --phase before-test --evidence-dir "$RUNNER_TEMP/wrapper-focused-diagnostic"
+
+      - name: Run32 serial functions with owned300second diagnostic bound
+        id: focused
+        shell: bash
+        run: python3 Scripts/run-linux-focused-diagnostic.py --workspace "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/wrapper-focused-diagnostic/run"
+
+      - name: Preserve final integrity and step outcomes
+        if: always()
+        env:
+          CONSUMER_STEP_OUTCOMES: ${{ toJSON(steps) }}
+        shell: bash
+        run: |
+          EVIDENCE="$RUNNER_TEMP/wrapper-focused-diagnostic"
+          mkdir -p "$EVIDENCE"
+          printf '%s\n' "$CONSUMER_STEP_OUTCOMES" > "$EVIDENCE/step-outcomes.json"
+          status=0
+          python3 Scripts/verify-wrapper-lock-integrity.py --phase after-test --evidence-dir "$EVIDENCE" || status=$?
+          python3 Scripts/verify-wrapper-lock-integrity.py --phase final --evidence-dir "$EVIDENCE" || status=$?
+          exit "$status"
+
+      - name: Retain partial evidence even when stacks are unavailable
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-focused-stall-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/wrapper-focused-diagnostic
+          include-hidden-files: true
+          if-no-files-found: error
