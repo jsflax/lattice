@@ -1188,8 +1188,10 @@ final class GenerationCoordinator: @unchecked Sendable {
 
     /// Remove the invalidation hook, release every keeper hold, and drop all
     /// shape caches. Called from the registry on `Lattice.close()` /
-    /// `Lattice.delete(for:)` — BEFORE the backend closes (§4.6 ordering;
-    /// the core close additionally retires its whole pool).
+    /// `Lattice.delete(for:)` before backend close (§4.6 ordering). The final
+    /// close eviction also tears down a concurrently minted replacement:
+    /// hook removal is independent of SQLite, and releasing generation IDs
+    /// already retired by core close is a no-op.
     func tearDown() {
         let cleanup: (token: UInt64?, generations: [UInt64]) = lock.withLockUnchecked { state in
             let token = state.hookToken
