@@ -7,15 +7,59 @@ extension Lattice {
     public struct RecoverySourceExpectation: Sendable, Hashable {
         public enum ConfigurationError: Swift.Error { case invalidEndpoint, invalidIdentity, invalidScope, invalidBounds }
         public enum Operation: String, Sendable, Codable, Hashable { case insert = "INSERT", update = "UPDATE", delete = "DELETE" }
+        /// Passive immutable fact from the enrolled source. This value does
+        /// not authorize a producer or migrate an existing receipt store.
+        public struct ReceiptCoverage: Sendable, Codable, Hashable {
+            public let kind: String
+            public let cohortID: String
+            public let cohortRevision: Int64
+            public let operationCodec: Int
+            public let namespaces: [String]
+            public init(cohortID: UUID, cohortRevision: Int64, namespaces: [String]) throws {
+                guard cohortRevision > 0, (1...64).contains(namespaces.count),
+                      namespaces.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 256 && !$0.contains("\0") }),
+                      Set(namespaces.map { Data($0.utf8) }).count == namespaces.count
+                else { throw ConfigurationError.invalidBounds }
+                kind = "registeredProducerV3"; self.cohortID = cohortID.uuidString.lowercased()
+                self.cohortRevision = cohortRevision; operationCodec = 1
+                self.namespaces = namespaces.sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
+            }
+            private enum CodingKeys: String, CodingKey { case kind, cohortID, cohortRevision, operationCodec, namespaces }
+            public init(from decoder: any Decoder) throws {
+                let value = try decoder.container(keyedBy: CodingKeys.self)
+                let kind = try value.decode(String.self, forKey: .kind)
+                let id = try value.decode(String.self, forKey: .cohortID)
+                let revision = try value.decode(Int64.self, forKey: .cohortRevision)
+                let codec = try value.decode(Int.self, forKey: .operationCodec)
+                let names = try value.decode([String].self, forKey: .namespaces)
+                guard kind == "registeredProducerV3", codec == 1,
+                      let uuid = UUID(uuidString: id), uuid.uuidString.lowercased() == id
+                else { throw ConfigurationError.invalidIdentity }
+                try self.init(cohortID: uuid, cohortRevision: revision, namespaces: names)
+                guard self.namespaces.map({ Data($0.utf8) }) == names.map({ Data($0.utf8) })
+                else { throw ConfigurationError.invalidIdentity }
+            }
+            public static func == (lhs: Self, rhs: Self) -> Bool {
+                lhs.cohortID == rhs.cohortID && lhs.cohortRevision == rhs.cohortRevision &&
+                    lhs.namespaces.map({ Data($0.utf8) }) == rhs.namespaces.map({ Data($0.utf8) })
+            }
+            public func hash(into hasher: inout Hasher) {
+                hasher.combine(cohortID); hasher.combine(cohortRevision); hasher.combine(namespaces.count)
+                for namespace in namespaces { hasher.combine(Data(namespace.utf8)) }
+            }
+        }
         public struct Source: Sendable, Encodable, Hashable {
             public let authority: String, sourceID: String, epoch: String
             public let scopeDigest: String, schemaDigest: String, receiptNamespace: String
             public let coverageID: String, coverageRevision: Int64, descriptorDigest: String
+            public let receiptCoverage: ReceiptCoverage?
             public init(authority: String, sourceID: UUID, epoch: UUID, scopeDigest: String, schemaDigest: String,
-                        receiptNamespace: String, coverageID: String, coverageRevision: Int64, descriptorDigest: String) {
+                        receiptNamespace: String, coverageID: String, coverageRevision: Int64, descriptorDigest: String,
+                        receiptCoverage: ReceiptCoverage? = nil) {
                 self.authority = authority; self.sourceID = sourceID.uuidString.lowercased(); self.epoch = epoch.uuidString.lowercased()
                 self.scopeDigest = scopeDigest; self.schemaDigest = schemaDigest; self.receiptNamespace = receiptNamespace
                 self.coverageID = coverageID; self.coverageRevision = coverageRevision; self.descriptorDigest = descriptorDigest
+                self.receiptCoverage = receiptCoverage
             }
         }
         public struct Peer: Sendable, Encodable, Hashable {
@@ -60,6 +104,10 @@ extension Lattice {
             guard text(source.authority), text(source.receiptNamespace), text(source.coverageID), source.coverageRevision > 0,
                   digest(source.scopeDigest), digest(source.schemaDigest), digest(source.descriptorDigest),
                   text(peer.replicaID), text(channel, 64), (1...3_600_000).contains(validForMilliseconds) else { throw ConfigurationError.invalidIdentity }
+            if let coverage = source.receiptCoverage {
+                guard coverage.namespaces.contains(where: { $0.utf8.elementsEqual(source.receiptNamespace.utf8) })
+                else { throw ConfigurationError.invalidIdentity }
+            }
             let scope = incomingScope, tables = scope.models.map(\.table) + scope.relations.map(\.table)
             func ops(_ values: [Operation]) -> Bool { values.count <= 3 && Set(values).count == values.count }
             guard (1...256).contains(scope.models.count), scope.relations.count <= 256, scope.scopedLinkTables.count <= 256,

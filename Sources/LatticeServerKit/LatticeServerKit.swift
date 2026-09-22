@@ -804,11 +804,14 @@ public struct SyncRelayHandle: Sendable {
     let pushManager: FileWatchManager?
 
     private let recoveryMount: RecoveryRelayMount?
+    private let recoveryMigration: (@Sendable (SyncChannel, SyncRecoveryReceiptCohort) async throws -> SyncRecoveryMigrationOutcome)?
 
-    init(manager: SocketManager, pushManager: FileWatchManager? = nil, recoveryMount: RecoveryRelayMount? = nil) {
+    init(manager: SocketManager, pushManager: FileWatchManager? = nil, recoveryMount: RecoveryRelayMount? = nil,
+         recoveryMigration: (@Sendable (SyncChannel, SyncRecoveryReceiptCohort) async throws -> SyncRecoveryMigrationOutcome)? = nil) {
         self.manager = manager
         self.pushManager = pushManager
         self.recoveryMount = recoveryMount
+        self.recoveryMigration = recoveryMigration
     }
 
     var recoverySessionCount: Int { recoveryMount?.sessionCount ?? 0 }
@@ -819,6 +822,20 @@ public struct SyncRelayHandle: Sendable {
         guard let recoveryMount else { return }
         recoveryMount.retire()
         await manager.disconnectEveryConnection()
+    }
+
+    /// Explicit source-owner administration. Retires this whole mount, then
+    /// migrates one resolved existing channel store. Configure a new mount from
+    /// the returned recipe after success; this handle remains retired. Pending
+    /// means a live native setup/result still owns custody and no migration was
+    /// admitted. Errors never imply that COMMIT was absent.
+    public func migrateRecoveryReceiptCoverage(channel: SyncChannel, cohort: SyncRecoveryReceiptCohort) async throws -> SyncRecoveryMigrationOutcome {
+        guard let recoveryMount, let recoveryMigration else { throw SyncRecoveryConfigurationError.staleAuthorization }
+        recoveryMount.retire()
+        guard recoveryMount.reserveMigration() else { return .pendingQuiescence }
+        defer { recoveryMount.releaseMigration() }
+        await manager.disconnectEveryConnection()
+        return try await recoveryMigration(channel, cohort)
     }
 
     /// Kick one user's live connections on a channel (membership removal).
@@ -1376,7 +1393,35 @@ extension Lattice {
         routes.webSocket(path, maxFrameSize: WebSocketMaxFrameSize(integerLiteral: recoveryMount == nil ? 300 * 1024 * 1024 : 8_388_608),
                          shouldUpgrade: { $0.eventLoop.makeSucceededFuture(HTTPHeaders?.some([:])) },
                          onUpgrade: onUpgrade)
-        return SyncRelayHandle(manager: sockets, pushManager: watchManager, recoveryMount: recoveryMount)
+        let migration: (@Sendable (SyncChannel, SyncRecoveryReceiptCohort) async throws -> SyncRecoveryMigrationOutcome)?
+        if let recoveryMount {
+            migration = { channel, cohort in
+                guard !channel.databaseFileName.isEmpty, channel.databaseFileName.utf8.count <= 255,
+                      !channel.databaseFileName.contains("/"), !channel.databaseFileName.contains("\\"),
+                      !channel.databaseFileName.contains("\0"), !channel.databaseFileName.hasPrefix(".")
+                else { throw SyncRecoveryConfigurationError.invalidBounds }
+                // The app provider executes before admission to a native lane.
+                // Both policy documents derive from this mount's immutable
+                // registration; callers cannot supply another source or path.
+                let (prior, next, configuration) = try recoveryMount.migrationPolicies(channel, cohort: cohort)
+                let file = storageURL.appending(path: channel.databaseFileName)
+                let key = FileWatchManager.canonicalKey(for: file)
+                return try await withCheckedThrowingContinuation { continuation in
+                    RelayExecutionPool.io.submitRequired(for: key) {
+                        do {
+                            var directory: ObjCBool = false
+                            guard FileManager.default.fileExists(atPath: file.path, isDirectory: &directory), !directory.boolValue
+                            else { throw SyncRecoveryConfigurationError.staleAuthorization }
+                            let open = SyncRelayApplyPolicy.configuration(fileURL: file, storeConfiguration: storeConfiguration)
+                            let owner = try Lattice(isolation: nil, for: schema, configuration: open)
+                            let committed = try migrateRecoveryRelayReceiptCoverage(owner: owner, prior: prior, next: next)
+                            continuation.resume(returning: committed ? .migrated(configuration) : .pendingQuiescence)
+                        } catch { continuation.resume(throwing: error) }
+                    }
+                }
+            }
+        } else { migration = nil }
+        return SyncRelayHandle(manager: sockets, pushManager: watchManager, recoveryMount: recoveryMount, recoveryMigration: migration)
     }
 
     /// Personal-topology wrapper preserving the original API and on-disk

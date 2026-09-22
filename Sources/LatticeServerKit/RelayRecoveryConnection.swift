@@ -7,6 +7,36 @@ struct RecoveryRelayAuthorizationTurn: Sendable {
     let context: SyncRecoveryAuthorizationContext
     let wire: Data
     let maximumAuthorizationMilliseconds: Int64
+    // The real connection captures this turn from the opened native source.
+    // Keeping marshaling here makes every answer pass the same exact-context
+    // checks before native authorization independently verifies it again.
+    func encode(_ answer: SyncRecoveryAuthorization) throws -> Data {
+        guard answer.authenticatedUserID == context.channel.userId, answer.peer == context.declaredPeer,
+              answer.source == context.source, answer.incomingScope == context.incomingScope,
+              !answer.authorizationRevision.isEmpty, answer.authorizationRevision.utf8.count <= 256,
+              !answer.authorizationRevision.contains("\0"),
+              (1...maximumAuthorizationMilliseconds).contains(answer.validForMilliseconds)
+        else { throw SyncRecoveryConfigurationError.staleAuthorization }
+        func object<T: Encodable>(_ value: T) throws -> Any { try JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) }
+        var payload: [String: Any] = ["context": try JSONSerialization.jsonObject(with: wire),
+            "authenticatedUserID": answer.authenticatedUserID.uuidString, "peer": try object(answer.peer),
+            "source": try object(answer.source), "incomingScope": try object(answer.incomingScope),
+            "authorizationRevision": answer.authorizationRevision, "validForMilliseconds": answer.validForMilliseconds]
+        switch (context.source.receiptCoverage, answer.receiptCoverage) {
+        case (nil, .namespaceOnly): break // Preserve exact existing v2 keys.
+        case (.some(let cohort), .registeredProducer(let producer, let cohortID, let revision)):
+            guard producer.isBounded, revision > 0, cohort.cohortID == cohortID.uuidString.lowercased(),
+                  cohort.cohortRevision == revision,
+                  cohort.namespaces.contains(where: { $0.utf8.elementsEqual(context.source.receiptNamespace.utf8) })
+            else { throw SyncRecoveryConfigurationError.staleAuthorization }
+            payload["receiptCoverage"] = ["kind": "registeredProducer", "registrationID": producer.registrationID,
+                "incarnation": producer.incarnation.uuidString.lowercased(), "cohortID": cohortID.uuidString.lowercased(),
+                "cohortRevision": revision]
+        default: throw SyncRecoveryConfigurationError.staleAuthorization
+        }
+        let encoded = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        guard encoded.count <= 32_768 else { throw SyncRecoveryConfigurationError.invalidBounds }; return encoded
+    }
 }
 /// One real accepted connection. Native-bearing fields are confined to its
 /// file IO lane. All other users hold only its payload-free lifetime cell.
@@ -71,7 +101,8 @@ final class RecoveryRelayConnection: @unchecked Sendable {
             let resolved = try JSONDecoder().decode(Wire.self, from: actual.descriptor)
             guard resolved.route.authenticatedUserID == channel.userId, resolved.route.peer == peer,
                   resolved.source.sourceID == source.configuration.sourceID, resolved.source.epoch == source.configuration.epoch,
-                  resolved.source.receiptNamespace == source.configuration.receiptNamespace else { throw SyncRecoveryConfigurationError.staleAuthorization }
+                  resolved.source.receiptNamespace == source.configuration.receiptNamespace,
+                  resolved.source.receiptCoverage == source.configuration.receiptCoverageFact else { throw SyncRecoveryConfigurationError.staleAuthorization }
             native = actual; resolvedScope = resolved.incomingScope
             return .init(context: .init(channel: channel, declaredPeer: peer, source: resolved.source,
                                         incomingScope: resolved.incomingScope), wire: actual.descriptor,
@@ -87,20 +118,8 @@ final class RecoveryRelayConnection: @unchecked Sendable {
         let captured = request.withLockedValue { value in let held = value; value = nil; return held }
         guard let captured else { throw SyncRecoveryConfigurationError.staleAuthorization }
         let answer = try await mount.authorize(captured, turn.context)
-        guard !lifetime.isStopped, !revocation.isRevoked, !socket.isClosed,
-              answer.authenticatedUserID == turn.context.channel.userId, answer.peer == turn.context.declaredPeer,
-              answer.source == turn.context.source, answer.incomingScope == turn.context.incomingScope,
-              !answer.authorizationRevision.isEmpty, answer.authorizationRevision.utf8.count <= 256,
-              !answer.authorizationRevision.contains("\0"),
-              (1...turn.maximumAuthorizationMilliseconds).contains(answer.validForMilliseconds)
-        else { throw SyncRecoveryConfigurationError.staleAuthorization }
-        func object<T: Encodable>(_ value: T) throws -> Any { try JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) }
-        let payload: [String: Any] = ["context": try JSONSerialization.jsonObject(with: turn.wire),
-            "authenticatedUserID": answer.authenticatedUserID.uuidString, "peer": try object(answer.peer),
-            "source": try object(answer.source), "incomingScope": try object(answer.incomingScope),
-            "authorizationRevision": answer.authorizationRevision, "validForMilliseconds": answer.validForMilliseconds]
-        let encoded = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
-        guard encoded.count <= 32_768 else { throw SyncRecoveryConfigurationError.invalidBounds }; return encoded
+        guard !lifetime.isStopped, !revocation.isRevoked, !socket.isClosed else { throw SyncRecoveryConfigurationError.staleAuthorization }
+        return try turn.encode(answer)
     }
     func finish(_ answer: Data) throws {
         precondition(RelayExecutionPool.io.isCurrentWorker)

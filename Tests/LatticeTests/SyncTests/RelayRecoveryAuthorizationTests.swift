@@ -703,3 +703,48 @@ private struct RelayAuthenticatedReadyLargeTests {
         }
     }
 }
+
+
+@Suite("Actual resolved-mount receipt migration", .timeLimit(.minutes(2)))
+private struct RelayReceiptCoverageMigrationTests {
+    @Test func actualResolvedMountMigrationRetiresPeersAndPreservesLegacyRows() async throws {
+        try await withRecoveryAuthorizationHarness { h in
+            let peer = try await h.connect()
+            let (frame, ids) = try recoveryDonorFrame(73)
+            try await peer.socket!.send(Array(frame))
+            try await peer.wait { Set(ids).isSubset(of: Set($0.acks)) }
+            let before = try await h.inspect()
+            #expect(before.0 == 1); #expect(before.1 == [73])
+            let cohort = try SyncRecoveryReceiptCohort(id: UUID(), revision: 1, namespaces: [
+                .init(namespaceID: "application", coverageID: "registered-peers-v1", revision: 7)
+            ])
+            let channel = SyncChannel(id: "group-a", userId: h.registrations.user)
+            let deadline = Date().addingTimeInterval(10)
+            var migrated: SyncRecoveryMountConfiguration?
+            while Date() < deadline, migrated == nil {
+                switch try await h.writer.migrateRecoveryReceiptCoverage(channel: channel, cohort: cohort) {
+                case .pendingQuiescence: try await Task.sleep(nanoseconds: 10_000_000)
+                case .migrated(let configuration): migrated = configuration
+                }
+            }
+            let actual = try #require(migrated)
+            let policyBytes = try actual.policy(nil)
+            let policy = try #require(JSONSerialization.jsonObject(with: policyBytes) as? [String: Any])
+            #expect(policy["version"] as? Int == 2)
+            #expect(policy["sourceID"] as? String == h.registrations.sourceA.uuidString.lowercased())
+            #expect(policy["epoch"] as? String == h.registrations.epoch.uuidString.lowercased())
+            let coverage = try #require(policy["receiptCoverage"] as? [String: Any])
+            #expect(coverage["cohortID"] as? String == cohort.id.uuidString.lowercased())
+            #expect(coverage["namespaces"] as? [String] == ["application"])
+            try await peer.wait { $0.closed }
+            #expect(h.writer.recoverySessionCount == 0)
+            let after = try await h.inspect()
+            #expect(after.0 == before.0); #expect(after.1 == before.1); #expect(after.2 == before.2)
+            // The public administration call consumed this mount. A later
+            // peer cannot obtain either old or new recovery authority here.
+            let late = try await h.connect(h.registrations.second)
+            try await late.wait { $0.closed }
+            #expect(late.facts.withLockedValue { $0.acks.isEmpty && $0.audits.isEmpty })
+        }
+    }
+}

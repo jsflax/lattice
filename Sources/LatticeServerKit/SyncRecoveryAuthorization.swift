@@ -22,6 +22,15 @@ public struct SyncRecoverySourceDescriptor: Sendable, Codable, Equatable {
     public let coverageID: String
     public let coverageRevision: Int64
     public let descriptorDigest: String
+    public let receiptCoverage: Lattice.RecoverySourceExpectation.ReceiptCoverage?
+    public init(authority: String, sourceID: UUID, epoch: UUID, scopeDigest: String, schemaDigest: String,
+                receiptNamespace: String, coverageID: String, coverageRevision: Int64, descriptorDigest: String,
+                receiptCoverage: Lattice.RecoverySourceExpectation.ReceiptCoverage? = nil) {
+        self.authority = authority; self.sourceID = sourceID; self.epoch = epoch
+        self.scopeDigest = scopeDigest; self.schemaDigest = schemaDigest; self.receiptNamespace = receiptNamespace
+        self.coverageID = coverageID; self.coverageRevision = coverageRevision; self.descriptorDigest = descriptorDigest
+        self.receiptCoverage = receiptCoverage
+    }
 }
 public struct SyncRecoveryModelScope: Sendable, Codable, Equatable {
     public let table: String
@@ -57,15 +66,17 @@ public struct SyncRecoveryAuthorization: Sendable {
     public let incomingScope: SyncRecoveryIncomingScope
     public let authorizationRevision: String
     public let validForMilliseconds: Int64
+    public let receiptCoverage: SyncRecoveryReceiptCoverageAuthorization
     public init(authenticatedUserID: UUID, peer: SyncRecoveryPeerIdentity,
                 source: SyncRecoverySourceDescriptor, incomingScope: SyncRecoveryIncomingScope,
-                authorizationRevision: String, validForMilliseconds: Int64) {
+                authorizationRevision: String, validForMilliseconds: Int64,
+                receiptCoverage: SyncRecoveryReceiptCoverageAuthorization = .namespaceOnly) {
         self.authenticatedUserID = authenticatedUserID; self.peer = peer; self.source = source
         self.incomingScope = incomingScope; self.authorizationRevision = authorizationRevision
-        self.validForMilliseconds = validForMilliseconds
+        self.validForMilliseconds = validForMilliseconds; self.receiptCoverage = receiptCoverage
     }
 }
-public struct SyncRecoveryNamespace: Sendable, Codable {
+public struct SyncRecoveryNamespace: Sendable, Codable, Hashable {
     public let namespaceID: String
     public let coverageID: String
     public let revision: Int64
@@ -73,23 +84,75 @@ public struct SyncRecoveryNamespace: Sendable, Codable {
         self.namespaceID = namespaceID; self.coverageID = coverageID; self.revision = revision
     }
 }
+/// An application-authorized persistent producer lineage. Reconnects and
+/// different legitimate channel peers may map to this same registration only
+/// through the application's durable membership evidence. Never infer it from
+/// a user ID, peer declaration, path or a newly generated per-connection UUID.
+public struct SyncRecoveryProducerRegistration: Sendable, Codable, Equatable {
+    public let registrationID: String
+    public let incarnation: UUID
+    public init(registrationID: String, incarnation: UUID) {
+        self.registrationID = registrationID; self.incarnation = incarnation
+    }
+    var isBounded: Bool { !registrationID.isEmpty && registrationID.utf8.count <= 256 && !registrationID.contains("\0") }
+}
+/// Exact immutable enrolled namespace entries. Creating this passive recipe
+/// does not enroll, resize or migrate an existing canonical source file.
+public struct SyncRecoveryReceiptCohort: Sendable, Codable, Equatable {
+    public let id: UUID
+    public let revision: Int64
+    public let namespaces: [SyncRecoveryNamespace]
+    public init(id: UUID, revision: Int64, namespaces: [SyncRecoveryNamespace]) throws {
+        guard revision > 0, (1...64).contains(namespaces.count),
+              namespaces.allSatisfy({ !$0.namespaceID.isEmpty && $0.namespaceID.utf8.count <= 256 && !$0.namespaceID.contains("\0") &&
+                  !$0.coverageID.isEmpty && $0.coverageID.utf8.count <= 256 && !$0.coverageID.contains("\0") && $0.revision > 0 }),
+              Set(namespaces.map { Data($0.namespaceID.utf8) }).count == namespaces.count
+        else { throw SyncRecoveryConfigurationError.invalidBounds }
+        self.id = id; self.revision = revision
+        self.namespaces = namespaces.sorted { $0.namespaceID.utf8.lexicographicallyPrecedes($1.namespaceID.utf8) }
+    }
+    private enum CodingKeys: String, CodingKey { case id, revision, namespaces }
+    public init(from decoder: any Decoder) throws {
+        let value = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(id: value.decode(UUID.self, forKey: .id), revision: value.decode(Int64.self, forKey: .revision),
+                      namespaces: value.decode([SyncRecoveryNamespace].self, forKey: .namespaces))
+    }
+}
+public enum SyncRecoveryReceiptCoveragePolicy: Sendable {
+    /// Existing namespace-only schema and wire. No alias authority is granted.
+    case singleNamespaceV2
+    /// New v3 enrollment requires an explicit .bounded48MiBV1 READY profile.
+    /// Its persistent source policy permits 16 retained transfers and 1 GiB
+    /// of charged storage; the v2 profile remains at 8 transfers and 512 MiB.
+    /// The SDK never upgrades the default profile or an existing source file.
+    case registeredProducerV3(SyncRecoveryReceiptCohort)
+}
+public enum SyncRecoveryReceiptCoverageAuthorization: Sendable {
+    /// Default for existing v2 sources. This is refused by an enrolled v3 source.
+    case namespaceOnly
+    case registeredProducer(SyncRecoveryProducerRegistration, cohortID: UUID, cohortRevision: Int64)
+}
 public enum SyncRecoveryDurability: Sendable { case walFull }
 /// Explicit persistent policy selection. Existing sources must reopen with
 /// exactly their enrolled profile; this never resizes or adopts a prior file.
 public enum SyncRecoveryReadyProfile: Sendable { case boundedV1, bounded48MiBV1 }
 public enum SyncRecoveryConfigurationError: Error, Sendable { case invalidBounds, ambiguousPolicy, invalidPeer, staleAuthorization }
-/// Explicit bounded-v1 source enrollment. The full registered model/relation
-/// closure is authoritative; a filtered scope label is not supported. Enrolling
-/// a file changes its durable canonical profile and requires exact reopen.
+/// Explicit source enrollment with namespace-only v2 behavior by default.
+/// The full registered model/relation closure is authoritative; a filtered
+/// scope label is not supported. V3 is an immutable enrollment choice, not
+/// an implicit migration of an existing file; reopening requires its exact profile.
 public struct SyncRecoveryMountConfiguration: Sendable {
     let authority: String, sourceID: UUID, epoch: UUID, localNamespace: String, receiptNamespace: String
     let namespaces: [SyncRecoveryNamespace], models: [String]
     let maximumAuthorizationMilliseconds: Int64
     let readyProfile: SyncRecoveryReadyProfile
+    let receiptCoverage: SyncRecoveryReceiptCoveragePolicy
+    let receiptCoverageFact: Lattice.RecoverySourceExpectation.ReceiptCoverage?
     public init(authority: String, sourceID: UUID, epoch: UUID, localNamespace: String,
                 namespaces: [SyncRecoveryNamespace], receiptNamespace: String, models: [String],
                 durability: SyncRecoveryDurability, maximumAuthorizationMilliseconds: Int64,
-                readyProfile: SyncRecoveryReadyProfile = .boundedV1) throws {
+                readyProfile: SyncRecoveryReadyProfile = .boundedV1,
+                receiptCoverage: SyncRecoveryReceiptCoveragePolicy = .singleNamespaceV2) throws {
         func bounded(_ s: String, _ cap: Int) -> Bool { !s.isEmpty && s.utf8.count <= cap && !s.contains("\0") }
         guard bounded(authority, 256), bounded(localNamespace, 256), bounded(receiptNamespace, 256),
               (1...64).contains(namespaces.count), (1...16).contains(models.count),
@@ -99,10 +162,22 @@ public struct SyncRecoveryMountConfiguration: Sendable {
               namespaces.contains(where: { $0.namespaceID == receiptNamespace }), receiptNamespace != localNamespace,
               models.allSatisfy({ bounded($0, 64) }), Set(models).count == models.count,
               (1...3_600_000).contains(maximumAuthorizationMilliseconds) else { throw SyncRecoveryConfigurationError.invalidBounds }
+        let coverageFact: Lattice.RecoverySourceExpectation.ReceiptCoverage?
+        switch receiptCoverage {
+        case .singleNamespaceV2: coverageFact = nil
+        case .registeredProducerV3(let cohort):
+            guard case .bounded48MiBV1 = readyProfile else { throw SyncRecoveryConfigurationError.invalidBounds }
+            guard cohort.namespaces.contains(where: { $0.namespaceID.utf8.elementsEqual(receiptNamespace.utf8) }),
+                  cohort.namespaces.allSatisfy({ member in namespaces.contains(where: {
+                      $0.namespaceID.utf8.elementsEqual(member.namespaceID.utf8) &&
+                      $0.coverageID.utf8.elementsEqual(member.coverageID.utf8) && $0.revision == member.revision
+                  }) }) else { throw SyncRecoveryConfigurationError.ambiguousPolicy }
+            coverageFact = try .init(cohortID: cohort.id, cohortRevision: cohort.revision, namespaces: cohort.namespaces.map(\.namespaceID))
+        }
         self.authority = authority; self.sourceID = sourceID; self.epoch = epoch; self.localNamespace = localNamespace
         self.namespaces = namespaces; self.receiptNamespace = receiptNamespace; self.models = models
         self.maximumAuthorizationMilliseconds = maximumAuthorizationMilliseconds
-        self.readyProfile = readyProfile
+        self.readyProfile = readyProfile; self.receiptCoverage = receiptCoverage; self.receiptCoverageFact = coverageFact
     }
     func policy(_ upload: SyncWritePolicy?) throws -> Data {
         let tables = upload?.allowedOperations ?? [:]
@@ -122,6 +197,10 @@ public struct SyncRecoveryMountConfiguration: Sendable {
             "maximumAuthorizationMilliseconds": maximumAuthorizationMilliseconds,
             "upload": ["tables": masks, "unlisted": unlisted,
                        "maximumDeletes": upload?.maxDeletesPerFrame ?? 256]]
+        if let coverage = receiptCoverageFact {
+            payload["version"] = 2
+            payload["receiptCoverage"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(coverage))
+        }
         if case .bounded48MiBV1 = readyProfile { payload["readyProfile"] = "bounded48MiBV1" }
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         guard data.count <= 32_768 else { throw SyncRecoveryConfigurationError.invalidBounds }; return data
@@ -205,7 +284,7 @@ final class RecoveryRelayMount: @unchecked Sendable {
     private let source: @Sendable (SyncChannel) throws -> SyncRecoveryMountConfiguration
     private let upload: SyncWritePolicy?
     let authorize: @Sendable (Request, SyncRecoveryAuthorizationContext) async throws -> SyncRecoveryAuthorization
-    private struct State { var retired = false; var sessions: [UUID: RecoveryRelayLifetime] = [:] }
+    private struct State { var retired = false; var migration = false; var sessions: [UUID: RecoveryRelayLifetime] = [:] }
     private let state = NIOLockedValueBox(State())
     convenience init(configuration: SyncRecoveryMountConfiguration, upload: SyncWritePolicy?,
          authorize: @escaping @Sendable (Request, SyncRecoveryAuthorizationContext) async throws -> SyncRecoveryAuthorization) throws {
@@ -229,6 +308,23 @@ final class RecoveryRelayMount: @unchecked Sendable {
         }
     }
     var sessionCount: Int { state.withLockedValue { $0.sessions.count } }
+    func reserveMigration() -> Bool {
+        state.withLockedValue { s in
+            guard s.retired, !s.migration else { return false }
+            s.migration = true; return true
+        }
+    }
+    func releaseMigration() { state.withLockedValue { $0.migration = false } }
+    func migrationPolicies(_ channel: SyncChannel, cohort: SyncRecoveryReceiptCohort) throws -> (Data, Data, SyncRecoveryMountConfiguration) {
+        let prior = try resolve(channel)
+        guard case .singleNamespaceV2 = prior.configuration.receiptCoverage else { throw SyncRecoveryConfigurationError.ambiguousPolicy }
+        let c = prior.configuration
+        let next = try SyncRecoveryMountConfiguration(authority: c.authority, sourceID: c.sourceID, epoch: c.epoch,
+            localNamespace: c.localNamespace, namespaces: c.namespaces, receiptNamespace: c.receiptNamespace,
+            models: c.models, durability: .walFull, maximumAuthorizationMilliseconds: c.maximumAuthorizationMilliseconds,
+            readyProfile: .bounded48MiBV1, receiptCoverage: .registeredProducerV3(cohort))
+        return (prior.policy, try next.policy(upload), next)
+    }
     func remove(_ id: UUID) { _ = state.withLockedValue { $0.sessions.removeValue(forKey: id) } }
     func retire() {
         let stopped = state.withLockedValue { s in s.retired = true; return Array(s.sessions.values) }

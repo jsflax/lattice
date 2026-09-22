@@ -1,5 +1,5 @@
 {
-  "scope": "Development graph combining authenticated relay, physical platform attempts, continuous producer/export and retained Swift owners, with owned relay-ID bridge correction. Receiver source trust, controller activation, existing-store adoption, runtime and performance qualification remain incomplete. Not a public release graph.",
-  "coreCommit": "8c2fccb0c4dc0f3b2ca287c73a36d5c78b07eff4",
-  "coreTree": "db5eb7c5fd61e4363b1a413da81e10b8e62bb633"
+  "scope": "Private development graph for review of explicit registered-producer v3 receipt coverage, immutable originals, connected export/ingress/Q/READY/controller validation, and explicit quiescent source migration. Source and runtime acceptance are pending. Legacy-unbound cross-namespace evidence and pending old-Q migration remain unresolved; no automatic historical recovery, performance, TLS or public release acceptance is claimed.",
+  "coreCommit": "c40ae3cc81321d78c7bd4d9bdd4f3be493aa0af8",
+  "coreTree": "97b2e0ede00181a1165f9a5f61bfd6a94490ae86"
 }
