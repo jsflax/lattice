@@ -1,5 +1,5 @@
 {
-  "scope": "Explicit authenticated relay development graph composed onto the qualified scheduler handoff correction. Upstream registered-peer authorization plus recipient publication gate only. Receiver trusted transport, continuous producer/controller integration, automatic recovery, runtime/performance qualification and public release remain separate.",
-  "coreCommit": "81138b153db5410d9f76ea43164ae8bbe36c2f5a",
-  "coreTree": "071a1ee0cad98acc1939d467341311d55f41a260"
+  "scope": "Explicit platform callback lifetime/attempt admission and authenticated relay development graph. Real Apple/NIO adapters are composed with registered-peer relay authorization. Receiver source trust, continuous producer/controller integration, automatic recovery, runtime and performance qualification remain incomplete. Not a public release graph.",
+  "coreCommit": "e6063ea46248292a84fe615ef3e335b4761f1319",
+  "coreTree": "a4fbc5cb5d80d4aa58d17ab26236d2fb4a301f53"
 }

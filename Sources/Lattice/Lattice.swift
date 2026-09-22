@@ -103,233 +103,140 @@ public struct Lattice {
         
     }
     
-    /// URLSession-backed sync transport that bridges to C++ generic_sync_transport
-    internal final class WebsocketClient: @unchecked Sendable {
-        private var webSocketTask: URLSessionWebSocketTask?
-        private var currentState: lattice.transport_state = .closed
-        // Recreated per connect attempt — see performConnect.
-        private var session: URLSession
-        private let delegateHandler: WebSocketDelegateHandler
-
-        // Pointers to trigger C++ callbacks - set after generic_websocket_client is created
-        private var cxxClientPtr: UnsafeMutableRawPointer?
-
-        final class WebSocketDelegateHandler: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
-            weak var client: WebsocketClient?
-
-            // The handler is shared across the per-attempt sessions (see
-            // performConnect). Events from an invalidated PREVIOUS session —
-            // its task's cancellation fires didComplete(NSURLErrorCancelled)
-            // — must not tear down the CURRENT attempt: without this guard the
-            // cancel of attempt N-1 error-looped attempt N forever.
-            private func isCurrent(_ session: URLSession) -> Bool {
-                client?.session === session
+    /// Each URLSession attempt owns a retained native callback endpoint. Late
+    /// receive/send completions cannot address a replacement task or freed C++.
+    internal final class WebsocketClient: PlatformTransportClient, @unchecked Sendable {
+        private final class Attempt: @unchecked Sendable {
+            let callbacks: PlatformTransportCallbacks
+            let delegate: WebSocketDelegateHandler
+            let session: URLSession
+            let task: URLSessionWebSocketTask
+            init(client: WebsocketClient, request: URLRequest, callbacks: PlatformTransportCallbacks) {
+                self.callbacks = callbacks
+                delegate = WebSocketDelegateHandler()
+                // Fresh credential/cookie state on every attempt, including
+                // reconnect after an authentication failure.
+                session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+                task = session.webSocketTask(with: request)
+                task.maximumMessageSize = 128 * 1024 * 1024
+                delegate.client = client
+                delegate.attempt = self
             }
+            func cancel() {
+                task.cancel(with: .normalClosure, reason: nil)
+                session.invalidateAndCancel()
+            }
+        }
+        private struct State {
+            var destroyed = false
+            var attempt: Attempt?
+        }
+        private let state = UnfairLock(initialState: State())
 
+        private final class WebSocketDelegateHandler: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable {
+            weak var client: WebsocketClient?
+            weak var attempt: Attempt?
+            private func current(_ session: URLSession, _ task: URLSessionTask) -> Attempt? {
+                guard let attempt, attempt.session === session, attempt.task === task,
+                      attempt.callbacks.isCurrent else { return nil }
+                return attempt
+            }
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didOpenWithProtocol protocol: String?) {
-                guard isCurrent(session) else { return }
-                client?.handleOpen()
+                guard let attempt = current(session, webSocketTask) else { return }
+                if attempt.callbacks.open() { client?.startReceiving(attempt) }
             }
-
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-                guard isCurrent(session) else { return }
-                let reasonString = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                client?.handleClose(code: Int(closeCode.rawValue), reason: reasonString)
+                guard let attempt = current(session, webSocketTask) else { return }
+                attempt.callbacks.close(code: Int(closeCode.rawValue),
+                    reason: reason.flatMap { String(data: $0, encoding: .utf8) } ?? "")
             }
-
-            func urlSession(_ session: URLSession,
-                            task: URLSessionTask,
+            func urlSession(_ session: URLSession, task: URLSessionTask,
                             didCompleteWithError error: (any Swift.Error)?) {
-                guard isCurrent(session) else { return }
-                if let error = error {
-                    client?.handleError(error.localizedDescription)
-                }
+                guard let attempt = current(session, task), let error else { return }
+                attempt.callbacks.error(error.localizedDescription)
             }
         }
 
-        init() {
-            delegateHandler = WebSocketDelegateHandler()
-            session = URLSession(configuration: .default, delegate: delegateHandler, delegateQueue: nil)
-            delegateHandler.client = self
-        }
+        func createCxxClient() -> UnsafeMutablePointer<lattice.sync_transport>? { makePlatformTransport(self) }
 
-        /// Creates the C++ generic_sync_transport that wraps this Swift client.
-        /// Returns a raw pointer that C++ will take ownership of via unique_ptr.
-        func createCxxClient() -> UnsafeMutableRawPointer {
-            let clientPtr = Unmanaged.passRetained(self).toOpaque()
-
-            let cxxClient = lattice.generic_sync_transport(
-                clientPtr,
-                // connect_fn
-                { ptr, urlPtr, headersPtr in
-                    guard let ptr = ptr, let urlPtr = urlPtr, let headersPtr = headersPtr else { return }
-                    let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
-                    let url = String(urlPtr.assumingMemoryBound(to: std.string.self).pointee)
-                    let headers = headersPtr.assumingMemoryBound(to: lattice.HeadersMap.self).pointee
-                    client.performConnect(url: url, headers: headers)
-                },
-                // disconnect_fn
-                { ptr in
-                    guard let ptr = ptr else { return }
-                    let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
-                    client.performDisconnect()
-                },
-                // state_fn
-                { ptr in
-                    guard let ptr = ptr else { return .closed }
-                    let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
-                    return client.currentState
-                },
-                // send_fn
-                { ptr, messagePtr in
-                    guard let ptr = ptr, let messagePtr = messagePtr else { return }
-                    let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
-                    let message = messagePtr.assumingMemoryBound(to: lattice.transport_message.self).pointee
-                    client.performSend(message)
-                }
-            )
-
-            // Allocate and store the C++ client so we can call trigger methods
-            let cxxPtr = UnsafeMutablePointer<lattice.generic_sync_transport>.allocate(capacity: 1)
-            cxxPtr.initialize(to: cxxClient)
-            self.cxxClientPtr = UnsafeMutableRawPointer(cxxPtr)
-
-            // Return as websocket_client* for unique_ptr
-            return UnsafeMutableRawPointer(cxxPtr)
-        }
-
-        private func performConnect(url urlString: String, headers: lattice.HeadersMap) {
+        func performConnect(url urlString: String, headers: lattice.HeadersMap, callbacks: PlatformTransportCallbacks) {
+            guard callbacks.isCurrent else { return }
             guard let url = URL(string: urlString) else {
-                triggerError("Invalid URL: \(urlString)")
+                callbacks.error("Invalid WebSocket URL")
                 return
             }
-
-            // Fresh ephemeral session per attempt. URLSession caches auth
-            // state per protection space: after ONE 401 response (e.g. the
-            // server's boot window while litestream restores the auth DB),
-            // CFNetwork stopped sending our manually-set Authorization header
-            // on every subsequent task in the same session — so a daemon that
-            // ever saw a 401 reconnected anonymously FOREVER (production:
-            // hours of 60s-cadence 401s while the same token passed via curl).
-            // An ephemeral config also drops cookies/credential caches.
-            session.finishTasksAndInvalidate()
-            session = URLSession(configuration: .ephemeral, delegate: delegateHandler, delegateQueue: nil)
-
             var request = URLRequest(url: url)
-            headers.forEach { (keyValuePair) in
-                let key = keyValuePair.first
-                let value = keyValuePair.second
-                request.setValue(String(value), forHTTPHeaderField: String(key))
+            headers.forEach { pair in
+                request.setValue(String(pair.second), forHTTPHeaderField: String(pair.first))
             }
-
-            currentState = .connecting
-            webSocketTask = session.webSocketTask(with: request)
-            webSocketTask?.maximumMessageSize = 128 * 1024 * 1024  // 128 MB (default is 1 MB)
-            webSocketTask?.resume()
-            // Try receiving immediately AND after open
-//            startReceiving()
+            let attempt = Attempt(client: self, request: request, callbacks: callbacks)
+            let replaced: (Bool, Attempt?) = state.withLockUnchecked { state in
+                guard !state.destroyed, callbacks.isCurrent else { return (false, nil) }
+                let previous = state.attempt
+                state.attempt = attempt
+                return (true, previous)
+            }
+            replaced.1?.cancel()
+            guard replaced.0, callbacks.isCurrent else { attempt.cancel(); return }
+            attempt.task.resume()
         }
 
-        private func performDisconnect() {
-            currentState = .closing
-            // Nil out cxxClientPtr BEFORE the async cancel so that any delegate
-            // callbacks (didCloseWith, didCompleteWithError) that fire after the
-            // C++ synchronizer is destroyed become no-ops instead of use-after-free.
-            cxxClientPtr = nil
-            webSocketTask?.cancel(with: .normalClosure, reason: nil)
+        func performDisconnect() {
+            let previous = state.withLockUnchecked { state in
+                let previous = state.attempt
+                state.attempt = nil
+                return previous
+            }
+            previous?.cancel()
         }
 
-        private func performSend(_ message: lattice.transport_message) {
-            guard let task = webSocketTask else { return }
-
-            let wsMessage: URLSessionWebSocketTask.Message
-            if message.msg_type == .text {
-                wsMessage = .string(String(message.as_string()))
-            } else {
-                let data = Data(message.data)
-                wsMessage = .data(data)
-            }
-
-            task.send(wsMessage) { [weak self] error in
-                if let error = error {
-                    self?.triggerError(error.localizedDescription)
-                }
+        func performSend(_ message: lattice.transport_message, callbacks: PlatformTransportCallbacks) {
+            let attempt = state.withLockUnchecked { $0.attempt }
+            guard let attempt, attempt.callbacks.matches(callbacks), callbacks.isCurrent else { return }
+            let outgoing: URLSessionWebSocketTask.Message
+            if message.msg_type == .text { outgoing = .string(String(message.as_string())) }
+            else { outgoing = .data(Data(message.data)) }
+            attempt.task.send(outgoing) { [weak attempt] error in
+                guard let attempt, let error else { return }
+                attempt.callbacks.error(error.localizedDescription)
             }
         }
 
-        private func startReceiving() {
-            webSocketTask?.receive { [weak self] result in
-                guard let self = self else {
-                    return
-                }
+        private func startReceiving(_ attempt: Attempt) {
+            guard attempt.callbacks.isCurrent else { return }
+            attempt.task.receive { [weak self, weak attempt] result in
+                guard let self, let attempt, attempt.callbacks.isCurrent else { return }
                 switch result {
                 case .success(let message):
-                    var cxxMessage = lattice.transport_message()
+                    let incoming: lattice.transport_message
                     switch message {
                     case .string(let text):
-                        cxxMessage = lattice.transport_message.from_string(std.string(text))
+                        incoming = lattice.transport_message.from_string(std.string(text))
                     case .data(let data):
-                        var vec = lattice.ByteVector()
-                        for byte in data {
-                            vec.push_back(byte)
-                        }
-                        cxxMessage = lattice.transport_message.from_binary(vec)
+                        var bytes = lattice.ByteVector()
+                        for byte in data { bytes.push_back(byte) }
+                        incoming = lattice.transport_message.from_binary(bytes)
                     @unknown default:
-                        break
+                        attempt.callbacks.error("Unsupported WebSocket message")
+                        return
                     }
-                    self.triggerMessage(cxxMessage)
-                    self.startReceiving()
-
+                    if attempt.callbacks.message(incoming) { self.startReceiving(attempt) }
                 case .failure(let error):
-                    self.triggerError(error.localizedDescription)
+                    attempt.callbacks.error(error.localizedDescription)
                 }
             }
         }
 
-        private func handleOpen() {
-            currentState = .open
-            startReceiving()  // Also try receiving here
-            triggerOpen()
-        }
-
-        private func handleClose(code: Int, reason: String) {
-            currentState = .closed
-            webSocketTask = nil
-            triggerClose(code: code, reason: reason)
-        }
-
-        private func handleError(_ error: String) {
-            triggerError(error)
-        }
-
-        // MARK: - C++ trigger methods
-
-        private func triggerOpen() {
-            guard let ptr = cxxClientPtr else { return }
-            ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_open()
-        }
-
-        private func triggerMessage(_ message: lattice.transport_message) {
-            guard let ptr = cxxClientPtr else { return }
-            ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_message(message)
-        }
-
-        private func triggerError(_ error: String) {
-            guard let ptr = cxxClientPtr else { return }
-            ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_error(std.string(error))
-        }
-
-        private func triggerClose(code: Int, reason: String) {
-            guard let ptr = cxxClientPtr else { return }
-            ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_close(Int32(code), std.string(reason))
-        }
-
-        deinit {
-            // Note: Don't deallocate cxxClientPtr - C++ owns it via unique_ptr
-            // The Swift WebsocketClient is kept alive by passRetained() and should be
-            // released when C++ destroys the websocket_client (not implemented yet)
+        func destroy() {
+            let previous = state.withLockUnchecked { state in
+                state.destroyed = true
+                let previous = state.attempt
+                state.attempt = nil
+                return previous
+            }
+            previous?.cancel()
         }
     }
 
@@ -350,7 +257,7 @@ public struct Lattice {
                 #else
                 let client = WebsocketClient()
                 #endif
-                return client.createCxxClient().assumingMemoryBound(to: lattice.sync_transport.self)
+                return client.createCxxClient()
             },
             nil   // destroy_fn
         )
