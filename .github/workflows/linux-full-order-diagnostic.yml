@@ -1,9 +1,9 @@
-name: Linux full-order stall diagnostic (temporary)
+name: Linux full-order fixture correction diagnostic (temporary)
 
 # Exactly one diagnostic branch; no PR trigger and no required-gate changes.
 on:
   push:
-    branches: [private/284-linux-full-order-diagnostic]
+    branches: [private/284-linux-full-order-corrected-1]
     paths:
       - .github/workflows/linux-full-order-diagnostic.yml
       - Scripts/run-linux-full-order-diagnostic.py
@@ -34,7 +34,7 @@ jobs:
       - name: Install ordinary diagnostic tooling
         run: apt-get update && apt-get install -y libsqlite3-dev sqlite3 python3 gdb
 
-      - name: Verify exact production baseline and retain tool metadata
+      - name: Verify exact reviewed fixture delta and retain tool metadata
         shell: bash
         run: |
           set -eu
@@ -46,21 +46,81 @@ jobs:
           git -c safe.directory="$GITHUB_WORKSPACE" status --porcelain > "$EVIDENCE/checkout-status.txt"
           git -c safe.directory="$GITHUB_WORKSPACE" diff --name-only 7f1028ebfa9e5b4776a1aa6636a086107ca5de0a HEAD > "$EVIDENCE/source-delta.txt"
           python3 - <<'PY'
-          import os
+          import hashlib, json, os, subprocess
           from pathlib import Path
+          workspace = Path(os.environ['GITHUB_WORKSPACE']).resolve()
           p = Path(os.environ['EVIDENCE'])
-          allowed = {'.github/workflows/linux-focused-diagnostic.yml',
-                     'Scripts/run-linux-focused-diagnostic.py',
-                     'Scripts/test-linux-focused-diagnostic.py',
-                     'engineering/private/284-linux-focused-diagnostic/README.md',
-                     '.github/workflows/linux-full-order-diagnostic.yml',
-                     'Scripts/run-linux-full-order-diagnostic.py',
-                     'Scripts/test-linux-full-order-diagnostic.py',
-                     'Scripts/linux-full-order-census.json',
-                     'engineering/private/284-linux-full-order-diagnostic/README.md'}
+          base = '7f1028ebfa9e5b4776a1aa6636a086107ca5de0a'
+          correction = 'f0afff07429aced7693843b1f981076b0e7b5c72'
+          git = ['git', '-c', 'safe.directory=' + str(workspace), '-C', str(workspace)]
+          def read(*args):
+              return subprocess.check_output(git + list(args), timeout=30)
+          def delta(left, right):
+              rows = read('diff', '--name-status', '--no-renames', left, right).decode().splitlines()
+              result = {}
+              for row in rows:
+                  status, path = row.split('\t')
+                  assert status in ('A', 'M') and path not in result, row
+                  result[path] = status
+              return result
+          inherited = {
+              '.github/workflows/linux-focused-diagnostic.yml': 'A',
+              '.github/workflows/linux-full-order-diagnostic.yml': 'A',
+              'Scripts/linux-full-order-census.json': 'A',
+              'Scripts/run-linux-focused-diagnostic.py': 'A',
+              'Scripts/run-linux-full-order-diagnostic.py': 'A',
+              'Scripts/test-linux-focused-diagnostic.py': 'A',
+              'Scripts/test-linux-full-order-diagnostic.py': 'A',
+              'Tests/LatticeTests/LiveResultsKeysetTests.swift': 'M',
+              'Tests/LatticeTests/VectorSearchTests.swift': 'M',
+              'engineering/private/284-linux-budget-correction/README.md': 'A',
+              'engineering/private/284-linux-budget-correction/SOURCE-VALIDATION.json': 'A',
+              'engineering/private/284-linux-focused-diagnostic/README.md': 'A',
+              'engineering/private/284-linux-full-order-diagnostic/README.md': 'A',
+          }
+          successor = {
+              '.github/workflows/linux-full-order-diagnostic.yml': 'M',
+              'engineering/private/284-linux-budget-correction/VALIDATION-CALLER.md': 'A',
+          }
           assert not (p/'checkout-status.txt').read_text()
-          delta = set((p/'source-delta.txt').read_text().splitlines())
-          assert delta and delta <= allowed, delta
+          assert read('rev-parse', base + '^{commit}').decode().strip() == base
+          assert read('rev-parse', correction + '^{commit}').decode().strip() == correction
+          assert delta(base, correction) == inherited, 'Unreviewed correction delta'
+          assert delta(correction, 'HEAD') == successor, 'Unreviewed caller delta'
+          expected = dict(inherited)
+          expected['engineering/private/284-linux-budget-correction/VALIDATION-CALLER.md'] = 'A'
+          assert delta(base, 'HEAD') == expected, 'Unexpected full source delta'
+          assert set((p/'source-delta.txt').read_text().splitlines()) == set(expected)
+          pinned = {
+              'Tests/LatticeTests/LiveResultsKeysetTests.swift': ('5d4a54102707e02e6ef97a029f9d91bb7becb91f17a5031ff3a2f2424e5bcf16', '00fb315e9d93ff854f0f8d607ba22f3ff6e345f909475e2ef71d205b30d90262'),
+              'Tests/LatticeTests/VectorSearchTests.swift': ('9edb9198f193a875b6a12668dd69f95466a3865a63e02dec8aaeddb85aa41c39', 'be13bbbad142dc2e0f912c3062847744654d3686f53e406494c13217701c1a9f'),
+          }
+          sha = lambda data: hashlib.sha256(data).hexdigest()
+          files = {}
+          for path, status in expected.items():
+              before = read('show', base + ':' + path) if status == 'M' else None
+              reviewed = read('show', correction + ':' + path) if path in inherited else None
+              current = read('show', 'HEAD:' + path)
+              assert (workspace/path).read_bytes() == current, path
+              if path not in successor:
+                  assert current == reviewed, 'Changed reviewed input: ' + path
+              hashes = {'baselineSHA256': sha(before) if before is not None else None,
+                        'reviewedCorrectionSHA256': sha(reviewed) if reviewed is not None else None,
+                        'currentSHA256': sha(current)}
+              if path in pinned:
+                  assert (hashes['baselineSHA256'], hashes['currentSHA256']) == pinned[path], path
+              files[path] = hashes
+          census = json.loads((workspace/'Scripts/linux-full-order-census.json').read_bytes())
+          assert (census['functionCount'], census['executingFunctionCount'], len(census['inheritedSkipKeys']), census['parameterCaseCount']) == (695,690,5,17)
+          for path, pair in pinned.items():
+              assert census['sourceHashes'][path] == pair[1]
+              assert census['sourceOverrides']['files'][path] == {'baselineSHA256': pair[0], 'currentSHA256': pair[1]}
+          receipt = {'schema':'linux-reviewed-fixture-admission/v1', 'baseline':base,
+                     'reviewedCorrection':correction, 'current':read('rev-parse','HEAD').decode().strip(),
+                     'files':files, 'originalRun':35721974566, 'originalOutcome':'NONPASS',
+                     'originalArtifactSHA256':'fbbb5b74e2d7c36d3a6bff08a69da5f42d4b81ac93d27fd3f4bc920f71cfffda',
+                     'requiredCIGateQualified':False, 'qualified':True}
+          (p/'SOURCE-ADMISSION.json').write_text(json.dumps(receipt,indent=2)+'\n')
           PY
           swift --version > "$EVIDENCE/swift-version.txt" 2>&1
           swift build --help > "$EVIDENCE/build-help.txt" 2>&1
@@ -71,7 +131,7 @@ jobs:
           python3 Scripts/verify-wrapper-bindings.py --expected Scripts/wrapper-expected-bindings.json --resolved "$EVIDENCE/baseline/files/Package.resolved"
           python3 Scripts/verify-wrapper-lock-integrity.py --phase before-build --evidence-dir "$EVIDENCE"
 
-      - name: Build the unchanged locked test graph
+      - name: Build the locked graph with exactly two reviewed fixture changes
         id: build
         shell: bash
         run: |
