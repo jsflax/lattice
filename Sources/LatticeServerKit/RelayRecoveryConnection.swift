@@ -129,15 +129,17 @@ final class RecoveryRelayConnection: @unchecked Sendable {
             socket.send(raw: data, opcode: .binary, promise: promise)
         }
     }
-    func fanOut(_ data: Data, to recipients: [SocketManager.Entry], result: RecoveryRelayNativeResult) {
+    func fanOut(_ data: Data, to recipients: [SocketManager.Entry], result: RecoveryRelayNativeResult,
+                didDecision: (@Sendable (Bool) -> Void)? = nil) {
         let lifetime = lifetime
         for recipient in recipients {
             recipient.socket.eventLoop.execute {
                 guard lifetime.publishable, result.publishable, !recipient.socket.isClosed,
-                      !recipient.revocation.isRevoked else { return }
+                      recipient.revocation.publicationAllowed else { didDecision?(false); return }
                 let promise = recipient.socket.eventLoop.makePromise(of: Void.self)
                 promise.futureResult.whenComplete { [self] _ in withExtendedLifetime((self, result)) {} }
                 recipient.socket.send(raw: data, opcode: .binary, promise: promise)
+                didDecision?(true)
             }
         }
     }

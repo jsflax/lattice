@@ -33,17 +33,22 @@ final class RelayIngressTestHooks: Sendable {
     let didFinishAsyncSetup: @Sendable () -> Void
     let didCloseConnection: @Sendable () -> Void
     let sendCatchUp: (@Sendable (WebSocket, Data, EventLoopPromise<Void>) -> Void)?
+    // Exact-mount, payload-free observation after the real recipient decision.
+    // Never changes admission and must not block the recipient event loop.
+    let didRecoveryFanoutDecision: (@Sendable (Bool) -> Void)?
 
     init(beforeAsyncSetup: @escaping @Sendable () async -> Void,
          didBufferFrame: @escaping @Sendable (Int) -> Void,
          didFinishAsyncSetup: @escaping @Sendable () -> Void,
          didCloseConnection: @escaping @Sendable () -> Void = {},
-         sendCatchUp: (@Sendable (WebSocket, Data, EventLoopPromise<Void>) -> Void)? = nil) {
+         sendCatchUp: (@Sendable (WebSocket, Data, EventLoopPromise<Void>) -> Void)? = nil,
+         didRecoveryFanoutDecision: (@Sendable (Bool) -> Void)? = nil) {
         self.beforeAsyncSetup = beforeAsyncSetup
         self.didBufferFrame = didBufferFrame
         self.didFinishAsyncSetup = didFinishAsyncSetup
         self.didCloseConnection = didCloseConnection
         self.sendCatchUp = sendCatchUp
+        self.didRecoveryFanoutDecision = didRecoveryFanoutDecision
     }
 }
 
@@ -668,6 +673,12 @@ final class RevocationFlag: @unchecked Sendable {
         let (revoked, recovery) = lock.withLock { (self.revoked, self.recovery) }
         return revoked || (recovery?.retiredOrExpired ?? false)
     }
+    // Pending recovery authorization remains registered for membership kicks,
+    // but cannot receive rows. Read the actual lifetime outside this leaf lock.
+    var publicationAllowed: Bool {
+        let (revoked, recovery) = lock.withLock { (self.revoked, self.recovery) }
+        return !revoked && (recovery?.publishable ?? true)
+    }
     var hasRecovery: Bool { lock.withLock { recovery != nil } }
     func filterRecoveryPage(_ page: [AuditLog]) -> [AuditLog] {
         let cell = lock.withLock { recovery }
@@ -1282,7 +1293,8 @@ extension Lattice {
                                 if outcome.isComplete { bytes = Data(buffer: ingressFrame.makeLegacyFanoutBuffer()) }
                                 else { bytes = frame.partialFanOut }
                                 if let bytes, let result = frame.recoveryResult {
-                                    recovery.fanOut(bytes, to: recipients, result: result)
+                                    recovery.fanOut(bytes, to: recipients, result: result,
+                                                    didDecision: ingressHooks?.didRecoveryFanoutDecision)
                                 }
                                 return
                             }

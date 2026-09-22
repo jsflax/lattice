@@ -19,7 +19,7 @@ private final class RecoveryAuthorizationGate: Sendable {
     func wait() async { for await _ in stream { return } }
 }
 private final class RegisteredRecoveryPeers: @unchecked Sendable {
-    enum Mode: Sendable, Equatable { case normal, wrongPeer, wrongSource, wrongScope, held }
+    enum Mode: Sendable, Equatable { case normal, wrongPeer, wrongSource, wrongScope, held, heldSecondApproved, heldSecondDenied }
     let user = UUID(), token = UUID().uuidString
     let first = SyncRecoveryPeerIdentity(replicaID: "registered-first", receiverIncarnation: UUID(), channelIncarnation: UUID())
     let second = SyncRecoveryPeerIdentity(replicaID: "registered-second", receiverIncarnation: UUID(), channelIncarnation: UUID())
@@ -28,6 +28,8 @@ private final class RegisteredRecoveryPeers: @unchecked Sendable {
     let gate = RecoveryAuthorizationGate()
     let calls = NIOLockedValueBox(0)
     let accepted = NIOLockedValueBox<[SyncRecoveryAuthorizationContext]>([])
+    let heldSecondEntered = NIOLockedValueBox(false)
+    let fanoutDecisions = NIOLockedValueBox<[Bool]>([])
     init(_ mode: Mode = .normal) { self.mode = mode }
     func channel(_ request: Request) throws -> SyncChannel {
         guard request.headers["X-Registered-Session"] == [token] else { throw Abort(.unauthorized) }
@@ -58,6 +60,11 @@ private final class RegisteredRecoveryPeers: @unchecked Sendable {
         else { throw Abort(.forbidden) }
         calls.withLockedValue { $0 += 1 }
         if mode == .held { await gate.wait() }
+        if context.declaredPeer == second, mode == .heldSecondApproved || mode == .heldSecondDenied {
+            heldSecondEntered.withLockedValue { $0 = true }
+            await gate.wait()
+            if mode == .heldSecondDenied { throw Abort(.forbidden) }
+        }
         var peer = context.declaredPeer, source = context.source, scope = context.incomingScope
         if mode == .wrongPeer { peer = context.declaredPeer == first ? second : first }
         if mode == .wrongSource {
@@ -122,6 +129,15 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
         let created = try await Application.make(environment)
         app = created
         app.http.server.configuration.port = 0; app.http.server.configuration.shutdownTimeout = .milliseconds(500)
+        let hooks: RelayIngressTestHooks?
+        if registrations.mode == .heldSecondApproved || registrations.mode == .heldSecondDenied {
+            hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in }, didFinishAsyncSetup: {},
+                didRecoveryFanoutDecision: { allowed in
+                    registrations.fanoutDecisions.withLockedValue { if $0.count < 16 { $0.append(allowed) } }
+                })
+            RelayIngressTesting.install(hooks!, for: directory)
+        } else { hooks = nil }
+        defer { if let hooks { RelayIngressTesting.remove(hooks, for: directory) } }
         writer = Lattice.configureSyncRelay(on: app.routes, path: ["writer"],
             for: [SimpleSyncObject.self, RecoveryAuthorizationHiddenRow.self], storageURL: directory,
             recoverySource: { try registrations.source($0) }, channelExtractor: { try registrations.channel($0) },
@@ -275,6 +291,46 @@ private struct RelayRecoveryAuthorizationTests {
         try await withRecoveryAuthorizationHarness { h in
             let peer = try await h.connect(duplicateDeclaration: true); try await peer.wait { $0.closed }
             #expect(h.registrations.calls.withLockedValue { $0 } == 0)
+        }
+    }
+
+    @Test(arguments: [RegisteredRecoveryPeers.Mode.heldSecondApproved, .heldSecondDenied])
+    func pendingRecipientReceivesNothingBeforeActualAuthorizationDecision(mode: RegisteredRecoveryPeers.Mode) async throws {
+        try await withRecoveryAuthorizationHarness(mode) { h in
+            let a = try await h.connect(), b = try await h.connect(h.registrations.second)
+            func waitFor(_ predicate: @escaping @Sendable () -> Bool) async throws {
+                let deadline = Date().addingTimeInterval(10)
+                while !predicate(), Date() < deadline, !Task.isCancelled { try await Task.sleep(nanoseconds: 10_000_000) }
+                try #require(predicate())
+            }
+            try await waitFor { h.registrations.heldSecondEntered.withLockedValue { $0 } }
+            let (first, firstIDs) = try recoveryDonorFrame(121)
+            try await a.socket!.send(Array(first)); try await a.wait { Set(firstIDs).isSubset(of: Set($0.acks)) }
+            // The exact real recipient loop has rejected this publication.
+            // Waiting for A's ACK alone would not prove fan-out had run yet.
+            try await waitFor { h.registrations.fanoutDecisions.withLockedValue { !$0.isEmpty } }
+            #expect(h.registrations.fanoutDecisions.withLockedValue { $0 } == [false])
+            #expect(b.facts.withLockedValue { $0.audits.isEmpty && $0.acks.isEmpty })
+            #expect(h.writer.recoverySessionCount == 2)
+            h.registrations.gate.release()
+            if mode == .heldSecondDenied {
+                try await b.wait { $0.closed }
+                #expect(b.facts.withLockedValue { $0.audits.isEmpty && $0.acks.isEmpty })
+            } else {
+                // Once approved, catch-up must include the withheld original.
+                try await b.wait { Set(firstIDs).isSubset(of: Set($0.audits)) }
+            }
+            let (second, secondIDs) = try recoveryDonorFrame(122)
+            try await a.socket!.send(Array(second)); try await a.wait { Set(secondIDs).isSubset(of: Set($0.acks)) }
+            if mode == .heldSecondApproved {
+                try await b.wait { Set(secondIDs).isSubset(of: Set($0.audits)) }
+                try await waitFor { h.registrations.fanoutDecisions.withLockedValue { $0.contains(true) } }
+                #expect(h.registrations.accepted.withLockedValue { Set($0.map(\.declaredPeer.replicaID)).count } == 2)
+            } else {
+                #expect(b.facts.withLockedValue { $0.closed && $0.audits.isEmpty && $0.acks.isEmpty })
+                #expect(h.registrations.accepted.withLockedValue { $0.map(\.declaredPeer.replicaID) } == [h.registrations.first.replicaID])
+            }
+            let rows = try await h.inspect(); #expect(rows.0 == 2); #expect(Set(rows.1) == Set([121, 122]))
         }
     }
 }
