@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import Vapor
 import CxxStdlib
+import NIOConcurrencyHelpers
 import LatticeServerExportTestSupport
 @testable import Lattice
 
@@ -94,4 +95,64 @@ struct PlatformTransportLifetimeTests {
             throw error
         }
     }
+    @Test func actualConfiguredSocketCloseReportsUnacknowledgedWorkAndStillTearsDown() async throws {
+        var environment = try Environment.detect()
+        environment.arguments = ["vapor"]
+        let app = try await Application.make(environment)
+        app.http.server.configuration.hostname = "127.0.0.1"
+        app.http.server.configuration.port = 0
+        let frames = NIOLockedValueBox(0)
+        let closes = NIOLockedValueBox(0)
+        app.webSocket("close-without-ack") { _, socket in
+            // Deliberately receive without ACKing. A local close must not
+            // convert this real physical send into delivered/settled success.
+            socket.onBinary { _, bytes in
+                if bytes.readableBytes > 0 { frames.withLockedValue { $0 += 1 } }
+            }
+            socket.onText { _, text in
+                if !text.isEmpty { frames.withLockedValue { $0 += 1 } }
+            }
+            socket.onClose.whenComplete { _ in closes.withLockedValue { $0 += 1 } }
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var retained: Lattice?
+        do {
+            try await app.startup()
+            let port = try #require(app.http.server.shared.localAddress?.port)
+            let client = try Lattice(Person.self, configuration: .init(fileURL: directory.appendingPathComponent("close.sqlite"),
+                authorizationToken: "close-fixture", wssEndpoint: URL(string: "ws://127.0.0.1:\(port)/close-without-ack")))
+            retained = client
+            let row = Person(); row.name = "unacknowledged"; row.age = 1
+            try client.add(row)
+            let sentDeadline = ContinuousClock.now.advanced(by: .seconds(10))
+            while frames.withLockedValue({ $0 }) == 0 {
+                guard ContinuousClock.now < sentDeadline else { throw PlatformFixtureError.timeout }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let result = client.closeChecked()
+            #expect(result.sync == .deadlinePending)
+            #expect(result.cleanupComplete)
+            #expect(!result.failed)
+            #expect(client.objects(Person.self).count == 0)
+            client.close()
+            #expect(client.lastCloseResult == result)
+            let closeDeadline = ContinuousClock.now.advanced(by: .seconds(10))
+            while closes.withLockedValue({ $0 }) == 0 {
+                guard ContinuousClock.now < closeDeadline else { throw PlatformFixtureError.timeout }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            retained = nil
+            let reopened = try Lattice(Person.self, configuration: .init(fileURL: directory.appendingPathComponent("close.sqlite")))
+            #expect(reopened.objects(Person.self).count == 1)
+            reopened.close()
+            try await app.asyncShutdown()
+        } catch {
+            retained?.close()
+            try? await app.asyncShutdown()
+            throw error
+        }
+    }
+
 }

@@ -543,15 +543,41 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         ref.rollback()
         reportQueryFailureIfAny()
     }
-    func close() {
-        let retired = recoveryActivation.withLockUnchecked { state in
+    func close() { _ = closeChecked() }
+    var lastCloseResult: LatticeCloseResult? {
+        recoveryActivation.withLockUnchecked { $0.closeResult }
+    }
+    func closeChecked() -> LatticeCloseResult {
+        let admission = recoveryActivation.withLockUnchecked { state -> (_RecoveryActivationLease?, LatticeCloseResult?) in
+            if let result = state.closeResult { return (nil, result) }
+            if state.closing {
+                // Reentrant/concurrent close never waits for its own callback
+                // or enters native teardown twice. Read lastCloseResult after
+                // the owning close settles for its final owned observation.
+                return (nil, LatticeCloseResult(sync: .reentrantPending, cleanupComplete: false))
+            }
+            state.closing = true
             state.closed = true
             let old = state.lease
             state.lease = nil
-            return old
+            return (old, nil)
         }
-        // Release the subscription outside the leaf lock.
-        withExtendedLifetime(retired) { ref.close() }
+        if let existing = admission.1 { return existing }
+        let retired = admission.0
+        // Release the subscription outside the leaf lock. Native result and
+        // text own their bytes after the actual implementation closes.
+        var native = withExtendedLifetime(retired) { ref.closeChecked() }
+        let message = String(native.takeMessage())
+        let result = LatticeCloseResult(sync: .init(rawValue: native.syncState()) ?? .unavailable,
+            cleanupComplete: native.cleanupComplete(), failed: native.failed(), cleanupFailed: native.cleanupFailed(),
+            errorMessage: message.isEmpty ? nil : message, errorMessageUnavailable: native.messageUnavailable())
+        return recoveryActivation.withLockUnchecked { state in
+            // A later idempotent close must not erase a prior failure/pending
+            // report by observing that the already-closed owner has no routes.
+            state.closeResult = result
+            state.closing = false
+            return result
+        }
     }
 
     /// One shared activation per physical owner, retained only by wrappers
@@ -1052,6 +1078,8 @@ func _makeCxxSyncFilter(_ entries: [(String, String?)]) -> lattice.SyncFilterVec
 
 private struct _RecoveryActivationState {
     var closed = false
+    var closeResult: LatticeCloseResult?
+    var closing = false
     var lease: _RecoveryActivationLease?
 }
 

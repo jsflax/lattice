@@ -163,4 +163,18 @@ final class CloseGuardTests: BaseTest {
 
         #expect(lattice.objects(Person.self).count == 0)
     }
+    @Test func checkedCloseOwnsItsResultAfterTheNativeOwnerCloses() throws {
+        let lattice = try testLattice(path: "\(String.random(length: 32)).sqlite", Person.self)
+        try seed(lattice, ["pending local data"])
+        let result = lattice.closeChecked()
+        #expect(result.sync == .notAttempted)
+        #expect(result.cleanupComplete)
+        #expect(!result.failed)
+        #expect(result.errorMessage == nil)
+        #expect(lattice.objects(Person.self).count == 0)
+        #expect(lattice.lastCloseResult == result)
+        lattice.close()
+        #expect(lattice.lastCloseResult == result)
+    }
+
 }

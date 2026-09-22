@@ -505,6 +505,8 @@ public protocol LatticeBackend: AnyObject, Sendable {
 
     // Lifecycle
     func close()
+    func closeChecked() -> LatticeCloseResult
+    var lastCloseResult: LatticeCloseResult? { get }
     func attach(_ other: any LatticeBackend) throws   // C++-to-C++; conformer downcasts peer
     func detach(_ other: any LatticeBackend) throws
 
@@ -658,6 +660,11 @@ public protocol LatticeBackend: AnyObject, Sendable {
 // matching, so the ergonomic optionals live in an extension that forwards.
 
 extension LatticeBackend {
+    public func closeChecked() -> LatticeCloseResult {
+        close()
+        return LatticeCloseResult(sync: .unavailable, cleanupComplete: false)
+    }
+    public var lastCloseResult: LatticeCloseResult? { nil }
     public var _hasAttachedStores: Bool { false }
     public var _supportsQueryRowImages: Bool { false }
     public func applySelectedMutations(_ objects: [any ObjectBackend], operations: [BulkMutationOperation]) throws -> Int {

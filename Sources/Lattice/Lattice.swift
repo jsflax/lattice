@@ -1565,15 +1565,17 @@ public struct Lattice {
 
     /// Explicitly close all database connections and tear down the synchronizer.
     /// If a sibling instance exists for the same database, it will inherit sync responsibility.
-    public func close() {
-        // Item A §4.6: tear down this identity's generation coordinator
-        // (invalidation hook, keeper holds, shape caches) before the backend
-        // closes — the core close additionally retires its whole read pool
-        // ahead of connection teardown; a reopened database mints a new
-        // identityHash and a fresh coordinator.
+    public func close() { _ = closeChecked() }
+
+    /// Close with a retained local outcome. Pending, disconnected and retired
+    /// outcomes do not assert that every original was uploaded or ACKed.
+    @discardableResult public func closeChecked() -> LatticeCloseResult {
         GenerationCoordinatorRegistry.evict(identityHash: backend.identityHash)
-        backend.close()
+        return backend.closeChecked()
     }
+
+    /// Remains available after close and is preserved on repeated close calls.
+    public var lastCloseResult: LatticeCloseResult? { backend.lastCloseResult }
 
     /// Retire every open read generation now (item A §3.6): force-COMMIT
     /// keeper transactions, return pooled connections. Facades re-pin lazily
