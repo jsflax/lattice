@@ -445,7 +445,7 @@ private func readyRequest(_ descriptor: Data, sequence: Int = 1, originals: Data
     let incarnation = try #require(peer["channelIncarnation"] as? String), attempt = UUID().uuidString.lowercased()
     let logical: [String: String] = ["receiver_incarnation": receiver, "channel_incarnation": incarnation,
         "channel": channel, "sequence": String(sequence), "attempt_id": attempt]
-    let entries = try originals.map { data in
+    let entries: [[String: Any]] = try originals.map { data in
         let object = try readyObject(data); return try #require(object["auditLog"] as? [[String: Any]])
     } ?? []
     var receipts: [[String: Any]] = []
