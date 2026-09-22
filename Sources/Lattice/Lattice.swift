@@ -2,6 +2,9 @@
 import os
 #endif
 import Foundation
+#if canImport(Security)
+import Security
+#endif
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -105,14 +108,32 @@ public struct Lattice {
     
     /// Each URLSession attempt owns a retained native callback endpoint. Late
     /// receive/send completions cannot address a replacement task or freed C++.
-    internal final class WebsocketClient: PlatformTransportClient, @unchecked Sendable {
+    internal final class WebsocketClient: SystemTLSPlatformTransportClient, @unchecked Sendable {
         private final class Attempt: @unchecked Sendable {
             let callbacks: PlatformTransportCallbacks
             let delegate: WebSocketDelegateHandler
             let session: URLSession
             let task: URLSessionWebSocketTask
+            let requestedURL: URL?
+            private struct Trust { var evaluated = false; var redirected = false }
+            private let trust = UnfairLock(initialState: Trust())
+            func rejectRedirect() { trust.withLockUnchecked { $0.redirected = true; $0.evaluated = false } }
+            func recordSystemTrust(host: String, port: Int, accepted: Bool) {
+                let expected = requestedURL.flatMap { PlatformTLSEndpoint($0) }
+                trust.withLockUnchecked { state in
+                    state.evaluated = accepted && !state.redirected && expected?.host == host.lowercased() && expected?.port == port
+                }
+            }
+            func verified(url: String) -> Bool {
+                guard callbacks.isCurrent, let requestedURL, requestedURL.absoluteString == url,
+                      let expected = PlatformTLSEndpoint(requestedURL),
+                      let current = task.currentRequest?.url, PlatformTLSEndpoint(current, actualTask: true) == expected,
+                      let actual = task.response?.url, PlatformTLSEndpoint(actual, actualTask: true) == expected else { return false }
+                return trust.withLockUnchecked { $0.evaluated && !$0.redirected }
+            }
             init(client: WebsocketClient, request: URLRequest, callbacks: PlatformTransportCallbacks) {
                 self.callbacks = callbacks
+                requestedURL = request.url
                 delegate = WebSocketDelegateHandler()
                 // Fresh credential/cookie state on every attempt, including
                 // reconnect after an authentication failure.
@@ -141,6 +162,36 @@ public struct Lattice {
                       attempt.callbacks.isCurrent else { return nil }
                 return attempt
             }
+            #if canImport(Security)
+            private func evaluate(_ session: URLSession, _ task: URLSessionTask, _ challenge: URLAuthenticationChallenge) {
+                guard let attempt = current(session, task),
+                      challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+                      let trust = challenge.protectionSpace.serverTrust else { return }
+                // Preserve Apple's policies/default anchors. This records the
+                // decision for this task; default challenge handling still owns
+                // the actual TLS connection, and didOpen must follow on it.
+                let accepted = SecTrustEvaluateWithError(trust, nil)
+                attempt.recordSystemTrust(host: challenge.protectionSpace.host,
+                    port: challenge.protectionSpace.port, accepted: accepted)
+            }
+            func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                            completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+                evaluate(session, task, challenge)
+                completionHandler(.performDefaultHandling, nil)
+            }
+            func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                            completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+                if let attempt { evaluate(session, attempt.task, challenge) }
+                completionHandler(.performDefaultHandling, nil)
+            }
+            #endif
+            func urlSession(_ session: URLSession, task: URLSessionTask,
+                            willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                            completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+                current(session, task)?.rejectRedirect()
+                // Keep legacy redirect behavior, but it cannot issue source trust.
+                completionHandler(request)
+            }
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didOpenWithProtocol protocol: String?) {
                 guard let attempt = current(session, webSocketTask) else { return }
@@ -159,7 +210,12 @@ public struct Lattice {
             }
         }
 
-        func createCxxClient() -> UnsafeMutablePointer<lattice.sync_transport>? { makePlatformTransport(self) }
+        func createCxxClient() -> UnsafeMutablePointer<lattice.sync_transport>? { makeSystemTLSPlatformTransport(self) }
+        func verifiesSystemTLS(url: String, callbacks: PlatformTransportCallbacks) -> Bool {
+            let attempt = state.withLockUnchecked { $0.destroyed ? nil : $0.attempt }
+            guard let attempt, attempt.callbacks.matches(callbacks) else { return false }
+            return attempt.verified(url: url)
+        }
 
         func performConnect(url urlString: String, headers: lattice.HeadersMap, callbacks: PlatformTransportCallbacks) {
             guard callbacks.isCurrent else { return }
@@ -448,6 +504,11 @@ public struct Lattice {
         }
         public var authorizationToken: String?
         public var wssEndpoint: URL?
+
+        /// Optional explicit registration expectation for the actual verified
+        /// WSS source. This binds describe only; automatic recovery/install is
+        /// not activated. Exact endpoint must also match wssEndpoint.
+        public var recoverySourceExpectation: RecoverySourceExpectation?
         private var scheduler: Scheduler
 
         /// Schema migration definitions keyed by version number.
@@ -584,6 +645,7 @@ public struct Lattice {
             lhs.storage == rhs.storage &&
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
+            lhs.recoverySourceExpectation == rhs.recoverySourceExpectation &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
             lhs.syncFilter == rhs.syncFilter &&
@@ -597,6 +659,7 @@ public struct Lattice {
             hasher.combine(storage)
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
+            hasher.combine(recoverySourceExpectation)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
             hasher.combine(syncFilter)
@@ -654,6 +717,7 @@ public struct Lattice {
                 self.wssEndpoint.map { std.string($0.absoluteString) } ?? std.string(),
                 authorizationToken.map { std.string($0) } ?? std.string(),
                 currentScheduler.scheduler)
+            config.set_recovery_source_expectation(recoverySourceExpectation.map { std.string($0.nativePolicy) } ?? std.string())
             config.read_only = isReadOnly
             config.busy_timeout_ms = Int32(busyTimeoutMs)
             if let auditRetention, auditRetention > 0 {
@@ -856,6 +920,12 @@ public struct Lattice {
         // Refuse migration before allocating callback contexts or opening a file.
         if continuousProducer != nil && configuration.migration != nil {
             throw ContinuousProducerError.migrationUnsupported
+        }
+        if let expectation = configuration.recoverySourceExpectation {
+            guard configuration.wssEndpoint?.absoluteString == expectation.endpoint.absoluteString,
+                  configuration.authorizationToken?.isEmpty == false else {
+                throw RecoverySourceExpectation.ConfigurationError.invalidEndpoint
+            }
         }
         // Register Swift network factory on first use
         Self.registerNetworkFactoryIfNeeded()
@@ -2116,6 +2186,7 @@ public struct Lattice {
                 var queryConfig = configuration
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
+                queryConfig.recoverySourceExpectation = nil
                 queryConfig.authorizationToken = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
@@ -2206,6 +2277,7 @@ public struct Lattice {
                 var queryConfig = configuration
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
+                queryConfig.recoverySourceExpectation = nil
                 queryConfig.authorizationToken = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
@@ -2654,6 +2726,7 @@ public struct Lattice {
         var queryConfig = configuration
         queryConfig.ipcTargets = nil
         queryConfig.wssEndpoint = nil
+        queryConfig.recoverySourceExpectation = nil
         queryConfig.authorizationToken = nil
         queryConfig.syncFilter = nil
         let cxxConfig = queryConfig.cxxConfiguration()

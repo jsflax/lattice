@@ -4,15 +4,24 @@ import Dispatch
 import WebSocketKit
 import NIOCore
 import NIOPosix
+import NIOSSL
 @_exported import LatticeSwiftCppBridge
 @_exported import LatticeSwiftModule
 
 /// NIO callbacks retain only the endpoint for their actual dial attempt.
-internal final class NIOWebsocketClient: PlatformTransportClient, @unchecked Sendable {
+internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unchecked Sendable {
     private final class Attempt: @unchecked Sendable {
         let callbacks: PlatformTransportCallbacks
+        let url: String
+        let systemTLS: Bool
         private let socket = UnfairLock(initialState: Optional<WebSocket>.none)
-        init(_ callbacks: PlatformTransportCallbacks) { self.callbacks = callbacks }
+        init(_ callbacks: PlatformTransportCallbacks, url: String, systemTLS: Bool) {
+            self.callbacks = callbacks; self.url = url; self.systemTLS = systemTLS
+        }
+        func verified(url: String) -> Bool {
+            guard systemTLS, self.url == url, callbacks.isCurrent else { return false }
+            return socket.withLockUnchecked { $0.map { !$0.isClosed } ?? false }
+        }
         func install(_ webSocket: WebSocket) -> Bool {
             let accepted = socket.withLockUnchecked { socket in
                 guard callbacks.isCurrent, socket == nil else { return false }
@@ -39,7 +48,12 @@ internal final class NIOWebsocketClient: PlatformTransportClient, @unchecked Sen
     private let state = UnfairLock(initialState: State())
     private let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
 
-    func createCxxClient() -> UnsafeMutablePointer<lattice.sync_transport>? { makePlatformTransport(self) }
+    func createCxxClient() -> UnsafeMutablePointer<lattice.sync_transport>? { makeSystemTLSPlatformTransport(self) }
+    func verifiesSystemTLS(url: String, callbacks: PlatformTransportCallbacks) -> Bool {
+        let attempt = state.withLockUnchecked { $0.destroyed ? nil : $0.attempt }
+        guard let attempt, attempt.callbacks.matches(callbacks) else { return false }
+        return attempt.verified(url: url)
+    }
 
     func performConnect(url urlString: String, headers: lattice.HeadersMap, callbacks: PlatformTransportCallbacks) {
         guard callbacks.isCurrent else { return }
@@ -59,7 +73,11 @@ internal final class NIOWebsocketClient: PlatformTransportClient, @unchecked Sen
             return
         }
         guard let url = components.string else { callbacks.error("Invalid WebSocket URL"); return }
-        let attempt = Attempt(callbacks)
+        // Only the original wss URL qualifies. https/ws compatibility dials
+        // stay legacy even when conversion happens to establish encrypted IO.
+        let original = URL(string: urlString).flatMap { PlatformTLSEndpoint($0) }
+        let actual = URL(string: url).flatMap { PlatformTLSEndpoint($0) }
+        let attempt = Attempt(callbacks, url: urlString, systemTLS: original != nil && original == actual)
         let replaced: (Bool, Attempt?) = state.withLockUnchecked { state in
             guard !state.destroyed, callbacks.isCurrent else { return (false, nil) }
             let previous = state.attempt
@@ -70,7 +88,12 @@ internal final class NIOWebsocketClient: PlatformTransportClient, @unchecked Sen
         guard replaced.0, callbacks.isCurrent else { return }
         var httpHeaders = NIOHTTP1.HTTPHeaders()
         headers.forEach { pair in httpHeaders.add(name: String(pair.first), value: String(pair.second)) }
-        let configuration = WebSocketClient.Configuration(maxFrameSize: 1 << 28)
+        // Fixed system trust for this exact pipeline; no application verifier,
+        // TLS override, proxy, or redirect handler can relax its hostname check.
+        var tls = TLSConfiguration.makeClientConfiguration()
+        tls.certificateVerification = .fullVerification
+        tls.trustRoots = .default
+        let configuration = WebSocketClient.Configuration(tlsConfiguration: tls, maxFrameSize: 1 << 28)
         WebSocket.connect(to: url, headers: httpHeaders, configuration: configuration, on: eventLoopGroup) {
             [weak self, attempt] webSocket in
             guard let self else { webSocket.close(code: .normalClosure, promise: nil); return }
