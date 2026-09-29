@@ -35,11 +35,9 @@ private struct ConnectedTLSEnvironment: Sendable {
               env["GITHUB_ACTIONS"] == "true", env["RUNNER_ENVIRONMENT"] == "github-hosted",
               let raw = env["LATTICE_CONNECTED_RECOVERY_RUN_DIR"] else { throw ConnectedRecoveryFailure.environment }
         observation?.phase(.environmentRoot)
-        let localdev = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("localdev").standardizedFileURL
-        let runRoot = URL(fileURLWithPath: raw).standardizedFileURL
+        guard let runRoot = ConnectedHostedRootLayout.runRoot(raw, home: env["HOME"]) else { throw ConnectedRecoveryFailure.environment }
         root = runRoot
-        guard raw.hasPrefix("/"), runRoot.path.hasPrefix(localdev.path + "/"),
-              runRoot.resolvingSymlinksInPath().path == runRoot.path else { throw ConnectedRecoveryFailure.environment }
+        guard runRoot.resolvingSymlinksInPath().path == runRoot.path else { throw ConnectedRecoveryFailure.environment }
         func privateFile(_ name: String) throws -> URL {
             guard let value = env[name], value.hasPrefix("/") else { throw ConnectedRecoveryFailure.environment }
             let url = URL(fileURLWithPath: value).standardizedFileURL
