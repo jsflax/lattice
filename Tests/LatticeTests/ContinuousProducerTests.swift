@@ -116,6 +116,7 @@ struct ContinuousProducerTests {
     @Test func publicationFailurePreservesKnownCommitForExplicitExactReopen() throws {
         let (container, original) = try fixture(); var config = original
         config.wssEndpoint = URL(string: "wss://continuous-sdk.invalid/a")!
+        config.authorizationToken = "continuous-publication-fixture-token"
         defer { try? FileManager.default.removeItem(at: container) }
         do {
             let unexpected = try open(config, owners: 1); unexpected.close()
