@@ -1756,7 +1756,7 @@ struct PublicReceiverKillRecoveryTests {
             try await killRecoveryLive(liveB, until: deadline)
             try await killRecoveryLive(freshA, until: deadline)
             try #require(app.http.server.shared.localAddress?.port == port && (try killRecoverySourceIdentity(sourceFile)) == sourceIdentity && gate.healthy)
-            facts.postRecoveryWriteObserved = true; facts.sharedRowsAfterPostWrite = postImage.rows.count; facts.sourceAndBStayedLive = true
+            facts.postRecoveryWriteObserved = true; facts.sharedRowsAfterPostWrite = postImage.rows.count
             facts.exactRowsPreserved = true; facts.localOnlyPreserved = true; facts.finalCommittedOpen = true
             let normal = try await child.closeAndReap()
             try #require(normal.reaped && normal.exitedZero && !normal.killedByOwnedSIGKILL && normal.spawnOrdinal == 2 && normal.instanceID == secondHello.instanceID)
@@ -1767,6 +1767,9 @@ struct PublicReceiverKillRecoveryTests {
             let newIncarnation = try final.storage.one("_lattice_producer_continuity").integer("incarnation")
             try #require(oldIncarnation < Int64.max && newIncarnation == oldIncarnation + 1)
             facts.finalInstallLinksValidated = true; facts.freshPhysicalIncarnation = true
+            try await killRecoveryLive(liveB, until: deadline)
+            try #require(app.http.server.shared.localAddress?.port == port && (try killRecoverySourceIdentity(sourceFile)) == sourceIdentity)
+            facts.sourceAndBStayedLive = true
             let allChildren = await child.cleanup()
             try #require(allChildren.allSpawnedReaped && allChildren.descriptorsClosed && allChildren.successfulCase && allChildren.spawnCount == 2)
             facts.childSpawnCount = allChildren.spawnCount; facts.allChildrenReaped = true; facts.descriptorsClosed = true
