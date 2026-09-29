@@ -119,20 +119,36 @@ struct ProjectionConsumerChildCustodyTests {
                             try Task.checkCancellation()
                             return value
                         }
-                        let first = Task { try await child(1) }
-                        let second = Task { try await child(2) }
-                        do {
-                            guard await crossNonisolatedSuspension(executor) else {
-                                throw ConsumerFixtureError.missingAffinity
+                        let outcome: Result<Void, any Error> = await withTaskGroup(
+                            of: (slot: Int, result: Result<Int, any Error>).self
+                        ) { group in
+                            group.addTask {
+                                do { return (0, .success(try await child(1))) }
+                                catch { return (0, .failure(error)) }
                             }
-                            if failController { throw ProjectionConsumerChildFixtureError.requestedCleanup }
-                            #expect(try await first.value == 1)
-                            #expect(try await second.value == 2)
-                        } catch {
-                            first.cancel(); second.cancel()
-                            _ = await first.result; _ = await second.result
-                            throw error
+                            group.addTask {
+                                do { return (1, .success(try await child(2))) }
+                                catch { return (1, .failure(error)) }
+                            }
+                            do {
+                                guard await crossNonisolatedSuspension(executor) else {
+                                    throw ConsumerFixtureError.missingAffinity
+                                }
+                                if failController { throw ProjectionConsumerChildFixtureError.requestedCleanup }
+                                var completed: [Result<Int, any Error>?] = [nil, nil]
+                                for await child in group { completed[child.slot] = child.result }
+                                let first = try #require(completed[0])
+                                let second = try #require(completed[1])
+                                #expect(try first.get() == 1)
+                                #expect(try second.get() == 2)
+                                return .success(())
+                            } catch {
+                                group.cancelAll()
+                                await group.waitForAll()
+                                return .failure(error)
+                            }
                         }
+                        try outcome.get()
                     }
                 } catch ProjectionConsumerChildFixtureError.requestedCleanup {
                     sawRequestedCleanup = true

@@ -98,50 +98,64 @@ struct ProjectionReadExecutorTests {
         let rejectedRuns = LockedBox(0)
         let gateExpired = LockedBox(false)
         let queuedSubmissionEntered = LockedBox(false)
-        let running = Task {
-            try await executor.submit {
-                entered.withLock { $0 = true }
-                do { try gate.wait() }
-                catch { gateExpired.withLock { $0 = true }; throw error }
-                return 1
+        // Structured children inherit the scoped consumer preference (SE-0417).
+        // Results retain each child's identity without depending on completion order.
+        let outcome: Result<Void, any Error> = await withTaskGroup(
+            of: (slot: Int, result: Result<Int, any Error>).self
+        ) { group in
+            group.addTask {
+                do {
+                    let value = try await executor.submit {
+                        entered.withLock { $0 = true }
+                        do { try gate.wait() }
+                        catch { gateExpired.withLock { $0 = true }; throw error }
+                        return 1
+                    }
+                    return (0, .success(value))
+                } catch { return (0, .failure(error)) }
             }
-        }
-        var queued: Task<Int, any Error>?
-        do {
-            try await waitUntil("queue-full first operation start") { entered.withLock { $0 } }
-            let submitted = Task {
-                queuedSubmissionEntered.withLock { $0 = true }
-                return try await executor.submit { 2 }
-            }
-            queued = submitted
-            try await waitUntil("queue-full pending admission", failureContext: {
-                let state = executor.snapshot
-                return "pending=\(state.pending) running=\(state.running) queuedAdmissions=\(state.queuedAdmissions) queuedSubmissionEntered=\(queuedSubmissionEntered.withLock { $0 }) gateExpired=\(gateExpired.withLock { $0 })"
-            }) { executor.snapshot.pending == 1 }
             do {
-                _ = try await executor.submit {
-                    rejectedRuns.withLock { $0 += 1 }
-                    return 3
+                try await waitUntil("queue-full first operation start") { entered.withLock { $0 } }
+                group.addTask {
+                    queuedSubmissionEntered.withLock { $0 = true }
+                    do { return (1, .success(try await executor.submit { 2 })) }
+                    catch { return (1, .failure(error)) }
                 }
-                Issue.record("A full queue must reject admission")
+                try await waitUntil("queue-full pending admission", failureContext: {
+                    let state = executor.snapshot
+                    return "pending=\(state.pending) running=\(state.running) queuedAdmissions=\(state.queuedAdmissions) queuedSubmissionEntered=\(queuedSubmissionEntered.withLock { $0 }) gateExpired=\(gateExpired.withLock { $0 })"
+                }) { executor.snapshot.pending == 1 }
+                do {
+                    _ = try await executor.submit {
+                        rejectedRuns.withLock { $0 += 1 }
+                        return 3
+                    }
+                    Issue.record("A full queue must reject admission")
+                } catch {
+                    #expect(error as? ProjectionReadExecutorError == .queueFull)
+                }
+                #expect(rejectedRuns.withLock { $0 } == 0)
+                #expect(executor.snapshot.pending == 1)
+                gate.open()
+                var completed: [Result<Int, any Error>?] = [nil, nil]
+                for await child in group { completed[child.slot] = child.result }
+                let running = try #require(completed[0])
+                let submitted = try #require(completed[1])
+                #expect(try running.get() == 1)
+                #expect(try submitted.get() == 2)
+                return .success(())
             } catch {
-                #expect(error as? ProjectionReadExecutorError == .queueFull)
+                // Release the native operation before waiting for either child.
+                gate.open()
+                group.cancelAll()
+                await group.waitForAll()
+                return .failure(error)
             }
-            #expect(rejectedRuns.withLock { $0 } == 0)
-            #expect(executor.snapshot.pending == 1)
-            gate.open()
-            #expect(try await running.value == 1)
-            #expect(try await submitted.value == 2)
-            await executor.shutdown()
-        } catch {
-            // Join every child before the scoped consumer executor can stop.
-            gate.open()
-            running.cancel(); queued?.cancel()
-            _ = await running.result
-            if let queued { _ = await queued.result }
-            await executor.shutdown()
-            throw error
         }
+        // Both child tasks are joined before native shutdown; the outer helper
+        // stops the consumer only after this body returns or rethrows.
+        await executor.shutdown()
+        try outcome.get()
     }
 
     @Test func cancellationBeforeAdmissionAndExpiredAdmissionNeverStart() async throws {
@@ -222,47 +236,57 @@ struct ProjectionReadExecutorTests {
         defer { gate.open() }
         let entered = LockedBox(false)
         let queuedRuns = LockedBox(0)
-        let running = Task {
-            try await executor.submit {
-                entered.withLock { $0 = true }
-                try gate.wait()
-                return 1
+        let outcome: Result<Void, any Error> = await withTaskGroup(
+            of: (slot: Int, result: Result<Int, any Error>).self
+        ) { group in
+            group.addTask {
+                do {
+                    let value = try await executor.submit {
+                        entered.withLock { $0 = true }
+                        try gate.wait()
+                        return 1
+                    }
+                    return (0, .success(value))
+                } catch { return (0, .failure(error)) }
             }
-        }
-        var queued: Task<Int, any Error>?
-        do {
-            try await waitUntil { entered.withLock { $0 } }
-            let before = executor.snapshot
-            let submitted = Task {
-                let deadline = DispatchTime.now().uptimeNanoseconds + 200_000_000
-                return try await executor.submit(deadline: deadline) {
-                    queuedRuns.withLock { $0 += 1 }
-                    return 2
+            do {
+                try await waitUntil { entered.withLock { $0 } }
+                let before = executor.snapshot
+                group.addTask {
+                    let deadline = DispatchTime.now().uptimeNanoseconds + 200_000_000
+                    do {
+                        let value = try await executor.submit(deadline: deadline) {
+                            queuedRuns.withLock { $0 += 1 }
+                            return 2
+                        }
+                        return (1, .success(value))
+                    } catch { return (1, .failure(error)) }
                 }
+                let submitted = try #require(await group.next())
+                try #require(submitted.slot == 1, "The queued deadline must finish while the first operation remains blocked")
+                expectFailure(submitted.result, .deadlineExceeded)
+                // Retained transition counts prove actual queued expiry, rather than
+                // accepting an already-expired admission or sampling transient state.
+                let after = executor.snapshot
+                #expect(after.queuedAdmissions &- before.queuedAdmissions == 1)
+                #expect(after.queuedDeadlineExpirations &- before.queuedDeadlineExpirations == 1)
+                #expect(executor.snapshot.running == 1)
+                #expect(executor.snapshot.pending == 0)
+                #expect(queuedRuns.withLock { $0 } == 0)
+                gate.open()
+                let running = try #require(await group.next())
+                try #require(running.slot == 0)
+                #expect(try running.result.get() == 1)
+                return .success(())
+            } catch {
+                gate.open()
+                group.cancelAll()
+                await group.waitForAll()
+                return .failure(error)
             }
-            queued = submitted
-            expectFailure(await submitted.result, .deadlineExceeded)
-            // A cooperative continuation may miss the entire 200ms pending window.
-            // Retained transition counts prove actual queued expiry, rather than
-            // accepting an already-expired admission or sampling transient state.
-            let after = executor.snapshot
-            #expect(after.queuedAdmissions &- before.queuedAdmissions == 1)
-            #expect(after.queuedDeadlineExpirations &- before.queuedDeadlineExpirations == 1)
-            #expect(executor.snapshot.running == 1)
-            #expect(executor.snapshot.pending == 0)
-            #expect(queuedRuns.withLock { $0 } == 0)
-            gate.open()
-            #expect(try await running.value == 1)
-            await executor.shutdown()
-        } catch {
-            // Join every child before the scoped consumer executor can stop.
-            gate.open()
-            running.cancel(); queued?.cancel()
-            _ = await running.result
-            if let queued { _ = await queued.result }
-            await executor.shutdown()
-            throw error
         }
+        await executor.shutdown()
+        try outcome.get()
     }
 
     @Test func runningCancellationSignalsOnceAndWaitsForCleanup() async throws {
