@@ -500,9 +500,22 @@ struct RelayReadyControlObservation: Sendable {
     let channel, requestID, operation: String
     let routeGeneration, requestDigest, attemptID, sequence, index: String?
     let canonicalKind: String?
+    let cutpoint: RelayReadyCutpoint?
+
+    init(connectionID: UUID, peer: SyncRecoveryPeerIdentity, channel: String,
+         requestID: String, operation: String, routeGeneration: String?,
+         requestDigest: String?, attemptID: String?, sequence: String?, index: String?,
+         canonicalKind: String?, cutpoint: RelayReadyCutpoint? = nil) {
+        self.connectionID = connectionID; self.peer = peer; self.channel = channel
+        self.requestID = requestID; self.operation = operation; self.routeGeneration = routeGeneration
+        self.requestDigest = requestDigest; self.attemptID = attemptID; self.sequence = sequence
+        self.index = index; self.canonicalKind = canonicalKind; self.cutpoint = cutpoint
+    }
 
     static func copy(input: Data, result: RecoveryRelayNativeReadyResult,
                      connection: RecoveryRelayConnection, channel: String) -> Self? {
+        let cutpoint = RelayReadyCutpoint.copy(input: input, output: result.data, status: result.status,
+            requestID: result.requestID, peer: connection.peer, channel: channel)
         // Only called for an installed observer, after native processing. The
         // existing result status also covers negative controls, so inspect its
         // real canonical envelope instead of treating status 1 as frame success.
@@ -524,7 +537,8 @@ struct RelayReadyControlObservation: Sendable {
             routeGeneration: text("routeGeneration", in: request),
             requestDigest: text("requestDigest", in: request),
             attemptID: text("attemptID", in: request), sequence: text("sequence", in: request),
-            index: text("index", in: request), canonicalKind: envelope.flatMap { text("kind", in: $0, cap: 16) })
+            index: text("index", in: request), canonicalKind: envelope.flatMap { text("kind", in: $0, cap: 16) },
+            cutpoint: cutpoint)
     }
 }
 
