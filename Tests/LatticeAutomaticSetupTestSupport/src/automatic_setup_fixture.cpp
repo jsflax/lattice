@@ -121,7 +121,7 @@ holder_facts writer_mutex_hold::facts()const noexcept {
 }
 void writer_mutex_hold::request_release()const noexcept {if(value_)value_->request_release();}
 bool writer_mutex_hold::retire_on_io()const noexcept {return value_&&value_->retire();}
-writer_mutex_hold hold_actual_writer(const swift_lattice_ref& ref)noexcept {
+writer_mutex_hold writer_mutex_hold::hold_actual_writer(const swift_lattice_ref& ref)noexcept {
     try {
         auto owner=swift_lattice_ref::shared_for_lattice(const_cast<swift_lattice*>(ref.get()));
         if(!owner)return {};

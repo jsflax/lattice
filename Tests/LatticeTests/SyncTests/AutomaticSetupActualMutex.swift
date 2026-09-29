@@ -15,7 +15,7 @@ final class AutomaticSetupActualMutex: @unchecked Sendable {
     private let value: lattice.automatic_setup_test_support.writer_mutex_hold
     init(owner: Lattice) {
         precondition(RelayExecutionPool.io.isCurrentWorker)
-        value = lattice.automatic_setup_test_support.holdActualWriter(owner.cxxLatticeRef)
+        value = lattice.automatic_setup_test_support.writer_mutex_hold.holdActualWriter(owner.cxxLatticeRef)
     }
     var facts: Facts {
         let f = value.facts()

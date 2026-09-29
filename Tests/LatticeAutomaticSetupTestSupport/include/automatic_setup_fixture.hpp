@@ -21,9 +21,12 @@ class writer_mutex_hold {
     struct state;
     std::shared_ptr<state> value_;
     explicit writer_mutex_hold(std::shared_ptr<state>) noexcept;
-    friend writer_mutex_hold hold_actual_writer(const swift_lattice_ref&) noexcept;
 public:
     writer_mutex_hold()=default;
+    // Caller retains this actual ref across the synchronous acquisition rendezvous.
+    // Fixed 2s acquisition and 8s hold safety bounds. Safety release is never a
+    // successful contention oracle. Neither bound changes production setup policy.
+    static writer_mutex_hold hold_actual_writer(const swift_lattice_ref&) noexcept SWIFT_NAME(holdActualWriter(_:));
     holder_facts facts() const noexcept;
     // Thread-safe signal only: no join, SQLite call or writer destruction.
     void request_release() const noexcept SWIFT_NAME(requestRelease());
@@ -32,8 +35,4 @@ public:
     // Releases/joins the sole worker, then clears the actual writer on that lane.
     bool retire_on_io() const noexcept SWIFT_NAME(retireOnIO());
 };
-// Caller retains this actual ref across the synchronous acquisition rendezvous.
-// Fixed 2s acquisition and 8s hold safety bounds. Safety release is never a
-// successful contention oracle. Neither bound changes production setup policy.
-writer_mutex_hold hold_actual_writer(const swift_lattice_ref&) noexcept SWIFT_NAME(holdActualWriter(_:));
 }

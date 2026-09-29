@@ -1344,7 +1344,8 @@ private struct AutomaticSourceSetupTests {
             #expect(state.registrations.calls.withLockedValue { $0 } == 1)
             let attempts = state.events(.attemptEntered)
             #expect(attempts.count >= 3 && attempts.count <= 32)
-            #expect(attempts.allSatisfy(\.onIO))
+            let attemptsOnIO = attempts.allSatisfy(\.onIO)
+            #expect(attemptsOnIO)
             #expect(Set(attempts.compactMap(\.owner)).count == 1)
             #expect(Set(attempts.compactMap { $0.budget?.deadline }).count == 1)
             for (before, after) in zip(attempts, attempts.dropFirst()) {
@@ -1694,7 +1695,8 @@ private struct AutomaticSourceSetupTests {
             try await readyWait { finalizerReturned.withLockedValue { $0 } }
             #expect(!completionHold.timedOut.withLockedValue { $0 })
             #expect(state.events(.ownerReleased).count == 1)
-            #expect(state.events(.ownerReleased).allSatisfy(\.onIO))
+            let ownerReleasesOnIO = state.events(.ownerReleased).allSatisfy(\.onIO)
+            #expect(ownerReleasesOnIO)
             #expect(h.writer.recoveryRetiredNativeSessionCount == 1)
             #expect(h.writer.recoverySessionCount == 1)
             #expect(state.facts.withLockedValue { $0.finished == 0 })
