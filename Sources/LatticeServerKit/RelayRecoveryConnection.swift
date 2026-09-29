@@ -57,12 +57,19 @@ final class RelayRecoveryConnectionObservation: @unchecked Sendable {
     let channel: String
     private weak var socket: WebSocket?
     private weak var lifetime: RecoveryRelayLifetime?
+    private weak var nativeStop: RecoveryRelayNativeStop?
     private let pending = NIOLockedValueBox(false)
 
     init(connectionID: UUID, peer: SyncRecoveryPeerIdentity, channel: String,
-         socket: WebSocket?, lifetime: RecoveryRelayLifetime?) {
+         socket: WebSocket?, lifetime: RecoveryRelayLifetime?, nativeStop: RecoveryRelayNativeStop? = nil) {
         self.connectionID = connectionID; self.peer = peer; self.channel = channel
-        self.socket = socket; self.lifetime = lifetime
+        self.socket = socket; self.lifetime = lifetime; self.nativeStop = nativeStop
+    }
+    // Only an explicit test observation retains the payload-free fence.
+    func retirementObservation() -> RelayRecoveryRetirementObservation? {
+        guard let nativeStop else { return nil }
+        return .init(connectionID: connectionID, peer: peer, channel: channel,
+                     socket: socket, lifetime: lifetime, nativeStop: nativeStop)
     }
     func sample(_ completion: @escaping @Sendable (RelayRecoveryConnectionSample) -> Void) {
         guard pending.withLockedValue({ value in if value { return false }; value = true; return true }) else {
@@ -80,6 +87,60 @@ final class RelayRecoveryConnectionObservation: @unchecked Sendable {
             pending.withLockedValue { $0 = false }
             completion(value) // No foreign callback under the observation lock.
         }
+    }
+}
+/// These are observations of one actual connection, not disposal authority.
+/// Missing weak resources cannot establish socket/setup retirement. The real
+/// fence remains observable after those resources disappear.
+struct RelayRecoveryRetirementSample: Sendable {
+    let available, socketOpen, lifetimeStopped, nativeSetupRetired: Bool
+    let nativeAvailable, nativeLive, nativeDrained: Bool
+    var connectionRetired: Bool {
+        available && !socketOpen && lifetimeStopped && nativeSetupRetired && nativeAvailable && !nativeLive
+    }
+    var operationsDrained: Bool { nativeAvailable && !nativeLive && nativeDrained }
+}
+
+final class RelayRecoveryRetirementObservation: @unchecked Sendable {
+    let connectionID: UUID
+    let peer: SyncRecoveryPeerIdentity
+    let channel: String
+    private weak var socket: WebSocket?
+    private weak var lifetime: RecoveryRelayLifetime?
+    // This object has no source owner, result, payload, SQL or application
+    // callback. No stop or admission operation is exposed by this handle.
+    private let nativeStop: RecoveryRelayNativeStop
+    private let pending = NIOLockedValueBox(false)
+
+    fileprivate init(connectionID: UUID, peer: SyncRecoveryPeerIdentity, channel: String,
+                     socket: WebSocket?, lifetime: RecoveryRelayLifetime?, nativeStop: RecoveryRelayNativeStop) {
+        self.connectionID = connectionID; self.peer = peer; self.channel = channel
+        self.socket = socket; self.lifetime = lifetime; self.nativeStop = nativeStop
+    }
+    func sample(_ completion: @escaping @Sendable (RelayRecoveryRetirementSample) -> Void) {
+        guard pending.withLockedValue({ value in if value { return false }; value = true; return true }) else {
+            completion(.init(available: false, socketOpen: false, lifetimeStopped: false, nativeSetupRetired: false,
+                             nativeAvailable: false, nativeLive: false, nativeDrained: false)); return
+        }
+        guard let socket, let lifetime else {
+            let value = copied(socket: nil, lifetime: nil)
+            pending.withLockedValue { $0 = false }
+            completion(value); return
+        }
+        socket.eventLoop.execute { [weak socket, weak lifetime, self] in
+            let value = copied(socket: socket, lifetime: lifetime)
+            pending.withLockedValue { $0 = false }
+            completion(value) // Never call a foreign callback under our lock.
+        }
+    }
+    private func copied(socket: WebSocket?, lifetime: RecoveryRelayLifetime?) -> RelayRecoveryRetirementSample {
+        if let socket, let lifetime {
+            return .init(available: true, socketOpen: !socket.isClosed, lifetimeStopped: lifetime.isStopped,
+                         nativeSetupRetired: lifetime.hasRetiredNative, nativeAvailable: true,
+                         nativeLive: nativeStop.isLive, nativeDrained: nativeStop.isDrained)
+        }
+        return .init(available: false, socketOpen: false, lifetimeStopped: false, nativeSetupRetired: false,
+                     nativeAvailable: true, nativeLive: nativeStop.isLive, nativeDrained: nativeStop.isDrained)
     }
 }
 private enum RelayACKTestLoss: Error { case deliberatelySuppressed }
@@ -225,7 +286,7 @@ final class RecoveryRelayConnection: @unchecked Sendable {
               !channel.isEmpty, channel.utf8.prefix(65).count <= 64 else { return nil }
         if let observedConnection { return observedConnection.channel == channel ? observedConnection : nil }
         let observation = RelayRecoveryConnectionObservation(connectionID: id, peer: peer, channel: channel,
-                                                               socket: socket, lifetime: lifetime)
+                                                               socket: socket, lifetime: lifetime, nativeStop: native?.stop)
         observedConnection = observation
         return observation
     }
