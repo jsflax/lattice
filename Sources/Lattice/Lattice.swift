@@ -109,6 +109,12 @@ public struct Lattice {
     /// Each URLSession attempt owns a retained native callback endpoint. Late
     /// receive/send completions cannot address a replacement task or freed C++.
     internal final class WebsocketClient: SystemTLSPlatformTransportClient, @unchecked Sendable {
+        // Passive per-instance test observation only; never changes TLS policy,
+        // challenge disposition, native callbacks or source authority.
+        private let onIdentityVerificationFailure: (@Sendable () -> Void)?
+        init(onIdentityVerificationFailure: (@Sendable () -> Void)? = nil) {
+            self.onIdentityVerificationFailure = onIdentityVerificationFailure
+        }
         private final class Attempt: @unchecked Sendable {
             let callbacks: PlatformTransportCallbacks
             let delegate: WebSocketDelegateHandler
@@ -170,9 +176,22 @@ public struct Lattice {
                 // Preserve Apple's policies/default anchors. This records the
                 // decision for this task; default challenge handling still owns
                 // the actual TLS connection, and didOpen must follow on it.
-                let accepted = SecTrustEvaluateWithError(trust, nil)
+                let observer = client?.onIdentityVerificationFailure
+                var failure: CFError?
+                let accepted = observer == nil ? SecTrustEvaluateWithError(trust, nil)
+                    : SecTrustEvaluateWithError(trust, &failure)
                 attempt.recordSystemTrust(host: challenge.protectionSpace.host,
                     port: challenge.protectionSpace.port, accepted: accepted)
+                // A generic URLSession/connect error is not identity evidence.
+                // Only this actual current system challenge can set the fact.
+                if !accepted, let observer, let failure,
+                   CFEqual(CFErrorGetDomain(failure), kCFErrorDomainOSStatus),
+                   CFErrorGetCode(failure) == Int(errSecHostNameMismatch),
+                   let requested = attempt.requestedURL.flatMap({ PlatformTLSEndpoint($0) }),
+                   requested.host == challenge.protectionSpace.host.lowercased(),
+                   requested.port == challenge.protectionSpace.port, attempt.callbacks.isCurrent {
+                    observer()
+                }
             }
             func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
                             completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {

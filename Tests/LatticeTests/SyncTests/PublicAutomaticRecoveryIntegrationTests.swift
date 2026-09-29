@@ -422,7 +422,10 @@ struct PublicConnectedAutomaticRecoveryTests {
         let env = try ConnectedTLSEnvironment()
         let app = try await connectedApplication(wrongHost ? env.wrongCertificate : env.certificate, wrongHost ? env.wrongKey : env.key)
         app.webSocket("tls") { _, _ in }
-        let client = ConnectedStockClient()
+        let identityFailure = NIOLockedValueBox(false)
+        let client = ConnectedStockClient(onIdentityVerificationFailure: {
+            identityFailure.withLockedValue { $0 = true }
+        })
         var driver = lattice.platform_tls_test_driver(try #require(client.createCxxClient()))
         do {
             try await app.startup()
@@ -434,14 +437,17 @@ struct PublicConnectedAutomaticRecoveryTests {
             try #require(app.http.server.shared.localAddress?.port == port)
             if wrongHost {
                 try #require(driver.errors() > 0); try #require(driver.opens() == 0); try #require(!driver.system_tls())
+                try #require(identityFailure.withLockedValue { $0 })
             } else {
                 try #require(driver.errors() == 0); try #require(driver.opens() == 1); try #require(driver.system_tls())
+                try #require(!identityFailure.withLockedValue { $0 })
             }
             let opens = Int(driver.opens()), errors = Int(driver.errors()), systemTLS = driver.system_tls()
             driver.close(); try #require(!driver.system_tls())
             try await app.asyncShutdown()
             try connectedReceipt(env, name: wrongHost ? "stockTLSRejectsReachableWrongHostCertificate" : "stockTLSAcceptsMatchingHostedCertificate",
-                facts: ["stockOpens": opens, "stockErrors": errors, "stockTLS": systemTLS, "serverListening": true])
+                facts: ["stockOpens": opens, "stockErrors": errors, "stockTLS": systemTLS, "serverListening": true,
+                        "identityFailureObserved": identityFailure.withLockedValue { $0 }])
         } catch { driver.close(); try? await app.asyncShutdown(); throw error }
     }
 
@@ -563,7 +569,9 @@ struct PublicConnectedAutomaticRecoveryTests {
             try await connectedWait("new public write works after recovery and reaches the other receiver", until: deadline) {
                 let ar = try a.rows(), br = try b.rows()
                 return try ar.count == 7 && ar == br && ar.contains { $0.label == "post" && $0.value == 99 }
+                    && ar.filter { $0.label != "post" } == expected
                     && a.openGate() && b.openGate() && a.preserves(ownA) && b.preserves(ownB)
+                    && a.localValue() == [registrations.a.replica + "-local"] && b.localValue() == [registrations.b.replica + "-local"]
             }
             try #require(!registrations.gate.overflow)
             try await cleanup()

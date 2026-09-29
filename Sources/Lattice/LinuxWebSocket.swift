@@ -10,6 +10,11 @@ import NIOSSL
 
 /// NIO callbacks retain only the endpoint for their actual dial attempt.
 internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unchecked Sendable {
+    // Passive per-instance test observation; no TLS or callback authority.
+    private let onIdentityVerificationFailure: (@Sendable () -> Void)?
+    init(onIdentityVerificationFailure: (@Sendable () -> Void)? = nil) {
+        self.onIdentityVerificationFailure = onIdentityVerificationFailure
+    }
     private final class Attempt: @unchecked Sendable {
         let callbacks: PlatformTransportCallbacks
         let url: String
@@ -120,7 +125,13 @@ internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unch
                 attempt.close()
             }
             attempt.callbacks.open()
-        }.whenFailure { [attempt] error in
+        }.whenFailure { [attempt, observer = onIdentityVerificationFailure] error in
+            // Pinned NIOSSL emits this typed error after chain validation when
+            // the actual peer certificate does not match the requested host/IP.
+            if attempt.systemTLS, attempt.callbacks.isCurrent,
+               let failure = error as? NIOSSLExtraError, failure == .failedToValidateHostname {
+                observer?()
+            }
             attempt.callbacks.error(error.localizedDescription)
         }
     }
