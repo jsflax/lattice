@@ -178,6 +178,13 @@ private final class RelayCatchUpReadState {
         guard isLive else {
             input.diagnostic?.record(.closedDuringSetup)
             input.sockets.remove(socket: input.socket, channelId: input.channel.id)
+            // Retirement may precede setup while the socket remains open.
+            // Seal ingress before finishing so that this path also releases
+            // buffered frames and asks the peer to close.
+            input.state.sealIngress(.setupRefused, socket: input.socket)
+            if !input.socket.isClosed {
+                input.socket.close(code: .goingAway, promise: nil)
+            }
             finish(); return
         }
         phase = .opening

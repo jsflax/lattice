@@ -1238,6 +1238,154 @@ private final class AutomaticSetupIOHold: @unchecked Sendable {
     }
     func release() { gate.signal() }
 }
+/// A finite publication/tail fence. Normal observation is bounded by readyWait.
+/// Only failed cleanup may join actual custody without a timer: abandoning that
+/// callback would permit native retirement while it still owns test work.
+private final class AutomaticSetupBusyFence: Sendable {
+    private struct State {
+        var complete = false
+        var waiter: CheckedContinuation<Void, Never>?
+    }
+    private let state = NIOLockedValueBox(State())
+    var complete: Bool { state.withLockedValue { $0.complete } }
+    func finish() {
+        let waiter = state.withLockedValue { value in
+            value.complete = true
+            let held = value.waiter; value.waiter = nil; return held
+        }
+        waiter?.resume()
+    }
+    func joinFailedCleanup() async {
+        await withCheckedContinuation { continuation in
+            let alreadyComplete = state.withLockedValue { value in
+                if value.complete { return true }
+                precondition(value.waiter == nil)
+                value.waiter = continuation; return false
+            }
+            if alreadyComplete { continuation.resume() }
+        }
+    }
+}
+/// Armed for one actualBusy case only. It cannot supply an admission result.
+/// Weak back-references avoid state -> probe -> mount -> state ownership cycles.
+private final class AutomaticSetupBusyRendezvous: @unchecked Sendable {
+    struct Boundary: Sendable {
+        let holder: AutomaticSetupActualMutex.Facts?
+        let configurationCalls, sourceCalls, authorizationCalls: Int
+        let sessions: Int?
+    }
+    struct Result: Sendable {
+        let trigger: RelaySetupAdmissionObservation
+        let beforeSubmission, beforeRelease: Boundary
+        let sameKeyAt, otherKeyAt, releaseAt: UInt64
+        let sameKeyOnIO, otherKeyOnIO, disarmed: Bool
+    }
+    private struct State {
+        var armed = true, waiting = 0, reserved = false, releaseClaimed = false, draining = false
+        var trigger: RelaySetupAdmissionObservation?
+        var beforeSubmission: Boundary?
+        var sameKeyAt: UInt64?, otherKeyAt: UInt64?
+        var sameKeyOnIO = false, otherKeyOnIO = false
+        var result: Result?
+    }
+    private weak var harness: AutomaticSetupHarness?
+    private weak var testCase: AutomaticSetupCase?
+    private let key: String
+    private let state = NIOLockedValueBox(State())
+    private let published = AutomaticSetupBusyFence()
+    init(_ harness: AutomaticSetupHarness) {
+        self.harness = harness; testCase = harness.state; key = harness.state.key
+    }
+    var result: Result? { state.withLockedValue { $0.result } }
+    private func boundary() -> (Boundary, AutomaticSetupActualMutex?) {
+        // Every foreign read is outside the probe/case/pool locks.
+        let owner = testCase
+        let holder = owner?.actualMutex.withLockedValue { $0 }
+        let counts = owner?.facts.withLockedValue { ($0.configurationCalls, $0.sourceCalls) }
+        let calls = owner?.registrations.calls.withLockedValue { $0 }
+        let sessions = harness?.writer.recoverySessionCount
+        return (.init(holder: holder?.facts, configurationCalls: counts?.0 ?? -1,
+                      sourceCalls: counts?.1 ?? -1, authorizationCalls: calls ?? -1,
+                      sessions: sessions), holder)
+    }
+    func observe(_ event: RelaySetupAdmissionObservation) {
+        guard event.stage == .waiting else { return }
+        let submit = state.withLockedValue { value in
+            guard value.armed, !value.reserved else { return false }
+            value.waiting += 1
+            guard value.waiting == 2 else { return false }
+            value.reserved = true; value.trigger = event; return true
+        }
+        guard submit else { return }
+        let before = boundary().0
+        state.withLockedValue { value in
+            precondition(value.reserved && value.beforeSubmission == nil)
+            value.beforeSubmission = before
+        }
+        RelayExecutionPool.io.submitRequired(for: key) { [self] in sentinel(sameKey: true) }
+        RelayExecutionPool.io.submitRequired(for: key + ".other") { [self] in sentinel(sameKey: false) }
+        // Cleanup cannot enqueue tails before both submissions are published,
+        // even if disarm raced after reservation but before either enqueue.
+        published.finish()
+    }
+    private func sentinel(sameKey: Bool) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        let onIO = RelayExecutionPool.io.isCurrentWorker
+        let release = state.withLockedValue { value -> (RelaySetupAdmissionObservation, Boundary, UInt64, UInt64, Bool, Bool)? in
+            if sameKey {
+                precondition(value.sameKeyAt == nil)
+                value.sameKeyAt = now; value.sameKeyOnIO = onIO
+            } else {
+                precondition(value.otherKeyAt == nil)
+                value.otherKeyAt = now; value.otherKeyOnIO = onIO
+            }
+            guard value.armed, !value.releaseClaimed,
+                  let same = value.sameKeyAt, let other = value.otherKeyAt,
+                  let trigger = value.trigger, let before = value.beforeSubmission else { return nil }
+            value.releaseClaimed = true
+            return (trigger, before, same, other, value.sameKeyOnIO, value.otherKeyOnIO)
+        }
+        guard let release else { return }
+        let (before, holder) = boundary()
+        let releaseAt = DispatchTime.now().uptimeNanoseconds
+        // Capture bad facts as-is; never wait for a favorable capacity/count.
+        holder?.requestRelease()
+        state.withLockedValue { value in
+            precondition(value.result == nil)
+            value.result = .init(trigger: release.0, beforeSubmission: release.1, beforeRelease: before,
+                                 sameKeyAt: release.2, otherKeyAt: release.3, releaseAt: releaseAt,
+                                 sameKeyOnIO: release.4, otherKeyOnIO: release.5, disarmed: !value.armed)
+        }
+    }
+    func disarm() {
+        let noSubmission = state.withLockedValue { value in value.armed = false; return !value.reserved }
+        if noSubmission { published.finish() }
+    }
+    func drain() async throws {
+        state.withLockedValue { precondition(!$0.draining); $0.draining = true }
+        disarm()
+        var first: (any Error)?
+        func wait(_ fence: AutomaticSetupBusyFence, _ phase: String) async -> (any Error)? {
+            do { try await readyWait(phase) { fence.complete }; return nil }
+            catch {
+                // Failure containment is never a successful rendezvous. Keep
+                // custody until the actual callback, including cancellation.
+                testCase?.releaseHolds()
+                await fence.joinFailedCleanup()
+                return error
+            }
+        }
+        first = await wait(published, "automatic busy: sentinel submission publication")
+        let sameTail = AutomaticSetupBusyFence(), otherTail = AutomaticSetupBusyFence()
+        RelayExecutionPool.io.submitRequired(for: key) { sameTail.finish() }
+        RelayExecutionPool.io.submitRequired(for: key + ".other") { otherTail.finish() }
+        // Pool FIFO releases prior callback bodies/captures before each tail.
+        // These tail closures own only fences, never the probe/harness/holder.
+        if let error = await wait(sameTail, "automatic busy: same-key sentinel tail"), first == nil { first = error }
+        if let error = await wait(otherTail, "automatic busy: other-key sentinel tail"), first == nil { first = error }
+        if let first { throw first }
+    }
+}
 private final class AutomaticSetupCase: @unchecked Sendable {
     struct Facts {
         var configurationCalls = 0, sourceCalls = 0, finished = 0
@@ -1257,6 +1405,7 @@ private final class AutomaticSetupCase: @unchecked Sendable {
     let holdActualMutex: Bool
     let holdWhenWaiting: Bool
     let actualMutex = NIOLockedValueBox<AutomaticSetupActualMutex?>(nil)
+    let busyRendezvous = NIOLockedValueBox<AutomaticSetupBusyRendezvous?>(nil)
     let otherKeyProgress = NIOLockedValueBox(false)
     init(queuedHold: Bool = false, constructorHold: Bool = false, memory: Bool = false,
          mode: RegisteredRecoveryPeers.Mode = .normal, holdAfterAdmission: Bool = false,
@@ -1302,6 +1451,7 @@ private final class AutomaticSetupCase: @unchecked Sendable {
     }
     func observe(_ event: RelaySetupAdmissionObservation) {
         facts.withLockedValue { if $0.events.count < 256 { $0.events.append(event) } else { $0.observationOverflow = true } }
+        busyRendezvous.withLockedValue { $0 }?.observe(event)
         if event.stage == .attemptEntered, holdBeforeCapture { hold.hold() }
         if event.stage == .admitted, holdAfterAdmission { hold.hold() }
         if event.stage == .waiting, holdWhenWaiting, facts.withLockedValue({ $0.configurationCalls == 1 }) { hold.hold() }
@@ -1381,12 +1531,16 @@ private final class AutomaticSetupHarness: @unchecked Sendable {
         return client
     }
     func shutdown() async throws {
+        var first: (any Error)?
+        if let rendezvous = state.busyRendezvous.withLockedValue({ $0 }) {
+            do { try await rendezvous.drain() } catch { first = error }
+            state.busyRendezvous.withLockedValue { $0 = nil }
+        }
         state.releaseHolds(); state.registrations.gate.release()
         let clients = peers.withLockedValue { $0 }
         for client in clients { client.socket?.close(promise: nil) }
         await writer.retireRecoveryAuthorization()
-        var first: (any Error)?
-        do { try await app.asyncShutdown() } catch { first = error }
+        do { try await app.asyncShutdown() } catch { if first == nil { first = error } }
         do { try await readyWait("automatic setup actual drain") { self.writer.recoverySessionCount == 0 } }
         catch { if first == nil { first = error } }
         await state.retireHolder()
@@ -1399,7 +1553,14 @@ private func withAutomaticSetupCase(_ state: AutomaticSetupCase,
     _ body: (AutomaticSetupHarness) async throws -> Void) async throws {
     let harness = try await AutomaticSetupHarness(state)
     var first: (any Error)?
-    do { try await body(harness) } catch { state.printFailureOnce(.body); first = error }
+    do {
+        try await withTaskCancellationHandler {
+            try await body(harness)
+        } onCancel: {
+            state.busyRendezvous.withLockedValue { $0 }?.disarm()
+        }
+    } catch { state.printFailureOnce(.body); first = error }
+    state.busyRendezvous.withLockedValue { $0 }?.disarm()
     // Exactly one cleanup attempt, including when cleanup itself fails.
     do { try await harness.shutdown() }
     catch { state.printFailureOnce(.cleanup); if first == nil { first = error } else { Issue.record("automatic setup cleanup: \(error)") } }
@@ -1416,20 +1577,33 @@ private struct AutomaticSourceSetupTests {
             defer { placement.expectCurrent() }
             try await withAutomaticSetupCase(state) { h in
                 placement.expectCurrent() // Actual harness construction returned.
+                let rendezvous = AutomaticSetupBusyRendezvous(h)
+                state.busyRendezvous.withLockedValue { precondition($0 == nil); $0 = rendezvous }
+                try Task.checkCancellation()
                 let peer = try await h.connect()
                 placement.expectCurrent()
                 try await readyWait("automatic busy: two actual waiting returns") { state.events(.waiting).count >= 2 }
                 placement.expectCurrent()
-                let holder = try #require(state.actualMutex.withLockedValue { $0 })
-                #expect(holder.facts.acquired && holder.facts.status == 0 && !holder.facts.workerFinished)
-                #expect(state.registrations.calls.withLockedValue { $0 } == 0)
-                let sameKey = NIOLockedValueBox(false)
-                RelayExecutionPool.io.submitRequired(for: state.key) { sameKey.withLockedValue { $0 = true } }
-                RelayExecutionPool.io.submitRequired(for: state.key + ".other") { state.otherKeyProgress.withLockedValue { $0 = true } }
-                try await readyWait("automatic busy: both actual IO sentinels") { sameKey.withLockedValue { $0 } && state.otherKeyProgress.withLockedValue { $0 } }
+                try await readyWait("automatic busy: both actual IO sentinels") { rendezvous.result != nil }
                 placement.expectCurrent()
-                #expect(h.writer.recoverySessionCount == 1)
-                holder.requestRelease()
+                let observed = try #require(rendezvous.result)
+                #expect(!observed.disarmed)
+                #expect(observed.trigger.connectionID == state.events(.waiting)[1].connectionID)
+                #expect(observed.trigger.observedAt == state.events(.waiting)[1].observedAt)
+                #expect(observed.trigger.budget?.attempts == 2)
+                #expect(observed.sameKeyOnIO && observed.otherKeyOnIO)
+                #expect(observed.sameKeyAt >= observed.trigger.observedAt && observed.otherKeyAt >= observed.trigger.observedAt)
+                #expect(observed.releaseAt >= observed.sameKeyAt && observed.releaseAt >= observed.otherKeyAt)
+                for boundary in [observed.beforeSubmission, observed.beforeRelease] {
+                    let held = try #require(boundary.holder)
+                    #expect(held.acquired && held.status == 0 && !held.workerFinished)
+                    #expect(!held.releaseRequested && !held.acquisitionTimedOut && !held.safetyReleased)
+                    #expect(boundary.authorizationCalls == 0)
+                    #expect(boundary.configurationCalls == 1 && boundary.sourceCalls == 1)
+                }
+                // The original live count oracle belongs at this actual
+                // pre-release boundary, even if the consumer resumes late.
+                #expect(observed.beforeRelease.sessions == 1)
                 try await readyWait("automatic busy: admitted and completion returned") { state.events(.admitted).count == 1 && state.facts.withLockedValue { $0.finished == 1 } }
                 placement.expectCurrent()
                 #expect(state.facts.withLockedValue { $0.configurationCalls == 1 && $0.sourceCalls == 1 })
