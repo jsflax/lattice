@@ -47,13 +47,24 @@ public struct ContinuousProducerLimits: Sendable {
 /// name ends in `.lattice-continuous`. Reopen requires the exact durable profile,
 /// full Swift declarations and canonical physical identity. Multiple admitted
 /// owners and channels may share rows. Legacy/raw writable paths refuse.
-/// This surface does not activate authentication, installation or recovery.
+/// Recovery is disabled by default. Explicit automatic recovery requires the
+/// actual authenticated source and verified WSS route; policy values alone
+/// never grant authentication or installation authority.
 public struct ContinuousProducerPolicy: Sendable {
+    public enum Recovery: Sendable, Equatable {
+        /// Preserve the original continuous-producer profile without a receiver.
+        case disabled
+        /// Enroll the fixed automatic canonical receiver profile. Reopening
+        /// requires this same profile; changing an existing store refuses.
+        case automatic
+    }
     public let contributions: [ContinuousProducerContribution]
     public let routes: [ContinuousProducerRoute]
     public let limits: ContinuousProducerLimits
-    public init(contributions: [ContinuousProducerContribution], routes: [ContinuousProducerRoute], limits: ContinuousProducerLimits) {
-        self.contributions = contributions; self.routes = routes; self.limits = limits
+    public let recovery: Recovery
+    public init(contributions: [ContinuousProducerContribution], routes: [ContinuousProducerRoute],
+                limits: ContinuousProducerLimits, recovery: Recovery = .disabled) {
+        self.contributions = contributions; self.routes = routes; self.limits = limits; self.recovery = recovery
     }
     internal func native() throws -> lattice.continuous_policy {
         func bounded(_ value: String, _ limit: Int) -> Bool { !value.isEmpty && value.utf8.count <= limit }
@@ -69,6 +80,12 @@ public struct ContinuousProducerPolicy: Sendable {
             throw ContinuousProducerError.invalidPolicy
         }
         var value = lattice.continuous_policy()
+        // This mapping selects an existing durable contract, not the latest
+        // available profile. A different contract requires explicit adoption.
+        switch recovery {
+        case .disabled: value.canonical_recovery_profile = 0
+        case .automatic: value.canonical_recovery_profile = 2
+        }
         let l = limits
         value.scopes = Int64(l.scopes); value.records = Int64(l.records)
         value.field_bytes = Int64(l.fieldBytes); value.journal_bytes = Int64(l.journalBytes)
@@ -116,6 +133,7 @@ public struct ContinuousProducerSettlement: Sendable {
 }
 public enum ContinuousProducerError: Error, Sendable {
     case invalidPolicy, migrationUnsupported, unsupportedBackend
+    case missingRecoverySourceExpectation
     case open(ContinuousProducerSettlement)
 }
 /// Not Sendable. Keep this handle and its last release on the owner's executor.

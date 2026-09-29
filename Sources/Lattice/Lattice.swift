@@ -506,8 +506,9 @@ public struct Lattice {
         public var wssEndpoint: URL?
 
         /// Optional explicit registration expectation for the actual verified
-        /// WSS source. This binds describe only; automatic recovery/install is
-        /// not activated. Exact endpoint must also match wssEndpoint.
+        /// WSS source. This binds describe; automatic recovery additionally
+        /// requires an explicit continuous-producer recovery policy. Exact
+        /// endpoint must also match wssEndpoint.
         public var recoverySourceExpectation: RecoverySourceExpectation?
         private var scheduler: Scheduler
 
@@ -920,6 +921,10 @@ public struct Lattice {
         // Refuse migration before allocating callback contexts or opening a file.
         if continuousProducer != nil && configuration.migration != nil {
             throw ContinuousProducerError.migrationUnsupported
+        }
+        if continuousProducer?.recovery == .automatic, configuration.wssEndpoint != nil,
+           configuration.recoverySourceExpectation == nil {
+            throw ContinuousProducerError.missingRecoverySourceExpectation
         }
         if let expectation = configuration.recoverySourceExpectation {
             guard configuration.wssEndpoint?.absoluteString == expectation.endpoint.absoluteString,

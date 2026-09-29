@@ -131,3 +131,157 @@ struct ContinuousProducerTests {
         #expect(reopened.objects(ContinuousSwiftV1.ContinuousSDKRow.self).count == 1)
     }
 }
+
+// These fixtures prove explicit offline activation and durable compatibility.
+// Actual authenticated WSS installation and process-death recovery are separate.
+extension ContinuousProducerTests {
+    private func recoveryPolicy(_ recovery: ContinuousProducerPolicy.Recovery) -> ContinuousProducerPolicy {
+        let original = policy()
+        return .init(contributions: original.contributions, routes: original.routes,
+                     limits: original.limits, recovery: recovery)
+    }
+    private func openRecovery(_ config: Lattice.Configuration,
+                              _ recovery: ContinuousProducerPolicy.Recovery) throws -> Lattice {
+        try Lattice(for: [ContinuousSwiftV1.ContinuousSDKRow.self, ContinuousSDKLocal.self],
+                    configuration: config, continuousProducer: recoveryPolicy(recovery))
+    }
+    private func originalIDs(_ store: Lattice) -> [UUID] {
+        Array(store.eventsAfter(globalId: nil)).compactMap(\.globalId)
+    }
+    private func expectKeptRow(_ store: Lattice, id: UUID, originals: [UUID]) throws {
+        #expect(store.objects(ContinuousSwiftV1.ContinuousSDKRow.self).count == 1)
+        let row = try #require(store.objects(ContinuousSwiftV1.ContinuousSDKRow.self).first)
+        #expect(row.globalId == id); #expect(row.value == "kept"); #expect(row.note == "private")
+        #expect(originalIDs(store) == originals)
+    }
+    private func sourceExpectation(_ endpoint: String) throws -> Lattice.RecoverySourceExpectation {
+        let id = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
+        let hash = String(repeating: "a", count: 64)
+        // Passive configured values for pre-open refusal tests. These are never
+        // sent, accepted as an authenticated grant, or used to install rows.
+        return try .init(endpoint: URL(string: endpoint)!,
+            source: .init(authority: "authority", sourceID: id, epoch: id,
+                scopeDigest: hash, schemaDigest: hash, receiptNamespace: "shared-receipts",
+                coverageID: "coverage", coverageRevision: 1, descriptorDigest: hash),
+            peer: .init(replicaID: "registered", receiverIncarnation: id, channelIncarnation: id),
+            incomingScope: .init(models: [.init(table: "ContinuousSDKRow", incomingOperations: [.insert, .update, .delete])],
+                relations: [], scopedLinkTables: [], catalogDigest: hash), channel: "a", validForMilliseconds: 60_000)
+    }
+    @Test func automaticOfflineFreshAndClosedReopenKeepOriginalsAndControllerOwnsCancellation() throws {
+        let (container, config) = try fixture()
+        defer { try? FileManager.default.removeItem(at: container) }
+        #expect(config.wssEndpoint == nil); #expect(config.recoverySourceExpectation == nil)
+        let id: UUID, originals: [UUID]
+        do {
+            let first = try openRecovery(config, .automatic); defer { first.close() }
+            try insert(first, value: "kept")
+            id = try #require(first.objects(ContinuousSwiftV1.ContinuousSDKRow.self).first?.globalId)
+            originals = originalIDs(first); #expect(originals.count == 1)
+            let begun = try first.beginContinuousProducerBarrier(attempt: 1); committed(begun.settlement)
+            let barrier = try #require(begun.barrier), frozen = barrier.finish()
+            committed(frozen.settlement); #expect(frozen.frozen); #expect(!frozen.waiting)
+            #expect(frozen.localUnsentCount == 1)
+            let refused = barrier.cancel()
+            #expect(refused.phase != .committed); #expect(refused.hasError); #expect(!refused.unexpectedCommitObserved)
+            #expect(throws: (any Error).self) { try insert(first, value: "still closed") }
+            try expectKeptRow(first, id: id, originals: originals)
+        }
+        let reopened = try openRecovery(config, .automatic); defer { reopened.close() }
+        try expectKeptRow(reopened, id: id, originals: originals)
+        let inspected = try reopened.inspectContinuousProducer(); committed(inspected.settlement)
+        let barrier = try #require(inspected.barrier), frozen = barrier.finish()
+        committed(frozen.settlement); #expect(frozen.frozen); #expect(!frozen.waiting)
+        #expect(frozen.localUnsentCount == 1)
+        let refused = barrier.cancel()
+        #expect(refused.phase != .committed); #expect(refused.hasError); #expect(!refused.unexpectedCommitObserved)
+        #expect(throws: (any Error).self) { try insert(reopened, value: "still closed after reopen") }
+        try expectKeptRow(reopened, id: id, originals: originals)
+    }
+    @Test func omittedRecoveryReopensAsExplicitDisabledAndKeepsPublicCancellation() throws {
+        let (container, config) = try fixture()
+        defer { try? FileManager.default.removeItem(at: container) }
+        let id: UUID, originals: [UUID]
+        do {
+            let first = try open(config); defer { first.close() }
+            try insert(first, value: "kept")
+            id = try #require(first.objects(ContinuousSwiftV1.ContinuousSDKRow.self).first?.globalId)
+            originals = originalIDs(first); #expect(originals.count == 1)
+        }
+        let reopened = try openRecovery(config, .disabled); defer { reopened.close() }
+        try expectKeptRow(reopened, id: id, originals: originals)
+        let begun = try reopened.beginContinuousProducerBarrier(attempt: 1); committed(begun.settlement)
+        let barrier = try #require(begun.barrier), frozen = barrier.finish()
+        committed(frozen.settlement); #expect(frozen.localUnsentCount == 1)
+        committed(barrier.cancel()); try insert(reopened, value: "resumed")
+        #expect(reopened.objects(ContinuousSwiftV1.ContinuousSDKRow.self).count == 2)
+    }
+    @Test(arguments: [ContinuousProducerPolicy.Recovery.disabled, .automatic])
+    func changingClosedRecoveryProfileRefusesAndExactReopenPreservesPublicData(original: ContinuousProducerPolicy.Recovery) throws {
+        let (container, config) = try fixture()
+        defer { try? FileManager.default.removeItem(at: container) }
+        let id: UUID, originals: [UUID]
+        do {
+            let first = try openRecovery(config, original); defer { first.close() }
+            try insert(first, value: "kept")
+            id = try #require(first.objects(ContinuousSwiftV1.ContinuousSDKRow.self).first?.globalId)
+            originals = originalIDs(first); #expect(originals.count == 1)
+        }
+        let changed: ContinuousProducerPolicy.Recovery = original == .disabled ? .automatic : .disabled
+        do {
+            let unexpected = try openRecovery(config, changed); unexpected.close()
+            Issue.record("an existing durable recovery profile was silently changed")
+        } catch ContinuousProducerError.open(let settlement) {
+            #expect(settlement.phase != .committed); #expect(settlement.hasError)
+            #expect(!settlement.unexpectedCommitObserved)
+        }
+        let reopened = try openRecovery(config, original); defer { reopened.close() }
+        try expectKeptRow(reopened, id: id, originals: originals)
+        try insert(reopened, value: "still writable")
+        #expect(reopened.objects(ContinuousSwiftV1.ContinuousSDKRow.self).count == 2)
+    }
+    @Test func automaticConfiguredRouteRequiresExpectationBeforeCreatingContainer() throws {
+        let (container, original) = try fixture(); var config = original
+        defer { try? FileManager.default.removeItem(at: container) }
+        config.wssEndpoint = URL(string: "wss://continuous-sdk.invalid/a")!
+        config.authorizationToken = "registered-token"
+        do {
+            let unexpected = try openRecovery(config, .automatic); unexpected.close()
+            Issue.record("automatic configured route opened without an expectation")
+        } catch ContinuousProducerError.missingRecoverySourceExpectation {}
+        #expect(!FileManager.default.fileExists(atPath: container.path))
+    }
+    @Test func automaticMismatchedExpectationRefusesBeforeCreatingContainer() throws {
+        let (container, original) = try fixture(); var config = original
+        defer { try? FileManager.default.removeItem(at: container) }
+        config.wssEndpoint = URL(string: "wss://continuous-sdk.invalid/a")!
+        config.authorizationToken = "registered-token"
+        config.recoverySourceExpectation = try sourceExpectation("wss://continuous-sdk.invalid/b")
+        do {
+            let unexpected = try openRecovery(config, .automatic); unexpected.close()
+            Issue.record("automatic configured route accepted a different endpoint")
+        } catch Lattice.RecoverySourceExpectation.ConfigurationError.invalidEndpoint {}
+        #expect(!FileManager.default.fileExists(atPath: container.path))
+    }
+    @Test(arguments: [false, true])
+    func automaticMissingOrEmptyTokenRefusesBeforeCreatingContainer(empty: Bool) throws {
+        let (container, original) = try fixture(); var config = original
+        defer { try? FileManager.default.removeItem(at: container) }
+        config.wssEndpoint = URL(string: "wss://continuous-sdk.invalid/a")!
+        config.authorizationToken = empty ? "" : nil
+        config.recoverySourceExpectation = try sourceExpectation("wss://continuous-sdk.invalid/a")
+        do {
+            let unexpected = try openRecovery(config, .automatic); unexpected.close()
+            Issue.record("automatic configured route accepted a missing token")
+        } catch Lattice.RecoverySourceExpectation.ConfigurationError.invalidEndpoint {}
+        #expect(!FileManager.default.fileExists(atPath: container.path))
+    }
+    @Test func automaticMigrationStillRefusesBeforeCreatingContainer() throws {
+        let (container, original) = try fixture(); var config = original; config.migration = [:]
+        defer { try? FileManager.default.removeItem(at: container) }
+        do {
+            let unexpected = try openRecovery(config, .automatic); unexpected.close()
+            Issue.record("automatic policy silently migrated the store")
+        } catch ContinuousProducerError.migrationUnsupported {}
+        #expect(!FileManager.default.fileExists(atPath: container.path))
+    }
+}
