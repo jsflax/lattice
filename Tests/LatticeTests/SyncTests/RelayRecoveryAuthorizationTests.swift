@@ -298,6 +298,7 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
         var configuration = WebSocketClient.Configuration(); configuration.maxFrameSize = registrations.mode == .readyLarge ? 8 << 20 : 1 << 20
         try await WebSocket.connect(to: "ws://127.0.0.1:\(port)/\(mount)?\(query)", headers: headers,
             configuration: configuration, on: app.eventLoopGroup) { client.attach($0) }.get()
+        try await readyWait("authorization peer socket attachment") { client.socket != nil }
         return client
     }
     func inspect(group: String = "group-a") async throws -> (Int, [Int], Int) {
@@ -1295,6 +1296,7 @@ private final class AutomaticSetupHarness: @unchecked Sendable {
         var configuration = WebSocketClient.Configuration(); configuration.maxFrameSize = 1 << 20
         try await WebSocket.connect(to: "ws://127.0.0.1:\(port)/writer?\(query)", headers: headers,
             configuration: configuration, on: app.eventLoopGroup) { client.attach($0) }.get()
+        try await readyWait("automatic setup peer socket attachment") { client.socket != nil }
         return client
     }
     func shutdown() async throws {
@@ -1629,6 +1631,7 @@ private struct AutomaticSourceSetupTests {
             var headers = HTTPHeaders(); headers.add(name: "X-Registered-Session", value: state.registrations.token)
             try await WebSocket.connect(to: "ws://127.0.0.1:\(port)/custody?\(query)", headers: headers,
                                          on: app.eventLoopGroup) { peer.attach($0) }.get()
+            try await readyWait("custody peer socket attachment") { peer.socket != nil }
             let socket = try #require(peer.socket)
             if !retireBeforeReservation {
                 try await readyWait { state.hold.entered.withLockedValue { $0 } && state.events(.admitted).count == 1 }
