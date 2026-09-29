@@ -279,4 +279,150 @@ class AnalyzerTests(unittest.TestCase):
         self.assertFalse(e.compare(groups)["eligible"])
 
 
+class QuietComparisonTests(unittest.TestCase):
+    @staticmethod
+    def raw_groups():
+        groups = []
+        for index in range(5):
+            group = {}
+            for order, label in enumerate(("A", "A2", "B")):
+                data = fixture(f"quiet-{index}-{label}", full=True, quiet_only=True)
+                data["metadata"] = dict(SDK_REVISION=("b" if label == "B" else "a")*40,
+                    CORE_REVISION="c"*40, BUILD_ID="synthetic-debug", HOST_ID="test",
+                    RUN_GROUP=str(index), RUN_ORDER=str((order+index)%3),
+                    LOGGING="off", platform="synthetic", placement="synthetic")
+                group[label] = data
+            groups.append(group)
+        return groups
+
+    @staticmethod
+    def analyzed(groups):
+        return [{label: e.analyze(data) for label, data in group.items()} for group in groups]
+
+    def test_full_quiet_control_compares_both_baselines_without_hot_or_goal_claim(self):
+        groups = self.analyzed(self.raw_groups())
+        for group in groups:
+            for run in group.values():
+                self.assertTrue(run["eligibleForNumericalComparison"])
+                self.assertEqual(run["expectedReceiptCount"], 41)
+                self.assertEqual(run["streams"]["hot"]["completed"], 0)
+        result = e.compare(groups, profile="quiet-only")
+        self.assertTrue(result["eligible"])
+        self.assertTrue(result["numericalGatesPass"])
+        self.assertEqual(result["comparisonProfile"], "quiet-only")
+        for baseline in ("A", "A2"):
+            self.assertEqual(set(result["comparisons"][baseline]), {"quietPostcommitP95", "quietThroughput"})
+            self.assertEqual(result["comparisons"][baseline]["quietPostcommitP95"]["pairedRunRatios"], [1.0]*5)
+        self.assertFalse(result["externalQualificationAccepted"])
+        self.assertFalse(result["releaseOrGoalAccepted"])
+
+    def test_one_quiet_latency_regression_cannot_hide_in_other_groups(self):
+        raw = self.raw_groups()
+        for row in raw[2]["B"]["receipts"]:
+            if row["phase"] == "measured":
+                row["firstExactReadNS"] = row["postcommitNS"] + 5_500_001
+        result = e.compare(self.analyzed(raw), profile="quiet-only")
+        self.assertTrue(result["eligible"])
+        self.assertFalse(result["numericalGatesPass"])
+        self.assertFalse(result["comparisons"]["A"]["quietPostcommitP95"]["pass"])
+        self.assertTrue(result["comparisons"]["A"]["quietThroughput"]["pass"])
+
+    def test_exact_ten_percent_quiet_latency_boundary_is_retained(self):
+        raw = self.raw_groups()
+        for group in raw:
+            for row in group["B"]["receipts"]:
+                if row["phase"] == "measured":
+                    row["firstExactReadNS"] = row["postcommitNS"] + 5_500_000
+        self.assertTrue(e.compare(self.analyzed(raw), profile="quiet-only")["numericalGatesPass"])
+
+    def test_late_last_read_can_fail_throughput_without_changing_p95(self):
+        raw = self.raw_groups()
+        run = raw[2]["B"]
+        run["receipts"][-1]["firstExactReadNS"] = run["measurementEpochNS"] + 45_000_000_000
+        run["finishedNS"] = run["measurementEpochNS"] + 46_000_000_000
+        result = e.compare(self.analyzed(raw), profile="quiet-only")
+        self.assertTrue(result["eligible"])
+        self.assertFalse(result["numericalGatesPass"])
+        self.assertTrue(result["comparisons"]["A"]["quietPostcommitP95"]["pass"])
+        self.assertFalse(result["comparisons"]["A"]["quietThroughput"]["pass"])
+
+    def test_second_baseline_must_independently_pass(self):
+        raw = self.raw_groups()
+        for row in raw[1]["A2"]["receipts"]:
+            if row["phase"] == "measured":
+                row["firstExactReadNS"] = row["postcommitNS"] + 4_000_000
+        result = e.compare(self.analyzed(raw), profile="quiet-only")
+        self.assertTrue(result["comparisons"]["A"]["quietPostcommitP95"]["pass"])
+        self.assertFalse(result["comparisons"]["A2"]["quietPostcommitP95"]["pass"])
+        self.assertFalse(result["numericalGatesPass"])
+
+    def test_missing_timed_out_or_errored_quiet_operation_invalidates_comparison(self):
+        for defect in ("missing", "timed_out", "error"):
+            with self.subTest(defect=defect):
+                raw = self.raw_groups()
+                run = raw[0]["B"]
+                if defect == "missing":
+                    run["receipts"].pop()
+                elif defect == "timed_out":
+                    row = run["receipts"][-1]
+                    row["lateExactReadNS"] = row.pop("firstExactReadNS")
+                    row["timedOut"] = True
+                else:
+                    run["counters"]["rawSyncErrors"] = 1
+                result = e.compare(self.analyzed(raw), profile="quiet-only")
+                self.assertFalse(result["eligible"])
+                self.assertFalse(result["numericalGatesPass"])
+
+    def test_comparison_modes_cannot_substitute_or_mix_profiles(self):
+        groups = self.analyzed(self.raw_groups())
+        self.assertFalse(e.compare(groups)["eligible"])
+        groups[0]["B"] = e.analyze(fixture("loaded-in-quiet", full=True))
+        self.assertFalse(e.compare(groups, profile="quiet-only")["eligible"])
+        with self.assertRaises(ValueError):
+            e.compare(groups, profile="unknown")
+
+    def test_quiet_control_keeps_repetition_graph_placement_and_run_identity_guards(self):
+        groups = self.analyzed(self.raw_groups())
+        with self.assertRaises(ValueError):
+            e.compare(groups[:4], profile="quiet-only")
+        for key, value in (("CORE_REVISION", "d"*40), ("HOST_ID", "other-host"), ("RUN_ORDER", "0")):
+            with self.subTest(key=key):
+                changed = copy.deepcopy(groups)
+                changed[0]["B"]["metadata"][key] = value
+                self.assertFalse(e.compare(changed, profile="quiet-only")["eligible"])
+        groups[1]["A2"]["runID"] = groups[0]["A"]["runID"]
+        with self.assertRaises(ValueError):
+            e.compare(groups, profile="quiet-only")
+
+    def test_compare_quiet_cli_retains_input_hashes_and_profile(self):
+        import contextlib
+        import hashlib
+        import io
+        from pathlib import Path
+        import tempfile
+        from unittest.mock import patch
+        # Test artifacts stay beside this checked-out source under localdev.
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as temporary:
+            root = Path(temporary)
+            manifest = {"groups": []}
+            for index, group in enumerate(self.raw_groups()):
+                names = {}
+                for label, data in group.items():
+                    name = f"{index}-{label}.json"
+                    (root/name).write_text(json.dumps(data))
+                    names[label] = name
+                manifest["groups"].append(names)
+            path = root/"groups.json"
+            path.write_text(json.dumps(manifest))
+            output = io.StringIO()
+            with patch("sys.argv", ["evaluate_sync.py", "compare-quiet", str(path)]), contextlib.redirect_stdout(output):
+                code = e.main()
+            result = json.loads(output.getvalue())
+            self.assertEqual(code, 0)
+            self.assertEqual(result["comparisonProfile"], "quiet-only")
+            self.assertEqual(result["manifestSHA256"], hashlib.sha256(path.read_bytes()).hexdigest())
+            self.assertEqual(result["runs"][0]["A"]["inputSHA256"], hashlib.sha256((root/"0-A.json").read_bytes()).hexdigest())
+            self.assertFalse(result["releaseOrGoalAccepted"])
+
+
 if __name__ == "__main__": unittest.main()

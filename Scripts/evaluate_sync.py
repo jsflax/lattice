@@ -3,9 +3,12 @@
 
 Usage: evaluate_sync.py run receipts.json
        evaluate_sync.py compare groups.json
+       evaluate_sync.py compare-quiet groups.json
 groups.json: {"groups": [{"A": "a.json", "A2": "a2.json", "B": "b.json"}, ...]}
 Paths are relative to the group manifest. Incomplete runs stay in the report and
 make comparison ineligible. No operation or run is silently dropped to pass.
+compare-quiet evaluates the independent quiet-only control with the same quiet
+gates; it does not replace the loaded comparison or qualify raw-read throughput.
 """
 import argparse
 import hashlib
@@ -270,7 +273,9 @@ def ratio_interval(values):
             "method": "10,000 paired-run resamples, deterministic seed; descriptive interval, not population guarantee"}
 
 
-def compare(groups):
+def compare(groups, *, profile="loaded"):
+    if profile not in ("loaded", "quiet-only"):
+        raise ValueError("comparison profile must be loaded or quiet-only")
     if len(groups) < 5:
         raise ValueError("at least five matched A/A2/B groups required")
     failures, ids = [], set()
@@ -282,7 +287,7 @@ def compare(groups):
             if run["runID"] in ids:
                 raise ValueError("run reused across matched groups")
             ids.add(run["runID"])
-            if not run["eligibleForNumericalComparison"] or run["profile"] != "loaded":
+            if not run["eligibleForNumericalComparison"] or run["profile"] != profile:
                 failures.append(f"group {index} {label}: incomplete/unqualified numerical profile")
             metadata = run["metadata"]
             for key in ("SDK_REVISION", "CORE_REVISION", "BUILD_ID", "HOST_ID", "RUN_GROUP", "RUN_ORDER", "LOGGING", "platform", "placement"):
@@ -305,19 +310,23 @@ def compare(groups):
         if len({group[x]["metadata"].get("RUN_ORDER") for x in ("A", "A2", "B")}) != 3:
             failures.append(f"group {index}: declared run order is duplicated")
     if failures:
-        return {"eligible": False, "failures": failures, "numericalGatesPass": False, "scope": DISCLAIMER}
+        return {"eligible": False, "failures": failures, "numericalGatesPass": False,
+                "comparisonProfile": profile, "scope": DISCLAIMER}
     output, passed = {}, True
     for baseline in ("A", "A2"):
         metrics = {}
         selectors = {
-            "hotPostcommitP95": lambda r: r["streams"]["hot"]["metrics"]["postcommitToVisible"]["p95MS"],
             "quietPostcommitP95": lambda r: r["streams"]["quiet"]["metrics"]["postcommitToVisible"]["p95MS"],
             "quietThroughput": lambda r: r["streams"]["quiet"]["completedOperationsPerSecond"]}
+        if profile == "loaded":
+            selectors = {"hotPostcommitP95": lambda r: r["streams"]["hot"]["metrics"]["postcommitToVisible"]["p95MS"],
+                         **selectors}
         for name, select in selectors.items():
             denominators = [select(g[baseline]) for g in groups]
             numerators = [select(g["B"]) for g in groups]
             if any(v is None or not math.isfinite(v) or v <= 0 for v in denominators + numerators):
-                return {"eligible": False, "failures": [f"nonpositive or missing {name}"], "numericalGatesPass": False, "scope": DISCLAIMER}
+                return {"eligible": False, "failures": [f"nonpositive or missing {name}"], "numericalGatesPass": False,
+                        "comparisonProfile": profile, "scope": DISCLAIMER}
             values = [b / a for a, b in zip(denominators, numerators)]
             result = ratio_interval(values)
             # Every matched group must pass; the bootstrap interval is reported
@@ -327,13 +336,13 @@ def compare(groups):
             metrics[name] = result
         output[baseline] = metrics
     return {"eligible": True, "groupCount": len(groups), "comparisons": output,
-            "numericalGatesPass": bool(passed), "scope": DISCLAIMER,
+            "numericalGatesPass": bool(passed), "comparisonProfile": profile, "scope": DISCLAIMER,
             "externalQualificationAccepted": False, "releaseOrGoalAccepted": False}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("run", "compare")); parser.add_argument("input", type=Path)
+    parser.add_argument("mode", choices=("run", "compare", "compare-quiet")); parser.add_argument("input", type=Path)
     args = parser.parse_args()
     try:
         data, digest = read_json(args.input)
@@ -347,7 +356,8 @@ def main():
                     raw, sha = read_json(args.input.parent / relative)
                     analyzed[label] = analyze(raw); analyzed[label]["inputSHA256"] = sha
                 groups.append(analyzed)
-            result = compare(groups); result["runs"] = groups; result["manifestSHA256"] = digest
+            result = compare(groups, profile="quiet-only" if args.mode == "compare-quiet" else "loaded")
+            result["runs"] = groups; result["manifestSHA256"] = digest
         print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
         return 0 if result.get("validCompleteRun", result.get("numericalGatesPass", False)) else 1
     except (ValueError, KeyError, TypeError, OSError) as error:
