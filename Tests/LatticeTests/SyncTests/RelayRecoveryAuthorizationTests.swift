@@ -1262,7 +1262,7 @@ private final class AutomaticSetupHarness: @unchecked Sendable {
     let writer: SyncRelayHandle
     let port: Int
     private let peers = NIOLockedValueBox<[RecoveryAuthorizationPeer]>([])
-    init(_ state: AutomaticSetupCase) async throws {
+    init(_ state: AutomaticSetupCase, didFinish: (@Sendable () -> Void)? = nil) async throws {
         self.state = state
         var environment = try Environment.detect(); environment.arguments = ["vapor"]
         let created = try await Application.make(environment)
@@ -1270,7 +1270,7 @@ private final class AutomaticSetupHarness: @unchecked Sendable {
         app.http.server.configuration.port = 0
         app.http.server.configuration.shutdownTimeout = .milliseconds(500)
         let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
-            didFinishAsyncSetup: { state.facts.withLockedValue { $0.finished += 1 } },
+            didFinishAsyncSetup: { didFinish?(); state.facts.withLockedValue { $0.finished += 1 } },
             didObserveRecoverySetup: { state.observe($0) },
             didOpenRecoverySetupOwnerForTesting: { state.ownerOpened($0) })
         RelayIngressTesting.install(hooks, for: state.directory)
@@ -1663,6 +1663,58 @@ private struct AutomaticSourceSetupTests {
         do { try await readyWait { mount.sessionCount == 0 } } catch { if first == nil { first = error } }
         #expect(!state.hold.timedOut.withLockedValue { $0 })
         #expect(!state.facts.withLockedValue { $0.observationOverflow })
+        if let first { throw first }
+    }
+}
+
+@Suite("Automatic setup final callback custody", .serialized, .timeLimit(.minutes(2)))
+private struct AutomaticSourceSetupFinalCallbackTests {
+    @Test func closedSetupKeepsCapacityThroughActualFinalCompletionCallbackReturn() async throws {
+        let state = try AutomaticSetupCase(constructorHold: true)
+        let completionHold = AutomaticSetupIOHold()
+        let h = try await AutomaticSetupHarness(state, didFinish: { completionHold.hold() })
+        var first: (any Error)?
+        do {
+            let peer = try await h.connect()
+            let socket = try #require(peer.socket)
+            try await readyWait { state.hold.entered.withLockedValue { $0 } }
+            try await socket.close()
+            try await peer.wait { $0.closed }
+            await h.writer.retireRecoveryAuthorization()
+            try await readyWait { state.events(.stopCallbackReturning).count == 1 }
+            // The scalar event precedes the stop task's work defer. A later
+            // actual turn proves that defer returned, so earlier stop custody
+            // cannot mask a missing charge on the final completion callback.
+            await Task { @RelayControlActor in () }.value
+            #expect(state.events(.ownerReleased).isEmpty)
+            #expect(h.writer.recoverySessionCount == 1)
+            state.hold.release()
+            try await readyWait { completionHold.entered.withLockedValue { $0 } }
+            let finalizerReturned = NIOLockedValueBox(false)
+            RelayExecutionPool.io.submitRequired(for: state.key) {
+                finalizerReturned.withLockedValue { $0 = RelayExecutionPool.io.isCurrentWorker }
+            }
+            try await readyWait { finalizerReturned.withLockedValue { $0 } }
+            #expect(!completionHold.timedOut.withLockedValue { $0 })
+            #expect(state.events(.ownerReleased).count == 1)
+            #expect(state.events(.ownerReleased).allSatisfy(\.onIO))
+            #expect(h.writer.recoveryRetiredNativeSessionCount == 1)
+            #expect(h.writer.recoverySessionCount == 1)
+            #expect(state.facts.withLockedValue { $0.finished == 0 })
+            #expect(socket.isClosed)
+            #expect(state.events(.attemptEntered).isEmpty && state.events(.admitted).isEmpty)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+            #expect(state.facts.withLockedValue { $0.configurationCalls == 1 && $0.sourceCalls == 1 })
+            completionHold.release()
+            try await readyWait { state.facts.withLockedValue { $0.finished == 1 } && h.writer.recoverySessionCount == 0 }
+            #expect(!completionHold.timedOut.withLockedValue { $0 })
+            withExtendedLifetime(socket) {}
+        } catch { first = error }
+        // Release both real callbacks before shutdown even on the first failure.
+        completionHold.release(); state.releaseHolds()
+        do { try await h.shutdown() }
+        catch { if first == nil { first = error } else { Issue.record("final setup callback cleanup: \(error)") } }
+        #expect(!completionHold.timedOut.withLockedValue { $0 })
         if let first { throw first }
     }
 }
