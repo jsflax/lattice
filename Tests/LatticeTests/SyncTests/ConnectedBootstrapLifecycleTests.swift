@@ -15,7 +15,8 @@ struct ConnectedBootstrapLifecycleTests {
         value.requestClose()
         #expect(!value.closed)
         #expect(!value.cleanupRetired(ownedGroupJoined: true))
-        #expect(value.didAttach())
+        let closeAfterAttach = value.didAttach()
+        #expect(closeAfterAttach)
         #expect(!value.cleanupRetired(ownedGroupJoined: true))
         value.didClose()
         #expect(value.closed)
@@ -24,7 +25,8 @@ struct ConnectedBootstrapLifecycleTests {
 
     @Test func attachedSocketRequiresOnCloseEvenAfterConnectFailure() {
         var value = ConnectedBootstrapLifecycle()
-        #expect(!value.didAttach())
+        let closeAfterAttach = value.didAttach()
+        #expect(!closeAfterAttach)
         value.connectFailed()
         value.requestClose()
         #expect(!value.failedWithoutWebSocket)
@@ -38,7 +40,8 @@ struct ConnectedBootstrapLifecycleTests {
     @Test func lateAttachmentRevokesFailedUnattachedCompletion() {
         var value = ConnectedBootstrapLifecycle()
         value.connectFailed()
-        #expect(value.didAttach()) // The real caller closes this late socket.
+        let closeAfterAttach = value.didAttach() // The real caller closes this late socket.
+        #expect(closeAfterAttach)
         #expect(!value.closed)
         #expect(!value.cleanupRetired(ownedGroupJoined: true))
         value.didClose()
