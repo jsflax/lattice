@@ -43,6 +43,99 @@ CLEANUP_SECONDS = 300
 TEST_SECONDS = 900
 BUILD_SECONDS = 5400
 
+# Exact finite schema for diagnostic-only records; never admission or a pass.
+FAILURE_RECORD_KEYS = ('version',
+ 'name',
+ 'completed',
+ 'phase',
+ 'failure',
+ 'cleanupPhase',
+ 'cleanupFailure',
+ 'callbacks',
+ 'callbackOverflow',
+ 'facts')
+FAILURE_RECORD_PHASES = ('started',
+ 'environmentMarkers',
+ 'environmentRoot',
+ 'environmentPrivateFiles',
+ 'environmentReceiptPath',
+ 'environmentReceiptRead',
+ 'environmentReceiptDecode',
+ 'environmentReceiptFields',
+ 'applicationEnvironment',
+ 'applicationCreate',
+ 'applicationTLS',
+ 'tlsDriver',
+ 'serverStartup',
+ 'serverAddress',
+ 'tlsConnect',
+ 'tlsTerminal',
+ 'tlsWrongHostOracle',
+ 'tlsMatchingOracle',
+ 'tlsClose',
+ 'applicationShutdown',
+ 'successReceipt',
+ 'directoryCreate',
+ 'sourceDirectoryCreate',
+ 'sourceSeed',
+ 'registrations',
+ 'relayConfigure',
+ 'bootstrapConnect',
+ 'bootstrapCatchup',
+ 'bootstrapContext',
+ 'bootstrapRetire',
+ 'receiverCreate',
+ 'receiverOpen',
+ 'initialRecovery',
+ 'receiverRetire',
+ 'offlineEdit',
+ 'recoveryReopen',
+ 'heldCanonicalRead',
+ 'heldBarrierOracle',
+ 'combinedRecovery',
+ 'postRecoveryWrite',
+ 'cleanup',
+ 'completed')
+FAILURE_CLEANUP_PHASES = ('releaseHeldSend',
+ 'closeReceivers',
+ 'closeBootstrap',
+ 'retireAuthorization',
+ 'shutdownApplication',
+ 'waitRetirement',
+ 'removeHooks',
+ 'completed')
+FAILURE_ERROR_KINDS = ('none',
+ 'identity',
+ 'tls',
+ 'transport',
+ 'protocolFailure',
+ 'cancelled',
+ 'fileSystem',
+ 'other',
+ 'environment',
+ 'deadline',
+ 'metadata',
+ 'receipt',
+ 'unexpectedOriginal',
+ 'invalidBounds',
+ 'ambiguousPolicy',
+ 'invalidPeer',
+ 'staleAuthorization',
+ 'administrationInProgress')
+FAILURE_ERROR_DOMAINS = ('none',
+ 'url',
+ 'osStatus',
+ 'posix',
+ 'cocoa',
+ 'nioSSL',
+ 'nioSSLExtra',
+ 'nioWebSocket',
+ 'nioChannel',
+ 'fixture',
+ 'recoveryConfiguration')
+FAILURE_CALLBACK_PHASES = ('trustEvaluation', 'completion', 'receive', 'send', 'connect')
+FAILURE_RECORD_PREFIX = b'LATTICE_CONNECTED_FAILURE_V1 '
+
 
 class GateFailure(Exception):
     """Only fixed stage/error class is published; exception text remains private."""
@@ -660,6 +753,115 @@ def case_outcomes(root):
     return result
 
 
+
+def validate_failure_record(value):
+    require(type(value) is dict and set(value) == set(FAILURE_RECORD_KEYS))
+    require(type(value['version']) is int and value['version'] == 1)
+    require(type(value['name']) is str and value['name'] in CASE_NAMES)
+    require(type(value['phase']) is str and value['phase'] in FAILURE_RECORD_PHASES)
+    require(type(value['completed']) is bool and type(value['callbackOverflow']) is bool)
+    require(value['cleanupPhase'] is None or
+            (type(value['cleanupPhase']) is str and value['cleanupPhase'] in FAILURE_CLEANUP_PHASES))
+
+    def error_fact(error):
+        require(type(error) is dict and set(error) == {'kind', 'domain', 'code'})
+        require(type(error['kind']) is str and error['kind'] in FAILURE_ERROR_KINDS)
+        require(type(error['domain']) is str and error['domain'] in FAILURE_ERROR_DOMAINS)
+        code = error['code']
+        require(code is None or (type(code) is int and -(2**31) <= code < 2**31))
+        if code is not None:
+            require(error['domain'] in ('url', 'osStatus', 'posix', 'cocoa', 'nioWebSocket'))
+        return {'kind': error['kind'], 'domain': error['domain'], 'code': code}
+
+    copied = {key: value[key] for key in ('version', 'name', 'completed', 'phase', 'cleanupPhase', 'callbackOverflow')}
+    for key in ('failure', 'cleanupFailure'):
+        copied[key] = None if value[key] is None else error_fact(value[key])
+    require(type(value['callbacks']) is list and len(value['callbacks']) <= 8)
+    copied['callbacks'] = []
+    for callback in value['callbacks']:
+        require(type(callback) is dict and set(callback) == {'phase', 'error', 'trustAccepted'})
+        require(type(callback['phase']) is str and callback['phase'] in FAILURE_CALLBACK_PHASES)
+        require(callback['trustAccepted'] is None or type(callback['trustAccepted']) is bool)
+        require(callback['phase'] == 'trustEvaluation' or callback['trustAccepted'] is None)
+        copied['callbacks'].append({'phase': callback['phase'], 'error': error_fact(callback['error']),
+                                    'trustAccepted': callback['trustAccepted']})
+    facts = value['facts']
+    require(type(facts) is dict and set(facts) <= {
+        'opens', 'errors', 'systemTLS', 'identityFailure', 'listenerPublished', 'mounts', 'bootstrapPeers', 'receivers'})
+    copied['facts'] = {}
+    for key, fact in facts.items():
+        if key in ('systemTLS', 'identityFailure', 'listenerPublished'):
+            require(type(fact) is bool)
+        else:
+            require(type(fact) is int and 0 <= fact <= (1000000 if key in ('opens', 'errors') else 2))
+        copied['facts'][key] = fact
+    return copied
+
+
+def parse_failure_records(raw):
+    """Pure bounded extraction. Partial observations remain partial, never passes."""
+    require(type(raw) is bytes and len(raw) <= 128 * 1024 * 1024)
+
+    def unique_members(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result)
+            result[key] = value
+        return result
+
+    def no_constant(_):
+        raise GateFailure()
+
+    records = {}
+    total = 0
+    for line in raw.splitlines():
+        if not line.startswith(FAILURE_RECORD_PREFIX):
+            continue
+        require(len(line) <= 4096 and len(records) < 3)
+        total += len(line)
+        require(total <= 16384)
+        value = json.loads(line[len(FAILURE_RECORD_PREFIX):].decode('utf-8'),
+                           object_pairs_hook=unique_members, parse_constant=no_constant)
+        copied = validate_failure_record(value)
+        require(copied['name'] not in records)
+        records[copied['name']] = copied
+    return [records[name] for name in CASE_NAMES if name in records]
+
+
+def failure_evidence(root):
+    # Match the existing first-log custody boundary. No inspection of a live
+    # test process, private raw text export, or inferred successful outcome.
+    result = {'version': 1, 'evidenceOnly': True, 'observation': 'not-started',
+              'complete': False, 'records': [], 'missingCases': list(CASE_NAMES),
+              'processExitCode': None, 'processRetired': False}
+    records = list((root / 'private/commands').glob('*-connected-tests.json'))
+    logs = list((root / 'private/commands').glob('*-connected-tests.log'))
+    if len(records) != 1 or len(logs) != 1 or records[0].stem != logs[0].stem:
+        result['observation'] = 'unobserved-process-proof' if records or logs else 'not-started'
+        return result
+    record = read_json(records[0], 1024 * 1024)
+    require(type(record['started']) is bool and (record['exitCode'] is None or type(record['exitCode']) is int))
+    result['processExitCode'] = record['exitCode']
+    result['processRetired'] = (record['cleanup']['groupGone'] is True and record['cleanup']['leaderReaped'] is True)
+    if not result['processRetired']:
+        result['observation'] = 'unobserved-process-proof'
+        return result
+    if not record['started']:
+        result['observation'] = 'command-not-started'
+        return result
+    if logs[0].is_symlink() or not logs[0].is_file() or logs[0].stat().st_size > 128 * 1024 * 1024:
+        result['observation'] = 'unobserved-log-bound'
+        return result
+    raw = read_file(logs[0], 128 * 1024 * 1024)
+    result['testLogSHA256'] = hashlib.sha256(raw).hexdigest()
+    result['observation'] = 'closed-first-log'
+    result['records'] = parse_failure_records(raw)
+    found = {value['name'] for value in result['records']}
+    result['missingCases'] = [name for name in CASE_NAMES if name not in found]
+    result['complete'] = not result['missingCases']
+    return result
+
+
 def source_and_tests(commands, helper, root, sdk_sha, core_sha, core_tree, openssl, result):
     sdk, core = root / 'lattice', root / 'LatticeCore'
     result['stage'] = 'exact-source-graph'
@@ -811,6 +1013,17 @@ def main():
             except BaseException as error:
                 result['caseEvidenceErrorClass'] = type(error).__name__
                 result['success'] = False
+        if not (root / 'public-evidence/connected-recovery-failures.json').exists():
+            try:
+                write_json(root / 'public-evidence/connected-recovery-failures.json', failure_evidence(root))
+            except BaseException as error:
+                result['failureEvidenceErrorClass'] = type(error).__name__
+                result['success'] = False
+        try:
+            write_json(root / 'public-evidence/cleanup-always-commands.json', public_commands(logs))
+        except BaseException as error:
+            result['cleanupCommandEvidenceErrorClass'] = type(error).__name__
+            result['success'] = False
         write_json(root / 'public-evidence/always-cleanup.json', result)
         print('connected gate always-cleanup success', result['success'], flush=True)
         return 0 if result['success'] else 1
@@ -865,6 +1078,20 @@ def main():
                     write_json(root / 'public-evidence/commands.json', public_commands(logs))
                 except BaseException as error:
                     result['evidenceErrorClass'] = type(error).__name__
+                    result['success'] = False
+                try:
+                    failures = failure_evidence(root)
+                    write_json(root / 'public-evidence/connected-recovery-failures.json', failures)
+                    result['diagnosticEvidenceComplete'] = failures['complete']
+                    if not failures['complete']:
+                        result['success'] = False
+                except BaseException as error:
+                    result['failureEvidenceErrorClass'] = type(error).__name__
+                    result['success'] = False
+                try:
+                    write_json(root / 'public-evidence/cleanup-final-commands.json', public_commands(cleanup_logs))
+                except BaseException as error:
+                    result['cleanupCommandEvidenceErrorClass'] = type(error).__name__
                     result['success'] = False
                 write_json(root / 'public-evidence/result.json', result)
     print('connected gate success', result['success'], 'stage', result['stage'], flush=True)

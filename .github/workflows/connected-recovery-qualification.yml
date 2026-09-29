@@ -147,5 +147,8 @@ jobs:
             ${{ env.CONNECTED_ROOT }}/public-evidence/source-graph.json
             ${{ env.CONNECTED_ROOT }}/public-evidence/compiler-inputs.json
             ${{ env.CONNECTED_ROOT }}/public-evidence/case-outcomes.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/connected-recovery-failures.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/cleanup-final-commands.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/cleanup-always-commands.json
           if-no-files-found: error
           retention-days: 14
