@@ -78,7 +78,7 @@ final class ConnectedFailureObservation: @unchecked Sendable {
     init(_ name: Case) { self.name = name }
     func phase(_ value: Phase) { state.withLockedValue { if $0.failure == nil { $0.phase = value } } }
     func failed(_ value: ErrorFact) { state.withLockedValue { if $0.failure == nil { $0.failure = value } } }
-    func cleanup(_ value: CleanupPhase) { state.withLockedValue { $0.cleanupPhase = value } }
+    func cleanup(_ value: CleanupPhase) { state.withLockedValue { if $0.cleanupFailure == nil { $0.cleanupPhase = value } } }
     func cleanupFailed(_ value: ErrorFact) { state.withLockedValue { if $0.cleanupFailure == nil { $0.cleanupFailure = value } } }
     func completed() { state.withLockedValue { $0.completed = true; $0.phase = .completed } }
     func callback(_ value: PlatformTransportFailureObservation) {

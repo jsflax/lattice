@@ -44,6 +44,7 @@ struct ConnectedFailureObservationTests {
         observation.failed(.init(ConnectedFailureObservation.FixtureError.environment))
         observation.cleanup(.shutdownApplication)
         observation.cleanupFailed(.init(NSError(domain: NSPOSIXErrorDomain, code: 5)))
+        observation.cleanup(.completed) // A later cleanup attempt cannot erase the first failure phase.
         observation.phase(.completed)
         observation.failed(.init(ConnectedFailureObservation.FixtureError.receipt))
         let value = try record(observation)

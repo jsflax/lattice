@@ -540,6 +540,7 @@ struct PublicConnectedAutomaticRecoveryTests {
         RelayIngressTesting.install(hooks, for: storage)
         var mounts: [SyncRelayHandle] = [], bootstrap: [ConnectedBootstrapPeer] = [], receivers: [ConnectedReceiver] = []
         func cleanup() async throws {
+            do {
             observation.cleanup(.releaseHeldSend)
             registrations.gate.release()
             observation.cleanup(.closeReceivers)
@@ -560,6 +561,10 @@ struct PublicConnectedAutomaticRecoveryTests {
             // The source checkpoint governor may retain an ordinary owner.
             // The wrapper removes this private UUID directory only after the
             // actual test process is reaped; never unlink live WAL/custody.
+            } catch {
+                observation.cleanupFailed(connectedFailureFact(error))
+                throw error
+            }
         }
         do {
             observation.phase(.relayConfigure)
