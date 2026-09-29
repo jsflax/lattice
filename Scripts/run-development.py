@@ -531,7 +531,10 @@ def main():
                 import recovery_refresh_qualification
                 recovery_refresh_qualification.qualify(runner, sdk, core, root, common, args.test_timeout)
             else:
-                runner.run('full-test', ['swift', 'test', *common, '--force-resolved-versions', '--skip-build'], cwd=sdk,
+                import development_crashes
+                with development_crashes.full_test_backtrace(runner, platform.system()) as backtrace:
+                    save_json(receipts / 'full-test-backtrace.json', backtrace)
+                    runner.run('full-test', ['swift', 'test', *common, '--force-resolved-versions', '--skip-build'], cwd=sdk,
                            timeout=args.test_timeout, require_full_timeout=True)
             graph = runner.run('effective-graph-after', ['swift', 'package', *common, 'show-dependencies', '--format', 'json'], cwd=sdk)
             verify_graph(runner, 'graph-after', read_graph(graph), original, core, args.core_sha, root / 'scratch')

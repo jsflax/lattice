@@ -1,4 +1,5 @@
 """Bounded, post-test crash evidence from this development job's test bundle."""
+import contextlib
 import hashlib
 import os
 from pathlib import Path
@@ -15,6 +16,31 @@ MAX_METADATA = 64
 MAX_ERROR_TEXT = 1024
 PREFIXES = ('LatticePackageTests', 'swiftpm-testing-helper')
 
+# macOS 26 defaults to terminal-only crash backtraces. GuardedRunner writes
+# stdout/stderr to a file, so explicitly request a noninteractive trace for
+# full correctness tests. This does not change performance experiment modes.
+FULL_TEST_BACKTRACE = ('enable=yes,interactive=no,color=no,timeout=0s,'
+                       'threads=crashed,registers=crashed,images=mentioned,'
+                       'limit=64,top=16,output-to=stderr')
+
+
+@contextlib.contextmanager
+def full_test_backtrace(runner, platform_name):
+    original = runner.env
+    requested = platform_name == 'Darwin'
+    receipt = {'scope': 'full SDK correctness test process only',
+               'requested': requested,
+               'priorSettingPresent': 'SWIFT_BACKTRACE' in original,
+               'setting': FULL_TEST_BACKTRACE if requested else None,
+               'captureGuaranteed': False,
+               'limitations': 'Runtime handler and process entitlement support remain required; no signing changes.'}
+    if requested:
+        runner.env = dict(original, SWIFT_BACKTRACE=FULL_TEST_BACKTRACE)
+    try:
+        yield receipt
+    finally:
+        runner.env = original
+
 
 def collect(root, destination, started_at, *, directories=None, wait_seconds=3):
     root, destination = Path(root), Path(destination)
@@ -26,6 +52,8 @@ def collect(root, destination, started_at, *, directories=None, wait_seconds=3):
               'limits': {'file': MAX_FILE, 'total': MAX_TOTAL, 'files': MAX_FILES,
                          'candidates': MAX_CANDIDATES, 'directoryEntries': MAX_DIRECTORY_ENTRIES,
                          'metadataPerKind': MAX_METADATA, 'errorText': MAX_ERROR_TEXT}}
+    result['scanSummary'] = {'passes': 0, 'directories': [],
+                             'countsAreCumulativeAcrossPasses': True}
 
     def record(kind, value):
         if len(result[kind]) < MAX_METADATA:
@@ -42,11 +70,19 @@ def collect(root, destination, started_at, *, directories=None, wait_seconds=3):
     result['testBundleExecutable'] = str(expected[0])
     if directories is None:
         directories = [Path.home() / 'Library/Logs/DiagnosticReports', Path('/Library/Logs/DiagnosticReports')]
+    directories = list(directories)
+    for directory in directories:
+        result['scanSummary']['directories'].append(
+            {'directory': str(directory), 'lastStatus': 'notScanned',
+             'entriesExamined': 0, 'matchingReportNames': 0,
+             'staleReports': 0, 'nonRegularReports': 0})
+    scan_started = time.monotonic()
     deadline = time.monotonic() + min(max(wait_seconds, 0), 3)
     seen = set()
     destination.mkdir(exist_ok=False)
     while True:
-        for directory in directories:
+        result['scanSummary']['passes'] += 1
+        for directory, summary in zip(directories, result['scanSummary']['directories']):
             try:
                 candidates = []
                 with os.scandir(directory) as entries:
@@ -54,12 +90,17 @@ def collect(root, destination, started_at, *, directories=None, wait_seconds=3):
                         if index >= MAX_DIRECTORY_ENTRIES:
                             result['inventoryTruncated'] = True
                             break
+                        summary['entriesExamined'] += 1
                         if entry.name.startswith(PREFIXES) and Path(entry.name).suffix in ('.ips', '.crash'):
+                            summary['matchingReportNames'] += 1
                             candidates.append(Path(entry.path))
                 candidates.sort()
+                summary['lastStatus'] = 'scanned'
             except FileNotFoundError:
+                summary['lastStatus'] = 'missing'
                 continue
             except OSError as error:
+                summary['lastStatus'] = 'error'
                 record('errors', {'directory': str(directory), 'error': str(error)})
                 continue
             for path in candidates:
@@ -71,6 +112,10 @@ def collect(root, destination, started_at, *, directories=None, wait_seconds=3):
                 try:
                     info = path.lstat()
                     identity = (str(path), info.st_ino, info.st_size, info.st_mtime_ns)
+                    if info.st_mtime < started_at:
+                        summary['staleReports'] += 1
+                    if not stat.S_ISREG(info.st_mode):
+                        summary['nonRegularReports'] += 1
                     if identity in seen or info.st_mtime < started_at or not stat.S_ISREG(info.st_mode):
                         continue
                     seen.add(identity)
@@ -109,4 +154,5 @@ def collect(root, destination, started_at, *, directories=None, wait_seconds=3):
             break
         time.sleep(min(0.25, max(0, deadline - time.monotonic())))
     result['reportsFound'] = bool(result['files'])
+    result['scanSummary']['elapsedSeconds'] = time.monotonic() - scan_started
     return result
