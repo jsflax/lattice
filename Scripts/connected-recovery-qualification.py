@@ -332,7 +332,7 @@ def material(commands, root, openssl):
     for name in ('matching', 'wrong-host'):
         output = commands.run(name + '-sans', [openssl, 'x509', '-in', tls / (name + '.pem'), '-noout', '-ext', 'subjectAltName'])
         lines = read_file(output, 16384).decode().strip().splitlines()
-        require(len(lines) == 2 and lines[0] == 'X509v3 Subject Alternative Name:')
+        require(len(lines) == 2 and lines[0].rstrip(' ') == 'X509v3 Subject Alternative Name:')
         sans[name] = [x.strip().replace('IP Address:', 'IP:') for x in lines[1].split(',')]
     require(sans == {'matching': ['DNS:localhost', 'IP:127.0.0.1'], 'wrong-host': ['DNS:lattice-wrong-host.invalid']})
     receipt = dict(version=1, caSHA256=only_certificate(ca), matchingSHA256=only_certificate(tls / 'matching.pem'),
