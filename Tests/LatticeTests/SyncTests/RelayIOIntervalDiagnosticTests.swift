@@ -207,7 +207,7 @@ struct RelayIOIntervalDiagnosticTests {
             let snapshot = try #require(recorder.closeSnapshot(partial: false))
             #expect(snapshot.dropped == 0 && snapshot.outputOmittedRecords == 0)
             let pages = snapshot.records.filter { $0.stage == .catchUpPageRequested }
-            #expect(pages.count == 3) // Two pages followed by the terminal read.
+            #expect(pages.count == 12) // Eleven 100-entry-bounded pages and the terminal read.
             #expect(Set(pages.map(\.sequence)).count == pages.count)
             var counts: [Int] = []
             for requested in pages {
@@ -226,7 +226,7 @@ struct RelayIOIntervalDiagnosticTests {
                 #expect(records[3].bytes > 0)
                 counts.append(records[3].count)
             }
-            #expect(counts == [1000, 1])
+            #expect(counts == Array(repeating: 100, count: 10) + [1])
             collector.socket?.close(promise: nil)
             try await app.asyncShutdown()
         } catch {

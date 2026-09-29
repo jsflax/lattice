@@ -397,8 +397,10 @@ struct RelayConnectionSetupTests {
             #expect(facts.injectedWriteFailures == 1)
             #expect(facts.sentFrameBytes.count == 2)
             #expect(facts.sentFrameBytes.allSatisfy { $0 > 16 * 1024 && $0 <= setupClientFrameLimit })
-            #expect(facts.sentAuditIDs.map(\.count) == [1000, 1000])
-            #expect(facts.sentAuditIDs.flatMap { $0 } == Array(ids.prefix(2000)))
+            // The relay yields its shared file lane after 100 entries. The
+            // second failed write must still stop before preparing page three.
+            #expect(facts.sentAuditIDs.map(\.count) == [100, 100])
+            #expect(facts.sentAuditIDs.flatMap { $0 } == Array(ids.prefix(200)))
             #expect(facts.preparedCatchUpIDs == facts.sentAuditIDs)
             #expect(facts.finishedCount == 1)
             state.stages.record("has_group_begin")
@@ -411,10 +413,10 @@ struct RelayConnectionSetupTests {
             #expect(!snapshot.records.contains { $0.stage == .watchActivated })
             // The failed second frame was never handed to the transport.
             state.stages.record("collector_wait_begin")
-            let arrived = await state.collector.wait { $0.receivedGlobalIds.count == 1000 }
+            let arrived = await state.collector.wait { $0.receivedGlobalIds.count == 100 }
             state.stages.record("collector_wait_end")
             #expect(arrived)
-            #expect(state.collector.receivedGlobalIds == Array(ids.prefix(1000)))
+            #expect(state.collector.receivedGlobalIds == Array(ids.prefix(100)))
         }
     }
 
