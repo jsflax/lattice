@@ -121,7 +121,8 @@ public struct SyncRecoveryReceiptCohort: Sendable, Codable, Equatable {
 public enum SyncRecoveryReceiptCoveragePolicy: Sendable {
     /// Existing namespace-only schema and wire. No alias authority is granted.
     case singleNamespaceV2
-    /// New v3 enrollment requires an explicit .bounded48MiBV1 READY profile.
+    /// New v3 enrollment requires an explicit large READY profile: either
+    /// .bounded48MiBV1 or .bounded48MiBOrphanV1 with its exact grace.
     /// Its persistent source policy permits 16 retained transfers and 1 GiB
     /// of charged storage; the v2 profile remains at 8 transfers and 512 MiB.
     /// The SDK never upgrades the default profile or an existing source file.
@@ -135,7 +136,14 @@ public enum SyncRecoveryReceiptCoverageAuthorization: Sendable {
 public enum SyncRecoveryDurability: Sendable { case walFull }
 /// Explicit persistent policy selection. Existing sources must reopen with
 /// exactly their enrolled profile; this never resizes or adopts a prior file.
-public enum SyncRecoveryReadyProfile: Sendable { case boundedV1, bounded48MiBV1 }
+public enum SyncRecoveryReadyProfile: Sendable {
+    case boundedV1, bounded48MiBV1
+    /// Opt in to terminal READY lifecycle recovery with an explicit source
+    /// resume grace (1...3_600_000 ms). This is not a receipt outcome, lease
+    /// renewal, or authorization extension. Reopen requires the exact enrolled
+    /// profile and grace; choosing this case never migrates an existing store.
+    case bounded48MiBOrphanV1(orphanResumeGraceMilliseconds: Int64)
+}
 public enum SyncRecoveryConfigurationError: Error, Sendable { case invalidBounds, ambiguousPolicy, invalidPeer, staleAuthorization }
 /// Explicit source enrollment with namespace-only v2 behavior by default.
 /// The full registered model/relation closure is authoritative; a filtered
@@ -162,11 +170,17 @@ public struct SyncRecoveryMountConfiguration: Sendable {
               namespaces.contains(where: { $0.namespaceID == receiptNamespace }), receiptNamespace != localNamespace,
               models.allSatisfy({ bounded($0, 64) }), Set(models).count == models.count,
               (1...3_600_000).contains(maximumAuthorizationMilliseconds) else { throw SyncRecoveryConfigurationError.invalidBounds }
+        if case .bounded48MiBOrphanV1(let grace) = readyProfile {
+            guard (1...3_600_000).contains(grace) else { throw SyncRecoveryConfigurationError.invalidBounds }
+        }
         let coverageFact: Lattice.RecoverySourceExpectation.ReceiptCoverage?
         switch receiptCoverage {
         case .singleNamespaceV2: coverageFact = nil
         case .registeredProducerV3(let cohort):
-            guard case .bounded48MiBV1 = readyProfile else { throw SyncRecoveryConfigurationError.invalidBounds }
+            switch readyProfile {
+            case .boundedV1: throw SyncRecoveryConfigurationError.invalidBounds
+            case .bounded48MiBV1, .bounded48MiBOrphanV1: break
+            }
             guard cohort.namespaces.contains(where: { $0.namespaceID.utf8.elementsEqual(receiptNamespace.utf8) }),
                   cohort.namespaces.allSatisfy({ member in namespaces.contains(where: {
                       $0.namespaceID.utf8.elementsEqual(member.namespaceID.utf8) &&
@@ -201,7 +215,13 @@ public struct SyncRecoveryMountConfiguration: Sendable {
             payload["version"] = 2
             payload["receiptCoverage"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(coverage))
         }
-        if case .bounded48MiBV1 = readyProfile { payload["readyProfile"] = "bounded48MiBV1" }
+        switch readyProfile {
+        case .boundedV1: break
+        case .bounded48MiBV1: payload["readyProfile"] = "bounded48MiBV1"
+        case .bounded48MiBOrphanV1(let grace):
+            payload["readyProfile"] = "bounded48MiBOrphanV1"
+            payload["orphanResumeGraceMilliseconds"] = grace
+        }
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
         guard data.count <= 32_768 else { throw SyncRecoveryConfigurationError.invalidBounds }; return data
     }
@@ -340,10 +360,18 @@ final class RecoveryRelayMount: @unchecked Sendable {
         let prior = try resolve(channel)
         guard case .singleNamespaceV2 = prior.configuration.receiptCoverage else { throw SyncRecoveryConfigurationError.ambiguousPolicy }
         let c = prior.configuration
+        let targetProfile: SyncRecoveryReadyProfile
+        switch c.readyProfile {
+        case .boundedV1, .bounded48MiBV1: targetProfile = .bounded48MiBV1
+        case .bounded48MiBOrphanV1(let grace):
+            // Receipt migration preserves an already-enrolled lifecycle
+            // policy. It cannot enable lifecycle or change its grace.
+            targetProfile = .bounded48MiBOrphanV1(orphanResumeGraceMilliseconds: grace)
+        }
         let next = try SyncRecoveryMountConfiguration(authority: c.authority, sourceID: c.sourceID, epoch: c.epoch,
             localNamespace: c.localNamespace, namespaces: c.namespaces, receiptNamespace: c.receiptNamespace,
             models: c.models, durability: .walFull, maximumAuthorizationMilliseconds: c.maximumAuthorizationMilliseconds,
-            readyProfile: .bounded48MiBV1, receiptCoverage: .registeredProducerV3(cohort))
+            readyProfile: targetProfile, receiptCoverage: .registeredProducerV3(cohort))
         return (prior.policy, try next.policy(upload), next)
     }
     func remove(_ id: UUID) { _ = state.withLockedValue { $0.sessions.removeValue(forKey: id) } }

@@ -226,3 +226,113 @@ import Testing
         #expect(throws: (any Swift.Error).self) { try expectation(missing) }
     }
 }
+
+/// Passive SDK profile and migration-recipe checks only. These do not enroll
+/// a source, migrate a file, or establish runtime automatic recovery.
+@Suite struct ReadyLifecycleProfilePolicyTests {
+    private let sourceID = UUID(uuidString: "A1000000-0000-4000-8000-000000000001")!
+    private let epoch = UUID(uuidString: "A1000000-0000-4000-8000-000000000002")!
+    private let cohortID = UUID(uuidString: "AB100000-0000-4000-8000-000000000003")!
+    private var namespaces: [SyncRecoveryNamespace] { [
+        .init(namespaceID: "local", coverageID: "local-v1", revision: 1),
+        .init(namespaceID: "a", coverageID: "a-v1", revision: 2),
+        .init(namespaceID: "b", coverageID: "b-v1", revision: 3)
+    ] }
+    private func cohort() throws -> SyncRecoveryReceiptCohort {
+        try .init(id: cohortID, revision: 7, namespaces: [namespaces[1], namespaces[2]])
+    }
+    private func configuration(_ profile: SyncRecoveryReadyProfile,
+                               coverage: SyncRecoveryReceiptCoveragePolicy = .singleNamespaceV2) throws -> SyncRecoveryMountConfiguration {
+        try .init(authority: "coverage-service", sourceID: sourceID, epoch: epoch, localNamespace: "local",
+            namespaces: namespaces, receiptNamespace: "a", models: ["CoverageRow"], durability: .walFull,
+            maximumAuthorizationMilliseconds: 60_000, readyProfile: profile, receiptCoverage: coverage)
+    }
+    private func object(_ data: Data) throws -> [String: Any] {
+        try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+    private func encoded(_ object: [String: Any]) throws -> Data {
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+    private func mount(_ configuration: SyncRecoveryMountConfiguration) throws -> RecoveryRelayMount {
+        try RecoveryRelayMount(configuration: configuration, upload: nil, authorize: { _, _ in
+            throw SyncRecoveryConfigurationError.staleAuthorization
+        })
+    }
+    private var channel: SyncChannel { .init(id: "channel-a", userId: sourceID) }
+
+    @Test func oldExplicitLargeProfileKeepsExactBytesWithoutGrace() throws {
+        let actual = try configuration(.bounded48MiBV1).policy(nil)
+        let golden = #"{"authority":"coverage-service","epoch":"a1000000-0000-4000-8000-000000000002","localNamespace":"local","maximumAuthorizationMilliseconds":60000,"models":["CoverageRow"],"namespaces":[{"coverageID":"local-v1","namespaceID":"local","revision":1},{"coverageID":"a-v1","namespaceID":"a","revision":2},{"coverageID":"b-v1","namespaceID":"b","revision":3}],"readyProfile":"bounded48MiBV1","receiptNamespace":"a","sourceID":"a1000000-0000-4000-8000-000000000001","upload":{"maximumDeletes":256,"tables":[],"unlisted":"allow"},"version":1,"walFull":true}"#
+        #expect(actual == Data(golden.utf8))
+        #expect(try object(actual)["orphanResumeGraceMilliseconds"] == nil)
+        let priorDefault = try object(configuration(.boundedV1).policy(nil))
+        #expect(priorDefault["readyProfile"] == nil)
+        #expect(priorDefault["orphanResumeGraceMilliseconds"] == nil)
+    }
+    @Test func explicitLifecycleBoundariesSerializeOnlyTheTwoIntendedPolicyChanges() throws {
+        for grace in [Int64(1), 3_600_000] {
+            for coverage in [SyncRecoveryReceiptCoveragePolicy.singleNamespaceV2, .registeredProducerV3(try cohort())] {
+                let prior = try configuration(.bounded48MiBV1, coverage: coverage).policy(nil)
+                let next = try configuration(.bounded48MiBOrphanV1(orphanResumeGraceMilliseconds: grace), coverage: coverage).policy(nil)
+                var value = try object(next)
+                #expect(value["readyProfile"] as? String == "bounded48MiBOrphanV1")
+                #expect(value["orphanResumeGraceMilliseconds"] as? Int64 == grace)
+                value["readyProfile"] = "bounded48MiBV1"
+                value.removeValue(forKey: "orphanResumeGraceMilliseconds")
+                #expect(try encoded(value) == prior)
+            }
+        }
+    }
+    @Test func invalidLifecycleGraceRefusesBeforeProducingAMountRecipe() throws {
+        for grace in [Int64.min, -1, 0, 3_600_001, Int64.max] {
+            for coverage in [SyncRecoveryReceiptCoveragePolicy.singleNamespaceV2, .registeredProducerV3(try cohort())] {
+                #expect(throws: SyncRecoveryConfigurationError.self) {
+                    try configuration(.bounded48MiBOrphanV1(orphanResumeGraceMilliseconds: grace), coverage: coverage)
+                }
+            }
+        }
+        #expect(throws: SyncRecoveryConfigurationError.self) {
+            try configuration(.boundedV1, coverage: .registeredProducerV3(cohort()))
+        }
+    }
+    @Test func legacyReceiptMigrationKeepsPriorAndTargetBytesAndNeverEnablesLifecycle() throws {
+        let recipe = try cohort()
+        let golden = #"{"authority":"coverage-service","epoch":"a1000000-0000-4000-8000-000000000002","localNamespace":"local","maximumAuthorizationMilliseconds":60000,"models":["CoverageRow"],"namespaces":[{"coverageID":"local-v1","namespaceID":"local","revision":1},{"coverageID":"a-v1","namespaceID":"a","revision":2},{"coverageID":"b-v1","namespaceID":"b","revision":3}],"readyProfile":"bounded48MiBV1","receiptCoverage":{"cohortID":"ab100000-0000-4000-8000-000000000003","cohortRevision":7,"kind":"registeredProducerV3","namespaces":["a","b"],"operationCodec":1},"receiptNamespace":"a","sourceID":"a1000000-0000-4000-8000-000000000001","upload":{"maximumDeletes":256,"tables":[],"unlisted":"allow"},"version":2,"walFull":true}"#
+        for profile in [SyncRecoveryReadyProfile.boundedV1, .bounded48MiBV1] {
+            let old = try configuration(profile)
+            let relay = try mount(old)
+            let (before, after, next) = try relay.migrationPolicies(channel, cohort: recipe)
+            #expect(before == (try old.policy(nil)))
+            #expect(after == Data(golden.utf8))
+            #expect(after == (try next.policy(nil)))
+            #expect(try object(after)["orphanResumeGraceMilliseconds"] == nil)
+        }
+    }
+    @Test func explicitReceiptMigrationPreservesAlreadyEnrolledLifecycleGraceExactly() throws {
+        for grace in [Int64(1), 60_000, 3_600_000] {
+            let old = try configuration(.bounded48MiBOrphanV1(orphanResumeGraceMilliseconds: grace))
+            let relay = try mount(old)
+            let (before, after, next) = try relay.migrationPolicies(channel, cohort: cohort())
+            #expect(before == (try old.policy(nil)))
+            #expect(after == (try next.policy(nil)))
+            let oldObject = try object(before)
+            var nextObject = try object(after)
+            #expect(nextObject["readyProfile"] as? String == "bounded48MiBOrphanV1")
+            #expect(nextObject["orphanResumeGraceMilliseconds"] as? Int64 == grace)
+            #expect(nextObject["version"] as? Int == 2)
+            #expect(nextObject["receiptCoverage"] != nil)
+            nextObject.removeValue(forKey: "receiptCoverage")
+            nextObject["version"] = 1
+            #expect(try encoded(nextObject) == encoded(oldObject))
+        }
+    }
+    @Test func receiptMigrationCannotReconfigureAnExistingV3Source() throws {
+        for profile in [SyncRecoveryReadyProfile.bounded48MiBV1, .bounded48MiBOrphanV1(orphanResumeGraceMilliseconds: 60_000)] {
+            let existing = try configuration(profile, coverage: .registeredProducerV3(cohort()))
+            let relay = try mount(existing)
+            #expect(throws: SyncRecoveryConfigurationError.self) {
+                try relay.migrationPolicies(channel, cohort: cohort())
+            }
+        }
+    }
+}
