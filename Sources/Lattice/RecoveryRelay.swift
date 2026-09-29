@@ -22,6 +22,40 @@ package func migrateRecoveryRelayReceiptCoverage(fileURL: URL, schema: [any Mode
     default: throw RecoveryRelayNativeError.refused("receipt migration did not establish a known result; inspect exact-profile reopen: " + recoveryRelayMessage())
     }
 }
+/// Passive copied facts. This contains no native owner or receiver admission.
+package struct RecoveryRelayLifecycleNativeOutcome: Sendable {
+    package let pending: Bool
+    package let phase: Int32
+    package let hasError: Bool
+    package let unexpectedCommitObserved: Bool
+    package let primaryError, cleanupError, postcommitError, notificationError: String?
+    package let transitionID: UUID?
+    package let recordDigest: String?
+    package let disposition: Int32
+    package init(_ value: lattice.relay_lifecycle_adoption_result) {
+        // Copy exact known settlement before fallible/optional metadata parsing.
+        pending = value.pending(); phase = value.phase(); unexpectedCommitObserved = value.unexpectedCommit(); hasError = value.hasError()
+        func message(_ text: std.string) -> String? { let copy = String(text); return copy.isEmpty ? nil : copy }
+        primaryError = message(value.primaryError()); cleanupError = message(value.cleanupError())
+        notificationError = message(value.notificationError())
+        let id = UUID(uuidString: String(value.transitionID())), digest = String(value.recordDigest())
+        let kind = value.disposition()
+        let valid = phase == 2 && (kind == 1 || kind == 2) && id != nil && digest.utf8.count == 64 &&
+            digest.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+        transitionID = valid ? id : nil; recordDigest = valid ? digest : nil; disposition = valid ? kind : 0
+        postcommitError = message(value.postcommitError()) ?? (kind != 0 && !valid ? "Lifecycle transition metadata unavailable after settlement" : nil)
+    }
+}
+package func adoptRecoveryRelayLifecycle(fileURL: URL, schema: [any Model.Type], schemaVersion: Int64,
+    busyTimeoutMilliseconds: Int32, prior: Data, next: Data) throws -> RecoveryRelayLifecycleNativeOutcome {
+    guard fileURL.isFileURL, !prior.isEmpty, !next.isEmpty, prior.count <= 32_768, next.count <= 32_768,
+          schemaVersion > 0, schemaVersion <= Int64(Int32.max), busyTimeoutMilliseconds >= 0, busyTimeoutMilliseconds <= 30_000,
+          let before = String(data: prior, encoding: .utf8), let after = String(data: next, encoding: .utf8) else {
+        throw RecoveryRelayNativeError.refused("lifecycle adoption bounded file/catalog contract unavailable")
+    }
+    return .init(lattice.swift_lattice_ref.adoptRelayLifecycleFile(path: std.string(fileURL.path), schemas: schema.cxxSchema,
+        schemaVersion: schemaVersion, busyTimeoutMilliseconds: busyTimeoutMilliseconds, prior: std.string(before), next: std.string(after)))
+}
 private func recoveryRelayMessage() -> String {
     let message = String(lattice.last_bridge_error().pointee)
     return String(decoding: message.utf8.prefix(768), as: UTF8.self)

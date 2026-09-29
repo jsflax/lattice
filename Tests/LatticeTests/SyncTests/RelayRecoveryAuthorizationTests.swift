@@ -119,10 +119,12 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
     let registrations: RegisteredRecoveryPeers
     let writer: SyncRelayHandle
     let observer: SyncRelayHandle
+    let lifecycle: SyncRelayHandle?
     let port: Int
     private let peers = NIOLockedValueBox<[RecoveryAuthorizationPeer]>([])
     init(_ registrations: RegisteredRecoveryPeers = .init(), seedHidden: Bool = false,
-         administrativeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil) async throws {
+         administrativeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
+         lifecycleTarget: NIOLockedValueBox<SyncRecoveryMountConfiguration?>? = nil) async throws {
         self.registrations = registrations
         directory = FileManager.default.temporaryDirectory.appending(path: "relay-recovery-auth-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -162,6 +164,16 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
             writePolicy: .init(allowedOperations: [:], unlistedTables: .deny),
             observerPush: .init(reconcileInterval: nil), recoverySource: { try registrations.source($0) },
             channelExtractor: { try registrations.channel($0) }, recoveryAuthorization: { try await registrations.authorize($0, $1) })
+        // Register the successor route before server startup. Its explicit
+        // value is supplied only after actual administration reports COMMIT.
+        if let lifecycleTarget {
+            lifecycle = Lattice.configureSyncRelay(on: app.routes, path: ["lifecycle"], for: relaySchema, storageURL: directory,
+                recoverySource: { _ in
+                    guard let next = lifecycleTarget.withLockedValue({ $0 }) else { throw SyncRecoveryConfigurationError.staleAuthorization }
+                    return next
+                }, channelExtractor: { try registrations.channel($0) },
+                recoveryAuthorization: { try await registrations.authorize($0, $1) })
+        } else { lifecycle = nil }
         do { try await created.startup(); port = try #require(created.http.server.shared.localAddress?.port) }
         catch { try? await created.asyncShutdown(); throw error }
     }
@@ -195,13 +207,15 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
         let clients = peers.withLockedValue { $0 }
         for peer in clients { peer.socket?.close(promise: nil) }
         await writer.retireRecoveryAuthorization(); await observer.retireRecoveryAuthorization()
+        await lifecycle?.retireRecoveryAuthorization()
         try await app.asyncShutdown()
         for peer in clients { try await peer.wait { $0.closed } }
         let deadline = Date().addingTimeInterval(10)
-        while (writer.recoverySessionCount != 0 || observer.recoverySessionCount != 0), Date() < deadline {
+        while (writer.recoverySessionCount != 0 || observer.recoverySessionCount != 0 || (lifecycle?.recoverySessionCount ?? 0) != 0), Date() < deadline {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         #expect(writer.recoverySessionCount == 0); #expect(observer.recoverySessionCount == 0)
+        #expect((lifecycle?.recoverySessionCount ?? 0) == 0)
         // The checkpoint governor can retain a source owner. Do not unlink a
         // live WAL/custody directory beneath it; this UUID fixture is retained.
     }
@@ -898,6 +912,133 @@ private struct RelayReceiptAdministrativeSchemaTests {
             #expect(refused); #expect(bodies.withLockedValue { $0 } == 0)
             let after = try await h.inspect()
             #expect(after.0 == before.0); #expect(after.1 == before.1); #expect(after.2 == before.2)
+            try await h.shutdown()
+        } catch { let original = error; try? await h.shutdown(); throw original }
+    }
+}
+
+
+@Suite("Actual resolved-mount lifecycle adoption", .timeLimit(.minutes(3)))
+private struct RelayLifecycleAdministrationTests {
+    private func adopt(_ h: RecoveryAuthorizationHarness, grace: Int64 = 60_000) async throws -> SyncRecoveryLifecycleAdoptionResult {
+        let channel = SyncChannel(id: "group-a", userId: h.registrations.user)
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline, !Task.isCancelled {
+            switch try await h.writer.adoptRecoveryOrphanLifecycle(channel: channel,
+                orphanResumeGraceMilliseconds: grace, retainedTransfers: .preserveCompleted) {
+            case .pendingQuiescence: try await Task.sleep(nanoseconds: 10_000_000)
+            case .settled(let result): return result
+            }
+        }
+        throw RecoveryAuthorizationFixtureError.timeout("explicit lifecycle administration quiescence")
+    }
+    private func committed(_ result: SyncRecoveryLifecycleAdoptionResult) throws -> SyncRecoveryLifecycleTransition {
+        guard case .committed = result.settlement.phase else {
+            Issue.record("lifecycle phase: \(result.settlement.phase); primary=\(result.settlement.primaryError ?? "none")")
+            throw RecoveryAuthorizationFixtureError.rejected
+        }
+        #expect(!result.settlement.hasError); #expect(!result.settlement.unexpectedCommitObserved)
+        return try #require(result.transition)
+    }
+    @Test func retainedActualSendBlocksAdoptionThenExactOldRequestResumesOnExplicitTarget() async throws {
+        let target = NIOLockedValueBox<SyncRecoveryMountConfiguration?>(nil)
+        let h = try await RecoveryAuthorizationHarness(.init(.readyParked), lifecycleTarget: target)
+        do {
+            let peer = try await h.connect(); let (upload, ids) = try recoveryDonorFrame(281)
+            try await peer.socket!.send(Array(upload)); try await peer.wait { Set(ids).isSubset(of: Set($0.acks)) }
+            let before = try await h.inspect(), descriptor = try await peer.ready(.init(operation: "describe"))
+            let q = try readyRequest(descriptor, originals: upload), offer = try await peer.ready(readyOffer(q, descriptor: descriptor))
+            #expect(try readyObject(offer)["leaseAvailable"] as? Bool == true)
+            let read = try readyRead(offer, index: 0)
+            h.registrations.readySendGate.arm(read.requestID); try await peer.socket!.send(Array(try read.data()))
+            try await readyWait("actual retained READY send before adoption") { h.registrations.readySendGate.parked }
+            let initial = try await h.writer.adoptRecoveryOrphanLifecycle(channel: .init(id: "group-a", userId: h.registrations.user),
+                orphanResumeGraceMilliseconds: 60_000, retainedTransfers: .preserveCompleted)
+            guard case .pendingQuiescence = initial else { Issue.record("retained native result did not block adoption"); throw RecoveryAuthorizationFixtureError.rejected }
+            try await peer.wait { $0.closed }; #expect(peer.facts.withLockedValue { $0.canonical.isEmpty })
+            h.registrations.readySendGate.release()
+            try await readyWait("retired retained READY send decision") { h.registrations.readySendGate.decision(read.requestID) != nil }
+            #expect(h.registrations.readySendGate.decision(read.requestID) == false)
+            let result = try await adopt(h), transition = try committed(result)
+            guard case .applied = transition.disposition else { throw RecoveryAuthorizationFixtureError.rejected }
+            #expect(transition.recordDigest.utf8.count == 64)
+            let repeated = try committed(await adopt(h))
+            guard case .verifiedExisting = repeated.disposition else { throw RecoveryAuthorizationFixtureError.rejected }
+            #expect(repeated.id == transition.id); #expect(repeated.recordDigest == transition.recordDigest)
+            #expect(try repeated.configuration.policy(nil) == transition.configuration.policy(nil))
+            let changed = try await adopt(h, grace: 60_001)
+            #expect(changed.transition == nil)
+            if case .committed = changed.settlement.phase { Issue.record("changed grace reconfigured the stored predecessor") }
+            let after = try await h.inspect(); #expect(after.0 == before.0); #expect(after.1 == before.1); #expect(after.2 == before.2)
+            target.withLockedValue { $0 = transition.configuration }
+            let successor = try await h.connect(mount: "lifecycle"), current = try await successor.ready(.init(operation: "describe"))
+            let profile = try #require(readyObject(current)["profile"] as? [String: Any])
+            #expect(profile["name"] as? String == "boundedV1OrphanV1")
+            #expect(profile["transfers"] as? Int == 16); #expect(profile["orphanResumeGraceMilliseconds"] as? Int == 60_000)
+            // The frozen old Q stays exact except its transport route wrapper.
+            var raw = try readyObject(Data(q.wire.utf8)), inner = try #require(raw["latticeCanonicalRange"] as? [String: Any])
+            inner["route_generation"] = try readyObject(current)["routeGeneration"]; raw["latticeCanonicalRange"] = inner
+            let same = ReadyTestRequest(wire: String(decoding: try JSONSerialization.data(withJSONObject: raw, options: [.sortedKeys]), as: UTF8.self),
+                digest: q.digest, attempt: q.attempt, sequence: q.sequence)
+            let resumed = try await successor.ready(readyOffer(same, descriptor: current, op: "resume"))
+            let value = try readyObject(resumed); #expect(value["leaseAvailable"] as? Bool == true)
+            #expect(value["requestDigest"] as? String == q.digest); #expect(value["attemptID"] as? String == q.attempt)
+            #expect(value["sequence"] as? String == q.sequence)
+            let count = try #require(Int(try #require(value["frames"] as? String)))
+            var kinds: [String] = [], positives: [String] = []
+            for index in 0..<count {
+                let frame = try readyObject(await successor.readyFrame(readyRead(resumed, index: index)))
+                let body = try #require(frame["latticeCanonicalRange"] as? [String: Any]), kind = try #require(body["kind"] as? String)
+                kinds.append(kind)
+                if kind == "receipt_page" {
+                    let page = try #require(body["body"] as? [String: Any])
+                    for receipt in try #require(page["items"] as? [[String: Any]]) {
+                        #expect(receipt["status"] as? String == "committed"); positives.append(try #require(receipt["original_id"] as? String))
+                    }
+                }
+            }
+            #expect(kinds.first == "manifest"); #expect(kinds.last == "end"); #expect(Set(positives) == Set(ids))
+            let late = try await h.connect(h.registrations.second); try await late.wait { $0.closed }
+            #expect(late.facts.withLockedValue { $0.acks.isEmpty && $0.canonical.isEmpty }); #expect(h.writer.recoverySessionCount == 0)
+            let final = try await h.inspect(); #expect(final.0 == before.0); #expect(final.1 == before.1); #expect(final.2 == before.2)
+            try await h.shutdown()
+        } catch { let original = error; h.registrations.readySendGate.release(); try? await h.shutdown(); throw original }
+    }
+    @Test func redirectedProviderIsCalledOnceAndRefusedBeforeEitherFileIsOpened() async throws {
+        let changed = NIOLockedValueBox(false), calls = NIOLockedValueBox(0)
+        let alternate = FileManager.default.temporaryDirectory.appending(path: "lifecycle-admin-never-create-\(UUID().uuidString).sqlite")
+        let h = try await RecoveryAuthorizationHarness(administrativeConfiguration: { url in
+            if changed.withLockedValue({ $0 }) { calls.withLockedValue { $0 += 1 }; return .init(fileURL: alternate) }
+            return .init(fileURL: url)
+        })
+        do {
+            let peer = try await h.connect(); let (frame, ids) = try recoveryDonorFrame(282)
+            try await peer.socket!.send(Array(frame)); try await peer.wait { Set(ids).isSubset(of: Set($0.acks)) }
+            let before = try await h.inspect(); changed.withLockedValue { $0 = true }
+            do { _ = try await adopt(h); Issue.record("redirected lifecycle administration succeeded") }
+            catch { #expect(error is SyncRecoveryConfigurationError) }
+            #expect(calls.withLockedValue { $0 } == 1); #expect(!FileManager.default.fileExists(atPath: alternate.path))
+            let after = try await h.inspect(); #expect(after.0 == before.0); #expect(after.1 == before.1); #expect(after.2 == before.2)
+            try await h.shutdown()
+        } catch { let original = error; try? await h.shutdown(); throw original }
+    }
+    @Test func declaredVersionMismatchReportsRefusedWithoutExecutingAppMigration() async throws {
+        let changed = NIOLockedValueBox(false), bodies = NIOLockedValueBox(0)
+        let h = try await RecoveryAuthorizationHarness(administrativeConfiguration: { url in
+            guard changed.withLockedValue({ $0 }) else { return .init(fileURL: url) }
+            let forbidden = Migration().add(from: SimpleSyncObject.self, to: SimpleSyncObject.self) { _, _ in bodies.withLockedValue { $0 += 1 } }
+            return .init(fileURL: url, migration: [2: forbidden])
+        })
+        do {
+            let peer = try await h.connect(); let (frame, ids) = try recoveryDonorFrame(283)
+            try await peer.socket!.send(Array(frame)); try await peer.wait { Set(ids).isSubset(of: Set($0.acks)) }
+            let before = try await h.inspect(); changed.withLockedValue { $0 = true }
+            let result = try await adopt(h)
+            guard case .refused = result.settlement.phase else { throw RecoveryAuthorizationFixtureError.rejected }
+            #expect(result.settlement.hasError); #expect(result.transition == nil)
+            #expect(result.settlement.primaryError?.contains("declared schema version differs") == true)
+            #expect(bodies.withLockedValue { $0 } == 0)
+            let after = try await h.inspect(); #expect(after.0 == before.0); #expect(after.1 == before.1); #expect(after.2 == before.2)
             try await h.shutdown()
         } catch { let original = error; try? await h.shutdown(); throw original }
     }

@@ -805,13 +805,16 @@ public struct SyncRelayHandle: Sendable {
 
     private let recoveryMount: RecoveryRelayMount?
     private let recoveryMigration: (@Sendable (SyncChannel, SyncRecoveryReceiptCohort) async throws -> SyncRecoveryMigrationOutcome)?
+    private let recoveryLifecycleAdoption: (@Sendable (SyncChannel, Int64, SyncRecoveryRetainedTransfers) async throws -> SyncRecoveryLifecycleAdoptionOutcome)?
 
     init(manager: SocketManager, pushManager: FileWatchManager? = nil, recoveryMount: RecoveryRelayMount? = nil,
-         recoveryMigration: (@Sendable (SyncChannel, SyncRecoveryReceiptCohort) async throws -> SyncRecoveryMigrationOutcome)? = nil) {
+         recoveryMigration: (@Sendable (SyncChannel, SyncRecoveryReceiptCohort) async throws -> SyncRecoveryMigrationOutcome)? = nil,
+         recoveryLifecycleAdoption: (@Sendable (SyncChannel, Int64, SyncRecoveryRetainedTransfers) async throws -> SyncRecoveryLifecycleAdoptionOutcome)? = nil) {
         self.manager = manager
         self.pushManager = pushManager
         self.recoveryMount = recoveryMount
         self.recoveryMigration = recoveryMigration
+        self.recoveryLifecycleAdoption = recoveryLifecycleAdoption
     }
 
     var recoverySessionCount: Int { recoveryMount?.sessionCount ?? 0 }
@@ -838,6 +841,21 @@ public struct SyncRelayHandle: Sendable {
         defer { recoveryMount.releaseMigration() }
         await manager.disconnectEveryConnection()
         return try await recoveryMigration(channel, cohort)
+    }
+
+    /// Explicitly adopts a same-capacity orphan lifecycle on this resolved
+    /// existing source. Complete receipt migration first if v3 is needed.
+    /// The whole mount remains retired; use the returned audited configuration
+    /// to create a new mount. Retry this original handle to inspect an uncertain
+    /// prior attempt. No exception or pending result proves receipt absence.
+    public func adoptRecoveryOrphanLifecycle(channel: SyncChannel, orphanResumeGraceMilliseconds: Int64,
+        retainedTransfers: SyncRecoveryRetainedTransfers) async throws -> SyncRecoveryLifecycleAdoptionOutcome {
+        guard let recoveryMount, let recoveryLifecycleAdoption else { throw SyncRecoveryConfigurationError.staleAuthorization }
+        recoveryMount.retire()
+        guard recoveryMount.reserveMigration() else { throw SyncRecoveryConfigurationError.administrationInProgress }
+        defer { recoveryMount.releaseMigration() }
+        await manager.disconnectEveryConnection()
+        return try await recoveryLifecycleAdoption(channel, orphanResumeGraceMilliseconds, retainedTransfers)
     }
 
     /// Kick one user's live connections on a channel (membership removal).
@@ -1423,7 +1441,32 @@ extension Lattice {
                 }
             }
         } else { migration = nil }
-        return SyncRelayHandle(manager: sockets, pushManager: watchManager, recoveryMount: recoveryMount, recoveryMigration: migration)
+        let adoption: (@Sendable (SyncChannel, Int64, SyncRecoveryRetainedTransfers) async throws -> SyncRecoveryLifecycleAdoptionOutcome)?
+        if let recoveryMount {
+            adoption = { channel, grace, retained in
+                guard !channel.databaseFileName.isEmpty, channel.databaseFileName.utf8.count <= 255,
+                      !channel.databaseFileName.contains("/"), !channel.databaseFileName.contains("\\"),
+                      !channel.databaseFileName.contains("\0"), !channel.databaseFileName.hasPrefix(".")
+                else { throw SyncRecoveryConfigurationError.invalidBounds }
+                let (prior, next, configuration) = try recoveryMount.lifecyclePolicies(channel, grace: grace, retainedTransfers: retained)
+                let file = storageURL.appending(path: channel.databaseFileName)
+                let open = try RecoveryReceiptAdministrativeOpen.resolve(fileURL: file, storeConfiguration: storeConfiguration)
+                let key = FileWatchManager.canonicalKey(for: file)
+                return try await withCheckedThrowingContinuation { continuation in
+                    RelayExecutionPool.io.submitRequired(for: key) {
+                        do {
+                            let value = try adoptRecoveryRelayLifecycle(fileURL: open.fileURL, schema: schema,
+                                schemaVersion: open.schemaVersion, busyTimeoutMilliseconds: open.busyTimeoutMilliseconds,
+                                prior: prior, next: next)
+                            continuation.resume(returning: value.pending ? .pendingQuiescence :
+                                .settled(.init(value, configuration: configuration)))
+                        } catch { continuation.resume(throwing: error) }
+                    }
+                }
+            }
+        } else { adoption = nil }
+        return SyncRelayHandle(manager: sockets, pushManager: watchManager, recoveryMount: recoveryMount,
+            recoveryMigration: migration, recoveryLifecycleAdoption: adoption)
     }
 
     /// Personal-topology wrapper preserving the original API and on-disk

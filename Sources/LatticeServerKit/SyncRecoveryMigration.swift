@@ -37,3 +37,60 @@ struct RecoveryReceiptAdministrativeOpen: Sendable {
                      busyTimeoutMilliseconds: Int32(configuration.busyTimeoutMs))
     }
 }
+
+/// Preserve bytes during adoption; the explicit grace starts at the first
+/// actual target enrollment. Later expiry may retire transport capsules only.
+public enum SyncRecoveryRetainedTransfers: Sendable { case preserveCompleted }
+public enum SyncRecoveryAdministrationPhase: Sendable {
+    case refused, rolledBack, committed, unsettled, ownershipLost, unrecognized(Int32)
+}
+/// Errors and COMMIT truth are independent. Neither an error nor an unknown
+/// result proves receipt absence, rollback, receiver installation or safe replay.
+public struct SyncRecoveryAdministrationSettlement: Sendable {
+    public let phase: SyncRecoveryAdministrationPhase
+    public let unexpectedCommitObserved: Bool
+    public let hasError: Bool
+    public let primaryError, cleanupError, postcommitError, notificationError: String?
+    init(_ value: RecoveryRelayLifecycleNativeOutcome) {
+        switch value.phase {
+        case 0: phase = .refused
+        case 1: phase = .rolledBack
+        case 2: phase = .committed
+        case 3: phase = .unsettled
+        case 4: phase = .ownershipLost
+        default: phase = .unrecognized(value.phase)
+        }
+        unexpectedCommitObserved = value.unexpectedCommitObserved
+        hasError = value.hasError || value.postcommitError != nil
+        primaryError = value.primaryError; cleanupError = value.cleanupError
+        postcommitError = value.postcommitError; notificationError = value.notificationError
+    }
+}
+public enum SyncRecoveryLifecycleAdoptionDisposition: Sendable { case applied, verifiedExisting }
+/// Passive source-owner fact. Receivers must acquire their own authenticated
+/// predecessor proof; this value is never a source/route/receipt admission.
+public struct SyncRecoveryLifecycleTransition: Sendable {
+    public let id: UUID
+    public let recordDigest: String
+    public let disposition: SyncRecoveryLifecycleAdoptionDisposition
+    public let retainedTransfers: SyncRecoveryRetainedTransfers
+    public let configuration: SyncRecoveryMountConfiguration
+}
+public struct SyncRecoveryLifecycleAdoptionResult: Sendable {
+    public let settlement: SyncRecoveryAdministrationSettlement
+    public let transition: SyncRecoveryLifecycleTransition?
+    init(_ value: RecoveryRelayLifecycleNativeOutcome, configuration: SyncRecoveryMountConfiguration) {
+        settlement = .init(value)
+        if value.phase == 2, let id = value.transitionID, let digest = value.recordDigest,
+           value.disposition == 1 || value.disposition == 2 {
+            transition = .init(id: id, recordDigest: digest,
+                disposition: value.disposition == 1 ? .applied : .verifiedExisting,
+                retainedTransfers: .preserveCompleted, configuration: configuration)
+        } else { transition = nil }
+    }
+}
+public enum SyncRecoveryLifecycleAdoptionOutcome: Sendable {
+    /// Only the physical registry refused before administrative file open.
+    case pendingQuiescence
+    case settled(SyncRecoveryLifecycleAdoptionResult)
+}

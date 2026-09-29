@@ -383,3 +383,95 @@ struct ReceiptAdministrativeOpenTests {
         }
     }
 }
+
+
+@Suite("Explicit lifecycle adoption value contract")
+private struct LifecycleAdministrationPolicyTests {
+    private let id = UUID(uuidString: "A1000000-0000-4000-8000-000000000001")!
+    private let epoch = UUID(uuidString: "A1000000-0000-4000-8000-000000000002")!
+    private var namespaces: [SyncRecoveryNamespace] { [
+        .init(namespaceID: "local", coverageID: "local-v1", revision: 1),
+        .init(namespaceID: "a", coverageID: "a-v1", revision: 2)] }
+    private func cohort() throws -> SyncRecoveryReceiptCohort {
+        try .init(id: epoch, revision: 3, namespaces: [namespaces[1]])
+    }
+    private func configuration(_ profile: SyncRecoveryReadyProfile,
+                               coverage: SyncRecoveryReceiptCoveragePolicy = .singleNamespaceV2) throws -> SyncRecoveryMountConfiguration {
+        try .init(authority: "lifecycle-admin", sourceID: id, epoch: epoch, localNamespace: "local",
+            namespaces: namespaces, receiptNamespace: "a", models: ["CoverageRow"], durability: .walFull,
+            maximumAuthorizationMilliseconds: 60_000, readyProfile: profile, receiptCoverage: coverage)
+    }
+    private func mount(_ configuration: SyncRecoveryMountConfiguration) throws -> RecoveryRelayMount {
+        try .init(configuration: configuration, upload: nil, authorize: { _, _ in throw SyncRecoveryConfigurationError.staleAuthorization })
+    }
+    private var channel: SyncChannel { .init(id: "a", userId: id) }
+    private func object(_ data: Data) throws -> [String: Any] {
+        try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+    private func encoded(_ object: [String: Any]) throws -> Data {
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+    @Test func explicitSmallProfilePreservesDefaultPolicyExceptNameAndGrace() throws {
+        let before = try configuration(.boundedV1).policy(nil)
+        for grace in [Int64(1), 60_000, 3_600_000] {
+            var value = try object(configuration(.boundedV1OrphanV1(orphanResumeGraceMilliseconds: grace)).policy(nil))
+            #expect(value["readyProfile"] as? String == "boundedV1OrphanV1")
+            #expect(value["orphanResumeGraceMilliseconds"] as? Int64 == grace)
+            value.removeValue(forKey: "readyProfile"); value.removeValue(forKey: "orphanResumeGraceMilliseconds")
+            #expect(try encoded(value) == before)
+        }
+    }
+    @Test func invalidSmallGraceAndRegisteredSmallProfileRefuse() throws {
+        for grace in [Int64.min, -1, 0, 3_600_001, Int64.max] {
+            #expect(throws: SyncRecoveryConfigurationError.self) {
+                try configuration(.boundedV1OrphanV1(orphanResumeGraceMilliseconds: grace))
+            }
+        }
+        #expect(throws: SyncRecoveryConfigurationError.self) {
+            try configuration(.boundedV1OrphanV1(orphanResumeGraceMilliseconds: 1), coverage: .registeredProducerV3(cohort()))
+        }
+    }
+    @Test func exactOldRecipeRetriesOnlyNameAndGraceForBothEnvelopesAndRegisteredSource() throws {
+        let cases: [(SyncRecoveryReadyProfile, SyncRecoveryReceiptCoveragePolicy)] = [
+            (.boundedV1, .singleNamespaceV2), (.bounded48MiBV1, .singleNamespaceV2),
+            (.bounded48MiBV1, .registeredProducerV3(try cohort()))]
+        for (profile, coverage) in cases {
+            let old = try configuration(profile, coverage: coverage), relay = try mount(old)
+            let (before, after, next) = try relay.lifecyclePolicies(channel, grace: 20_000, retainedTransfers: .preserveCompleted)
+            #expect(before == (try old.policy(nil))); #expect(after == (try next.policy(nil)))
+            var actual = try object(after); let prior = try object(before)
+            #expect(actual["orphanResumeGraceMilliseconds"] as? Int64 == 20_000)
+            #expect(actual["readyProfile"] as? String == (prior["readyProfile"] == nil ? "boundedV1OrphanV1" : "bounded48MiBOrphanV1"))
+            actual.removeValue(forKey: "orphanResumeGraceMilliseconds")
+            if let name = prior["readyProfile"] { actual["readyProfile"] = name } else { actual.removeValue(forKey: "readyProfile") }
+            #expect(try encoded(actual) == encoded(prior))
+            let (againBefore, againAfter, _) = try relay.lifecyclePolicies(channel, grace: 20_000, retainedTransfers: .preserveCompleted)
+            #expect(againBefore == before); #expect(againAfter == after)
+            #expect(throws: SyncRecoveryConfigurationError.self) {
+                try mount(next).lifecyclePolicies(channel, grace: 20_000, retainedTransfers: .preserveCompleted)
+            }
+        }
+    }
+    @Test func existingLifecycleHandleCannotInventPredecessorOrChangeGrace() throws {
+        for profile in [SyncRecoveryReadyProfile.boundedV1OrphanV1(orphanResumeGraceMilliseconds: 10_000),
+                        .bounded48MiBOrphanV1(orphanResumeGraceMilliseconds: 10_000)] {
+            let relay = try mount(configuration(profile))
+            for grace in [Int64(1), 10_000, 20_000] {
+                #expect(throws: SyncRecoveryConfigurationError.self) {
+                    try relay.lifecyclePolicies(channel, grace: grace, retainedTransfers: .preserveCompleted)
+                }
+            }
+        }
+    }
+    @Test func smallLifecycleCannotImplicitlyWidenDuringReceiptMigration() throws {
+        let relay = try mount(configuration(.boundedV1OrphanV1(orphanResumeGraceMilliseconds: 10_000)))
+        #expect(throws: SyncRecoveryConfigurationError.self) { try relay.migrationPolicies(channel, cohort: cohort()) }
+    }
+    @Test func receiptAndLifecycleAdministrationShareOneMountReservation() throws {
+        let relay = try mount(configuration(.boundedV1))
+        #expect(!relay.reserveMigration()); relay.retire()
+        #expect(relay.reserveMigration()); #expect(!relay.reserveMigration())
+        relay.releaseMigration(); #expect(relay.reserveMigration()); relay.releaseMigration()
+        // This local exclusion is not evidence of native physical quiescence.
+    }
+}
