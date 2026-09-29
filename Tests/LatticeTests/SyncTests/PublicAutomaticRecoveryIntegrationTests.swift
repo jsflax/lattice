@@ -1937,7 +1937,7 @@ struct PublicReceiverKillRecoveryTests {
             try #require(freshA.allSatisfy { !killedConnectionIDs.contains($0.connectionID) })
             try await killRecoveryLive(freshA, until: deadline)
             try await killRecoveryLive(liveB, until: deadline)
-            let refrozen = try #require(gate.recoveryBranch(after: resumedFrom, old: evidence))
+            let refrozen = try #require(try gate.recoveryBranch(after: resumedFrom, old: evidence))
             facts.actualResumeObserved = !refrozen; facts.actualRefreezeObserved = refrozen
             facts.preservedSharedOriginals = pending.count; facts.sharedRowsBeforePostWrite = recoveredImage.rows.count
             phase = .postWrite

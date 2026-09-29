@@ -62,7 +62,7 @@ struct RelayQuietACKObservationTests {
         let input = QuietACKInputs()
         for kind in [Int64(0), Int64(1)] {
             for number in [Int64(55), Int64.min, Int64.max] {
-                let observation = try #require(input.copy(input.changedInteger(number, kind: kind)))
+                let observation = try #require(try input.copy(input.changedInteger(number, kind: kind)))
                 let entry = try #require(observation.entry)
                 #expect(observation.connectionID == input.connection && observation.peer == input.peer)
                 #expect(observation.channel == input.channel && observation.metadataFailure == nil)
@@ -78,7 +78,7 @@ struct RelayQuietACKObservationTests {
         let input = QuietACKInputs()
         var entry = input.entry()
         entry["changedFields"] = ["label": ["kind": 4, "value": NSNull()], "value": ["kind": 1, "value": 55]]
-        let observation = try #require(input.copy(entry))
+        let observation = try #require(try input.copy(entry))
         let copied = try #require(observation.entry)
         #expect(copied.fieldName == "value" && copied.integerKind == 1 && copied.integerValue == 55)
         #expect(copied.originalID == input.original && copied.targetID == input.target && observation.metadataFailure == nil)
@@ -86,17 +86,17 @@ struct RelayQuietACKObservationTests {
         var fields: [String: Any] = ["value": ["kind": 1, "value": 55]]
         for index in 0..<31 { fields["unchanged\(index)"] = ["kind": 4, "value": NSNull()] }
         entry["changedFields"] = fields
-        let bounded = try #require(input.copy(entry))
+        let bounded = try #require(try input.copy(entry))
         #expect(bounded.entry == copied)
         fields["tooMany"] = ["kind": 4, "value": NSNull()]; entry["changedFields"] = fields
-        let exceeded = try #require(input.copy(entry))
+        let exceeded = try #require(try input.copy(entry))
         #expect(exceeded.entry == nil && exceeded.metadataFailure != nil)
         let invalid: [Any] = [NSNull(), ["kind": 4], ["kind": 4, "value": 55],
             ["kind": 0, "value": NSNull()], ["kind": "4", "value": NSNull()],
             ["kind": true, "value": NSNull()], ["kind": 4, "value": NSNull(), "extra": 0]]
         for placeholder in invalid {
             entry["changedFields"] = ["label": placeholder, "value": ["kind": 1, "value": 55]]
-            let refused = try #require(input.copy(entry))
+            let refused = try #require(try input.copy(entry))
             #expect(refused.entry == nil && refused.metadataFailure != nil)
         }
     }
@@ -111,7 +111,8 @@ struct RelayQuietACKObservationTests {
             let observation = try #require(RelayRecoveryACKObservation.copy(frame: frame, acceptedIDs: [input.original],
                 connectionID: input.connection, peer: input.peer, channel: input.channel))
             #expect(observation.entry == nil && observation.metadataFailure != nil)
-            #expect(!RelayRecoveryACKObservation.requestsDrop(observation, connectionID: input.connection, peer: input.peer, decision: { _ in true }))
+            let requestsDrop = RelayRecoveryACKObservation.requestsDrop(observation, connectionID: input.connection, peer: input.peer, decision: { _ in true })
+            #expect(!requestsDrop)
         }
     }
 
@@ -125,7 +126,7 @@ struct RelayQuietACKObservationTests {
         }
         for key in ["globalId", "globalRowId"] {
             var entry = input.entry(); entry[key] = "not-a-uuid"
-            let observation = try #require(input.copy(entry))
+            let observation = try #require(try input.copy(entry))
             #expect(observation.entry == nil && observation.metadataFailure != nil)
         }
     }
@@ -134,18 +135,18 @@ struct RelayQuietACKObservationTests {
         let input = QuietACKInputs()
         let invalidValues: [Any] = [true, false, "55", 55.25, NSNumber(value: UInt64.max), NSNull()]
         for value in invalidValues {
-            let observation = try #require(input.copy(input.changedInteger(value)))
+            let observation = try #require(try input.copy(input.changedInteger(value)))
             #expect(observation.entry == nil && observation.metadataFailure != nil)
         }
         let invalidKinds: [Any] = [true, "0", 0.25, -1, 2, 7]
         for kind in invalidKinds {
-            let observation = try #require(input.copy(input.changedInteger(55, kind: kind)))
+            let observation = try #require(try input.copy(input.changedInteger(55, kind: kind)))
             #expect(observation.entry == nil && observation.metadataFailure != nil)
         }
         for version in [true, "1", 1.25, 0, 2] as [Any] {
             var entry = input.entry()
             entry["originalIdentity"] = ["version": version, "changedFieldsNames": ["value"], "digest": input.digest]
-            let observation = try #require(input.copy(entry))
+            let observation = try #require(try input.copy(entry))
             #expect(observation.entry == nil && observation.metadataFailure != nil)
         }
     }
@@ -166,7 +167,7 @@ struct RelayQuietACKObservationTests {
         }
         entry = input.entry(); entry["originalIdentity"] = ["version": 1, "changedFieldsNames": ["value"], "digest": input.digest, "extra": 1]; entries.append(entry)
         for value in entries {
-            let observation = try #require(input.copy(value))
+            let observation = try #require(try input.copy(value))
             #expect(observation.entry == nil && observation.metadataFailure != nil)
         }
     }
@@ -174,18 +175,18 @@ struct RelayQuietACKObservationTests {
     @Test func oversizedFramesAndCopiedFieldsCannotReachSelectorAsValidEvidence() throws {
         let input = QuietACKInputs()
         var entry = input.entry(); entry["unused"] = String(repeating: "x", count: 1_048_576)
-        let large = try #require(input.copy(entry))
+        let large = try #require(try input.copy(entry))
         #expect(large.entry == nil && large.metadataFailure != nil)
         for text in [String(repeating: "t", count: 65), "bad\0table"] {
             entry = input.entry(); entry["tableName"] = text
-            let observation = try #require(input.copy(entry))
+            let observation = try #require(try input.copy(entry))
             #expect(observation.entry == nil && observation.metadataFailure != nil)
         }
         entry = input.entry()
         let field = String(repeating: "f", count: 65)
         entry["changedFields"] = [field: ["kind": 0, "value": 55]]
         entry["changedFieldsNames"] = [field]
-        let observation = try #require(input.copy(entry))
+        let observation = try #require(try input.copy(entry))
         #expect(observation.entry == nil && observation.metadataFailure != nil)
         let frame = try input.frame(input.entry())
         #expect(RelayRecoveryACKObservation.copy(frame: frame, acceptedIDs: [input.original], connectionID: input.connection,
@@ -198,7 +199,7 @@ struct RelayQuietACKObservationTests {
 
     @Test func nilNonACKAndMismatchedConnectionOrPeerNeverInvokeDecision() throws {
         let input = QuietACKInputs()
-        let observation = try #require(input.copy(input.entry()))
+        let observation = try #require(try input.copy(input.entry()))
         let calls = NIOLockedValueBox(0)
         let decision: @Sendable (RelayRecoveryACKObservation) -> Bool = { _ in calls.withLockedValue { $0 += 1 }; return true }
         #expect(!RelayRecoveryACKObservation.requestsDrop(nil, connectionID: input.connection, peer: input.peer, decision: decision))
@@ -208,12 +209,13 @@ struct RelayQuietACKObservationTests {
         #expect(!RelayRecoveryACKObservation.requestsDrop(observation, connectionID: input.connection, peer: otherPeer, decision: decision))
         #expect(!RelayRecoveryACKObservation.requestsDrop(observation, connectionID: input.connection, peer: input.peer, decision: nil))
         #expect(calls.withLockedValue { $0 } == 0)
-        #expect(!RelayRecoveryACKObservation.requestsDrop(observation, connectionID: input.connection, peer: input.peer, decision: { _ in false }))
+        let requestsDrop = RelayRecoveryACKObservation.requestsDrop(observation, connectionID: input.connection, peer: input.peer, decision: { _ in false })
+        #expect(!requestsDrop)
     }
 
     @Test func invalidMetadataCanBeObservedButNeverDrops() throws {
         let input = QuietACKInputs()
-        let observation = try #require(input.copy(input.changedInteger(true)))
+        let observation = try #require(try input.copy(input.changedInteger(true)))
         let calls = NIOLockedValueBox(0)
         let dropped = RelayRecoveryACKObservation.requestsDrop(observation, connectionID: input.connection, peer: input.peer) { value in
             #expect(value.entry == nil && value.metadataFailure != nil)
@@ -225,10 +227,10 @@ struct RelayQuietACKObservationTests {
     @Test func exactSelectionDropsOnceAndNonmatchesDoNotConsumeSelection() throws {
         let input = QuietACKInputs()
         let selector = QuietACKSelection(input)
-        let valid = try #require(input.copy(input.entry()))
+        let valid = try #require(try input.copy(input.entry()))
         var entry = input.entry(); entry["globalRowId"] = UUID().uuidString
-        let otherTarget = try #require(input.copy(entry))
-        let otherValue = try #require(input.copy(input.changedInteger(56)))
+        let otherTarget = try #require(try input.copy(entry))
+        let otherValue = try #require(try input.copy(input.changedInteger(56)))
         let otherChannel = RelayRecoveryACKObservation(connectionID: input.connection, peer: input.peer,
             channel: "wss://127.0.0.1:9443/b", entry: valid.entry, metadataFailure: nil)
         let decide: @Sendable (RelayRecoveryACKObservation) -> Bool = { selector.choose($0) }

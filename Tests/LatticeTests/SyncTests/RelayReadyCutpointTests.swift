@@ -85,7 +85,7 @@ private struct CutpointFixture {
 @Suite struct RelayReadyCutpointTests {
     @Test func positivePrepareBindsCompleteNestedQAndRawBytes() throws {
         let f = CutpointFixture(), q = try f.wire(f.request())
-        let cut = try #require(f.copy(f.prepare(q), f.prepared))
+        let cut = try #require(try f.copy(f.prepare(q), f.prepared))
         #expect(cut.kind == .positivePrepareLease)
         #expect(cut.frame.kind == .request && cut.frame.canonicalVersion == 2)
         #expect(cut.frame.receiverIncarnation == f.receiver && cut.frame.channelIncarnation == f.incarnation)
@@ -95,13 +95,13 @@ private struct CutpointFixture {
         #expect(cut.frame.normalizedFrameSHA256.count == 64)
         #expect(cut.frame.manifestDigest == nil && cut.frame.nativePageDigest == nil)
         let spaced = Data(([UInt8(32)] + Array(q)))
-        let other = try #require(f.copy(f.prepare(spaced), f.prepared))
+        let other = try #require(try f.copy(f.prepare(spaced), f.prepared))
         #expect(other.requestFrameSHA256 != cut.requestFrameSHA256)
         #expect(other.frame.normalizedFrameSHA256 == cut.frame.normalizedFrameSHA256)
     }
     @Test func positiveV3PrepareValidatesRegisteredBinding() throws {
         let f = CutpointFixture()
-        let cut = try #require(f.copy(f.prepare(f.wire(f.request(version: 3))), f.prepared))
+        let cut = try #require(try f.copy(f.prepare(f.wire(f.request(version: 3))), f.prepared))
         #expect(cut.frame.canonicalVersion == 3)
         for path in [["registered_producer", "cohortRevision"], ["registered_producer", "operationCodec"]] {
             let bad = f.replacing(f.request(version: 3), path: ["latticeCanonicalRange", "body"] + path, with: true)
@@ -154,12 +154,12 @@ private struct CutpointFixture {
         let f = CutpointFixture()
         let frames: [(RelayReadyCutpoint.Kind, [String: Any])] = [(.manifest, f.manifest()), (.contentPage, f.page()), (.receiptPage, f.page(receipt: true, version: 3)), (.end, f.frame(kind: "end", body: ["manifest_digest": f.manifestDigest]))]
         for (kind, output) in frames {
-            let cut = try #require(f.copy(f.read, output))
+            let cut = try #require(try f.copy(f.read, output))
             #expect(cut.kind == kind && cut.frame.routeGeneration == "9")
             #expect(cut.requestDigest == f.digest && cut.requestFrameSHA256 == nil)
             #expect(cut.frame.manifestDigest == f.manifestDigest)
         }
-        let page = try #require(f.copy(f.read, f.page()))
+        let page = try #require(try f.copy(f.read, f.page()))
         #expect(page.frame.pageIndex == "0" && page.frame.itemCount == "1" && page.frame.payloadBytes == "48")
         #expect(page.frame.nativePageDigest == f.pageDigest)
         #expect(try f.copy(f.read, f.request()) == nil)

@@ -92,7 +92,7 @@ private extension ReapFrameFixture {
             "next_content_page": receipt ? "0" : "1", "next_receipt_page": receipt ? "1" : "0",
             "identities": receipt ? "0" : "1", "present": receipt ? "0" : "1", "tombstones": "0",
             "content_bytes": receipt ? "0" : "48", "receipts": receipt ? "1" : "0", "receipt_bytes": receipt ? "48" : "0",
-            "last_identity": receipt ? NSNull() : ["table": "Thing", "id": "item"], "rebase_seen": ""]]
+            "last_identity": receipt ? (NSNull() as Any) : (["table": "Thing", "id": "item"] as Any), "rebase_seen": ""]]
     }
     func check(_ state: [String: Any]? = nil, page changed: [String: Any]? = nil,
                observed: [String: Any]? = nil, q: [String: Any]? = nil, m: [String: Any]? = nil) throws {
