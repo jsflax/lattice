@@ -249,7 +249,7 @@ struct RecoveryRelayResolvedSource: Sendable {
 }
 
 final class RecoveryRelayLifetime: @unchecked Sendable {
-    private struct State { var stopped = false; var authorized = false; var native: RecoveryRelayNativeStop?; var readScope: [String: Set<String>] = [:] }
+    private struct State { var stopped = false; var authorized = false; var nativeRetired = false; var native: RecoveryRelayNativeStop?; var readScope: [String: Set<String>] = [:] }
     private let state = NIOLockedValueBox(State())
     var isStopped: Bool { state.withLockedValue { $0.stopped } }
     var publishable: Bool { state.withLockedValue { !$0.stopped && $0.authorized && ($0.native?.isLive ?? false) } }
@@ -266,12 +266,28 @@ final class RecoveryRelayLifetime: @unchecked Sendable {
         return page.filter { rules[$0.tableName]?.contains($0.operation.rawValue) == true }
     }
     func bind(_ native: RecoveryRelayNativeStop) {
-        let stop = state.withLockedValue { s in s.native = native; return s.stopped }
+        let stop = state.withLockedValue { s in
+            guard !s.nativeRetired else { return true }
+            s.native = native; return s.stopped
+        }
         if stop { native.stop() }
     }
     func stop() {
         let native = state.withLockedValue { s in s.stopped = true; return s.native }
         native?.stop()
+    }
+    /// Called after the actual setup is released on its file IO lane. A closed
+    /// socket can retain this cell indefinitely; it must not keep the native
+    /// source budget alive. Outstanding results retain their own fence/charge
+    /// and still prevent native migration until their real settlement.
+    func finishNativeRetirement() {
+        precondition(RelayExecutionPool.io.isCurrentWorker)
+        let released = state.withLockedValue { s in
+            precondition(s.stopped)
+            s.nativeRetired = true
+            let held = s.native; s.native = nil; return held
+        }
+        withExtendedLifetime(released) {}
     }
     func reserveReady(bytes: Int) throws -> RecoveryRelayNativeCharge {
         let native = state.withLockedValue { s in !s.stopped && s.authorized ? s.native : nil }

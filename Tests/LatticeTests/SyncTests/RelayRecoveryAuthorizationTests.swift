@@ -748,3 +748,48 @@ private struct RelayReceiptCoverageMigrationTests {
         }
     }
 }
+
+@Suite("Recovery native retirement with retained sockets", .timeLimit(.minutes(2)))
+private struct RelayRecoveryRetirementTests {
+    @Test func closedSocketDoesNotRetainRegistrationOrBlockReceiptMigration() async throws {
+        try await withRecoveryAuthorizationHarness { h in
+            let peer = try await h.connect()
+            let socket = try #require(peer.socket)
+            let (frame, ids) = try recoveryDonorFrame(81)
+            try await socket.send(Array(frame))
+            try await peer.wait { Set(ids).isSubset(of: Set($0.acks)) }
+            #expect(h.writer.recoverySessionCount == 1)
+            let before = try await h.inspect()
+            #expect(before.0 == 1); #expect(before.1 == [81])
+
+            await h.writer.retireRecoveryAuthorization()
+            await h.writer.retireRecoveryAuthorization()
+            try await peer.wait { $0.closed }
+            let deadline = Date().addingTimeInterval(10)
+            while h.writer.recoverySessionCount != 0, Date() < deadline {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            #expect(h.writer.recoverySessionCount == 0)
+
+            let cohort = try SyncRecoveryReceiptCohort(id: UUID(), revision: 1, namespaces: [
+                .init(namespaceID: "application", coverageID: "registered-peers-v1", revision: 7)
+            ])
+            let channel = SyncChannel(id: "group-a", userId: h.registrations.user)
+            let migrationDeadline = Date().addingTimeInterval(10)
+            var migrated = false
+            while !migrated, Date() < migrationDeadline {
+                switch try await h.writer.migrateRecoveryReceiptCoverage(channel: channel, cohort: cohort) {
+                case .pendingQuiescence: try await Task.sleep(nanoseconds: 10_000_000)
+                case .migrated: migrated = true
+                }
+            }
+            #expect(migrated)
+            let after = try await h.inspect()
+            #expect(after.0 == before.0); #expect(after.1 == before.1); #expect(after.2 == before.2)
+            #expect(socket.isClosed)
+            // Keep the socket and its handler state alive through both gates.
+            // Native retirement must not depend on this wrapper's destruction.
+            withExtendedLifetime(socket) {}
+        }
+    }
+}

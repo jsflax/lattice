@@ -194,6 +194,11 @@ final class RecoveryRelayConnection: @unchecked Sendable {
         if first {
             RelayExecutionPool.io.submitRequired(for: key) {
                 self.native?.close(); self.native = nil; self.resolvedScope = nil
+                self.lifetime.finishNativeRetirement()
+                // Socket handlers may retain this Swift connection after
+                // close. Registration ends at actual native retirement,
+                // rather than waiting for the socket wrapper's deinit.
+                self.mount.remove(self.id)
             }
         }
     }
