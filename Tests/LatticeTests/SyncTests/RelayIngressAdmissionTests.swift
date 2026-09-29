@@ -16,6 +16,17 @@ private final class IngressCopyGate: Sendable {
                 && DispatchTime.now().uptimeNanoseconds - entered < 5_000_000_000
         }
     }
+    // Failure-only copied facts. The separate locks are sampled in sequence;
+    // this is diagnostic context, never an atomic admission or timing oracle.
+    var failureDescription: String {
+        let value = times.withLockedValue { $0 }
+        let enteredFlag = entered.withLockedValue { $0 }
+        let expiredFlag = expired.withLockedValue { $0 }
+        let observedAt = DispatchTime.now().uptimeNanoseconds
+        let enteredAt = value.entered.map { String($0) } ?? "none"
+        let elapsed = value.entered.map { observedAt >= $0 ? String(observedAt - $0) : "clockReversed" } ?? "none"
+        return "observedAt=\(observedAt) enteredAt=\(enteredAt) elapsed=\(elapsed) entered=\(enteredFlag) released=\(value.released) finished=\(value.finished) expired=\(expiredFlag)"
+    }
     func open() {
         times.withLockedValue { $0.released = true }
         release.signal()
@@ -166,7 +177,15 @@ struct RelayIngressAdmissionTests {
             do {
                 try await Self().until { gate.entered.withLockedValue { $0 } }
                 #expect(affinity(), "copy-race controller must resume its fixture executor")
-                try #require(gate.held, "copy must still be held when the seal is exercised")
+                do {
+                    try #require(gate.held, "copy must still be held when the seal is exercised")
+                } catch {
+                    let gateFacts = gate.failureDescription
+                    let accountFacts = account.snapshot, processFacts = service.snapshot
+                    let workerFacts = pool.snapshot
+                    print("[IngressCopyHoldFailure] \(gateFacts) accountFrames=\(accountFacts.frames) accountBytes=\(accountFacts.inputBytes) firstReason=\(String(describing: accountFacts.firstReason)) processFrames=\(processFacts.frames) processBytes=\(processFacts.inputBytes) workerLive=\(workerFacts.liveWorkers) workerQueued=\(workerFacts.queued) workerRunning=\(workerFacts.running)")
+                    throw error
+                }
                 #expect(account.snapshot.frames == 1 && account.snapshot.inputBytes == 32)
                 account.seal(.closed)
                 #expect(gate.held, "seal must finish before copy custody is released")
