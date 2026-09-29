@@ -91,9 +91,13 @@ struct ConnectedFailureObservationTests {
         let response = HTTPResponseHead(version: .http1_1, status: .badRequest)
         let protocolError = ConnectedFailureObservation.ErrorFact(WebSocketClient.Error.invalidResponseStatus(response))
         #expect(protocolError.kind == "protocolFailure" && protocolError.domain == "nioWebSocket" && protocolError.code == 400)
+        let oversized = HTTPResponseHead(version: .http1_1, status: .custom(code: UInt.max, reasonPhrase: "private-text"))
+        let bounded = ConnectedFailureObservation.ErrorFact(WebSocketClient.Error.invalidResponseStatus(oversized))
+        #expect(bounded.kind == "protocolFailure" && bounded.domain == "nioWebSocket" && bounded.code == nil)
         #if os(Linux)
         #expect(PlatformTransportErrorFact.copy(NIOSSLExtraError.failedToValidateHostname)
             == .init(kind: .identity, domain: .nioSSLExtra, code: nil))
+        #expect(PlatformTransportErrorFact.copy(WebSocketClient.Error.invalidResponseStatus(oversized)).code == nil)
         #endif
     }
 }

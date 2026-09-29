@@ -23,7 +23,7 @@ internal struct PlatformTransportErrorFact: Sendable, Equatable {
         if let value = error as? WebSocketClient.Error {
             switch value {
             case .invalidResponseStatus(let response):
-                return .init(kind: .protocolFailure, domain: .nioWebSocket, code: Int(response.status.code))
+                return .init(kind: .protocolFailure, domain: .nioWebSocket, code: Int32(exactly: response.status.code).map(Int.init))
             case .invalidURL, .alreadyShutdown:
                 return .init(kind: .protocolFailure, domain: .nioWebSocket, code: nil)
             }

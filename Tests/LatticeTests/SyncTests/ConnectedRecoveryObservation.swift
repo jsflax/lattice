@@ -49,7 +49,7 @@ final class ConnectedFailureObservation: @unchecked Sendable {
                     fact = .init(kind: .tls, domain: .nioSSL, code: nil)
                 } else if let value = error as? WebSocketClient.Error {
                     switch value {
-                    case .invalidResponseStatus(let response): fact = .init(kind: .protocolFailure, domain: .nioWebSocket, code: Int(response.status.code))
+                    case .invalidResponseStatus(let response): fact = .init(kind: .protocolFailure, domain: .nioWebSocket, code: Int32(exactly: response.status.code).map(Int.init))
                     case .invalidURL, .alreadyShutdown: fact = .init(kind: .protocolFailure, domain: .nioWebSocket, code: nil)
                     }
                 } else if error is ChannelError {
