@@ -839,6 +839,7 @@ private func quietReceiverOpen(_ snapshot: QuietACKSnapshot, channels: [String],
         try quietACKRequire(try sequence > 0 && sequence == continuity.integer("attempt") && sequence == installed.integer("last_sequence"), .receiverSettlement)
         try quietACKRequire(try scope.integer("installed_revision") == installed.integer("revision") && installed.integer("revision") > 0, .receiverSettlement)
         try quietACKRequire(try !scope.blob("installed_manifest").isEmpty && !installed.blob("last_install").isEmpty, .receiverSettlement)
+        try quietACKValidateInstalledIdentity(channel: installed, scope: scope, store: store)
     }
 }
 private func quietSettled(_ snapshot: QuietACKSnapshot, channels: [String], id: UUID, target: UUID, position: Int64? = nil) throws {

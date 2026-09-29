@@ -284,3 +284,62 @@ func quietACKJSONInteger(_ value: Any?) throws -> Int64 {
           number.stringValue == String(number.int64Value) else { throw QuietACKFailure.sqliteType }
     return number.int64Value
 }
+
+// Passive decoding of Core receive_install_state.cpp's v1 retained identity.
+// Opaque digests stay byte-exact. This checks an observed committed-state link;
+// it supplies no native installation, receipt or recovery authority.
+struct QuietACKInstallIdentity: Equatable, Sendable {
+    let sequence, expectedRevision, baseKind, basePosition, head, mode: Int64
+    let requestDigest, receiptDigest, contentDigest, manifestDigest: Data
+
+    static func decode(_ data: Data, maximumFieldBytes: Int64, maximumEncodedBytes: Int64) throws -> Self {
+        // The raw reader already applies this field cap. Apply it again before
+        // cursor arithmetic or digest copying, including for pure copied inputs.
+        guard maximumFieldBytes > 0, maximumEncodedBytes > 0,
+              data.count <= 65_536, Int64(data.count) <= maximumEncodedBytes else { throw QuietACKFailure.receiverSettlement }
+        var offset = 0
+        func number() throws -> Int64 {
+            guard offset <= data.count, data.count - offset >= 8 else { throw QuietACKFailure.receiverSettlement }
+            var value: UInt64 = 0
+            for _ in 0..<8 {
+                value = (value << 8) | UInt64(data[data.startIndex + offset]); offset += 1
+            }
+            guard value <= UInt64(Int64.max) else { throw QuietACKFailure.receiverSettlement }
+            return Int64(value)
+        }
+        func digest() throws -> Data {
+            let count = try number()
+            guard count > 0, count <= maximumFieldBytes, count <= Int64(data.count - offset) else { throw QuietACKFailure.receiverSettlement }
+            // The remaining-input comparison establishes representable bounded
+            // Int arithmetic before constructing this sole field copy.
+            let end = offset + Int(count)
+            let value = Data(data[(data.startIndex + offset)..<(data.startIndex + end)])
+            offset = end; return value
+        }
+        guard try number() == 1 else { throw QuietACKFailure.receiverSettlement }
+        let sequence = try number(), revision = try number(), kind = try number(), position = try number()
+        let head = try number(), mode = try number()
+        guard sequence > 0, revision < Int64.max, sequence > revision,
+              (0...2).contains(kind), (0...1).contains(mode),
+              (kind == 2) == (revision > 0), kind == 2 || position == 0,
+              kind != 2 || head >= position, mode == 0 || kind == 2 else { throw QuietACKFailure.receiverSettlement }
+        let request = try digest(), receipt = try digest(), content = try digest(), manifest = try digest()
+        guard offset == data.count else { throw QuietACKFailure.receiverSettlement }
+        return .init(sequence: sequence, expectedRevision: revision, baseKind: kind, basePosition: position,
+                     head: head, mode: mode, requestDigest: request, receiptDigest: receipt,
+                     contentDigest: content, manifestDigest: manifest)
+    }
+}
+
+func quietACKValidateInstalledIdentity(channel: QuietACKRow, scope: QuietACKRow, store: QuietACKRow) throws {
+    let identity = try QuietACKInstallIdentity.decode(channel.blob("last_install"),
+        maximumFieldBytes: store.integer("max_field_bytes"), maximumEncodedBytes: store.integer("max_bytes"))
+    // decode refuses Int64.max before this addition. The independent old scalar
+    // checks remain in quietReceiverOpen; here the actual retained blob must
+    // agree with both tables, rather than merely being nonempty.
+    let revision = identity.expectedRevision + 1
+    try quietACKRequire(try identity.sequence == channel.integer("last_sequence") && identity.sequence == scope.integer("installed_sequence") &&
+        identity.head == channel.integer("frontier") && identity.head == scope.integer("installed_head") &&
+        revision == channel.integer("revision") && revision == scope.integer("installed_revision") &&
+        identity.manifestDigest == scope.blob("installed_manifest"), .receiverSettlement)
+}
