@@ -81,7 +81,7 @@ private final class RegisteredRecoveryPeers: @unchecked Sendable {
     }
 }
 private final class RecoveryAuthorizationPeer: @unchecked Sendable {
-    struct Facts { var kinds: [String] = []; var acks: [String] = []; var audits: [String] = []; var closed = false; var ready: [String: Data] = [:]; var canonical: [Data] = [] }
+    struct Facts { var kinds: [String] = []; var acks: [String] = []; var audits: [String] = []; var closed = false; var ready: [String: Data] = [:]; var canonical: [Data] = []; var firstRejection: String? }
     let facts = NIOLockedValueBox(Facts())
     private let transport = NIOLockedValueBox<WebSocket?>(nil)
     var socket: WebSocket? { transport.withLockedValue { $0 } }
@@ -91,6 +91,10 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
             guard let self, let root = (try? JSONSerialization.jsonObject(with: Data(buffer: bytes))) as? [String: Any] else { return }
             facts.withLockedValue { value in
                 value.kinds.append(root["kind"] as? String ?? "?")
+                if root["kind"] as? String == "rejected", value.firstRejection == nil,
+                   let reason = root["rejected"] as? String {
+                    value.firstRejection = String(decoding: reason.utf8.prefix(256), as: UTF8.self)
+                }
                 if root["kind"] as? String == "recoveryReady", let requestID = root["requestID"] as? String, value.ready.count < 64 {
                     value.ready[requestID] = Data(buffer: bytes)
                 }
@@ -107,10 +111,14 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
             if facts.withLockedValue({ predicate($0) }) { return }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
-        let state = facts.withLockedValue {
-            "closed=\($0.closed) ackCount=\($0.acks.count) readyCount=\($0.ready.count) canonicalCount=\($0.canonical.count)"
-        }
+        let state = diagnosticState
         throw RecoveryAuthorizationFixtureError.timeout("\(phase.prefix(128)); \(state); cancelled=\(Task.isCancelled)")
+    }
+    var diagnosticState: String {
+        facts.withLockedValue {
+            let rejectedCount = $0.kinds.filter { $0 == "rejected" }.count
+            return "closed=\($0.closed) ackCount=\($0.acks.count) readyCount=\($0.ready.count) canonicalCount=\($0.canonical.count) auditCount=\($0.audits.count) rejectedCount=\(rejectedCount) firstRejection=\(String(reflecting: $0.firstRejection))"
+        }
     }
 }
 private final class RecoveryAuthorizationHarness: @unchecked Sendable {
@@ -280,10 +288,10 @@ private struct RelayRecoveryAuthorizationTests {
         try await withRecoveryAuthorizationHarness { h in
             let watcher = try await h.connect(h.registrations.second, mount: "observer"), writer = try await h.connect()
             let (frame, ids) = try recoveryDonorFrame(11)
-            try await writer.socket!.send(Array(frame)); try await writer.wait { Set(ids).isSubset(of: Set($0.acks)) }
-            try await watcher.wait { Set(ids).isSubset(of: Set($0.audits)) }
+            try await writer.socket!.send(Array(frame)); try await writer.wait("shared mount writer upload ACK") { Set(ids).isSubset(of: Set($0.acks)) }
+            try await watcher.wait("shared mount observer authorized audit") { Set(ids).isSubset(of: Set($0.audits)) }
             let (denied, _) = try recoveryDonorFrame(12); try await watcher.socket!.send(Array(denied))
-            try await watcher.wait { $0.kinds.contains("rejected") }
+            try await watcher.wait("shared mount observer denied upload refusal") { $0.kinds.contains("rejected") }
             #expect(try await h.inspect().1 == [11])
         }
     }
@@ -605,7 +613,14 @@ private struct RelayAuthenticatedReadyTests {
             let offer = try await first.ready(readyOffer(q, descriptor: d, duration: action == "expiry" ? 1_000 : 10_000))
             let command = try readyRead(offer, index: 0), id = command.requestID
             h.registrations.readySendGate.arm(id); try await first.socket!.send(Array(try command.data()))
-            try await readyWait("parked send entry action=\(action)") { h.registrations.readySendGate.parked }
+            do {
+                try await readyWait("parked send entry action=\(action)") { h.registrations.readySendGate.parked }
+            } catch {
+                // This observes an already failed wait; a refused read and a
+                // missing native-to-socket handoff require different fixes.
+                print("READY_PARK_TIMEOUT action=\(action) \(first.diagnosticState) decision=\(String(reflecting: h.registrations.readySendGate.decision(id)))")
+                throw error
+            }
             #expect(first.facts.withLockedValue { $0.canonical.isEmpty })
             if action == "close" { try await first.socket!.close(); try await first.wait { $0.closed } }
             else if action == "kick" { await h.writer.disconnect(channelId: "group-a", userId: h.registrations.user); try await first.wait { $0.closed } }
