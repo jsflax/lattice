@@ -46,6 +46,44 @@ final class RecoveryRelayAuthorizationWork: @unchecked Sendable {
     deinit { connection.releaseAuthorization() }
 }
 
+struct RelayRecoveryConnectionSample: Sendable {
+    let available, socketOpen, lifetimeLive: Bool
+}
+/// Observation-only handle. It never owns a socket, native result, source
+/// owner or stop token. The fixture bounds its wait and joins its own tasks.
+final class RelayRecoveryConnectionObservation: @unchecked Sendable {
+    let connectionID: UUID
+    let peer: SyncRecoveryPeerIdentity
+    let channel: String
+    private weak var socket: WebSocket?
+    private weak var lifetime: RecoveryRelayLifetime?
+    private let pending = NIOLockedValueBox(false)
+
+    init(connectionID: UUID, peer: SyncRecoveryPeerIdentity, channel: String,
+         socket: WebSocket?, lifetime: RecoveryRelayLifetime?) {
+        self.connectionID = connectionID; self.peer = peer; self.channel = channel
+        self.socket = socket; self.lifetime = lifetime
+    }
+    func sample(_ completion: @escaping @Sendable (RelayRecoveryConnectionSample) -> Void) {
+        guard pending.withLockedValue({ value in if value { return false }; value = true; return true }) else {
+            completion(.init(available: false, socketOpen: false, lifetimeLive: false)); return
+        }
+        guard let socket, let lifetime else {
+            pending.withLockedValue { $0 = false }
+            completion(.init(available: false, socketOpen: false, lifetimeLive: false)); return
+        }
+        socket.eventLoop.execute { [weak socket, weak lifetime, self] in
+            let value: RelayRecoveryConnectionSample
+            if let socket, let lifetime {
+                value = .init(available: true, socketOpen: !socket.isClosed, lifetimeLive: lifetime.publishable)
+            } else { value = .init(available: false, socketOpen: false, lifetimeLive: false) }
+            pending.withLockedValue { $0 = false }
+            completion(value) // No foreign callback under the observation lock.
+        }
+    }
+}
+private enum RelayACKTestLoss: Error { case deliberatelySuppressed }
+
 /// One real accepted connection. Native-bearing fields are confined to its
 /// file IO lane. All other users hold only its payload-free lifetime cell.
 final class RecoveryRelayConnection: @unchecked Sendable {
@@ -58,6 +96,7 @@ final class RecoveryRelayConnection: @unchecked Sendable {
     private let revocation: RevocationFlag
     private var native: RecoveryRelayNativeSetup? // IO only
     private var resolvedScope: SyncRecoveryIncomingScope? // IO only
+    private var observedConnection: RelayRecoveryConnectionObservation? // IO only; weak resources
     private struct Retirement {
         var requested = false
         var nativeRetired = false
@@ -180,6 +219,16 @@ final class RecoveryRelayConnection: @unchecked Sendable {
         guard lifetime.publishable, let native else { throw SyncRecoveryConfigurationError.staleAuthorization }
         return try native.ready(data, charge: charge)
     }
+    func connectionObservation(channel: String) -> RelayRecoveryConnectionObservation? {
+        precondition(RelayExecutionPool.io.isCurrentWorker)
+        guard lifetime.publishable, let socket, !socket.isClosed,
+              !channel.isEmpty, channel.utf8.prefix(65).count <= 64 else { return nil }
+        if let observedConnection { return observedConnection.channel == channel ? observedConnection : nil }
+        let observation = RelayRecoveryConnectionObservation(connectionID: id, peer: peer, channel: channel,
+                                                               socket: socket, lifetime: lifetime)
+        observedConnection = observation
+        return observation
+    }
     func sendReady(_ result: RecoveryRelayNativeReadyResult,
                    park: (@Sendable (String, @escaping @Sendable () -> Void) -> Bool)? = nil,
                    didDecision: (@Sendable (String, Bool) -> Void)? = nil) {
@@ -200,7 +249,9 @@ final class RecoveryRelayConnection: @unchecked Sendable {
     }
     /// Check on the actual socket event loop immediately before handoff. The
     /// payload-free native operation stays counted until this send settles.
-    func send(_ data: Data, result: RecoveryRelayNativeResult? = nil, capacity: RecoveryRelayNativeCharge? = nil, promise supplied: EventLoopPromise<Void>? = nil) {
+    func send(_ data: Data, result: RecoveryRelayNativeResult? = nil, capacity: RecoveryRelayNativeCharge? = nil, promise supplied: EventLoopPromise<Void>? = nil,
+              ackObservation: RelayRecoveryACKObservation? = nil,
+              dropACK: (@Sendable (RelayRecoveryACKObservation) -> Bool)? = nil) {
         guard let socket else { supplied?.fail(SyncRecoveryConfigurationError.staleAuthorization); return }
         let lifetime = lifetime
         socket.eventLoop.execute {
@@ -209,6 +260,10 @@ final class RecoveryRelayConnection: @unchecked Sendable {
                 promise.fail(SyncRecoveryConfigurationError.staleAuthorization); return
             }
             promise.futureResult.whenComplete { [self] _ in withExtendedLifetime((self, result, capacity)) {} }
+            if result?.status == 1,
+               RelayRecoveryACKObservation.requestsDrop(ackObservation, connectionID: self.id, peer: self.peer, decision: dropACK) {
+                promise.fail(RelayACKTestLoss.deliberatelySuppressed); return
+            }
             socket.send(raw: data, opcode: .binary, promise: promise)
         }
     }

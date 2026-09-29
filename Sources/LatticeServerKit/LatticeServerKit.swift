@@ -43,6 +43,10 @@ final class RelayIngressTestHooks: Sendable {
     // Passive, bounded facts from an actual completed native control. This
     // cannot authorize a result; sendReady still owns every publication fence.
     let didRecoveryReadyControl: (@Sendable (RelayReadyControlObservation) -> Void)?
+    // ACK-only fault decision after actual native acceptance and final send
+    // fences. Absent by default; copied facts never grant publication.
+    let shouldDropRecoveryACK: (@Sendable (RelayRecoveryACKObservation) -> Bool)?
+    let didObserveRecoveryConnection: (@Sendable (RelayRecoveryConnectionObservation) -> Void)?
 
     init(beforeAsyncSetup: @escaping @Sendable () async -> Void,
          didBufferFrame: @escaping @Sendable (Int) -> Void,
@@ -52,7 +56,9 @@ final class RelayIngressTestHooks: Sendable {
          didRecoveryFanoutDecision: (@Sendable (Bool) -> Void)? = nil,
          parkRecoveryReadySend: (@Sendable (String, @escaping @Sendable () -> Void) -> Bool)? = nil,
          didRecoveryReadyDecision: (@Sendable (String, Bool) -> Void)? = nil,
-         didRecoveryReadyControl: (@Sendable (RelayReadyControlObservation) -> Void)? = nil) {
+         didRecoveryReadyControl: (@Sendable (RelayReadyControlObservation) -> Void)? = nil,
+         shouldDropRecoveryACK: (@Sendable (RelayRecoveryACKObservation) -> Bool)? = nil,
+         didObserveRecoveryConnection: (@Sendable (RelayRecoveryConnectionObservation) -> Void)? = nil) {
         self.beforeAsyncSetup = beforeAsyncSetup
         self.didBufferFrame = didBufferFrame
         self.didFinishAsyncSetup = didFinishAsyncSetup
@@ -62,6 +68,8 @@ final class RelayIngressTestHooks: Sendable {
         self.parkRecoveryReadySend = parkRecoveryReadySend
         self.didRecoveryReadyDecision = didRecoveryReadyDecision
         self.didRecoveryReadyControl = didRecoveryReadyControl
+        self.shouldDropRecoveryACK = shouldDropRecoveryACK
+        self.didObserveRecoveryConnection = didObserveRecoveryConnection
     }
 }
 
@@ -1211,7 +1219,9 @@ extension Lattice {
                                                       diagnostic: ackPath, needsFanOut: watchManager == nil,
                                                       admissionSpan: admissionSpan, recovery: state.recovery,
                                                       recoveryCharge: recoveryCharge,
-                                                      readyObservation: ingressHooks?.didRecoveryReadyControl)
+                                                      readyObservation: ingressHooks?.didRecoveryReadyControl,
+                                                      observeRecoveryACK: ingressHooks?.shouldDropRecoveryACK != nil,
+                                                      connectionObservation: ingressHooks?.didObserveRecoveryConnection)
                         }, completion: { processed in
                             if let recovery = state.recovery, !recovery.lifetime.publishable { return }
                             let frame: RelayAppliedFrame
@@ -1266,7 +1276,11 @@ extension Lattice {
                                 if let encoded = try? JSONEncoder().encode(ServerSentEvent.ack(outcome.applied)) {
                                     ackPath?.record(.ackEncodeEnd, span: frameSpan, bytes: encoded.count)
                                     ackPath?.record(.ackSendBegin, span: frameSpan, bytes: encoded.count)
-                                    if let recovery = state.recovery { recovery.send(encoded, result: frame.recoveryResult) }
+                                    if let recovery = state.recovery {
+                                        recovery.send(encoded, result: frame.recoveryResult,
+                                            ackObservation: frame.recoveryACKObservation,
+                                            dropACK: ingressHooks?.shouldDropRecoveryACK)
+                                    }
                                     else { ws.send(ByteBuffer(data: encoded)) }
                                     // Existing synchronous send-call return, not write completion.
                                     ackPath?.record(.ackSendReturn, span: frameSpan)
