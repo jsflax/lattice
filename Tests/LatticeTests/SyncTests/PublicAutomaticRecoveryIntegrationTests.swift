@@ -1143,17 +1143,28 @@ struct PublicQuietACKLossRecoveryTests {
             shouldDropRecoveryACK: { probe.shouldDrop($0) }, didObserveRecoveryConnection: { probe.observe($0) })
         RelayIngressTesting.install(hooks, for: storage)
         var mounts: [SyncRelayHandle] = [], bootstrap: [ConnectedBootstrapPeer] = [], receivers: [ConnectedReceiver] = []
-        var facts: [String: Any] = [:], phase = QuietACKFailure.metadata, cleanupAttempted = false
+        var facts: [String: Any] = [:], phase = QuietACKFailure.metadata
+        var cleanupResult: Result<Void, any Error>?
         func cleanup() async throws {
-            cleanupAttempted = true; probe.disarm()
+            if let cleanupResult { return try cleanupResult.get() }
+            var firstError: (any Error)?
+            func failed(_ error: any Error) { if firstError == nil { firstError = error } }
+            probe.disarm()
             for receiver in receivers { receiver.close() }
             for peer in bootstrap { peer.close() }
             for mount in mounts { await mount.retireRecoveryAuthorization() }
-            try await app.asyncShutdown()
-            try await connectedWait("quiet ACK actual authorization retirement", until: ContinuousClock.now.advanced(by: .seconds(10))) {
-                mounts.allSatisfy { $0.recoverySessionCount == 0 } && bootstrap.allSatisfy(\.closed)
-            }
+            var ownedGroupJoined = false
+            do { try await connectedShutdown(app); ownedGroupJoined = true }
+            catch { failed(error) }
+            do {
+                try await connectedWait("quiet ACK actual authorization retirement", until: ContinuousClock.now.advanced(by: .seconds(10))) {
+                    mounts.allSatisfy { $0.recoverySessionCount == 0 }
+                        && bootstrap.allSatisfy { $0.cleanupRetired(ownedGroupJoined: ownedGroupJoined) }
+                }
+            } catch { failed(error) }
             RelayIngressTesting.remove(hooks, for: storage)
+            if let firstError { cleanupResult = .failure(firstError); throw firstError }
+            cleanupResult = .success(())
             // No live-file deletion: the existing wrapper owns exact UUID
             // directory cleanup only after the actual test process is reaped.
         }
@@ -1178,7 +1189,12 @@ struct PublicQuietACKLossRecoveryTests {
                 let declared = registrations.bootstrap.peer(index), peer = ConnectedBootstrapPeer(); bootstrap.append(peer)
                 let query = "?recovery-v=1&recovery-replica=\(declared.replicaID)&recovery-receiver=\(declared.receiverIncarnation)&recovery-channel=\(declared.channelIncarnation)"
                 var headers = HTTPHeaders(); headers.add(name: "Authorization", value: "Bearer " + registrations.bootstrap.token)
-                try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get()
+                do {
+                    try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get()
+                } catch {
+                    peer.connectFailed()
+                    throw error
+                }
                 try await connectedWait("quiet ACK real bootstrap metadata", until: deadline) {
                     !peer.invalid && peer.ids == seededOriginals && registrations.contexts.withLockedValue { $0[index] != nil }
                 }
@@ -1321,9 +1337,7 @@ struct PublicQuietACKLossRecoveryTests {
             // Preserve first failure before teardown. Unknown facts are omitted;
             // cleanup cannot transform it into success or publish a late pass.
             try? quietACKReceipt(env, passed: false, phase: failure.rawValue, facts: facts)
-            if !cleanupAttempted {
-                do { try await cleanup() } catch { Issue.record("quiet ACK fixtureCleanup") }
-            }
+            do { try await cleanup() } catch { Issue.record("quiet ACK fixtureCleanup") }
             probe.disarm(); RelayIngressTesting.remove(hooks, for: storage)
             throw failure
         }
