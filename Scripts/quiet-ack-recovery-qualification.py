@@ -16,7 +16,7 @@ import sys
 import time
 
 sys.dont_write_bytecode = True
-COMMON_SHA256 = 'b42640b54096278976c9997fec1353745f0cb7337c9599583d3fe476f9e56b66'
+COMMON_SHA256 = 'bf1a0f0f9c9ed9eea769626c66cbfb61fb3de2378430ac2bdef30054c21ba94e'
 CASE_NAMES = ('oneDroppedACKRecoversOnLiveConnectionWithoutAppActivity',)
 # Fixed fixture contract; receipt strings outside these labels are refused.
 PHASES = frozenset(['environment', 'deadline', 'metadata', 'drop', 'connections', 'sourceImage', 'sourceCounters', 'sourceCoverage', 'receiverImage', 'originals', 'receiverSettlement', 'sqliteOpen', 'sqlitePrepare', 'sqliteStep', 'sqliteType', 'sqliteBound', 'sqliteSchema', 'sqliteCleanup', 'fixtureCleanup', 'receipt', 'completed'])
