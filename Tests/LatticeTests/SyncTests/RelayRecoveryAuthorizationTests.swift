@@ -107,11 +107,30 @@ private func readyDiagnosticReply(_ value: [String: Any]) -> String {
     }
     return readyDiagnosticText(fields.joined(separator: " "), limit: 2_048)
 }
+// Scalar timing only. No timestamp decides a wait, native result, or deadline.
+private struct ReadyWaitTiming: Sendable {
+    var predicates: UInt64 = 0, sleeps: UInt64 = 0, resumes: UInt64 = 0
+    var lastPredicateAt: UInt64?, lastSleepEnteredAt: UInt64?, lastSleepReturnedAt: UInt64?
+    mutating func predicate(at now: UInt64) {
+        if predicates < UInt64.max { predicates += 1 }; lastPredicateAt = now
+    }
+    mutating func sleepEntered(at now: UInt64) {
+        if sleeps < UInt64.max { sleeps += 1 }; lastSleepEnteredAt = now
+    }
+    mutating func sleepReturned(at now: UInt64) {
+        if resumes < UInt64.max { resumes += 1 }; lastSleepReturnedAt = now
+    }
+    var summary: String {
+        "predicates=\(predicates) sleeps=\(sleeps) resumes=\(resumes) lastPredicateNs=\(String(reflecting: lastPredicateAt)) " +
+        "sleepEnteredNs=\(String(reflecting: lastSleepEnteredAt)) sleepReturnedNs=\(String(reflecting: lastSleepReturnedAt))"
+    }
+}
 private struct ReadyPeerObservation: Sendable {
     var operation: String = "unknown"
     var requestedDuration: Int64?
     var sendRequestedAt: UInt64?, sendCompletedAt: UInt64?
     var firstReceivedAt: UInt64?, lastReceivedAt: UInt64?
+    var firstPublishedAt: UInt64?, lastPublishedAt: UInt64?
     var receivedCount: UInt64 = 0
     var reply = "unobserved"
     var waitStartedAt: UInt64?, nominalWaitDeadline: UInt64?, nominalWaitDeadlineUpper: UInt64?, waitReturnedAt: UInt64?
@@ -119,6 +138,7 @@ private struct ReadyPeerObservation: Sendable {
         "operation=\(String(reflecting: operation)) durationMs=\(String(reflecting: requestedDuration)) " +
         "sendRequestedNs=\(String(reflecting: sendRequestedAt)) sendCompletedNs=\(String(reflecting: sendCompletedAt)) " +
         "firstReceivedNs=\(String(reflecting: firstReceivedAt)) lastReceivedNs=\(String(reflecting: lastReceivedAt)) receivedCount=\(receivedCount) " +
+        "firstPublishedNs=\(String(reflecting: firstPublishedAt)) lastPublishedNs=\(String(reflecting: lastPublishedAt)) " +
         "waitStartedNs=\(String(reflecting: waitStartedAt)) nominalWaitDeadlineLowerNs=\(String(reflecting: nominalWaitDeadline)) nominalWaitDeadlineUpperNs=\(String(reflecting: nominalWaitDeadlineUpper)) waitReturnedNs=\(String(reflecting: waitReturnedAt)) reply={\(reply)}"
     }
 }
@@ -166,14 +186,22 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
                    let reason = root["rejected"] as? String {
                     value.firstRejection = String(decoding: reason.utf8.prefix(256), as: UTF8.self)
                 }
+                var publishedAt: UInt64?
                 if root["kind"] as? String == "recoveryReady", let requestID = root["requestID"] as? String, value.ready.count < 64 {
                     value.ready[requestID] = Data(buffer: bytes)
+                    // Sample only this callback's actual publication, including
+                    // the original capacity guard; never reuse an older reply.
+                    publishedAt = DispatchTime.now().uptimeNanoseconds
                 }
                 if root["latticeCanonicalRange"] != nil, value.canonical.count < 16 { value.canonical.append(Data(buffer: bytes)) }
                 value.acks += (root["ack"] as? [String] ?? []).map { $0.lowercased() }
                 value.audits += (root["auditLog"] as? [[String: Any]] ?? []).compactMap { ($0["globalId"] as? String)?.lowercased() }
                 if let receivedAt = readyReceivedAt, let id = root["requestID"] as? String {
                     value.observe(id) {
+                        if let publishedAt {
+                            if $0.firstPublishedAt == nil { $0.firstPublishedAt = publishedAt }
+                            $0.lastPublishedAt = publishedAt
+                        }
                         if $0.firstReceivedAt == nil { $0.firstReceivedAt = receivedAt }
                         $0.lastReceivedAt = receivedAt
                         if $0.receivedCount < UInt64.max { $0.receivedCount += 1 }
@@ -198,15 +226,24 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
             $0.waitStartedAt = startedAt; $0.nominalWaitDeadline = nominalDeadline; $0.nominalWaitDeadlineUpper = nominalDeadlineUpper
         } } }
         var lastPredicateAt: UInt64?
+        var timing = ReadyWaitTiming()
         while Date() < deadline, !Task.isCancelled {
             lastPredicateAt = DispatchTime.now().uptimeNanoseconds
+            if let lastPredicateAt { timing.predicate(at: lastPredicateAt) }
             if facts.withLockedValue({ predicate($0) }) {
                 if let id = diagnosticRequestID { facts.withLockedValue { value in value.observe(id) {
                     $0.waitReturnedAt = DispatchTime.now().uptimeNanoseconds
                 } } }
                 return
             }
-            try await Task.sleep(nanoseconds: 10_000_000)
+            timing.sleepEntered(at: DispatchTime.now().uptimeNanoseconds)
+            do { try await Task.sleep(nanoseconds: 10_000_000) }
+            catch {
+                timing.sleepReturned(at: DispatchTime.now().uptimeNanoseconds)
+                print("READY_WAIT_SLEEP_FAILED phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) \(timing.summary) cancelled=\(Task.isCancelled)")
+                throw error
+            }
+            timing.sleepReturned(at: DispatchTime.now().uptimeNanoseconds)
         }
         let state = diagnosticState
         let finalAt = DispatchTime.now().uptimeNanoseconds
@@ -214,7 +251,7 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
             "count=\(value.ready.count) first8=[" + value.ready.keys.prefix(8).map { String(reflecting: readyDiagnosticText($0)) }.joined(separator: ",") + "]"
         }
         let observed = diagnosticRequestID.map { readyObservation($0) } ?? "requestID=unspecified"
-        print("READY_WAIT_TIMEOUT phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) startNs=\(startedAt) nominalDeadlineLowerNs=\(nominalDeadline) nominalDeadlineUpperNs=\(nominalDeadlineUpper) wallDeadline=\(deadline.timeIntervalSince1970) lastPredicateAttemptNs=\(String(reflecting: lastPredicateAt)) finalNs=\(finalAt) wallFinal=\(Date().timeIntervalSince1970) retainedIDs=[\(retained)] \(observed)")
+        print("READY_WAIT_TIMEOUT phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) startNs=\(startedAt) nominalDeadlineLowerNs=\(nominalDeadline) nominalDeadlineUpperNs=\(nominalDeadlineUpper) wallDeadline=\(deadline.timeIntervalSince1970) lastPredicateAttemptNs=\(String(reflecting: lastPredicateAt)) finalNs=\(finalAt) wallFinal=\(Date().timeIntervalSince1970) retainedIDs=[\(retained)] \(timing.summary) \(observed)")
         throw RecoveryAuthorizationFixtureError.timeout("\(phase.prefix(128)); \(state); cancelled=\(Task.isCancelled)")
     }
     var diagnosticState: String {
@@ -507,8 +544,21 @@ private final class RecoveryReadySendGate: Sendable {
 private func readyObject(_ data: Data) throws -> [String: Any] { try #require(JSONSerialization.jsonObject(with: data) as? [String: Any]) }
 private func readyWait(_ phase: String = "READY fixture state", _ predicate: @escaping @Sendable () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(10)
+    let startedAt = DispatchTime.now().uptimeNanoseconds
+    var timing = ReadyWaitTiming()
+    var completed = false
+    defer {
+        if !completed {
+            print("READY_FIXTURE_WAIT_FAILED phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) startNs=\(startedAt) finalNs=\(DispatchTime.now().uptimeNanoseconds) \(timing.summary) cancelled=\(Task.isCancelled)")
+        }
+    }
     while Date() < deadline, !Task.isCancelled {
-        if predicate() { return }; try await Task.sleep(nanoseconds: 10_000_000)
+        timing.predicate(at: DispatchTime.now().uptimeNanoseconds)
+        if predicate() { completed = true; return }
+        timing.sleepEntered(at: DispatchTime.now().uptimeNanoseconds)
+        do { try await Task.sleep(nanoseconds: 10_000_000) }
+        catch { timing.sleepReturned(at: DispatchTime.now().uptimeNanoseconds); throw error }
+        timing.sleepReturned(at: DispatchTime.now().uptimeNanoseconds)
     }
     throw RecoveryAuthorizationFixtureError.timeout("\(phase.prefix(128)); cancelled=\(Task.isCancelled)")
 }
@@ -1192,6 +1242,7 @@ private final class AutomaticSetupCase: @unchecked Sendable {
     struct Facts {
         var configurationCalls = 0, sourceCalls = 0, finished = 0
         var observationOverflow = false
+        var failureDiagnosticPrinted = false
         var events: [RelaySetupAdmissionObservation] = []
     }
     let directory: URL
@@ -1237,8 +1288,13 @@ private final class AutomaticSetupCase: @unchecked Sendable {
     func retireHolder() async {
         guard let holder = actualMutex.withLockedValue({ $0 }) else { return }
         let retired = await holder.retire(on: key)
+        if !retired { printFailureOnce(.holderRetirement) }
         #expect(retired)
         let facts = holder.facts
+        if !facts.workerFinished || !facts.writerRetired || !facts.releaseRequested ||
+            facts.acquisitionTimedOut || facts.safetyReleased || facts.status != 0 {
+            printFailureOnce(.holderRetirement)
+        }
         #expect(facts.workerFinished && facts.writerRetired && facts.releaseRequested)
         #expect(!facts.acquisitionTimedOut && !facts.safetyReleased && facts.status == 0)
         let released = actualMutex.withLockedValue { value in let held = value; value = nil; return held }
@@ -1252,6 +1308,31 @@ private final class AutomaticSetupCase: @unchecked Sendable {
         if event.stage == .ownerOpened, queuedHold {
             RelayExecutionPool.io.submitRequired(for: key) { [hold] in hold.hold() }
         }
+    }
+    enum FailurePhase: String { case body, cleanup, holderRetirement }
+    func printFailureOnce(_ phase: FailurePhase) {
+        // Copy bounded scalars first; no formatting or other lock acquisition
+        // while holding the case/holder/pool leaf. At most one line per case.
+        let copied = facts.withLockedValue { value -> Facts? in
+            guard !value.failureDiagnosticPrinted else { return nil }
+            value.failureDiagnosticPrinted = true; return value
+        }
+        guard let copied else { return }
+        let holder = actualMutex.withLockedValue { $0 }?.facts
+        let control = RelayExecutionPool.control.snapshot, io = RelayExecutionPool.io.snapshot
+        func pool(_ value: RelayExecutionSnapshot) -> String {
+            "live=\(value.liveWorkers),started=\(value.startedWorkers),executors=\(value.executors),queued=\(value.queued),running=\(value.running),stopping=\(value.stopping)"
+        }
+        let chosen = copied.events.count <= 8 ? copied.events : Array(copied.events.prefix(2)) + Array(copied.events.suffix(6))
+        let events = chosen.map { event in
+            "stage=\(event.stage),ns=\(event.observedAt),io=\(event.onIO),attempts=\(String(reflecting: event.budget?.attempts)),start=\(String(reflecting: event.budget?.startedAt)),deadline=\(String(reflecting: event.budget?.deadline)),inflight=\(String(reflecting: event.budget?.inFlight)),cancelled=\(String(reflecting: event.budget?.cancelled)),completed=\(String(reflecting: event.budget?.completed))"
+        }.joined(separator: ";")
+        let held: String
+        if let holder {
+            held = "acquired=\(holder.acquired),workerFinished=\(holder.workerFinished),releaseRequested=\(holder.releaseRequested),acquisitionTimedOut=\(holder.acquisitionTimedOut),safetyReleased=\(holder.safetyReleased),writerRetired=\(holder.writerRetired),status=\(holder.status)"
+        } else { held = "unobserved" }
+        let line = "AUTOMATIC_SETUP_FAILURE phase=\(phase.rawValue) ns=\(DispatchTime.now().uptimeNanoseconds) configurationCalls=\(copied.configurationCalls) sourceCalls=\(copied.sourceCalls) finished=\(copied.finished) eventsCount=\(copied.events.count) eventsOmitted=\(copied.events.count - chosen.count) overflow=\(copied.observationOverflow) holder={\(held)} control={\(pool(control))} io={\(pool(io))} events=[\(events)]"
+        print(readyDiagnosticText(line, limit: 4_096))
     }
     func events(_ stage: RelaySetupAdmissionObservation.Stage) -> [RelaySetupAdmissionObservation] {
         facts.withLockedValue { $0.events.filter { $0.stage == stage } }
@@ -1318,10 +1399,10 @@ private func withAutomaticSetupCase(_ state: AutomaticSetupCase,
     _ body: (AutomaticSetupHarness) async throws -> Void) async throws {
     let harness = try await AutomaticSetupHarness(state)
     var first: (any Error)?
-    do { try await body(harness) } catch { first = error }
+    do { try await body(harness) } catch { state.printFailureOnce(.body); first = error }
     // Exactly one cleanup attempt, including when cleanup itself fails.
     do { try await harness.shutdown() }
-    catch { if first == nil { first = error } else { Issue.record("automatic setup cleanup: \(error)") } }
+    catch { state.printFailureOnce(.cleanup); if first == nil { first = error } else { Issue.record("automatic setup cleanup: \(error)") } }
     if let first { throw first }
 }
 
@@ -1331,17 +1412,17 @@ private struct AutomaticSourceSetupTests {
         let state = try AutomaticSetupCase(holdActualMutex: true)
         try await withAutomaticSetupCase(state) { h in
             let peer = try await h.connect()
-            try await readyWait { state.events(.waiting).count >= 2 }
+            try await readyWait("automatic busy: two actual waiting returns") { state.events(.waiting).count >= 2 }
             let holder = try #require(state.actualMutex.withLockedValue { $0 })
             #expect(holder.facts.acquired && holder.facts.status == 0 && !holder.facts.workerFinished)
             #expect(state.registrations.calls.withLockedValue { $0 } == 0)
             let sameKey = NIOLockedValueBox(false)
             RelayExecutionPool.io.submitRequired(for: state.key) { sameKey.withLockedValue { $0 = true } }
             RelayExecutionPool.io.submitRequired(for: state.key + ".other") { state.otherKeyProgress.withLockedValue { $0 = true } }
-            try await readyWait { sameKey.withLockedValue { $0 } && state.otherKeyProgress.withLockedValue { $0 } }
+            try await readyWait("automatic busy: both actual IO sentinels") { sameKey.withLockedValue { $0 } && state.otherKeyProgress.withLockedValue { $0 } }
             #expect(h.writer.recoverySessionCount == 1)
             holder.requestRelease()
-            try await readyWait { state.events(.admitted).count == 1 && state.facts.withLockedValue { $0.finished == 1 } }
+            try await readyWait("automatic busy: admitted and completion returned") { state.events(.admitted).count == 1 && state.facts.withLockedValue { $0.finished == 1 } }
             #expect(state.facts.withLockedValue { $0.configurationCalls == 1 && $0.sourceCalls == 1 })
             #expect(state.registrations.calls.withLockedValue { $0 } == 1)
             let attempts = state.events(.attemptEntered)
