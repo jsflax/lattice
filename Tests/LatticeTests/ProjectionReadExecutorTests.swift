@@ -85,6 +85,12 @@ struct ProjectionReadExecutorTests {
     }
 
     @Test func queueFullRejectsWithoutStartingAnOperation() async throws {
+        try await withProjectionMemoryConsumerExecutor {
+            try await Self().queueFullRejectsWithoutStartingAnOperationBody()
+        }
+    }
+
+    private func queueFullRejectsWithoutStartingAnOperationBody() async throws {
         let executor = ProjectionReadExecutor(workerCount: 1, maxPendingJobs: 1)
         let gate = ProjectionExecutorTestGate()
         defer { gate.open() }
@@ -100,30 +106,42 @@ struct ProjectionReadExecutorTests {
                 return 1
             }
         }
-        try await waitUntil("queue-full first operation start") { entered.withLock { $0 } }
-        let queued = Task {
-            queuedSubmissionEntered.withLock { $0 = true }
-            return try await executor.submit { 2 }
-        }
-        try await waitUntil("queue-full pending admission", failureContext: {
-            let state = executor.snapshot
-            return "pending=\(state.pending) running=\(state.running) queuedAdmissions=\(state.queuedAdmissions) queuedSubmissionEntered=\(queuedSubmissionEntered.withLock { $0 }) gateExpired=\(gateExpired.withLock { $0 })"
-        }) { executor.snapshot.pending == 1 }
+        var queued: Task<Int, any Error>?
         do {
-            _ = try await executor.submit {
-                rejectedRuns.withLock { $0 += 1 }
-                return 3
+            try await waitUntil("queue-full first operation start") { entered.withLock { $0 } }
+            let submitted = Task {
+                queuedSubmissionEntered.withLock { $0 = true }
+                return try await executor.submit { 2 }
             }
-            Issue.record("A full queue must reject admission")
+            queued = submitted
+            try await waitUntil("queue-full pending admission", failureContext: {
+                let state = executor.snapshot
+                return "pending=\(state.pending) running=\(state.running) queuedAdmissions=\(state.queuedAdmissions) queuedSubmissionEntered=\(queuedSubmissionEntered.withLock { $0 }) gateExpired=\(gateExpired.withLock { $0 })"
+            }) { executor.snapshot.pending == 1 }
+            do {
+                _ = try await executor.submit {
+                    rejectedRuns.withLock { $0 += 1 }
+                    return 3
+                }
+                Issue.record("A full queue must reject admission")
+            } catch {
+                #expect(error as? ProjectionReadExecutorError == .queueFull)
+            }
+            #expect(rejectedRuns.withLock { $0 } == 0)
+            #expect(executor.snapshot.pending == 1)
+            gate.open()
+            #expect(try await running.value == 1)
+            #expect(try await submitted.value == 2)
+            await executor.shutdown()
         } catch {
-            #expect(error as? ProjectionReadExecutorError == .queueFull)
+            // Join every child before the scoped consumer executor can stop.
+            gate.open()
+            running.cancel(); queued?.cancel()
+            _ = await running.result
+            if let queued { _ = await queued.result }
+            await executor.shutdown()
+            throw error
         }
-        #expect(rejectedRuns.withLock { $0 } == 0)
-        #expect(executor.snapshot.pending == 1)
-        gate.open()
-        #expect(try await running.value == 1)
-        #expect(try await queued.value == 2)
-        await executor.shutdown()
     }
 
     @Test func cancellationBeforeAdmissionAndExpiredAdmissionNeverStart() async throws {
@@ -193,6 +211,12 @@ struct ProjectionReadExecutorTests {
     }
 
     @Test func queuedDeadlineExpiresWhileAllWorkersAreBlocked() async throws {
+        try await withProjectionMemoryConsumerExecutor {
+            try await Self().queuedDeadlineExpiresWhileAllWorkersAreBlockedBody()
+        }
+    }
+
+    private func queuedDeadlineExpiresWhileAllWorkersAreBlockedBody() async throws {
         let executor = ProjectionReadExecutor(workerCount: 1, maxPendingJobs: 1)
         let gate = ProjectionExecutorTestGate()
         defer { gate.open() }
@@ -205,28 +229,40 @@ struct ProjectionReadExecutorTests {
                 return 1
             }
         }
-        try await waitUntil { entered.withLock { $0 } }
-        let before = executor.snapshot
-        let deadline = DispatchTime.now().uptimeNanoseconds + 200_000_000
-        let queued = Task {
-            try await executor.submit(deadline: deadline) {
-                queuedRuns.withLock { $0 += 1 }
-                return 2
+        var queued: Task<Int, any Error>?
+        do {
+            try await waitUntil { entered.withLock { $0 } }
+            let before = executor.snapshot
+            let submitted = Task {
+                let deadline = DispatchTime.now().uptimeNanoseconds + 200_000_000
+                return try await executor.submit(deadline: deadline) {
+                    queuedRuns.withLock { $0 += 1 }
+                    return 2
+                }
             }
+            queued = submitted
+            expectFailure(await submitted.result, .deadlineExceeded)
+            // A cooperative continuation may miss the entire 200ms pending window.
+            // Retained transition counts prove actual queued expiry, rather than
+            // accepting an already-expired admission or sampling transient state.
+            let after = executor.snapshot
+            #expect(after.queuedAdmissions &- before.queuedAdmissions == 1)
+            #expect(after.queuedDeadlineExpirations &- before.queuedDeadlineExpirations == 1)
+            #expect(executor.snapshot.running == 1)
+            #expect(executor.snapshot.pending == 0)
+            #expect(queuedRuns.withLock { $0 } == 0)
+            gate.open()
+            #expect(try await running.value == 1)
+            await executor.shutdown()
+        } catch {
+            // Join every child before the scoped consumer executor can stop.
+            gate.open()
+            running.cancel(); queued?.cancel()
+            _ = await running.result
+            if let queued { _ = await queued.result }
+            await executor.shutdown()
+            throw error
         }
-        expectFailure(await queued.result, .deadlineExceeded)
-        // A cooperative continuation may miss the entire 200ms pending window.
-        // Retained transition counts prove actual queued expiry, rather than
-        // accepting an already-expired admission or sampling transient state.
-        let after = executor.snapshot
-        #expect(after.queuedAdmissions &- before.queuedAdmissions == 1)
-        #expect(after.queuedDeadlineExpirations &- before.queuedDeadlineExpirations == 1)
-        #expect(executor.snapshot.running == 1)
-        #expect(executor.snapshot.pending == 0)
-        #expect(queuedRuns.withLock { $0 } == 0)
-        gate.open()
-        #expect(try await running.value == 1)
-        await executor.shutdown()
     }
 
     @Test func runningCancellationSignalsOnceAndWaitsForCleanup() async throws {

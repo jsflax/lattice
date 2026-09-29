@@ -97,3 +97,61 @@ struct ProjectionMemoryConsumerExecutorTests {
         #expect(preserved)
     }
 }
+
+
+private enum ProjectionConsumerChildFixtureError: Error { case requestedCleanup }
+
+@Suite("Projection consumer inherited child custody")
+struct ProjectionConsumerChildCustodyTests {
+    @Test func twoInheritedChildrenSuspendAndJoinBeforeConsumerStops() async throws {
+        if #available(macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2, *) {
+            for failController in [false, true] {
+                let executor = ProjectionMemoryConsumerExecutor()
+                let crossed = LockedBox(0)
+                var sawRequestedCleanup = false
+                do {
+                    try await withTaskExecutorPreference(executor) {
+                        let child: @Sendable (Int) async throws -> Int = { value in
+                            guard executor.isCurrent, await crossNonisolatedSuspension(executor) else {
+                                throw ConsumerFixtureError.missingAffinity
+                            }
+                            crossed.withLock { $0 += 1 }
+                            try Task.checkCancellation()
+                            return value
+                        }
+                        let first = Task { try await child(1) }
+                        let second = Task { try await child(2) }
+                        do {
+                            guard await crossNonisolatedSuspension(executor) else {
+                                throw ConsumerFixtureError.missingAffinity
+                            }
+                            if failController { throw ProjectionConsumerChildFixtureError.requestedCleanup }
+                            #expect(try await first.value == 1)
+                            #expect(try await second.value == 2)
+                        } catch {
+                            first.cancel(); second.cancel()
+                            _ = await first.result; _ = await second.result
+                            throw error
+                        }
+                    }
+                } catch ProjectionConsumerChildFixtureError.requestedCleanup {
+                    sawRequestedCleanup = true
+                } catch {
+                    await executor.shutdown()
+                    throw error
+                }
+                await executor.shutdown()
+                let finished = executor.snapshot
+                #expect(sawRequestedCleanup == failController)
+                #expect(crossed.withLock { $0 } == 2)
+                #expect(finished.stopped && finished.liveWorkers == 0)
+                #expect(finished.pending == 0 && finished.running == 0)
+                #expect(finished.peakPending <= 3 && finished.completedTurns >= 6)
+            }
+        } else {
+            // The unchanged helper fallback still runs the affected real tests.
+            let result = try await withProjectionMemoryConsumerExecutor { 47 }
+            #expect(result == 47)
+        }
+    }
+}
