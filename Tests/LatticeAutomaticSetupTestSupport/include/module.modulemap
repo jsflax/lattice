@@ -1,0 +1,5 @@
+module LatticeAutomaticSetupTestSupport {
+    header "swift_test_support_umbrella.hpp"
+    textual header "automatic_setup_fixture.hpp"
+    export *
+}

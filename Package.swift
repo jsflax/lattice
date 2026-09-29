@@ -97,6 +97,7 @@ let package = Package(
             name: "LatticeTests",
             dependencies: [
                 "CLatticeTestSQLite",
+                "LatticeAutomaticSetupTestSupport",
                 .product(name: "LatticeServerExportTestSupport", package: "LatticeCore"),
                 "Lattice",
                 "LatticeMCP",
@@ -108,6 +109,23 @@ let package = Package(
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
+        // SDK automatic-setup regressions only. No published product or
+        // ordinary runtime target depends on this actual-writer mutex holder.
+        .target(
+            name: "LatticeAutomaticSetupTestSupport",
+            dependencies: [
+                .product(name: "LatticeSwiftCppBridge", package: "LatticeCore"),
+                .product(name: "LatticeCore", package: "LatticeCore"),
+            ],
+            path: "Tests/LatticeAutomaticSetupTestSupport",
+            sources: ["src"],
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("include"),
+                .define("SQLITE_VEC_EXPERIMENTAL_IVF_ENABLE"),
+                .unsafeFlags(["-std=c++20"]),
+                .unsafeFlags(["-fno-implicit-module-maps"], .when(platforms: [.macOS, .iOS])),
+            ]),
         // Child-process writer for the WAL-epoch forensics harness
         // (Tests/LatticeTests/SyncTests/WalEpochForensicsTests.swift): kill -9
         // semantics need a real separate process holding a relay-shaped handle.
