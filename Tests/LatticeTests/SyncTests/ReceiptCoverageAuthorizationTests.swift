@@ -475,3 +475,101 @@ private struct LifecycleAdministrationPolicyTests {
         // This local exclusion is not evidence of native physical quiescence.
     }
 }
+
+
+/// Passive conversion only. No fixture input can create native admission,
+/// perform a COMMIT, or substitute for authenticated receiver predecessor proof.
+@Suite("Lifecycle copied settlement preserves transaction truth")
+private struct LifecycleSettlementValueTests {
+    private let id = "a1000000-0000-4000-8000-000000000001"
+    private let digest = String(repeating: "a", count: 64)
+    private func configuration() throws -> SyncRecoveryMountConfiguration {
+        try .init(authority: "passive-settlement", sourceID: UUID(uuidString: id)!, epoch: UUID(), localNamespace: "local",
+            namespaces: [.init(namespaceID: "local", coverageID: "local-v1", revision: 1),
+                         .init(namespaceID: "a", coverageID: "a-v1", revision: 2)],
+            receiptNamespace: "a", models: ["CoverageRow"], durability: .walFull, maximumAuthorizationMilliseconds: 60_000,
+            readyProfile: .boundedV1OrphanV1(orphanResumeGraceMilliseconds: 10_000))
+    }
+    private func copied(phase: Int32 = 2, pending: Bool = false, hasError: Bool = false,
+        unexpected: Bool = false, primary: String? = nil, cleanup: String? = nil, postcommit: String? = nil,
+        notification: String? = nil, transitionID: String? = nil, recordDigest: String? = nil, disposition: Int32 = 1) -> RecoveryRelayLifecycleNativeOutcome {
+        .init(pending: pending, phase: phase, hasError: hasError, unexpectedCommitObserved: unexpected,
+            primaryError: primary, cleanupError: cleanup, postcommitError: postcommit, notificationError: notification,
+            transitionID: transitionID ?? id, recordDigest: recordDigest ?? digest, disposition: disposition)
+    }
+    @Test func committedWithEveryErrorChannelKeepsKnownPhaseAndAuditedConfiguration() throws {
+        let target = try configuration()
+        for channel in 0..<4 {
+            let inputs = copied(hasError: true, primary: channel == 0 ? "primary" : nil,
+                cleanup: channel == 1 ? "cleanup" : nil, postcommit: channel == 2 ? "postcommit" : nil,
+                notification: channel == 3 ? "notification" : nil)
+            let result = SyncRecoveryLifecycleAdoptionResult(inputs, configuration: target)
+            guard case .committed = result.settlement.phase else { Issue.record("COMMIT was collapsed by an error"); continue }
+            #expect(result.settlement.hasError); #expect(!result.settlement.unexpectedCommitObserved)
+            #expect(result.settlement.primaryError == inputs.primaryError); #expect(result.settlement.cleanupError == inputs.cleanupError)
+            #expect(result.settlement.postcommitError == inputs.postcommitError); #expect(result.settlement.notificationError == inputs.notificationError)
+            let transition = try #require(result.transition)
+            #expect(transition.id == UUID(uuidString: id)); #expect(transition.recordDigest == digest)
+            #expect(try transition.configuration.policy(nil) == target.policy(nil))
+            guard case .applied = transition.disposition else { Issue.record("copied disposition changed"); continue }
+        }
+    }
+    @Test func noncommittedAndUnknownPhasesNeverGainTransitionFromCopiedMetadata() throws {
+        let target = try configuration()
+        for phase in [Int32(0), 1, 3, 4, 99] {
+            let value = copied(phase: phase, hasError: true, unexpected: true, primary: "exact primary", cleanup: "exact cleanup")
+            let result = SyncRecoveryLifecycleAdoptionResult(value, configuration: target)
+            #expect(result.transition == nil); #expect(value.transitionID == nil); #expect(value.recordDigest == nil); #expect(value.disposition == 0)
+            #expect(result.settlement.hasError); #expect(result.settlement.unexpectedCommitObserved)
+            #expect(result.settlement.primaryError == "exact primary"); #expect(result.settlement.cleanupError == "exact cleanup")
+            switch (phase, result.settlement.phase) {
+            case (0, .refused), (1, .rolledBack), (3, .unsettled), (4, .ownershipLost), (99, .unrecognized(99)): break
+            default: Issue.record("phase was collapsed: \(phase) -> \(result.settlement.phase)")
+            }
+        }
+    }
+    @Test func committedMetadataCopyFailureKeepsCommitAndWithholdsConfiguration() throws {
+        let target = try configuration()
+        // This is the actual native formatter-failure value shape: phase/error
+        // retained, record/disposition removed. No native failure is injected.
+        let value = copied(hasError: true, postcommit: "bounded formatter failure", transitionID: "", recordDigest: "", disposition: 0)
+        let result = SyncRecoveryLifecycleAdoptionResult(value, configuration: target)
+        guard case .committed = result.settlement.phase else { Issue.record("known COMMIT lost during copy"); return }
+        #expect(result.settlement.hasError); #expect(result.settlement.postcommitError == "bounded formatter failure")
+        #expect(result.transition == nil); #expect(value.disposition == 0)
+    }
+    @Test func incompleteOrMalformedCommittedMetadataDoesNotExposeConfiguration() throws {
+        let target = try configuration()
+        let cases: [(String, String, Int32)] = [("", digest, 1), ("not-a-uuid", digest, 1), (id, "", 1),
+            (id, String(repeating: "a", count: 63), 1), (id, String(repeating: "G", count: 64), 1), (id, digest, 7)]
+        for (rawID, rawDigest, disposition) in cases {
+            let value = copied(transitionID: rawID, recordDigest: rawDigest, disposition: disposition)
+            let result = SyncRecoveryLifecycleAdoptionResult(value, configuration: target)
+            guard case .committed = result.settlement.phase else { Issue.record("COMMIT lost with malformed metadata"); continue }
+            #expect(result.transition == nil); #expect(result.settlement.hasError)
+            #expect(result.settlement.postcommitError == "Lifecycle transition metadata unavailable after settlement")
+        }
+    }
+    @Test func exactRetryDispositionAndUnexpectedCommitFlagRemainIndependent() throws {
+        let target = try configuration()
+        let result = SyncRecoveryLifecycleAdoptionResult(copied(unexpected: true, disposition: 2), configuration: target)
+        guard case .committed = result.settlement.phase else { Issue.record("phase changed"); return }
+        #expect(result.settlement.unexpectedCommitObserved); #expect(!result.settlement.hasError)
+        let transition = try #require(result.transition)
+        guard case .verifiedExisting = transition.disposition else { Issue.record("retry became original apply"); return }
+        #expect(transition.id == UUID(uuidString: id)); #expect(transition.recordDigest == digest)
+    }
+    @Test func pendingAndDiagnosticFailureBitsCannotBeInferredFromEmptyStrings() throws {
+        let pending = copied(phase: 0, pending: true, transitionID: "", recordDigest: "", disposition: 0)
+        #expect(pending.pending); #expect(pending.phase == 0); #expect(!pending.hasError)
+        let pendingResult = SyncRecoveryLifecycleAdoptionResult(pending, configuration: try configuration())
+        #expect(pendingResult.transition == nil)
+        // Native error bits survive even when copied diagnostic text is empty.
+        let value = copied(hasError: true, transitionID: "", recordDigest: "", disposition: 0)
+        let result = SyncRecoveryLifecycleAdoptionResult(value, configuration: try configuration())
+        guard case .committed = result.settlement.phase else { Issue.record("known phase changed"); return }
+        #expect(!value.pending); #expect(result.settlement.hasError); #expect(result.settlement.primaryError == nil)
+        #expect(result.settlement.cleanupError == nil); #expect(result.settlement.postcommitError == nil)
+        #expect(result.settlement.notificationError == nil); #expect(result.transition == nil)
+    }
+}

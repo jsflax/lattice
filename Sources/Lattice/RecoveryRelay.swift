@@ -33,17 +33,28 @@ package struct RecoveryRelayLifecycleNativeOutcome: Sendable {
     package let recordDigest: String?
     package let disposition: Int32
     package init(_ value: lattice.relay_lifecycle_adoption_result) {
-        // Copy exact known settlement before fallible/optional metadata parsing.
-        pending = value.pending(); phase = value.phase(); unexpectedCommitObserved = value.unexpectedCommit(); hasError = value.hasError()
+        // Retain known native truth before copying any diagnostic/record text.
+        let pending = value.pending(), phase = value.phase()
+        let unexpected = value.unexpectedCommit(), errors = value.hasError()
         func message(_ text: std.string) -> String? { let copy = String(text); return copy.isEmpty ? nil : copy }
-        primaryError = message(value.primaryError()); cleanupError = message(value.cleanupError())
-        notificationError = message(value.notificationError())
-        let id = UUID(uuidString: String(value.transitionID())), digest = String(value.recordDigest())
-        let kind = value.disposition()
+        self.init(pending: pending, phase: phase, hasError: errors, unexpectedCommitObserved: unexpected,
+            primaryError: message(value.primaryError()), cleanupError: message(value.cleanupError()),
+            postcommitError: message(value.postcommitError()), notificationError: message(value.notificationError()),
+            transitionID: String(value.transitionID()), recordDigest: String(value.recordDigest()), disposition: value.disposition())
+    }
+    /// Package-only copying/validation of passive values. This does not create
+    /// an owner, perform a transaction or authorize a source/receiver operation.
+    package init(pending: Bool, phase: Int32, hasError: Bool, unexpectedCommitObserved: Bool,
+        primaryError: String?, cleanupError: String?, postcommitError: String?, notificationError: String?,
+        transitionID: String, recordDigest: String, disposition: Int32) {
+        self.pending = pending; self.phase = phase; self.hasError = hasError
+        self.unexpectedCommitObserved = unexpectedCommitObserved
+        self.primaryError = primaryError; self.cleanupError = cleanupError; self.notificationError = notificationError
+        let id = UUID(uuidString: transitionID), digest = recordDigest, kind = disposition
         let valid = phase == 2 && (kind == 1 || kind == 2) && id != nil && digest.utf8.count == 64 &&
             digest.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
-        transitionID = valid ? id : nil; recordDigest = valid ? digest : nil; disposition = valid ? kind : 0
-        postcommitError = message(value.postcommitError()) ?? (kind != 0 && !valid ? "Lifecycle transition metadata unavailable after settlement" : nil)
+        self.transitionID = valid ? id : nil; self.recordDigest = valid ? digest : nil; self.disposition = valid ? kind : 0
+        self.postcommitError = postcommitError ?? (kind != 0 && !valid ? "Lifecycle transition metadata unavailable after settlement" : nil)
     }
 }
 package func adoptRecoveryRelayLifecycle(fileURL: URL, schema: [any Model.Type], schemaVersion: Int64,
