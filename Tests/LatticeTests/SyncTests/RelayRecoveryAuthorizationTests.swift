@@ -275,6 +275,97 @@ private struct RecoveryReadyReplyStoreTests {
         #expect(facts.withLockedValue { $0.count } == 64)
     }
 }
+private final class ReadyWaiterSleepSentinel: Error {}
+private enum ReadyWaiterControlFlowError: Error { case repeatedSleep }
+@Suite("READY reply waiter control flow")
+private struct RecoveryReadyReplyWaiterTests {
+    @Test(arguments: [true, false])
+    func timelyPublicationSurvivesActualWaiterDeadlineExit(consume: Bool) async throws {
+        let peer = RecoveryAuthorizationPeer(), clock = NIOLockedValueBox(Date(timeIntervalSince1970: 90))
+        let sleeps = NIOLockedValueBox<[UInt64]>([]), publications = NIOLockedValueBox<[Bool]>([])
+        let payload = Data([41, 42])
+        let selected = try await peer.waitReadyReply("controlled timely", id: "timely", consume: consume,
+            now: { clock.withLockedValue { $0 } }, sleep: { duration in
+                let count = sleeps.withLockedValue { $0.append(duration); return $0.count }
+                guard count == 1 else { throw ReadyWaiterControlFlowError.repeatedSleep }
+                let accepted = peer.facts.withLockedValue { $0.ready.publish(payload, for: "timely", now: { Date(timeIntervalSince1970: 99) }) }
+                publications.withLockedValue { $0.append(accepted) }
+                clock.withLockedValue { $0 = Date(timeIntervalSince1970: 105) }
+            })
+        #expect(selected == payload)
+        #expect(sleeps.withLockedValue { $0 } == [10_000_000])
+        #expect(publications.withLockedValue { $0 } == [true])
+        let retained = peer.facts.withLockedValue { $0.ready["timely"] }
+        #expect(retained == (consume ? nil : payload))
+        #expect(peer.facts.withLockedValue { $0.readyObservations["timely"]?.waitReturnedAt != nil })
+    }
+    @Test(arguments: [0.0, 1.0])
+    func actualWaiterRejectsEqualAndLatePublicationAfterWake(offset: Double) async throws {
+        let peer = RecoveryAuthorizationPeer(), clock = NIOLockedValueBox(Date(timeIntervalSince1970: 90))
+        let sleeps = NIOLockedValueBox<[UInt64]>([]), publications = NIOLockedValueBox<[Bool]>([])
+        let payload = Data([43])
+        do {
+            _ = try await peer.waitReadyReply("controlled late", id: "late",
+                now: { clock.withLockedValue { $0 } }, sleep: { duration in
+                    let count = sleeps.withLockedValue { $0.append(duration); return $0.count }
+                    guard count == 1 else { throw ReadyWaiterControlFlowError.repeatedSleep }
+                    let accepted = peer.facts.withLockedValue { $0.ready.publish(payload, for: "late", now: { Date(timeIntervalSince1970: 100 + offset) }) }
+                    publications.withLockedValue { $0.append(accepted) }
+                    clock.withLockedValue { $0 = Date(timeIntervalSince1970: 105) }
+                })
+            Issue.record("the actual waiter accepted an equal or late publication")
+        } catch RecoveryAuthorizationFixtureError.timeout(let detail) {
+            #expect(detail.hasPrefix("controlled late;")); #expect(detail.hasSuffix("cancelled=false"))
+        }
+        #expect(sleeps.withLockedValue { $0 } == [10_000_000])
+        #expect(publications.withLockedValue { $0 } == [true])
+        #expect(peer.facts.withLockedValue { $0.ready["late"] } == payload)
+        #expect(peer.facts.withLockedValue { $0.readyObservations["late"]?.waitReturnedAt } == nil)
+    }
+    @Test func actualWaiterRethrowsSleepErrorWithoutConsumingTimelyReply() async throws {
+        let peer = RecoveryAuthorizationPeer(), sentinel = ReadyWaiterSleepSentinel()
+        let sleeps = NIOLockedValueBox<[UInt64]>([])
+        let payload = Data([44])
+        do {
+            _ = try await peer.waitReadyReply("controlled sleep error", id: "error",
+                now: { Date(timeIntervalSince1970: 90) }, sleep: { duration in
+                    sleeps.withLockedValue { $0.append(duration) }
+                    _ = peer.facts.withLockedValue { $0.ready.publish(payload, for: "error", now: { Date(timeIntervalSince1970: 99) }) }
+                    throw sentinel
+                })
+            Issue.record("the actual waiter lost its sleeper error")
+        } catch {
+            #expect((error as? ReadyWaiterSleepSentinel) === sentinel)
+        }
+        #expect(sleeps.withLockedValue { $0 } == [10_000_000])
+        #expect(peer.facts.withLockedValue { $0.ready["error"] } == payload)
+        #expect(peer.facts.withLockedValue { $0.readyObservations["error"]?.waitReturnedAt } == nil)
+    }
+    @Test func actualWaiterCancellationAtFinalSelectionRetainsTimelyReply() async throws {
+        let peer = RecoveryAuthorizationPeer(), clock = NIOLockedValueBox(Date(timeIntervalSince1970: 90))
+        let sleeps = NIOLockedValueBox<[UInt64]>([])
+        let payload = Data([45])
+        // Own and join the canceled test task; the parent test remains live.
+        let task = Task {
+            try await peer.waitReadyReply("controlled cancellation", id: "cancelled",
+                now: { clock.withLockedValue { $0 } }, sleep: { duration in
+                    sleeps.withLockedValue { $0.append(duration) }
+                    _ = peer.facts.withLockedValue { $0.ready.publish(payload, for: "cancelled", now: { Date(timeIntervalSince1970: 99) }) }
+                    clock.withLockedValue { $0 = Date(timeIntervalSince1970: 105) }
+                    withUnsafeCurrentTask { $0?.cancel() }
+                })
+        }
+        do {
+            _ = try await task.value
+            Issue.record("the canceled waiter consumed a timely reply")
+        } catch RecoveryAuthorizationFixtureError.timeout(let detail) {
+            #expect(detail.hasPrefix("controlled cancellation;")); #expect(detail.hasSuffix("cancelled=true"))
+        }
+        #expect(sleeps.withLockedValue { $0 } == [10_000_000])
+        #expect(peer.facts.withLockedValue { $0.ready["cancelled"] } == payload)
+        #expect(peer.facts.withLockedValue { $0.readyObservations["cancelled"]?.waitReturnedAt } == nil)
+    }
+}
 private final class RecoveryAuthorizationPeer: @unchecked Sendable {
     struct Facts { var kinds: [String] = []; var acks: [String] = []; var audits: [String] = []; var closed = false; var ready = RecoveryReadyReplyStore(); var canonical: [Data] = []; var firstRejection: String?
         var readyObservations: [String: ReadyPeerObservation] = [:]
@@ -387,9 +478,11 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
         print("READY_WAIT_TIMEOUT phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) startNs=\(startedAt) nominalDeadlineLowerNs=\(nominalDeadline) nominalDeadlineUpperNs=\(nominalDeadlineUpper) wallDeadline=\(deadline.timeIntervalSince1970) lastPredicateAttemptNs=\(String(reflecting: lastPredicateAt)) finalNs=\(finalAt) wallFinal=\(Date().timeIntervalSince1970) retainedIDs=[\(retained)] \(timing.summary) \(observed)")
         throw RecoveryAuthorizationFixtureError.timeout("\(phase.prefix(128)); \(state); cancelled=\(Task.isCancelled)")
     }
-    func waitReadyReply(_ phase: String, id: String, consume: Bool = true) async throws -> Data {
+    func waitReadyReply(_ phase: String, id: String, consume: Bool = true,
+                        now: @Sendable () -> Date = { Date() },
+                        sleep: @Sendable (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }) async throws -> Data {
         let startedAt = DispatchTime.now().uptimeNanoseconds
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = now().addingTimeInterval(10)
         let capturedAt = DispatchTime.now().uptimeNanoseconds
         let sum = startedAt.addingReportingOverflow(10_000_000_000)
         let nominalDeadline = sum.overflow ? UInt64.max : sum.partialValue
@@ -408,12 +501,12 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
         }
         var lastPredicateAt: UInt64?
         var timing = ReadyWaitTiming()
-        while Date() < deadline, !Task.isCancelled {
+        while now() < deadline, !Task.isCancelled {
             lastPredicateAt = DispatchTime.now().uptimeNanoseconds
             if let lastPredicateAt { timing.predicate(at: lastPredicateAt) }
             if let reply = selectReply() { return reply }
             timing.sleepEntered(at: DispatchTime.now().uptimeNanoseconds)
-            do { try await Task.sleep(nanoseconds: 10_000_000) }
+            do { try await sleep(10_000_000) }
             catch {
                 timing.sleepReturned(at: DispatchTime.now().uptimeNanoseconds)
                 print("READY_WAIT_SLEEP_FAILED phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) \(timing.summary) cancelled=\(Task.isCancelled)")
@@ -432,7 +525,7 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
             "count=\(value.ready.count) first8=[" + value.ready.keys.prefix(8).map { String(reflecting: readyDiagnosticText($0)) }.joined(separator: ",") + "]"
         }
         let observed = readyObservation(id)
-        print("READY_WAIT_TIMEOUT phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) startNs=\(startedAt) nominalDeadlineLowerNs=\(nominalDeadline) nominalDeadlineUpperNs=\(nominalDeadlineUpper) wallDeadline=\(deadline.timeIntervalSince1970) lastPredicateAttemptNs=\(String(reflecting: lastPredicateAt)) finalNs=\(finalAt) wallFinal=\(Date().timeIntervalSince1970) retainedIDs=[\(retained)] \(timing.summary) \(observed)")
+        print("READY_WAIT_TIMEOUT phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) startNs=\(startedAt) nominalDeadlineLowerNs=\(nominalDeadline) nominalDeadlineUpperNs=\(nominalDeadlineUpper) wallDeadline=\(deadline.timeIntervalSince1970) lastPredicateAttemptNs=\(String(reflecting: lastPredicateAt)) finalNs=\(finalAt) wallFinal=\(now().timeIntervalSince1970) retainedIDs=[\(retained)] \(timing.summary) \(observed)")
         throw RecoveryAuthorizationFixtureError.timeout("\(phase.prefix(128)); \(state); cancelled=\(Task.isCancelled)")
     }
     var diagnosticState: String {
