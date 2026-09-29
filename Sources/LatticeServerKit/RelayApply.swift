@@ -404,19 +404,62 @@ enum RelayProcessedFrame: Sendable {
     case applied(RelayAppliedFrame)
 }
 
+/// Exact-mount test observation only. Values come from the actual authenticated
+/// connection and a native-processed request/result; no payload or owner escapes.
+struct RelayReadyControlObservation: Sendable {
+    let connectionID: UUID
+    let peer: SyncRecoveryPeerIdentity
+    let channel, requestID, operation: String
+    let routeGeneration, requestDigest, attemptID, sequence, index: String?
+    let canonicalKind: String?
+
+    static func copy(input: Data, result: RecoveryRelayNativeReadyResult,
+                     connection: RecoveryRelayConnection, channel: String) -> Self? {
+        // Only called for an installed observer, after native processing. The
+        // existing result status also covers negative controls, so inspect its
+        // real canonical envelope instead of treating status 1 as frame success.
+        guard input.count <= 8_388_608, result.data.count <= 8_388_608,
+              let request = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any],
+              let response = (try? JSONSerialization.jsonObject(with: result.data)) as? [String: Any]
+        else { return nil }
+        func text(_ key: String, in value: [String: Any], cap: Int = 64) -> String? {
+            guard let text = value[key] as? String, !text.isEmpty,
+                  text.utf8.count <= cap, !text.contains("\0") else { return nil }
+            return text
+        }
+        guard let requestID = text("requestID", in: request), requestID == result.requestID,
+              let operation = text("operation", in: request, cap: 16),
+              channel.utf8.count <= 64, connection.peer.replicaID.utf8.count <= 256 else { return nil }
+        let envelope = response["latticeCanonicalRange"] as? [String: Any]
+        return .init(connectionID: connection.id, peer: connection.peer,
+            channel: channel, requestID: requestID, operation: operation,
+            routeGeneration: text("routeGeneration", in: request),
+            requestDigest: text("requestDigest", in: request),
+            attemptID: text("attemptID", in: request), sequence: text("sequence", in: request),
+            index: text("index", in: request), canonicalKind: envelope.flatMap { text("kind", in: $0, cap: 16) })
+    }
+}
+
 /// The Foundation parse tree never crosses the IO boundary. The caller receives
 /// immutable values; complete legacy fan-out uses its original upstream buffer.
 func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChannel,
                               policy: SyncWritePolicy?, revocation: RevocationFlag,
                               diagnostic: ACKPathConnection?, needsFanOut: Bool,
                               admissionSpan: UInt64 = 0, recovery: RecoveryRelayConnection? = nil,
-                              recoveryCharge: RecoveryRelayNativeCharge? = nil) -> RelayProcessedFrame {
+                              recoveryCharge: RecoveryRelayNativeCharge? = nil,
+                              readyObservation: (@Sendable (RelayReadyControlObservation) -> Void)? = nil) -> RelayProcessedFrame {
     guard !revocation.isRevoked else { return .revoked }
     if let recovery {
         guard data.count <= 8_388_608, let recoveryCharge else { return .refused("recovery source input admission required") }
         do {
             let result = try recovery.ready(data, charge: recoveryCharge)
-            if result.status == 1 { return .ready(result) }
+            if result.status == 1 {
+                if let readyObservation,
+                   let copied = RelayReadyControlObservation.copy(input: data, result: result, connection: recovery, channel: channel.id) {
+                    readyObservation(copied)
+                }
+                return .ready(result)
+            }
             if result.status == 2 { return .revoked }
             if result.status != 0 { return .recoveryRefused(result.error ?? "recovery control outcome unavailable", recoveryCharge) }
         } catch { return .recoveryRefused(String(describing: error), recoveryCharge) }

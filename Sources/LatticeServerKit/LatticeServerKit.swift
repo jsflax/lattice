@@ -40,6 +40,9 @@ final class RelayIngressTestHooks: Sendable {
     // owns bounded release; final real socket admission always runs afterward.
     let parkRecoveryReadySend: (@Sendable (String, @escaping @Sendable () -> Void) -> Bool)?
     let didRecoveryReadyDecision: (@Sendable (String, Bool) -> Void)?
+    // Passive, bounded facts from an actual completed native control. This
+    // cannot authorize a result; sendReady still owns every publication fence.
+    let didRecoveryReadyControl: (@Sendable (RelayReadyControlObservation) -> Void)?
 
     init(beforeAsyncSetup: @escaping @Sendable () async -> Void,
          didBufferFrame: @escaping @Sendable (Int) -> Void,
@@ -48,7 +51,8 @@ final class RelayIngressTestHooks: Sendable {
          sendCatchUp: (@Sendable (WebSocket, Data, EventLoopPromise<Void>) -> Void)? = nil,
          didRecoveryFanoutDecision: (@Sendable (Bool) -> Void)? = nil,
          parkRecoveryReadySend: (@Sendable (String, @escaping @Sendable () -> Void) -> Bool)? = nil,
-         didRecoveryReadyDecision: (@Sendable (String, Bool) -> Void)? = nil) {
+         didRecoveryReadyDecision: (@Sendable (String, Bool) -> Void)? = nil,
+         didRecoveryReadyControl: (@Sendable (RelayReadyControlObservation) -> Void)? = nil) {
         self.beforeAsyncSetup = beforeAsyncSetup
         self.didBufferFrame = didBufferFrame
         self.didFinishAsyncSetup = didFinishAsyncSetup
@@ -57,6 +61,7 @@ final class RelayIngressTestHooks: Sendable {
         self.didRecoveryFanoutDecision = didRecoveryFanoutDecision
         self.parkRecoveryReadySend = parkRecoveryReadySend
         self.didRecoveryReadyDecision = didRecoveryReadyDecision
+        self.didRecoveryReadyControl = didRecoveryReadyControl
     }
 }
 
@@ -1205,7 +1210,8 @@ extension Lattice {
                                                       policy: writePolicy, revocation: state.revocation,
                                                       diagnostic: ackPath, needsFanOut: watchManager == nil,
                                                       admissionSpan: admissionSpan, recovery: state.recovery,
-                                                      recoveryCharge: recoveryCharge)
+                                                      recoveryCharge: recoveryCharge,
+                                                      readyObservation: ingressHooks?.didRecoveryReadyControl)
                         }, completion: { processed in
                             if let recovery = state.recovery, !recovery.lifetime.publishable { return }
                             let frame: RelayAppliedFrame
