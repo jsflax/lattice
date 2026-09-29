@@ -20,10 +20,10 @@ private final class ProjectionExecutorTestGate: @unchecked Sendable {
 
 @Suite("Bounded native projection executor", .serialized)
 struct ProjectionReadExecutorTests {
-    private func waitUntil(_ predicate: @escaping @Sendable () -> Bool) async throws {
+    private func waitUntil(_ phase: String = "executor state", _ predicate: @escaping @Sendable () -> Bool) async throws {
         let end = DispatchTime.now().uptimeNanoseconds + 3_000_000_000
         while !predicate() {
-            try #require(DispatchTime.now().uptimeNanoseconds < end, "executor state did not settle")
+            try #require(DispatchTime.now().uptimeNanoseconds < end, "\(phase) did not settle")
             try await Task.sleep(nanoseconds: 1_000_000)
         }
     }
@@ -94,9 +94,9 @@ struct ProjectionReadExecutorTests {
                 return 1
             }
         }
-        try await waitUntil { entered.withLock { $0 } }
+        try await waitUntil("queue-full first operation start") { entered.withLock { $0 } }
         let queued = Task { try await executor.submit { 2 } }
-        try await waitUntil { executor.snapshot.pending == 1 }
+        try await waitUntil("queue-full pending admission") { executor.snapshot.pending == 1 }
         do {
             _ = try await executor.submit {
                 rejectedRuns.withLock { $0 += 1 }
