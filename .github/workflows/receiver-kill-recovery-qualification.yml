@@ -3,6 +3,8 @@ name: Public receiver kill and reopen recovery
 # Explicit, separately reviewed hosted gate. This does not replace development,
 # full-suite, benchmark or release qualification. Never use a self-hosted runner.
 on:
+  push:
+    branches: ['codex/sdk-receiver-kill-recovery-registration-20260929']
   workflow_dispatch:
     inputs:
       receiver_kill_gate:
