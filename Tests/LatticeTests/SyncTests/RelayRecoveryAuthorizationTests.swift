@@ -1410,34 +1410,46 @@ private func withAutomaticSetupCase(_ state: AutomaticSetupCase,
 private struct AutomaticSourceSetupTests {
     @Test func actualBusyYieldsKeyedIOAndReusesOneOwnerUntilSuccessfulRelease() async throws {
         let state = try AutomaticSetupCase(holdActualMutex: true)
-        try await withAutomaticSetupCase(state) { h in
-            let peer = try await h.connect()
-            try await readyWait("automatic busy: two actual waiting returns") { state.events(.waiting).count >= 2 }
-            let holder = try #require(state.actualMutex.withLockedValue { $0 })
-            #expect(holder.facts.acquired && holder.facts.status == 0 && !holder.facts.workerFinished)
-            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
-            let sameKey = NIOLockedValueBox(false)
-            RelayExecutionPool.io.submitRequired(for: state.key) { sameKey.withLockedValue { $0 = true } }
-            RelayExecutionPool.io.submitRequired(for: state.key + ".other") { state.otherKeyProgress.withLockedValue { $0 = true } }
-            try await readyWait("automatic busy: both actual IO sentinels") { sameKey.withLockedValue { $0 } && state.otherKeyProgress.withLockedValue { $0 } }
-            #expect(h.writer.recoverySessionCount == 1)
-            holder.requestRelease()
-            try await readyWait("automatic busy: admitted and completion returned") { state.events(.admitted).count == 1 && state.facts.withLockedValue { $0.finished == 1 } }
-            #expect(state.facts.withLockedValue { $0.configurationCalls == 1 && $0.sourceCalls == 1 })
-            #expect(state.registrations.calls.withLockedValue { $0 } == 1)
-            let attempts = state.events(.attemptEntered)
-            #expect(attempts.count >= 3 && attempts.count <= 32)
-            let attemptsOnIO = attempts.allSatisfy(\.onIO)
-            #expect(attemptsOnIO)
-            #expect(Set(attempts.compactMap(\.owner)).count == 1)
-            #expect(Set(attempts.compactMap { $0.budget?.deadline }).count == 1)
-            for (before, after) in zip(attempts, attempts.dropFirst()) {
-                #expect(after.observedAt >= before.observedAt + 100_000_000)
+        try await withAutomaticSetupConsumer { placement in
+            // Runs after the original body, shutdown and holder retirement,
+            // including a thrown primary error or failed harness construction.
+            defer { placement.expectCurrent() }
+            try await withAutomaticSetupCase(state) { h in
+                placement.expectCurrent() // Actual harness construction returned.
+                let peer = try await h.connect()
+                placement.expectCurrent()
+                try await readyWait("automatic busy: two actual waiting returns") { state.events(.waiting).count >= 2 }
+                placement.expectCurrent()
+                let holder = try #require(state.actualMutex.withLockedValue { $0 })
+                #expect(holder.facts.acquired && holder.facts.status == 0 && !holder.facts.workerFinished)
+                #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+                let sameKey = NIOLockedValueBox(false)
+                RelayExecutionPool.io.submitRequired(for: state.key) { sameKey.withLockedValue { $0 = true } }
+                RelayExecutionPool.io.submitRequired(for: state.key + ".other") { state.otherKeyProgress.withLockedValue { $0 = true } }
+                try await readyWait("automatic busy: both actual IO sentinels") { sameKey.withLockedValue { $0 } && state.otherKeyProgress.withLockedValue { $0 } }
+                placement.expectCurrent()
+                #expect(h.writer.recoverySessionCount == 1)
+                holder.requestRelease()
+                try await readyWait("automatic busy: admitted and completion returned") { state.events(.admitted).count == 1 && state.facts.withLockedValue { $0.finished == 1 } }
+                placement.expectCurrent()
+                #expect(state.facts.withLockedValue { $0.configurationCalls == 1 && $0.sourceCalls == 1 })
+                #expect(state.registrations.calls.withLockedValue { $0 } == 1)
+                let attempts = state.events(.attemptEntered)
+                #expect(attempts.count >= 3 && attempts.count <= 32)
+                let attemptsOnIO = attempts.allSatisfy(\.onIO)
+                #expect(attemptsOnIO)
+                #expect(Set(attempts.compactMap(\.owner)).count == 1)
+                #expect(Set(attempts.compactMap { $0.budget?.deadline }).count == 1)
+                for (before, after) in zip(attempts, attempts.dropFirst()) {
+                    #expect(after.observedAt >= before.observedAt + 100_000_000)
+                }
+                let (frame, ids) = try recoveryDonorFrame(611)
+                try await peer.socket!.send(Array(frame))
+                placement.expectCurrent()
+                try await peer.wait { Set(ids).isSubset(of: Set($0.acks)) }
+                placement.expectCurrent()
+                #expect(peer.facts.withLockedValue { Set($0.acks).count == ids.count })
             }
-            let (frame, ids) = try recoveryDonorFrame(611)
-            try await peer.socket!.send(Array(frame))
-            try await peer.wait { Set(ids).isSubset(of: Set($0.acks)) }
-            #expect(peer.facts.withLockedValue { Set($0.acks).count == ids.count })
         }
     }
 
