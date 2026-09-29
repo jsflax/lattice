@@ -309,6 +309,9 @@ struct RelayProtectedExportTests {
             try await fixture.fence()
             #expect(service.snapshot.endpoints == 1 && service.snapshot.outputBytes > 0)
             try await fixture.settle(success: false); await failed(delivery)
+            // Delivery settles the page; the reentrant close queued endpoint
+            // retirement on this file's IO lane. Join that turn before release checks.
+            try await fixture.fence()
             #expect(service.snapshot.endpoints == 0 && service.snapshot.pages == 0)
             #expect(fixture.contextReleases.withLockedValue { $0 } == 1)
         }
