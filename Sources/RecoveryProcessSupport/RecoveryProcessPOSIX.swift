@@ -28,10 +28,24 @@ public enum RecoveryProcessPOSIX {
     public static func receiveBytes(_ fd: Int32, _ bytes: UnsafeMutableRawPointer, _ count: Int) -> Int {
         recv(fd, bytes, count, Int32(MSG_DONTWAIT))
     }
+    // Pure environment spelling check only; the descriptor walk below remains
+    // the actual no-follow custody check. Hosted wrappers use explicit HOME.
+    static func hostedDirectoryPath(_ url: URL, home: String?) throws -> String {
+        let path = url.path
+        guard let home, url.isFileURL, url.standardizedFileURL.path == path,
+              home.hasPrefix("/"), path.hasPrefix("/"), !home.contains("\0"), !path.contains("\0"),
+              home.utf8.count <= 4096, path.utf8.count <= 4096 else { throw RecoveryProcessFailure.configuration }
+        func canonical(_ value: String) -> Bool {
+            let parts = value.split(separator: "/", omittingEmptySubsequences: false)
+            return parts.count > 1 && parts.first == "" &&
+                parts.dropFirst().allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+        }
+        guard canonical(home), canonical(path), path.hasPrefix(home + "/localdev/")
+        else { throw RecoveryProcessFailure.configuration }
+        return path
+    }
     public static func directory(_ url: URL, privateCase: Bool) throws -> Int32 {
-        let path = url.standardizedFileURL.path
-        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
-        guard url.isFileURL, path == url.path, path.hasPrefix(home + "/localdev/"), path.utf8.count <= 4096 else { throw RecoveryProcessFailure.configuration }
+        let path = try hostedDirectoryPath(url, home: ProcessInfo.processInfo.environment["HOME"])
         var fd = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard fd >= 0 else { throw RecoveryProcessFailure.io }
         do {
