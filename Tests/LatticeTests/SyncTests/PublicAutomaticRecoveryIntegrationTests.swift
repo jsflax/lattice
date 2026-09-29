@@ -89,7 +89,9 @@ private func connectedApplication(_ certificate: URL, _ key: URL, observation: C
     observation?.phase(.applicationEnvironment)
     var environment = try Environment.detect(); environment.arguments = ["vapor"]
     observation?.phase(.applicationCreate)
-    let app = try await Application.make(environment)
+    // The bootstrap client uses this same group. Own it so failed pre-upgrade
+    // channels are closed and its threads joined by fixture cleanup.
+    let app = try await Application.make(environment, .createNew)
     observation?.phase(.applicationTLS)
     var tls = TLSConfiguration.makeServerConfiguration(certificateChain: [.file(certificate.path)], privateKey: .file(key.path))
     tls.minimumTLSVersion = .tlsv12
@@ -99,6 +101,21 @@ private func connectedApplication(_ certificate: URL, _ key: URL, observation: C
     app.http.server.configuration.tlsConfiguration = tls
     app.http.server.configuration.shutdownTimeout = .seconds(1)
     return app
+}
+
+@MainActor
+private func connectedShutdown(_ app: Application) async throws {
+    guard case .createNew = app.eventLoopGroupProvider else { throw ConnectedRecoveryFailure.metadata }
+    var firstError: (any Error)?
+    if !app.didShutdown {
+        do { try await app.asyncShutdown() } catch { firstError = error }
+    }
+    // Vapor logs and suppresses group-shutdown errors. Pinned NIO explicitly
+    // permits this second call: it returns the retained result after all
+    // registered channels close and all owned event-loop threads are joined.
+    do { try await app.eventLoopGroup.shutdownGracefully() }
+    catch { if firstError == nil { firstError = error } }
+    if let firstError { throw firstError }
 }
 
 /// Only copied scalar test facts leave the owning actor. No records, native
@@ -252,10 +269,13 @@ private final class ConnectedRegistrations: Sendable {
 /// Receives real ordinary catch-up only. It never emits READY/audit/ACK frames
 /// and never serves as a receiver or an installation authority.
 private final class ConnectedBootstrapPeer: Sendable {
-    private struct State { var socket: WebSocket?; var ids = Set<String>(); var closed = false; var invalid = false }
+    private struct State { var socket: WebSocket?; var ids = Set<String>(); var lifecycle = ConnectedBootstrapLifecycle(); var invalid = false }
     private let state = NIOLockedValueBox(State())
     func attach(_ socket: WebSocket) {
-        state.withLockedValue { $0.socket = socket }
+        let closeAfterAttach = state.withLockedValue { value in
+            value.socket = socket
+            return value.lifecycle.didAttach()
+        }
         socket.onBinary { [weak self] _, bytes in
             guard let self else { return }
             guard bytes.readableBytes <= 1_048_576,
@@ -270,12 +290,20 @@ private final class ConnectedBootstrapPeer: Sendable {
                 }
             }
         }
-        socket.onClose.whenComplete { [weak self] _ in self?.state.withLockedValue { $0.closed = true; $0.socket = nil } }
+        socket.onClose.whenComplete { [weak self] _ in self?.state.withLockedValue { $0.lifecycle.didClose(); $0.socket = nil } }
+        if closeAfterAttach { socket.close(promise: nil) }
     }
     var ids: Set<String> { state.withLockedValue { $0.ids } }
     var invalid: Bool { state.withLockedValue { $0.invalid } }
-    var closed: Bool { state.withLockedValue { $0.closed } }
-    func close() { state.withLockedValue { $0.socket }?.close(promise: nil) }
+    var closed: Bool { state.withLockedValue { $0.lifecycle.closed } }
+    func connectFailed() { state.withLockedValue { $0.lifecycle.connectFailed() } }
+    func cleanupRetired(ownedGroupJoined: Bool) -> Bool {
+        state.withLockedValue { $0.lifecycle.cleanupRetired(ownedGroupJoined: ownedGroupJoined) }
+    }
+    func close() {
+        let socket = state.withLockedValue { value in value.lifecycle.requestClose(); return value.socket }
+        socket?.close(promise: nil)
+    }
 }
 
 private struct ConnectedRow: Equatable, Sendable { let id: UUID; let label: String; let value: Int }
@@ -488,7 +516,7 @@ struct PublicConnectedAutomaticRecoveryTests {
             observation.phase(.tlsClose)
             driver.close(); try #require(!driver.system_tls())
             observation.phase(.applicationShutdown)
-            try await app.asyncShutdown()
+            try await connectedShutdown(app)
             observation.phase(.successReceipt)
             try connectedReceipt(env, name: wrongHost ? "stockTLSRejectsReachableWrongHostCertificate" : "stockTLSAcceptsMatchingHostedCertificate",
                 facts: ["stockOpens": opens, "stockErrors": errors, "stockTLS": systemTLS, "serverListening": true,
@@ -497,7 +525,7 @@ struct PublicConnectedAutomaticRecoveryTests {
             observation.failed(connectedFailureFact(error)); captureTLS()
             driver.close()
             observation.cleanup(.shutdownApplication)
-            do { try await app.asyncShutdown(); observation.cleanup(.completed) }
+            do { try await connectedShutdown(app); observation.cleanup(.completed) }
             catch { observation.cleanupFailed(connectedFailureFact(error)) }
             throw error
         }
@@ -537,8 +565,14 @@ struct PublicConnectedAutomaticRecoveryTests {
             didRecoveryReadyControl: { registrations.gate.observe($0) })
         RelayIngressTesting.install(hooks, for: storage)
         var mounts: [SyncRelayHandle] = [], bootstrap: [ConnectedBootstrapPeer] = [], receivers: [ConnectedReceiver] = []
+        var cleanupResult: Result<Void, any Error>?
         func cleanup() async throws {
-            do {
+            if let cleanupResult { return try cleanupResult.get() }
+            var firstError: (any Error)?
+            func failed(_ error: any Error) {
+                if firstError == nil { firstError = error }
+                observation.cleanupFailed(connectedFailureFact(error))
+            }
             observation.cleanup(.releaseHeldSend)
             registrations.gate.release()
             observation.cleanup(.closeReceivers)
@@ -548,21 +582,24 @@ struct PublicConnectedAutomaticRecoveryTests {
             observation.cleanup(.retireAuthorization)
             for mount in mounts { await mount.retireRecoveryAuthorization() }
             observation.cleanup(.shutdownApplication)
-            try await app.asyncShutdown()
+            var ownedGroupJoined = false
+            do { try await connectedShutdown(app); ownedGroupJoined = true }
+            catch { failed(error) }
             observation.cleanup(.waitRetirement)
-            try await connectedWait("all real authorization and held-result retirement", until: ContinuousClock.now.advanced(by: .seconds(10))) {
-                mounts.allSatisfy { $0.recoverySessionCount == 0 } && bootstrap.allSatisfy(\.closed)
-            }
+            do {
+                try await connectedWait("all real authorization and held-result retirement", until: ContinuousClock.now.advanced(by: .seconds(10))) {
+                    mounts.allSatisfy { $0.recoverySessionCount == 0 }
+                        && bootstrap.allSatisfy { $0.cleanupRetired(ownedGroupJoined: ownedGroupJoined) }
+                }
+            } catch { failed(error) }
             observation.cleanup(.removeHooks)
             RelayIngressTesting.remove(hooks, for: storage)
+            if let firstError { cleanupResult = .failure(firstError); throw firstError }
+            cleanupResult = .success(())
             observation.cleanup(.completed)
             // The source checkpoint governor may retain an ordinary owner.
             // The wrapper removes this private UUID directory only after the
             // actual test process is reaped; never unlink live WAL/custody.
-            } catch {
-                observation.cleanupFailed(connectedFailureFact(error))
-                throw error
-            }
         }
         do {
             observation.phase(.relayConfigure)
@@ -587,7 +624,12 @@ struct PublicConnectedAutomaticRecoveryTests {
                 var headers = HTTPHeaders(); headers.add(name: "Authorization", value: "Bearer " + registrations.bootstrap.token)
                 // This real default-verifying socket sends no protocol frame.
                 observation.phase(.bootstrapConnect)
-                try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get()
+                do {
+                    try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get()
+                } catch {
+                    peer.connectFailed()
+                    throw error
+                }
                 observation.phase(.bootstrapCatchup)
                 try await connectedWait("real enrolled source metadata and authorized seeded catch-up", until: deadline) {
                     !peer.invalid && peer.ids == seededOriginals && registrations.contexts.withLockedValue { $0[index] != nil }
