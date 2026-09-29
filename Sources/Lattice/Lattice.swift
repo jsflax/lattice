@@ -173,14 +173,21 @@ public struct Lattice {
             }
             #if canImport(Security)
             private func evaluate(_ session: URLSession, _ task: URLSessionTask, _ challenge: URLAuthenticationChallenge) {
-                guard let attempt = current(session, task),
-                      challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-                      let trust = challenge.protectionSpace.serverTrust else { return }
+                let failureObserver = client?.onFailureObservation
+                guard let attempt = current(session, task) else {
+                    failureObserver?(.rejectedChallenge(self.attempt == nil ? .missingAttempt : .staleTaskOrSession))
+                    return
+                }
+                guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust else {
+                    failureObserver?(.rejectedChallenge(.nonServerTrust)); return
+                }
+                guard let trust = challenge.protectionSpace.serverTrust else {
+                    failureObserver?(.rejectedChallenge(.missingServerTrust)); return
+                }
                 // Preserve Apple's policies/default anchors. This records the
                 // decision for this task; default challenge handling still owns
                 // the actual TLS connection, and didOpen must follow on it.
                 let observer = client?.onIdentityVerificationFailure
-                let failureObserver = client?.onFailureObservation
                 var failure: CFError?
                 let accepted = observer == nil && failureObserver == nil ? SecTrustEvaluateWithError(trust, nil)
                     : SecTrustEvaluateWithError(trust, &failure)
@@ -202,7 +209,8 @@ public struct Lattice {
                     let kind: PlatformTransportErrorFact.Kind = accepted ? .none
                         : (osStatus && code == Int(errSecHostNameMismatch) ? .identity : .tls)
                     failureObserver(.init(phase: .trustEvaluation,
-                        error: .init(kind: kind, domain: osStatus ? .osStatus : .none, code: code), trustAccepted: accepted))
+                        error: .init(kind: kind, domain: osStatus ? .osStatus : .none, code: code), trustAccepted: accepted,
+                        guardOutcome: .currentServerTrust))
                 }
             }
             func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
@@ -213,6 +221,7 @@ public struct Lattice {
             func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
                             completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
                 if let attempt { evaluate(session, attempt.task, challenge) }
+                else { client?.onFailureObservation?(.rejectedChallenge(.missingAttempt)) }
                 completionHandler(.performDefaultHandling, nil)
             }
             #endif
@@ -237,7 +246,7 @@ public struct Lattice {
             func urlSession(_ session: URLSession, task: URLSessionTask,
                             didCompleteWithError error: (any Swift.Error)?) {
                 guard let attempt = current(session, task), let error else { return }
-                client?.onFailureObservation?(.init(phase: .completion, error: .copy(error), trustAccepted: nil))
+                PlatformTransportFailureObservation.report(client?.onFailureObservation, phase: .completion, error: error)
                 attempt.callbacks.error(error.localizedDescription)
             }
         }
@@ -288,7 +297,7 @@ public struct Lattice {
             else { outgoing = .data(Data(message.data)) }
             attempt.task.send(outgoing) { [weak attempt, observer = onFailureObservation] error in
                 guard let attempt, let error else { return }
-                if attempt.callbacks.isCurrent { observer?(.init(phase: .send, error: .copy(error), trustAccepted: nil)) }
+                if attempt.callbacks.isCurrent { PlatformTransportFailureObservation.report(observer, phase: .send, error: error) }
                 attempt.callbacks.error(error.localizedDescription)
             }
         }
@@ -313,7 +322,7 @@ public struct Lattice {
                     }
                     if attempt.callbacks.message(incoming) { self.startReceiving(attempt) }
                 case .failure(let error):
-                    self.onFailureObservation?(.init(phase: .receive, error: .copy(error), trustAccepted: nil))
+                    PlatformTransportFailureObservation.report(self.onFailureObservation, phase: .receive, error: error)
                     attempt.callbacks.error(error.localizedDescription)
                 }
             }

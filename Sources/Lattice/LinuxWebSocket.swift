@@ -136,7 +136,7 @@ internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unch
                 observer?()
             }
             if attempt.callbacks.isCurrent {
-                failureObserver?(.init(phase: .connect, error: .copy(error), trustAccepted: nil))
+                PlatformTransportFailureObservation.report(failureObserver, phase: .connect, error: error)
             }
             attempt.callbacks.error(error.localizedDescription)
         }
