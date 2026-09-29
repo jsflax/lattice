@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import Vapor
 import Lattice
 import NIOConcurrencyHelpers
@@ -243,6 +244,92 @@ struct RelayFrame {
     }
 }
 
+// Bounded observation of one actual accepted integer UPDATE. These values
+// are test facts, never native acceptance, a receipt or a publication grant.
+struct RelayAcknowledgedEntryObservation: Sendable, Equatable {
+    let originalID, targetID: UUID
+    let table, operation, fieldName: String
+    let integerKind, integerValue, originalIdentityVersion: Int64
+    let originalIdentityDigest: String
+}
+enum RelayACKMetadataFailure: Sendable {
+    case frameBound, singleton, identity, shape, integer, operation
+}
+struct RelayRecoveryACKObservation: Sendable {
+    let connectionID: UUID
+    let peer: SyncRecoveryPeerIdentity
+    let channel: String
+    let entry: RelayAcknowledgedEntryObservation?
+    let metadataFailure: RelayACKMetadataFailure?
+
+    // Pure copied-input validation. Only the authenticated status-1 branch
+    // below may attach the result to a real ACK. Do not retain the parse tree.
+    static func copy(frame: RelayFrame, acceptedIDs: [UUID], connectionID: UUID,
+                     peer: SyncRecoveryPeerIdentity, channel: String) -> Self? {
+        func bounded(_ text: String, _ cap: Int) -> Bool {
+            !text.isEmpty && text.utf8.prefix(cap + 1).count <= cap && !text.contains("\0")
+        }
+        guard bounded(channel, 64), bounded(peer.replicaID, 256) else { return nil }
+        func failed(_ reason: RelayACKMetadataFailure) -> Self {
+            .init(connectionID: connectionID, peer: peer, channel: channel, entry: nil, metadataFailure: reason)
+        }
+        guard frame.byteCount <= 1_048_576 else { return failed(.frameBound) }
+        guard let raw = frame.rawEntries, raw.count == 1, frame.requestedIds.count == 1,
+              acceptedIDs.count == 1 else { return failed(.singleton) }
+        guard let item = raw[0] as? [String: Any],
+              let original = item["globalId"] as? String, bounded(original, 36), original.utf8.count == 36,
+              let originalID = UUID(uuidString: original), originalID == frame.requestedIds[0], originalID == acceptedIDs[0],
+              let target = item["globalRowId"] as? String, bounded(target, 36), target.utf8.count == 36,
+              let targetID = UUID(uuidString: target) else { return failed(.identity) }
+        guard let table = item["tableName"] as? String, bounded(table, 64),
+              let operation = item["operation"] as? String, operation == "UPDATE" else { return failed(.operation) }
+        guard let fields = item["changedFields"] as? [String: Any], !fields.isEmpty, fields.count <= 32,
+              let names = item["changedFieldsNames"] as? [String], names.count == 1,
+              let field = names.first, bounded(field, 64),
+              let value = fields[field] as? [String: Any], Set(value.keys) == ["kind", "value"],
+              let identity = item["originalIdentity"] as? [String: Any],
+              Set(identity.keys) == ["version", "changedFieldsNames", "digest"],
+              let originalNames = identity["changedFieldsNames"] as? [String], originalNames == [field],
+              let digest = identity["digest"] as? String, digest.utf8.count == 64,
+              digest.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return failed(.shape) }
+        func integer(_ raw: Any?) -> Int64? {
+            guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  ["c", "s", "i", "l", "q", "C", "S", "I", "L", "Q"].contains(String(cString: number.objCType))
+            else { return nil }
+            // String conversion is bounded and exact, rejecting UInt64 overflow
+            // instead of accepting NSNumber's truncating int64Value coercion.
+            let text = number.stringValue
+            guard text.utf8.count <= 20 else { return nil }
+            return Int64(text)
+        }
+        // Generated UPDATE frames retain every schema field, with unchanged
+        // columns encoded as typed null placeholders. Copy only the one named
+        // changed value, and never accept an extra nonnull value as equivalent.
+        for (name, raw) in fields where name != field {
+            guard bounded(name, 64), let placeholder = raw as? [String: Any],
+                  Set(placeholder.keys) == ["kind", "value"], integer(placeholder["kind"]) == 4,
+                  placeholder["value"] is NSNull else { return failed(.shape) }
+        }
+        guard let kind = integer(value["kind"]), kind == 0 || kind == 1,
+              let number = integer(value["value"]), let version = integer(identity["version"]), version == 1
+        else { return failed(.integer) }
+        return .init(connectionID: connectionID, peer: peer, channel: channel,
+            entry: .init(originalID: originalID, targetID: targetID, table: table, operation: operation,
+                         fieldName: field, integerKind: kind, integerValue: number,
+                         originalIdentityVersion: version, originalIdentityDigest: digest), metadataFailure: nil)
+    }
+
+    // Explicit ACK-only call sites pass this optional observation. Invalid
+    // metadata is observable as a fixed code but cannot suppress any bytes.
+    static func requestsDrop(_ observation: Self?, connectionID: UUID, peer: SyncRecoveryPeerIdentity,
+                             decision: (@Sendable (Self) -> Bool)?) -> Bool {
+        guard let observation, observation.connectionID == connectionID, observation.peer == peer,
+              let decision else { return false }
+        let requested = decision(observation)
+        return requested && observation.entry != nil && observation.metadataFailure == nil
+    }
+}
+
 // MARK: - Apply outcome
 
 /// What one (retried) apply achieved.
@@ -394,6 +481,7 @@ struct RelayAppliedFrame: Sendable {
     let span: UInt64
     let partialFanOut: Data?
     var recoveryResult: RecoveryRelayNativeResult? = nil
+    var recoveryACKObservation: RelayRecoveryACKObservation? = nil
 }
 
 enum RelayProcessedFrame: Sendable {
@@ -412,9 +500,22 @@ struct RelayReadyControlObservation: Sendable {
     let channel, requestID, operation: String
     let routeGeneration, requestDigest, attemptID, sequence, index: String?
     let canonicalKind: String?
+    let cutpoint: RelayReadyCutpoint?
+
+    init(connectionID: UUID, peer: SyncRecoveryPeerIdentity, channel: String,
+         requestID: String, operation: String, routeGeneration: String?,
+         requestDigest: String?, attemptID: String?, sequence: String?, index: String?,
+         canonicalKind: String?, cutpoint: RelayReadyCutpoint? = nil) {
+        self.connectionID = connectionID; self.peer = peer; self.channel = channel
+        self.requestID = requestID; self.operation = operation; self.routeGeneration = routeGeneration
+        self.requestDigest = requestDigest; self.attemptID = attemptID; self.sequence = sequence
+        self.index = index; self.canonicalKind = canonicalKind; self.cutpoint = cutpoint
+    }
 
     static func copy(input: Data, result: RecoveryRelayNativeReadyResult,
                      connection: RecoveryRelayConnection, channel: String) -> Self? {
+        let cutpoint = RelayReadyCutpoint.copy(input: input, output: result.data, status: result.status,
+            requestID: result.requestID, peer: connection.peer, channel: channel)
         // Only called for an installed observer, after native processing. The
         // existing result status also covers negative controls, so inspect its
         // real canonical envelope instead of treating status 1 as frame success.
@@ -436,7 +537,8 @@ struct RelayReadyControlObservation: Sendable {
             routeGeneration: text("routeGeneration", in: request),
             requestDigest: text("requestDigest", in: request),
             attemptID: text("attemptID", in: request), sequence: text("sequence", in: request),
-            index: text("index", in: request), canonicalKind: envelope.flatMap { text("kind", in: $0, cap: 16) })
+            index: text("index", in: request), canonicalKind: envelope.flatMap { text("kind", in: $0, cap: 16) },
+            cutpoint: cutpoint)
     }
 }
 
@@ -447,13 +549,18 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
                               diagnostic: ACKPathConnection?, needsFanOut: Bool,
                               admissionSpan: UInt64 = 0, recovery: RecoveryRelayConnection? = nil,
                               recoveryCharge: RecoveryRelayNativeCharge? = nil,
-                              readyObservation: (@Sendable (RelayReadyControlObservation) -> Void)? = nil) -> RelayProcessedFrame {
+                              readyObservation: (@Sendable (RelayReadyControlObservation) -> Void)? = nil,
+                              observeRecoveryACK: Bool = false,
+                              connectionObservation: (@Sendable (RelayRecoveryConnectionObservation) -> Void)? = nil) -> RelayProcessedFrame {
     guard !revocation.isRevoked else { return .revoked }
     if let recovery {
         guard data.count <= 8_388_608, let recoveryCharge else { return .refused("recovery source input admission required") }
         do {
             let result = try recovery.ready(data, charge: recoveryCharge)
             if result.status == 1 {
+                if let connectionObservation, let observed = recovery.connectionObservation(channel: channel.id) {
+                    connectionObservation(observed)
+                }
                 if let readyObservation,
                    let copied = RelayReadyControlObservation.copy(input: data, result: result, connection: recovery, channel: channel.id) {
                     readyObservation(copied)
@@ -479,6 +586,7 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
     diagnostic?.record(.applyBodyEntered, span: span, matching: frame.requestedIds)
     var outcome: RelayApplyOutcome
     var recoveryResult: RecoveryRelayNativeResult?
+    var recoveryACKObservation: RelayRecoveryACKObservation?
     if let recovery {
         outcome = RelayApplyOutcome(); outcome.attempts = 1; outcome.recoveryAcceptanceUnverified = true
         let started = DispatchTime.now().uptimeNanoseconds
@@ -486,7 +594,13 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
             let actual = try recovery.receive(data)
             if actual.status == 2 { return .revoked }
             outcome.applied = actual.ids
-            if actual.status == 1 { recoveryResult = actual }
+            if actual.status == 1 {
+                recoveryResult = actual
+                if observeRecoveryACK, !actual.ids.isEmpty {
+                    recoveryACKObservation = .copy(frame: frame, acceptedIDs: actual.ids,
+                        connectionID: recovery.id, peer: recovery.peer, channel: channel.id)
+                }
+            }
             else { outcome.lastError = actual.error ?? "authenticated native apply outcome unavailable" }
         } catch { outcome.lastError = String(describing: error) }
         let accepted = Set(outcome.applied)
@@ -506,5 +620,6 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
     return .applied(.init(outcome: outcome, byteCount: frame.byteCount,
                          requestedIds: frame.requestedIds, malformed: frame.root == nil,
                          claimsUpload: frame.claimsUpload, isAcknowledgment: frame.isAcknowledgment,
-                         span: span, partialFanOut: partial, recoveryResult: recoveryResult))
+                         span: span, partialFanOut: partial, recoveryResult: recoveryResult,
+                         recoveryACKObservation: recoveryACKObservation))
 }

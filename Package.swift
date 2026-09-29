@@ -102,6 +102,8 @@ let package = Package(
                 "LatticeMCP",
                 "LatticeServerKit",
                 "WalEpochWriterChild",
+                "RecoveryProcessSupport",
+                "RecoveryProcessChild",
                     .product(name: "Vapor", package: "vapor")
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]
@@ -113,6 +115,16 @@ let package = Package(
         .executableTarget(
             name: "WalEpochWriterChild",
             dependencies: ["Lattice"],
+            swiftSettings: [.interoperabilityMode(.Cxx)]),
+        // C recovery qualification only: dedicated real child and exact shared
+        // model/configuration protocol. Neither target is a published product.
+        .target(
+            name: "RecoveryProcessSupport",
+            dependencies: ["Lattice"],
+            swiftSettings: [.interoperabilityMode(.Cxx)]),
+        .executableTarget(
+            name: "RecoveryProcessChild",
+            dependencies: ["Lattice", "RecoveryProcessSupport"],
             swiftSettings: [.interoperabilityMode(.Cxx)]),
         // Cross-SDK conformance runner (plan WS-C item C4a): interprets the
         // declarative corpus in latticecore/conformance/corpus against the
