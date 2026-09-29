@@ -1,5 +1,5 @@
 {
-  "scope": "Private hosted qualification graph combining reviewed recovery delivery regressions, main-WAL and UUID fixture corrections, passive READY/read diagnostics, registered-producer v3 receipt coverage and explicit quiescent source migration, strict received-END profile checks with retained verification authority, and canonical full-image equality across independently framed transfers, and the current public-main Linux poll notifier correction, and one full audit per private authenticated owned READY read with original direct and fault-hook two-audit paths retained. Component source reviews are complete; final integrated source and hosted runtime acceptance remain pending. Legacy-unbound cross-namespace evidence and pending old-Q migration remain unresolved; no automatic historical recovery, performance, TLS or public release acceptance is claimed.",
-  "coreCommit": "e2bbf36a6628de4357a46a6c0c5ea9e1295ef063",
-  "coreTree": "11a32921235c17d66c49fbf9b25f2a2f31b36707"
+  "scope": "Private full hosted qualification of the reviewed recovery admission, terminal renewal and orphan lifecycle, registered producer receipt coverage, scheduler ownership, and callback lifetime corrections, together with the SDK explicit lifecycle policy and relay retirement retention. Earlier qualification failures are preserved. Final integrated source review and hosted runtime acceptance remain pending; no performance improvement, existing-store adoption, stock TLS behavior, historical crash cause, or public release acceptance is claimed.",
+  "coreCommit": "4e97e42f0eda4df1c334cb32d1c59f921f4ed350",
+  "coreTree": "4b1b40e7bfe2271d6989bc5fc415c3af5853023a"
 }
