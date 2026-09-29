@@ -815,6 +815,8 @@ public struct SyncRelayHandle: Sendable {
     }
 
     var recoverySessionCount: Int { recoveryMount?.sessionCount ?? 0 }
+    // Read-only retirement observation for bounded lifecycle regressions.
+    var recoveryRetiredNativeSessionCount: Int { recoveryMount?.retiredNativeSessionCount ?? 0 }
 
     /// Retire this recovery mount. Existing admitted effects settle truthfully;
     /// no further setup, apply, catch-up or observer publication is authorized.

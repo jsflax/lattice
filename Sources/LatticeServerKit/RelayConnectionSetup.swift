@@ -148,6 +148,7 @@ private final class RelayCatchUpReadState {
     private var native: UnsafeSendableBox<RelayCatchUpReadState>?
     private var boundary: Int64 = 0
     private var subscription: PushSubscription?
+    private var authorizationWork: RecoveryRelayAuthorizationWork?
 
     init(input: RelayConnectionSetupInput) { self.input = input }
 
@@ -209,13 +210,17 @@ private final class RelayCatchUpReadState {
         }
         guard isLive else { finish(); return }
         if let recovery = input.state.recovery, let turn {
+            let work: RecoveryRelayAuthorizationWork
+            do { work = try recovery.reserveAuthorization() }
+            catch { fail(error); return }
+            authorizationWork = work
             phase = .authorizingRecovery
             // External auth never runs while an IO worker or native lock is
             // held. A closed connection retains its finite mount charge until
             // this actual callback settles; close cannot recycle the budget.
             Task.detached {
                 let answer: Result<Data, any Error>
-                do { answer = .success(try await recovery.authorize(turn)) }
+                do { answer = .success(try await recovery.authorize(turn, work: work)) }
                 catch { answer = .failure(error) }
                 Task { @RelayControlActor in self.authorizationReturned(answer, probe: probe) }
             }
@@ -244,6 +249,7 @@ private final class RelayCatchUpReadState {
 
     private func authorizationConsumed(_ error: (any Error)?, probe: ObserverSendBoundaryProbe?) {
         precondition(phase == .authorizingRecovery)
+        authorizationWork = nil
         if let error { fail(error); return }
         guard isLive else { finish(); return }
         subscribe(probe: probe)
@@ -411,6 +417,7 @@ private final class RelayCatchUpReadState {
     private func finish(keepSubscription: Bool = false) {
         guard phase != .finishing, phase != .finished else { return }
         phase = .finishing
+        authorizationWork = nil
         if !keepSubscription { input.state.recovery?.retire(for: input.applyKey) }
         if !keepSubscription, let sub = subscription {
             input.state.pushSubscription = nil

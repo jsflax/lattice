@@ -38,6 +38,14 @@ struct RecoveryRelayAuthorizationTurn: Sendable {
         guard encoded.count <= 32_768 else { throw SyncRecoveryConfigurationError.invalidBounds }; return encoded
     }
 }
+/// Retains the existing mount slot from before auth task submission through
+/// actual callback settlement. Closing a socket cannot recycle that capacity.
+final class RecoveryRelayAuthorizationWork: @unchecked Sendable {
+    fileprivate let connection: RecoveryRelayConnection
+    fileprivate init(_ connection: RecoveryRelayConnection) { self.connection = connection }
+    deinit { connection.releaseAuthorization() }
+}
+
 /// One real accepted connection. Native-bearing fields are confined to its
 /// file IO lane. All other users hold only its payload-free lifetime cell.
 final class RecoveryRelayConnection: @unchecked Sendable {
@@ -50,7 +58,37 @@ final class RecoveryRelayConnection: @unchecked Sendable {
     private let revocation: RevocationFlag
     private var native: RecoveryRelayNativeSetup? // IO only
     private var resolvedScope: SyncRecoveryIncomingScope? // IO only
-    private let retiring = NIOLockedValueBox(false)
+    private struct Retirement {
+        var requested = false
+        var nativeRetired = false
+        var authorizationReserved = false
+        var removed = false
+    }
+    private let retirement = NIOLockedValueBox(Retirement())
+
+    private static func removeIfSettled(_ state: inout Retirement) -> Bool {
+        guard state.nativeRetired, !state.authorizationReserved, !state.removed else { return false }
+        state.removed = true; return true
+    }
+
+    func reserveAuthorization() throws -> RecoveryRelayAuthorizationWork {
+        try retirement.withLockedValue { state in
+            guard !state.requested, !state.authorizationReserved else {
+                throw SyncRecoveryConfigurationError.staleAuthorization
+            }
+            state.authorizationReserved = true
+        }
+        return RecoveryRelayAuthorizationWork(self)
+    }
+
+    fileprivate func releaseAuthorization() {
+        let remove = retirement.withLockedValue { state in
+            precondition(state.authorizationReserved)
+            state.authorizationReserved = false
+            return Self.removeIfSettled(&state)
+        }
+        if remove { mount.remove(id) }
+    }
 
     init(mount: RecoveryRelayMount, request: Request, socket: WebSocket, revocation: RevocationFlag) throws {
         self.mount = mount; self.request = NIOLockedValueBox(request); self.socket = socket; self.revocation = revocation
@@ -111,7 +149,9 @@ final class RecoveryRelayConnection: @unchecked Sendable {
     }
     /// Executes off native/SQL/control locks. The app's actual request/session
     /// and registration outcome is checked again on the returning IO turn.
-    func authorize(_ turn: RecoveryRelayAuthorizationTurn) async throws -> Data {
+    func authorize(_ turn: RecoveryRelayAuthorizationTurn, work: RecoveryRelayAuthorizationWork) async throws -> Data {
+        guard work.connection === self else { throw SyncRecoveryConfigurationError.staleAuthorization }
+        defer { withExtendedLifetime(work) {} }
         guard let socket, !lifetime.isStopped, !revocation.isRevoked, !socket.isClosed else { throw SyncRecoveryConfigurationError.staleAuthorization }
         // A Request can retain its channel. Transfer it once into the actual
         // callback turn instead of retaining a connection/channel cycle.
@@ -190,15 +230,20 @@ final class RecoveryRelayConnection: @unchecked Sendable {
         lifetime.stop()
         let releasedRequest = request.withLockedValue { value in let held = value; value = nil; return held }
         withExtendedLifetime(releasedRequest) {}
-        let first = retiring.withLockedValue { value in if value { return false }; value = true; return true }
+        let first = retirement.withLockedValue { state in
+            if state.requested { return false }; state.requested = true; return true
+        }
         if first {
             RelayExecutionPool.io.submitRequired(for: key) {
                 self.native?.close(); self.native = nil; self.resolvedScope = nil
                 self.lifetime.finishNativeRetirement()
-                // Socket handlers may retain this Swift connection after
-                // close. Registration ends at actual native retirement,
-                // rather than waiting for the socket wrapper's deinit.
-                self.mount.remove(self.id)
+                // Native retirement and actual app authorization are separate
+                // obligations. Neither depends on socket wrapper destruction.
+                let remove = self.retirement.withLockedValue { state in
+                    state.nativeRetired = true
+                    return Self.removeIfSettled(&state)
+                }
+                if remove { self.mount.remove(self.id) }
             }
         }
     }

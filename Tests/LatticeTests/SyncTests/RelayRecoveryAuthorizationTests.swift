@@ -751,6 +751,29 @@ private struct RelayReceiptCoverageMigrationTests {
 
 @Suite("Recovery native retirement with retained sockets", .timeLimit(.minutes(2)))
 private struct RelayRecoveryRetirementTests {
+    @Test(arguments: [false, true])
+    func heldAuthorizationKeepsMountCapacityAfterNativeRetirement(deny: Bool) async throws {
+        let mode: RegisteredRecoveryPeers.Mode = deny ? .heldSecondDenied : .heldSecondApproved
+        try await withRecoveryAuthorizationHarness(mode) { h in
+            let peer = try await h.connect(h.registrations.second)
+            let socket = try #require(peer.socket)
+            try await readyWait { h.registrations.heldSecondEntered.withLockedValue { $0 } }
+            try await socket.close()
+            try await peer.wait { $0.closed }
+            // Observe the real IO retirement, rather than assuming that a
+            // socket close means its queued native release already ran.
+            try await readyWait { h.writer.recoveryRetiredNativeSessionCount == 1 }
+            #expect(h.writer.recoverySessionCount == 1)
+            #expect(peer.facts.withLockedValue { $0.acks.isEmpty && $0.canonical.isEmpty })
+
+            h.registrations.gate.release()
+            try await readyWait { h.writer.recoverySessionCount == 0 }
+            #expect(h.writer.recoveryRetiredNativeSessionCount == 0)
+            #expect(h.registrations.calls.withLockedValue { $0 } == 1)
+            withExtendedLifetime(socket) {}
+        }
+    }
+
     @Test func closedSocketDoesNotRetainRegistrationOrBlockReceiptMigration() async throws {
         try await withRecoveryAuthorizationHarness { h in
             let peer = try await h.connect()

@@ -252,6 +252,7 @@ final class RecoveryRelayLifetime: @unchecked Sendable {
     private struct State { var stopped = false; var authorized = false; var nativeRetired = false; var native: RecoveryRelayNativeStop?; var readScope: [String: Set<String>] = [:] }
     private let state = NIOLockedValueBox(State())
     var isStopped: Bool { state.withLockedValue { $0.stopped } }
+    var hasRetiredNative: Bool { state.withLockedValue { $0.nativeRetired } }
     var publishable: Bool { state.withLockedValue { !$0.stopped && $0.authorized && ($0.native?.isLive ?? false) } }
     var retiredOrExpired: Bool { state.withLockedValue { $0.stopped || ($0.authorized && !($0.native?.isLive ?? false)) } }
     func didAuthorize(_ scope: SyncRecoveryIncomingScope) {
@@ -324,6 +325,10 @@ final class RecoveryRelayMount: @unchecked Sendable {
         }
     }
     var sessionCount: Int { state.withLockedValue { $0.sessions.count } }
+    var retiredNativeSessionCount: Int {
+        let sessions = state.withLockedValue { Array($0.sessions.values) }
+        return sessions.filter(\.hasRetiredNative).count
+    }
     func reserveMigration() -> Bool {
         state.withLockedValue { s in
             guard s.retired, !s.migration else { return false }
