@@ -10,7 +10,7 @@ import Lattice
     var value: Int = 0
     init(value: Int) { self.value = value }
 }
-private enum RecoveryAuthorizationFixtureError: Error { case timeout, rejected }
+private enum RecoveryAuthorizationFixtureError: Error { case timeout(String), rejected }
 private final class RecoveryAuthorizationGate: Sendable {
     private let stream: AsyncStream<Bool>
     private let continuation: AsyncStream<Bool>.Continuation
@@ -101,13 +101,16 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
         }
         socket.onClose.whenComplete { [weak self] _ in self?.facts.withLockedValue { $0.closed = true } }
     }
-    func wait(_ predicate: @escaping @Sendable (Facts) -> Bool) async throws {
+    func wait(_ phase: String = "peer state", _ predicate: @escaping @Sendable (Facts) -> Bool) async throws {
         let deadline = Date().addingTimeInterval(10)
         while Date() < deadline, !Task.isCancelled {
             if facts.withLockedValue({ predicate($0) }) { return }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
-        throw RecoveryAuthorizationFixtureError.timeout
+        let state = facts.withLockedValue {
+            "closed=\($0.closed) ackCount=\($0.acks.count) readyCount=\($0.ready.count) canonicalCount=\($0.canonical.count)"
+        }
+        throw RecoveryAuthorizationFixtureError.timeout("\(phase.prefix(128)); \(state); cancelled=\(Task.isCancelled)")
     }
 }
 private final class RecoveryAuthorizationHarness: @unchecked Sendable {
@@ -375,12 +378,12 @@ private final class RecoveryReadySendGate: Sendable {
     func decision(_ id: String) -> Bool? { state.withLockedValue { $0.decisions[id] } }
 }
 private func readyObject(_ data: Data) throws -> [String: Any] { try #require(JSONSerialization.jsonObject(with: data) as? [String: Any]) }
-private func readyWait(_ predicate: @escaping @Sendable () -> Bool) async throws {
+private func readyWait(_ phase: String = "READY fixture state", _ predicate: @escaping @Sendable () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(10)
     while Date() < deadline, !Task.isCancelled {
         if predicate() { return }; try await Task.sleep(nanoseconds: 10_000_000)
     }
-    throw RecoveryAuthorizationFixtureError.timeout
+    throw RecoveryAuthorizationFixtureError.timeout("\(phase.prefix(128)); cancelled=\(Task.isCancelled)")
 }
 private struct ReadyTestControl: Encodable {
     let kind = "recoveryReady", version = 1
@@ -395,13 +398,13 @@ private extension RecoveryAuthorizationPeer {
         let id = command.requestID, data = try command.data()
         let actual = try #require(socket)
         try await actual.send(Array(data))
-        try await wait { $0.ready[id] != nil }
+        try await wait("READY \(command.operation) reply") { $0.ready[id] != nil }
         return try #require(facts.withLockedValue { $0.ready.removeValue(forKey: id) })
     }
     func readyFrame(_ command: ReadyTestControl) async throws -> Data {
         let actual = try #require(socket)
         try await actual.send(Array(try command.data()))
-        try await wait { !$0.canonical.isEmpty }
+        try await wait("READY \(command.operation) frame index=\(command.index ?? "missing")") { !$0.canonical.isEmpty }
         return facts.withLockedValue { $0.canonical.removeFirst() }
     }
 }
@@ -555,11 +558,11 @@ private struct RelayAuthenticatedReadyTests {
         try await withRecoveryAuthorizationHarness(mode) { h in
             let peer = try await h.connect(h.registrations.second); let describe = ReadyTestControl(operation: "describe")
             try await peer.socket!.send(Array(try describe.data()))
-            try await readyWait { h.registrations.heldSecondEntered.withLockedValue { $0 } }
+            try await readyWait("held describe authorization entry deny=\(deny)") { h.registrations.heldSecondEntered.withLockedValue { $0 } }
             #expect(peer.facts.withLockedValue { $0.ready.isEmpty && $0.canonical.isEmpty })
             h.registrations.gate.release()
             if deny { try await peer.wait { $0.closed }; #expect(peer.facts.withLockedValue { $0.ready.isEmpty && $0.canonical.isEmpty }) }
-            else { let id = describe.requestID; try await peer.wait { $0.ready[id] != nil } }
+            else { let id = describe.requestID; try await peer.wait("held describe after authorization release") { $0.ready[id] != nil } }
         }
     }
     @Test func keeperReconnectResumesSameCapsuleWithFreshPhysicalGeneration() async throws {
@@ -587,7 +590,7 @@ private struct RelayAuthenticatedReadyTests {
             let offer = try await first.ready(readyOffer(q, descriptor: d, duration: action == "expiry" ? 1_000 : 10_000))
             let command = try readyRead(offer, index: 0), id = command.requestID
             h.registrations.readySendGate.arm(id); try await first.socket!.send(Array(try command.data()))
-            try await readyWait { h.registrations.readySendGate.parked }
+            try await readyWait("parked send entry action=\(action)") { h.registrations.readySendGate.parked }
             #expect(first.facts.withLockedValue { $0.canonical.isEmpty })
             if action == "close" { try await first.socket!.close(); try await first.wait { $0.closed } }
             else if action == "kick" { await h.writer.disconnect(channelId: "group-a", userId: h.registrations.user); try await first.wait { $0.closed } }
@@ -600,7 +603,7 @@ private struct RelayAuthenticatedReadyTests {
                 let reply = try await other.ready(readyOffer(same, descriptor: next, op: action))
                 if action == "resume" { _ = try await other.readyFrame(readyRead(reply, index: 0)) }
             }
-            h.registrations.readySendGate.release(); try await readyWait { h.registrations.readySendGate.decision(id) != nil }
+            h.registrations.readySendGate.release(); try await readyWait("parked send decision action=\(action)") { h.registrations.readySendGate.decision(id) != nil }
             #expect(h.registrations.readySendGate.decision(id) == false); #expect(first.facts.withLockedValue { $0.canonical.isEmpty })
         }
     }
@@ -632,7 +635,7 @@ private struct RelayAuthenticatedReadyLargeTests {
                 let wire = try JSONEncoder().encode(ServerSentEvent.auditLog(batch))
                 #expect(wire.count <= 1_048_576)
                 let expected = Set(batch.compactMap { $0.globalId?.uuidString.lowercased() })
-                try await peer.socket!.send(Array(wire)); try await peer.wait { expected.isSubset(of: Set($0.acks)) }
+                try await peer.socket!.send(Array(wire)); try await peer.wait("8000-row upload ACK begin=\(begin)") { expected.isSubset(of: Set($0.acks)) }
             }
             let originals = try JSONEncoder().encode(ServerSentEvent.auditLog(entries))
             let request = try readyRequest(description, originals: originals)

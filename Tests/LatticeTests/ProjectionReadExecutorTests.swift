@@ -20,10 +20,13 @@ private final class ProjectionExecutorTestGate: @unchecked Sendable {
 
 @Suite("Bounded native projection executor", .serialized)
 struct ProjectionReadExecutorTests {
-    private func waitUntil(_ phase: String = "executor state", _ predicate: @escaping @Sendable () -> Bool) async throws {
+    private func waitUntil(_ phase: String = "executor state", failureContext: @Sendable () -> String = { "" },
+                           _ predicate: @escaping @Sendable () -> Bool) async throws {
         let end = DispatchTime.now().uptimeNanoseconds + 3_000_000_000
         while !predicate() {
-            try #require(DispatchTime.now().uptimeNanoseconds < end, "\(phase) did not settle")
+            let withinDeadline = DispatchTime.now().uptimeNanoseconds < end
+            let detail = withinDeadline ? "" : failureContext()
+            try #require(withinDeadline, "\(phase) did not settle \(detail)")
             try await Task.sleep(nanoseconds: 1_000_000)
         }
     }
@@ -87,16 +90,25 @@ struct ProjectionReadExecutorTests {
         defer { gate.open() }
         let entered = LockedBox(false)
         let rejectedRuns = LockedBox(0)
+        let gateExpired = LockedBox(false)
+        let queuedSubmissionEntered = LockedBox(false)
         let running = Task {
             try await executor.submit {
                 entered.withLock { $0 = true }
-                try gate.wait()
+                do { try gate.wait() }
+                catch { gateExpired.withLock { $0 = true }; throw error }
                 return 1
             }
         }
         try await waitUntil("queue-full first operation start") { entered.withLock { $0 } }
-        let queued = Task { try await executor.submit { 2 } }
-        try await waitUntil("queue-full pending admission") { executor.snapshot.pending == 1 }
+        let queued = Task {
+            queuedSubmissionEntered.withLock { $0 = true }
+            return try await executor.submit { 2 }
+        }
+        try await waitUntil("queue-full pending admission", failureContext: {
+            let state = executor.snapshot
+            return "pending=\(state.pending) running=\(state.running) queuedAdmissions=\(state.queuedAdmissions) queuedSubmissionEntered=\(queuedSubmissionEntered.withLock { $0 }) gateExpired=\(gateExpired.withLock { $0 })"
+        }) { executor.snapshot.pending == 1 }
         do {
             _ = try await executor.submit {
                 rejectedRuns.withLock { $0 += 1 }
