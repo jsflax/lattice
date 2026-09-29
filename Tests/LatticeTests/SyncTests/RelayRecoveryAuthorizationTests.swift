@@ -142,8 +142,141 @@ private struct ReadyPeerObservation: Sendable {
         "waitStartedNs=\(String(reflecting: waitStartedAt)) nominalWaitDeadlineLowerNs=\(String(reflecting: nominalWaitDeadline)) nominalWaitDeadlineUpperNs=\(String(reflecting: nominalWaitDeadlineUpper)) waitReturnedNs=\(String(reflecting: waitReturnedAt)) reply={\(reply)}"
     }
 }
+/// The facts lock protects each current payload and its own publication stamp.
+/// Diagnostic observation records are not used to decide reply eligibility.
+private struct RecoveryReadyReplyStore {
+    private struct Entry { let data: Data; var publishedAt: Date? }
+    private var entries: [String: Entry] = [:]
+    var count: Int { entries.count }
+    var isEmpty: Bool { entries.isEmpty }
+    var keys: [String] { Array(entries.keys) }
+    subscript(_ id: String) -> Data? { entries[id]?.data }
+
+    mutating func publish(_ data: @autoclosure () -> Data, for id: String, now: () -> Date?) -> Bool {
+        // Preserve the original guard, including refusal to replace at 64.
+        guard entries.count < 64 else { return false }
+        entries[id] = Entry(data: data(), publishedAt: nil)
+        // Sample after the actual bytes are stored, within the same facts lock.
+        entries[id]?.publishedAt = now()
+        return true
+    }
+    mutating func select(_ id: String, before deadline: Date, consume: Bool,
+                         isCancelled: () -> Bool) -> Data? {
+        // Every selection checks here: acquiring facts may itself be delayed
+        // after the caller's Date check. Missing/late stamps never grant success.
+        guard !isCancelled(), let entry = entries[id],
+              let publishedAt = entry.publishedAt, publishedAt < deadline else { return nil }
+        if consume { entries.removeValue(forKey: id) }
+        // The returned value is the same selected entry, never a second lookup.
+        return entry.data
+    }
+}
+@Suite("Exact READY reply publication selection")
+private struct RecoveryReadyReplyStoreTests {
+    @Test func timelyBytesSurviveDelayedObservationAndAreConsumedOnce() throws {
+        let facts = NIOLockedValueBox(RecoveryReadyReplyStore())
+        let deadline = Date(timeIntervalSince1970: 100)
+        let accepted = facts.withLockedValue { $0.publish(Data([1, 2]), for: "timely", now: { deadline.addingTimeInterval(-1) }) }
+        #expect(accepted)
+        // The waiter resumes after its Date loop has ended. Eligibility is the
+        // exact entry's publication, and selection also consumes those bytes.
+        let selected = facts.withLockedValue { $0.select("timely", before: deadline, consume: true, isCancelled: { false }) }
+        #expect(selected == Data([1, 2]))
+        #expect(facts.withLockedValue { $0.isEmpty })
+        #expect(facts.withLockedValue { $0.select("timely", before: deadline, consume: true, isCancelled: { false }) } == nil)
+    }
+    @Test(arguments: [0.0, 1.0])
+    func equalOrLatePublicationCannotWinDelayedLockAcquisition(offset: Double) {
+        let facts = NIOLockedValueBox(RecoveryReadyReplyStore())
+        let deadline = Date(timeIntervalSince1970: 100)
+        // Between the outer Date check and lock acquisition, a callback may
+        // publish. The inside-lock selection still enforces this deadline.
+        let accepted = facts.withLockedValue { $0.publish(Data([3]), for: "late", now: { deadline.addingTimeInterval(offset) }) }
+        #expect(accepted)
+        let selected = facts.withLockedValue { $0.select("late", before: deadline, consume: true, isCancelled: { false }) }
+        #expect(selected == nil)
+        #expect(facts.withLockedValue { $0["late"] } == Data([3]))
+        #expect(facts.withLockedValue { $0.count } == 1)
+    }
+    @Test func missingReplyOrPublicationStampCannotBeSelected() {
+        let facts = NIOLockedValueBox(RecoveryReadyReplyStore())
+        let deadline = Date(timeIntervalSince1970: 100)
+        #expect(facts.withLockedValue { $0.select("missing", before: deadline, consume: true, isCancelled: { false }) } == nil)
+        let accepted = facts.withLockedValue { $0.publish(Data([4]), for: "unstamped", now: { nil }) }
+        #expect(accepted)
+        #expect(facts.withLockedValue { $0.select("unstamped", before: deadline, consume: true, isCancelled: { false }) } == nil)
+        #expect(facts.withLockedValue { $0["unstamped"] } == Data([4]))
+    }
+    @Test func cancellationAtSelectionPreservesTheTimelyEntry() {
+        let facts = NIOLockedValueBox(RecoveryReadyReplyStore())
+        let cancellation = NIOLockedValueBox(false)
+        let deadline = Date(timeIntervalSince1970: 100)
+        let accepted = facts.withLockedValue { $0.publish(Data([5]), for: "cancelled", now: { deadline.addingTimeInterval(-1) }) }
+        #expect(accepted)
+        #expect(!cancellation.withLockedValue { $0 })
+        // Cancellation changes after the caller's check and before selection.
+        cancellation.withLockedValue { $0 = true }
+        let selected = facts.withLockedValue { $0.select("cancelled", before: deadline, consume: true,
+                                                       isCancelled: { cancellation.withLockedValue { $0 } }) }
+        #expect(selected == nil)
+        #expect(facts.withLockedValue { $0["cancelled"] } == Data([5]))
+    }
+    @Test func preexistingHeldReplyRetainsItsExactBytesUntilConsumed() {
+        let facts = NIOLockedValueBox(RecoveryReadyReplyStore())
+        let startedAt = Date(timeIntervalSince1970: 90), deadline = Date(timeIntervalSince1970: 100)
+        let accepted = facts.withLockedValue { $0.publish(Data([6]), for: "held", now: { startedAt.addingTimeInterval(-1) }) }
+        #expect(accepted)
+        let first = facts.withLockedValue { $0.select("held", before: deadline, consume: false, isCancelled: { false }) }
+        let second = facts.withLockedValue { $0.select("held", before: deadline, consume: false, isCancelled: { false }) }
+        #expect(first == Data([6])); #expect(second == first)
+        #expect(facts.withLockedValue { $0.count } == 1)
+        let consumed = facts.withLockedValue { $0.select("held", before: deadline, consume: true, isCancelled: { false }) }
+        #expect(consumed == first); #expect(facts.withLockedValue { $0.isEmpty })
+    }
+    @Test func currentReplacementOwnsItsStampAndCannotChangeSelectedBytes() {
+        let facts = NIOLockedValueBox(RecoveryReadyReplyStore())
+        let deadline = Date(timeIntervalSince1970: 100)
+        let first = facts.withLockedValue { $0.publish(Data([7]), for: "duplicate", now: { deadline.addingTimeInterval(-2) }) }
+        let replacement = facts.withLockedValue { $0.publish(Data([8]), for: "duplicate", now: { deadline.addingTimeInterval(1) }) }
+        #expect(first && replacement)
+        #expect(facts.withLockedValue { $0.select("duplicate", before: deadline, consume: true, isCancelled: { false }) } == nil)
+        #expect(facts.withLockedValue { $0["duplicate"] } == Data([8]))
+        #expect(facts.withLockedValue { $0.count } == 1)
+        let selectedFacts = NIOLockedValueBox(RecoveryReadyReplyStore())
+        let current = selectedFacts.withLockedValue { $0.publish(Data([9]), for: "duplicate", now: { deadline.addingTimeInterval(-1) }) }
+        #expect(current)
+        let selected = selectedFacts.withLockedValue { $0.select("duplicate", before: deadline, consume: true, isCancelled: { false }) }
+        // A callback after the locked consume creates a distinct current entry.
+        let afterSelection = selectedFacts.withLockedValue { $0.publish(Data([10]), for: "duplicate", now: { deadline.addingTimeInterval(2) }) }
+        #expect(afterSelection); #expect(selected == Data([9]))
+        #expect(selectedFacts.withLockedValue { $0["duplicate"] } == Data([10]))
+        #expect(selectedFacts.withLockedValue { $0.select("duplicate", before: deadline, consume: true, isCancelled: { false }) } == nil)
+    }
+    @Test func fullCapacityRefusesNewAndDuplicatePublicationBeforeCopying() {
+        let facts = NIOLockedValueBox(RecoveryReadyReplyStore())
+        let deadline = Date(timeIntervalSince1970: 100)
+        for index in 0..<64 {
+            let accepted = facts.withLockedValue { $0.publish(Data([UInt8(index)]), for: String(index), now: { deadline.addingTimeInterval(-1) }) }
+            #expect(accepted)
+        }
+        let copies = NIOLockedValueBox(0), clocks = NIOLockedValueBox(0)
+        func bytes() -> Data { copies.withLockedValue { $0 += 1 }; return Data([255]) }
+        func stamp() -> Date? { clocks.withLockedValue { $0 += 1 }; return deadline }
+        let duplicate = facts.withLockedValue { $0.publish(bytes(), for: "0", now: stamp) }
+        let additional = facts.withLockedValue { $0.publish(bytes(), for: "overflow", now: stamp) }
+        #expect(!duplicate && !additional)
+        #expect(copies.withLockedValue { $0 } == 0); #expect(clocks.withLockedValue { $0 } == 0)
+        #expect(facts.withLockedValue { $0.count } == 64)
+        #expect(facts.withLockedValue { $0["0"] } == Data([0]))
+        let freed = facts.withLockedValue { $0.select("0", before: deadline, consume: true, isCancelled: { false }) }
+        #expect(freed == Data([0]))
+        let admitted = facts.withLockedValue { $0.publish(bytes(), for: "overflow", now: { deadline.addingTimeInterval(-1) }) }
+        #expect(admitted); #expect(copies.withLockedValue { $0 } == 1)
+        #expect(facts.withLockedValue { $0.count } == 64)
+    }
+}
 private final class RecoveryAuthorizationPeer: @unchecked Sendable {
-    struct Facts { var kinds: [String] = []; var acks: [String] = []; var audits: [String] = []; var closed = false; var ready: [String: Data] = [:]; var canonical: [Data] = []; var firstRejection: String?
+    struct Facts { var kinds: [String] = []; var acks: [String] = []; var audits: [String] = []; var closed = false; var ready = RecoveryReadyReplyStore(); var canonical: [Data] = []; var firstRejection: String?
         var readyObservations: [String: ReadyPeerObservation] = [:]
         var observationsOmitted = false
         mutating func observe(_ id: String, _ update: (inout ReadyPeerObservation) -> Void) {
@@ -187,8 +320,8 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
                     value.firstRejection = String(decoding: reason.utf8.prefix(256), as: UTF8.self)
                 }
                 var publishedAt: UInt64?
-                if root["kind"] as? String == "recoveryReady", let requestID = root["requestID"] as? String, value.ready.count < 64 {
-                    value.ready[requestID] = Data(buffer: bytes)
+                if root["kind"] as? String == "recoveryReady", let requestID = root["requestID"] as? String,
+                   value.ready.publish(Data(buffer: bytes), for: requestID, now: { Date() }) {
                     // Sample only this callback's actual publication, including
                     // the original capacity guard; never reuse an older reply.
                     publishedAt = DispatchTime.now().uptimeNanoseconds
@@ -251,6 +384,54 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
             "count=\(value.ready.count) first8=[" + value.ready.keys.prefix(8).map { String(reflecting: readyDiagnosticText($0)) }.joined(separator: ",") + "]"
         }
         let observed = diagnosticRequestID.map { readyObservation($0) } ?? "requestID=unspecified"
+        print("READY_WAIT_TIMEOUT phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) startNs=\(startedAt) nominalDeadlineLowerNs=\(nominalDeadline) nominalDeadlineUpperNs=\(nominalDeadlineUpper) wallDeadline=\(deadline.timeIntervalSince1970) lastPredicateAttemptNs=\(String(reflecting: lastPredicateAt)) finalNs=\(finalAt) wallFinal=\(Date().timeIntervalSince1970) retainedIDs=[\(retained)] \(timing.summary) \(observed)")
+        throw RecoveryAuthorizationFixtureError.timeout("\(phase.prefix(128)); \(state); cancelled=\(Task.isCancelled)")
+    }
+    func waitReadyReply(_ phase: String, id: String, consume: Bool = true) async throws -> Data {
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        let deadline = Date().addingTimeInterval(10)
+        let capturedAt = DispatchTime.now().uptimeNanoseconds
+        let sum = startedAt.addingReportingOverflow(10_000_000_000)
+        let nominalDeadline = sum.overflow ? UInt64.max : sum.partialValue
+        let upperSum = capturedAt.addingReportingOverflow(10_000_000_000)
+        let nominalDeadlineUpper = upperSum.overflow ? UInt64.max : upperSum.partialValue
+        facts.withLockedValue { value in value.observe(id) {
+            $0.waitStartedAt = startedAt; $0.nominalWaitDeadline = nominalDeadline; $0.nominalWaitDeadlineUpper = nominalDeadlineUpper
+        } }
+        func selectReply() -> Data? {
+            facts.withLockedValue { value in
+                guard let reply = value.ready.select(id, before: deadline, consume: consume,
+                                                     isCancelled: { Task.isCancelled }) else { return nil }
+                value.observe(id) { $0.waitReturnedAt = DispatchTime.now().uptimeNanoseconds }
+                return reply
+            }
+        }
+        var lastPredicateAt: UInt64?
+        var timing = ReadyWaitTiming()
+        while Date() < deadline, !Task.isCancelled {
+            lastPredicateAt = DispatchTime.now().uptimeNanoseconds
+            if let lastPredicateAt { timing.predicate(at: lastPredicateAt) }
+            if let reply = selectReply() { return reply }
+            timing.sleepEntered(at: DispatchTime.now().uptimeNanoseconds)
+            do { try await Task.sleep(nanoseconds: 10_000_000) }
+            catch {
+                timing.sleepReturned(at: DispatchTime.now().uptimeNanoseconds)
+                print("READY_WAIT_SLEEP_FAILED phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) \(timing.summary) cancelled=\(Task.isCancelled)")
+                throw error
+            }
+            timing.sleepReturned(at: DispatchTime.now().uptimeNanoseconds)
+        }
+        // A delayed wake may still select bytes published within the original
+        // deadline. Cancellation is checked during this same locked selection.
+        lastPredicateAt = DispatchTime.now().uptimeNanoseconds
+        if let lastPredicateAt { timing.predicate(at: lastPredicateAt) }
+        if let reply = selectReply() { return reply }
+        let state = diagnosticState
+        let finalAt = DispatchTime.now().uptimeNanoseconds
+        let retained = facts.withLockedValue { value in
+            "count=\(value.ready.count) first8=[" + value.ready.keys.prefix(8).map { String(reflecting: readyDiagnosticText($0)) }.joined(separator: ",") + "]"
+        }
+        let observed = readyObservation(id)
         print("READY_WAIT_TIMEOUT phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) startNs=\(startedAt) nominalDeadlineLowerNs=\(nominalDeadline) nominalDeadlineUpperNs=\(nominalDeadlineUpper) wallDeadline=\(deadline.timeIntervalSince1970) lastPredicateAttemptNs=\(String(reflecting: lastPredicateAt)) finalNs=\(finalAt) wallFinal=\(Date().timeIntervalSince1970) retainedIDs=[\(retained)] \(timing.summary) \(observed)")
         throw RecoveryAuthorizationFixtureError.timeout("\(phase.prefix(128)); \(state); cancelled=\(Task.isCancelled)")
     }
@@ -577,8 +758,7 @@ private extension RecoveryAuthorizationPeer {
         observeReadySend(command)
         try await actual.send(Array(data))
         observeReadySend(command, completed: true)
-        try await wait("READY \(command.operation) reply", diagnosticRequestID: id) { $0.ready[id] != nil }
-        return try #require(facts.withLockedValue { $0.ready.removeValue(forKey: id) })
+        return try await waitReadyReply("READY \(command.operation) reply", id: id)
     }
     func readyFrame(_ command: ReadyTestControl) async throws -> Data {
         let actual = try #require(socket)
@@ -749,7 +929,7 @@ private struct RelayAuthenticatedReadyTests {
             #expect(peer.facts.withLockedValue { $0.ready.isEmpty && $0.canonical.isEmpty })
             h.registrations.gate.release()
             if deny { try await peer.wait { $0.closed }; #expect(peer.facts.withLockedValue { $0.ready.isEmpty && $0.canonical.isEmpty }) }
-            else { let id = describe.requestID; try await peer.wait("held describe after authorization release", diagnosticRequestID: id) { $0.ready[id] != nil } }
+            else { _ = try await peer.waitReadyReply("held describe after authorization release", id: describe.requestID, consume: false) }
         }
     }
     @Test func keeperReconnectResumesSameCapsuleWithFreshPhysicalGeneration() async throws {
