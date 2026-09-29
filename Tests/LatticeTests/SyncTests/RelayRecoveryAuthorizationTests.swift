@@ -1174,3 +1174,495 @@ private struct RelayLifecycleAdministrationTests {
         } catch { let original = error; try? await h.shutdown(); throw original }
     }
 }
+
+// Automatic setup admission fixtures use real route/IO/authorization paths.
+// Their dedicated directory is retained; no live native file is unlinked.
+private final class AutomaticSetupIOHold: @unchecked Sendable {
+    private let gate = DispatchSemaphore(value: 0)
+    let entered = NIOLockedValueBox(false)
+    let timedOut = NIOLockedValueBox(false)
+    func hold() {
+        entered.withLockedValue { $0 = true }
+        if gate.wait(timeout: .now() + 12) != .success { timedOut.withLockedValue { $0 = true } }
+    }
+    func release() { gate.signal() }
+}
+private final class AutomaticSetupCase: @unchecked Sendable {
+    struct Facts {
+        var configurationCalls = 0, sourceCalls = 0, finished = 0
+        var observationOverflow = false
+        var events: [RelaySetupAdmissionObservation] = []
+    }
+    let directory: URL
+    let facts = NIOLockedValueBox(Facts())
+    let registrations: RegisteredRecoveryPeers
+    let hold = AutomaticSetupIOHold()
+    let queuedHold: Bool
+    let constructorHold: Bool
+    let memory: Bool
+    let holdAfterAdmission: Bool
+    let holdBeforeCapture: Bool
+    let holdActualMutex: Bool
+    let holdWhenWaiting: Bool
+    let actualMutex = NIOLockedValueBox<AutomaticSetupActualMutex?>(nil)
+    let otherKeyProgress = NIOLockedValueBox(false)
+    init(queuedHold: Bool = false, constructorHold: Bool = false, memory: Bool = false,
+         mode: RegisteredRecoveryPeers.Mode = .normal, holdAfterAdmission: Bool = false,
+         holdBeforeCapture: Bool = false, holdActualMutex: Bool = false, holdWhenWaiting: Bool = false) throws {
+        self.queuedHold = queuedHold; self.constructorHold = constructorHold; self.memory = memory
+        self.holdAfterAdmission = holdAfterAdmission; self.holdBeforeCapture = holdBeforeCapture
+        self.holdActualMutex = holdActualMutex
+        self.holdWhenWaiting = holdWhenWaiting
+        registrations = .init(mode)
+        let home = try #require(ProcessInfo.processInfo.environment["HOME"])
+        directory = URL(fileURLWithPath: home).appending(path: "localdev/lattice-automatic-setup-tests/\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    var key: String { FileWatchManager.canonicalKey(for: directory.appending(path: "group-a.sqlite")) }
+    func ownerOpened(_ owner: Lattice) {
+        if holdActualMutex, facts.withLockedValue({ $0.configurationCalls == 1 }) {
+            let holder = AutomaticSetupActualMutex(owner: owner)
+            actualMutex.withLockedValue { existing in
+                precondition(existing == nil) // One selected physical connection.
+                existing = holder
+            }
+        }
+        if constructorHold { hold.hold() }
+    }
+    func releaseHolds() {
+        hold.release()
+        actualMutex.withLockedValue { $0 }?.requestRelease()
+    }
+    func retireHolder() async {
+        guard let holder = actualMutex.withLockedValue({ $0 }) else { return }
+        let retired = await holder.retire(on: key)
+        #expect(retired)
+        let facts = holder.facts
+        #expect(facts.workerFinished && facts.writerRetired && facts.releaseRequested)
+        #expect(!facts.acquisitionTimedOut && !facts.safetyReleased && facts.status == 0)
+        let released = actualMutex.withLockedValue { value in let held = value; value = nil; return held }
+        withExtendedLifetime(released) {}
+    }
+    func observe(_ event: RelaySetupAdmissionObservation) {
+        facts.withLockedValue { if $0.events.count < 256 { $0.events.append(event) } else { $0.observationOverflow = true } }
+        if event.stage == .attemptEntered, holdBeforeCapture { hold.hold() }
+        if event.stage == .admitted, holdAfterAdmission { hold.hold() }
+        if event.stage == .waiting, holdWhenWaiting, facts.withLockedValue({ $0.configurationCalls == 1 }) { hold.hold() }
+        if event.stage == .ownerOpened, queuedHold {
+            RelayExecutionPool.io.submitRequired(for: key) { [hold] in hold.hold() }
+        }
+    }
+    func events(_ stage: RelaySetupAdmissionObservation.Stage) -> [RelaySetupAdmissionObservation] {
+        facts.withLockedValue { $0.events.filter { $0.stage == stage } }
+    }
+}
+private final class AutomaticSetupHarness: @unchecked Sendable {
+    let state: AutomaticSetupCase
+    let app: Application
+    let writer: SyncRelayHandle
+    let port: Int
+    private let peers = NIOLockedValueBox<[RecoveryAuthorizationPeer]>([])
+    init(_ state: AutomaticSetupCase) async throws {
+        self.state = state
+        var environment = try Environment.detect(); environment.arguments = ["vapor"]
+        let created = try await Application.make(environment)
+        app = created
+        app.http.server.configuration.port = 0
+        app.http.server.configuration.shutdownTimeout = .milliseconds(500)
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
+            didFinishAsyncSetup: { state.facts.withLockedValue { $0.finished += 1 } },
+            didObserveRecoverySetup: { state.observe($0) },
+            didOpenRecoverySetupOwnerForTesting: { state.ownerOpened($0) })
+        RelayIngressTesting.install(hooks, for: state.directory)
+        defer { RelayIngressTesting.remove(hooks, for: state.directory) }
+        writer = Lattice.configureSyncRelay(on: app.routes, path: ["writer"], for: [SimpleSyncObject.self],
+            storageURL: state.directory, storeConfiguration: { url in
+                state.facts.withLockedValue { $0.configurationCalls += 1 }
+                return state.memory ? .init(storage: .memory()) : .init(fileURL: url)
+            }, recoverySource: { channel in
+                state.facts.withLockedValue { $0.sourceCalls += 1 }
+                return try state.registrations.source(channel)
+            }, channelExtractor: { try state.registrations.channel($0) },
+            recoveryAuthorization: { try await state.registrations.authorize($0, $1) })
+        do { try await created.startup(); port = try #require(created.http.server.shared.localAddress?.port) }
+        catch { try? await created.asyncShutdown(); throw error }
+    }
+    func connect() async throws -> RecoveryAuthorizationPeer {
+        let p = state.registrations.first
+        let query = "recovery-v=1&recovery-replica=\(p.replicaID)&recovery-receiver=\(p.receiverIncarnation)&recovery-channel=\(p.channelIncarnation)"
+        let client = RecoveryAuthorizationPeer(); peers.withLockedValue { $0.append(client) }
+        var headers = HTTPHeaders(); headers.add(name: "X-Registered-Session", value: state.registrations.token)
+        var configuration = WebSocketClient.Configuration(); configuration.maxFrameSize = 1 << 20
+        try await WebSocket.connect(to: "ws://127.0.0.1:\(port)/writer?\(query)", headers: headers,
+            configuration: configuration, on: app.eventLoopGroup) { client.attach($0) }.get()
+        return client
+    }
+    func shutdown() async throws {
+        state.releaseHolds(); state.registrations.gate.release()
+        let clients = peers.withLockedValue { $0 }
+        for client in clients { client.socket?.close(promise: nil) }
+        await writer.retireRecoveryAuthorization()
+        var first: (any Error)?
+        do { try await app.asyncShutdown() } catch { first = error }
+        do { try await readyWait("automatic setup actual drain") { self.writer.recoverySessionCount == 0 } }
+        catch { if first == nil { first = error } }
+        await state.retireHolder()
+        #expect(!state.hold.timedOut.withLockedValue { $0 })
+        #expect(!state.facts.withLockedValue { $0.observationOverflow })
+        if let first { throw first }
+    }
+}
+private func withAutomaticSetupCase(_ state: AutomaticSetupCase,
+    _ body: (AutomaticSetupHarness) async throws -> Void) async throws {
+    let harness = try await AutomaticSetupHarness(state)
+    var first: (any Error)?
+    do { try await body(harness) } catch { first = error }
+    // Exactly one cleanup attempt, including when cleanup itself fails.
+    do { try await harness.shutdown() }
+    catch { if first == nil { first = error } else { Issue.record("automatic setup cleanup: \(error)") } }
+    if let first { throw first }
+}
+
+@Suite("Actual automatic source setup admission", .serialized, .timeLimit(.minutes(2)))
+private struct AutomaticSourceSetupTests {
+    @Test func actualBusyYieldsKeyedIOAndReusesOneOwnerUntilSuccessfulRelease() async throws {
+        let state = try AutomaticSetupCase(holdActualMutex: true)
+        try await withAutomaticSetupCase(state) { h in
+            let peer = try await h.connect()
+            try await readyWait { state.events(.waiting).count >= 2 }
+            let holder = try #require(state.actualMutex.withLockedValue { $0 })
+            #expect(holder.facts.acquired && holder.facts.status == 0 && !holder.facts.workerFinished)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+            let sameKey = NIOLockedValueBox(false)
+            RelayExecutionPool.io.submitRequired(for: state.key) { sameKey.withLockedValue { $0 = true } }
+            RelayExecutionPool.io.submitRequired(for: state.key + ".other") { state.otherKeyProgress.withLockedValue { $0 = true } }
+            try await readyWait { sameKey.withLockedValue { $0 } && state.otherKeyProgress.withLockedValue { $0 } }
+            #expect(h.writer.recoverySessionCount == 1)
+            holder.requestRelease()
+            try await readyWait { state.events(.admitted).count == 1 && state.facts.withLockedValue { $0.finished == 1 } }
+            #expect(state.facts.withLockedValue { $0.configurationCalls == 1 && $0.sourceCalls == 1 })
+            #expect(state.registrations.calls.withLockedValue { $0 } == 1)
+            let attempts = state.events(.attemptEntered)
+            #expect(attempts.count >= 3 && attempts.count <= 32)
+            #expect(attempts.allSatisfy(\.onIO))
+            #expect(Set(attempts.compactMap(\.owner)).count == 1)
+            #expect(Set(attempts.compactMap { $0.budget?.deadline }).count == 1)
+            for (before, after) in zip(attempts, attempts.dropFirst()) {
+                #expect(after.observedAt >= before.observedAt + 100_000_000)
+            }
+            let (frame, ids) = try recoveryDonorFrame(611)
+            try await peer.socket!.send(Array(frame))
+            try await peer.wait { Set(ids).isSubset(of: Set($0.acks)) }
+            #expect(peer.facts.withLockedValue { Set($0.acks).count == ids.count })
+        }
+    }
+
+    @Test func actualBusyExhaustsOriginalBudgetWhileMutexIsStillHeld() async throws {
+        let state = try AutomaticSetupCase(holdActualMutex: true)
+        try await withAutomaticSetupCase(state) { h in
+            let peer = try await h.connect()
+            try await readyWait { !state.events(.waiting).isEmpty }
+            let holder = try #require(state.actualMutex.withLockedValue { $0 })
+            #expect(holder.facts.acquired && holder.facts.status == 0)
+            try await readyWait { !state.events(.failed).isEmpty }
+            let failed = try #require(state.events(.failed).first)
+            let budget = try #require(failed.budget)
+            #expect(budget.attempts > 0 && budget.attempts <= 32)
+            #expect(budget.attempts == 32 || failed.observedAt >= budget.deadline)
+            #expect(budget.deadline - budget.startedAt == 5_000_000_000)
+            #expect(!holder.facts.workerFinished && !holder.facts.releaseRequested && !holder.facts.safetyReleased)
+            #expect(state.events(.admitted).isEmpty)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+            #expect(state.facts.withLockedValue { $0.configurationCalls == 1 && $0.sourceCalls == 1 })
+            // Never release the actual mutex to manufacture the refusal oracle.
+            holder.requestRelease()
+            try await peer.wait { $0.closed }
+            try await readyWait { h.writer.recoverySessionCount == 0 }
+        }
+    }
+
+    @Test func closedTimerCallbackKeepsCapacityUntilItActuallyDrainsAndCannotPoisonSuccessor() async throws {
+        let state = try AutomaticSetupCase(holdActualMutex: true, holdWhenWaiting: true)
+        try await withAutomaticSetupCase(state) { h in
+            let peer = try await h.connect()
+            let socket = try #require(peer.socket)
+            try await readyWait { state.hold.entered.withLockedValue { $0 } }
+            let waiting = try #require(state.events(.waiting).first)
+            let holder = try #require(state.actualMutex.withLockedValue { $0 })
+            #expect(holder.facts.acquired && holder.facts.status == 0)
+            try await socket.close()
+            try await peer.wait { $0.closed }
+            // Native retirement can finish on IO while the real timer/control
+            // callback remains pending. This must not recycle the mount slot.
+            try await readyWait { h.writer.recoveryRetiredNativeSessionCount == 1 }
+            #expect(h.writer.recoverySessionCount == 1)
+            #expect(state.events(.timerDrained).isEmpty)
+            #expect(state.events(.ownerReleased).isEmpty)
+            holder.requestRelease(); state.hold.release()
+            try await readyWait { h.writer.recoverySessionCount == 0 && state.events(.timerDrained).count == 1 }
+            await state.retireHolder()
+            let successor = try await h.connect()
+            try await readyWait { state.events(.admitted).count == 1 && state.registrations.calls.withLockedValue { $0 } == 1 }
+            let admitted = try #require(state.events(.admitted).first)
+            #expect(admitted.connectionID != waiting.connectionID)
+            #expect(!state.events(.admitted).contains { $0.connectionID == waiting.connectionID })
+            let (frame, ids) = try recoveryDonorFrame(612)
+            try await successor.socket!.send(Array(frame))
+            try await successor.wait { Set(ids).isSubset(of: Set($0.acks)) }
+            withExtendedLifetime(socket) {}
+        }
+    }
+
+    @Test func oneOpenedOwnerAndAuthorizationRemainUsableBeyondAdmissionDeadline() async throws {
+        let state = try AutomaticSetupCase()
+        try await withAutomaticSetupCase(state) { h in
+            let peer = try await h.connect()
+            try await readyWait { state.events(.admitted).count == 1 && state.facts.withLockedValue { $0.finished == 1 } }
+            #expect(state.facts.withLockedValue { $0.configurationCalls == 1 && $0.sourceCalls == 1 })
+            #expect(state.registrations.calls.withLockedValue { $0 } == 1)
+            let admitted = try #require(state.events(.admitted).first)
+            let budget = try #require(admitted.budget)
+            let now = DispatchTime.now().uptimeNanoseconds
+            if now <= budget.deadline { try await Task.sleep(nanoseconds: budget.deadline - now + 100_000_000) }
+            // The setup deadline must never become retained route liveness.
+            let (frame, ids) = try recoveryDonorFrame(610)
+            try await peer.socket!.send(Array(frame))
+            try await peer.wait { Set(ids).isSubset(of: Set($0.acks)) }
+            #expect(!peer.facts.withLockedValue { $0.closed })
+            let owners = state.facts.withLockedValue { Set($0.events.compactMap(\.owner)) }
+            #expect(owners.count == 1)
+            #expect(state.events(.admitted).count == 1)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func closeKeepsSetupCapacityUntilActualQueuedOrOpeningIODrains(opening: Bool) async throws {
+        let state = try AutomaticSetupCase(queuedHold: !opening, constructorHold: opening)
+        try await withAutomaticSetupCase(state) { h in
+            let peer = try await h.connect()
+            let socket = try #require(peer.socket)
+            try await readyWait { state.hold.entered.withLockedValue { $0 } }
+            RelayExecutionPool.io.submitRequired(for: state.key + ".independent") {
+                state.otherKeyProgress.withLockedValue { $0 = true }
+            }
+            try await readyWait { state.otherKeyProgress.withLockedValue { $0 } }
+            try await socket.close()
+            try await peer.wait { $0.closed }
+            #expect(h.writer.recoverySessionCount == 1)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+            #expect(state.events(.attemptEntered).isEmpty)
+            #expect(state.events(.ownerReleased).isEmpty)
+            state.hold.release()
+            try await readyWait { h.writer.recoverySessionCount == 0 && state.facts.withLockedValue { $0.finished == 1 } }
+            #expect(state.events(.ownerReleased).count == 1)
+            #expect(state.events(.admitted).isEmpty)
+            #expect(state.facts.withLockedValue { $0.configurationCalls == 1 && $0.sourceCalls == 1 })
+            withExtendedLifetime(socket) {}
+        }
+    }
+
+    @Test func firstCaptureQueuedBeyondOriginalDeadlineNeverEntersNativeAdmission() async throws {
+        let state = try AutomaticSetupCase(queuedHold: true)
+        try await withAutomaticSetupCase(state) { h in
+            let peer = try await h.connect()
+            try await readyWait { state.hold.entered.withLockedValue { $0 } && !state.events(.attemptQueued).isEmpty }
+            let queued = try #require(state.events(.attemptQueued).first)
+            let budget = try #require(queued.budget)
+            #expect(budget.attempts == 0)
+            let now = DispatchTime.now().uptimeNanoseconds
+            if now <= budget.deadline { try await Task.sleep(nanoseconds: budget.deadline - now + 100_000_000) }
+            #expect(h.writer.recoverySessionCount == 1)
+            state.hold.release()
+            try await peer.wait { $0.closed }
+            try await readyWait { h.writer.recoverySessionCount == 0 && !state.events(.failed).isEmpty }
+            #expect(state.events(.attemptEntered).isEmpty)
+            #expect(state.events(.failed).first?.budget?.attempts == 0)
+            #expect(state.events(.failed).first?.budget?.deadline == budget.deadline)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+            #expect(state.facts.withLockedValue { $0.configurationCalls == 1 && $0.sourceCalls == 1 })
+        }
+    }
+
+    @Test func deadlineCrossedAfterAttemptEntryIsVetoedBeforeNativeEnrollment() async throws {
+        let state = try AutomaticSetupCase(holdBeforeCapture: true)
+        try await withAutomaticSetupCase(state) { h in
+            let peer = try await h.connect()
+            try await readyWait { state.hold.entered.withLockedValue { $0 } && state.events(.attemptEntered).count == 1 }
+            let entered = try #require(state.events(.attemptEntered).first)
+            let budget = try #require(entered.budget)
+            #expect(budget.attempts == 1)
+            let now = DispatchTime.now().uptimeNanoseconds
+            if now <= budget.deadline { try await Task.sleep(nanoseconds: budget.deadline - now + 100_000_000) }
+            state.hold.release()
+            try await peer.wait { $0.closed }
+            try await readyWait { h.writer.recoverySessionCount == 0 && !state.events(.failed).isEmpty }
+            #expect(state.events(.attemptEntered).count == 1)
+            #expect(state.events(.failed).first?.budget?.attempts == 1)
+            #expect(state.events(.failed).first?.budget?.deadline == budget.deadline)
+            #expect(state.events(.admitted).isEmpty && state.events(.busy).isEmpty)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+        }
+    }
+
+    @Test func retiringActualMountCancelsBusyEpisodeAndDrainsWithSocketRetained() async throws {
+        let state = try AutomaticSetupCase(holdActualMutex: true)
+        try await withAutomaticSetupCase(state) { h in
+            let peer = try await h.connect()
+            let socket = try #require(peer.socket)
+            try await readyWait { state.events(.waiting).count >= 2 }
+            let holder = try #require(state.actualMutex.withLockedValue { $0 })
+            #expect(holder.facts.acquired && holder.facts.status == 0)
+            await h.writer.retireRecoveryAuthorization()
+            try await peer.wait { $0.closed }
+            try await readyWait { h.writer.recoverySessionCount == 0 && state.facts.withLockedValue { $0.finished == 1 } }
+            #expect(state.events(.admitted).isEmpty)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+            #expect(state.events(.ownerReleased).count == 1)
+            #expect(!holder.facts.workerFinished && !holder.facts.releaseRequested && !holder.facts.safetyReleased)
+            holder.requestRelease()
+            withExtendedLifetime(socket) {}
+        }
+    }
+
+    @Test func unsupportedPhysicalStoreIsTerminalWithoutBusyRetry() async throws {
+        let state = try AutomaticSetupCase(memory: true)
+        try await withAutomaticSetupCase(state) { h in
+            let peer = try await h.connect()
+            try await peer.wait { $0.closed }
+            try await readyWait { h.writer.recoverySessionCount == 0 && state.facts.withLockedValue { $0.finished == 1 } }
+            #expect(state.events(.ownerOpened).count == 1)
+            #expect(state.events(.attemptEntered).count == 1)
+            #expect(state.events(.failed).count == 1)
+            #expect(state.events(.busy).isEmpty)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+        }
+    }
+
+    @Test func closeAfterRealEnrollmentBeforeControlHandoffDisposesLateSetup() async throws {
+        let state = try AutomaticSetupCase(holdAfterAdmission: true)
+        try await withAutomaticSetupCase(state) { h in
+            let peer = try await h.connect()
+            let socket = try #require(peer.socket)
+            try await readyWait { state.hold.entered.withLockedValue { $0 } && state.events(.admitted).count == 1 }
+            try await socket.close()
+            try await peer.wait { $0.closed }
+            #expect(h.writer.recoverySessionCount == 1)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+            state.hold.release()
+            try await readyWait { h.writer.recoverySessionCount == 0 && state.facts.withLockedValue { $0.finished == 1 } }
+            #expect(state.events(.admitted).count == 1)
+            #expect(state.events(.ownerReleased).count == 1)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+            withExtendedLifetime(socket) {}
+        }
+    }
+
+    @Test func authorizationRefusalAfterEnrollmentNeverRestartsCapture() async throws {
+        let state = try AutomaticSetupCase(mode: .wrongSource)
+        try await withAutomaticSetupCase(state) { h in
+            let peer = try await h.connect()
+            try await peer.wait { $0.closed }
+            try await readyWait { h.writer.recoverySessionCount == 0 && state.facts.withLockedValue { $0.finished == 1 } }
+            #expect(state.events(.admitted).count == 1)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 1)
+            #expect(state.facts.withLockedValue { $0.configurationCalls == 1 && $0.sourceCalls == 1 })
+            #expect(peer.facts.withLockedValue { $0.acks.isEmpty && $0.audits.isEmpty })
+        }
+    }
+    @Test(arguments: [false, true])
+    func stalePreReadUnopenedKeyCannotRetireOnAnotherLane(retireBeforeReservation: Bool) async throws {
+        let state = try AutomaticSetupCase(holdAfterAdmission: !retireBeforeReservation)
+        var environment = try Environment.detect(); environment.arguments = ["vapor"]
+        let app = try await Application.make(environment)
+        app.http.server.configuration.port = 0; app.http.server.configuration.shutdownTimeout = .milliseconds(500)
+        let mount = RecoveryRelayMount(source: { try state.registrations.source($0) }, upload: nil,
+                                      authorize: { try await state.registrations.authorize($0, $1) })
+        let sockets = SocketManager()
+        let staleLaneDrained = NIOLockedValueBox(false)
+        let oldKey = NIOLockedValueBox<String?>(nil)
+        let failure = NIOLockedValueBox<String?>(nil)
+        let peer = RecoveryAuthorizationPeer()
+        app.webSocket("custody") { request, socket in
+            do {
+                let channel = try state.registrations.channel(request)
+                let source = try mount.resolve(channel)
+                let connectionState = ConnectionRelayState()
+                let recovery = try RecoveryRelayConnection(mount: mount, request: request, socket: socket,
+                                                            revocation: connectionState.revocation)
+                connectionState.recovery = recovery
+                // This is an actual pre-start read, not a fabricated apply key.
+                let capturedBeforeStart = connectionState.nativeReleaseKey
+                oldKey.withLockedValue { $0 = capturedBeforeStart }
+                socket.onClose.whenComplete { _ in
+                    // Deliberately deliver the genuine stale captured argument
+                    // first. A fresh-key second call must not hide the race.
+                    recovery.retire(for: capturedBeforeStart)
+                    connectionState.sealIngress(.setupRefused, socket: socket)
+                    RelayExecutionPool.io.submitRequired(for: capturedBeforeStart) {
+                        staleLaneDrained.withLockedValue { $0 = true }
+                    }
+                    Task { @RelayControlActor in sockets.remove(socket: socket, channelId: channel.id) }
+                }
+                if retireBeforeReservation { recovery.retire(for: capturedBeforeStart) }
+                let input = RelayConnectionSetupInput(schema: [SimpleSyncObject.self], storageURL: state.directory,
+                    fileURL: state.directory.appending(path: "group-a.sqlite"), applyKey: state.key,
+                    channel: channel, recoverySource: source, socket: socket, state: connectionState,
+                    sockets: sockets, watchManager: nil, pushContext: nil,
+                    storeConfiguration: { url in
+                        state.facts.withLockedValue { $0.configurationCalls += 1 }; return .init(fileURL: url)
+                    }, lastEventId: nil, processFrame: { _, _, _ in }, diagnostic: nil, sendCatchUp: nil,
+                    didFinish: { state.facts.withLockedValue { $0.finished += 1 } },
+                    didObserveRecoverySetup: { state.observe($0) }, didOpenRecoverySetupOwnerForTesting: nil)
+                Task { @RelayControlActor in RelayConnectionSetup(input: input).start() }
+            } catch {
+                failure.withLockedValue { $0 = String(describing: error) }
+                socket.close(promise: nil)
+            }
+        }
+        var first: (any Error)?
+        do {
+            try await app.startup()
+            let port = try #require(app.http.server.shared.localAddress?.port)
+            let p = state.registrations.first
+            let query = "recovery-v=1&recovery-replica=\(p.replicaID)&recovery-receiver=\(p.receiverIncarnation)&recovery-channel=\(p.channelIncarnation)"
+            var headers = HTTPHeaders(); headers.add(name: "X-Registered-Session", value: state.registrations.token)
+            try await WebSocket.connect(to: "ws://127.0.0.1:\(port)/custody?\(query)", headers: headers,
+                                         on: app.eventLoopGroup) { peer.attach($0) }.get()
+            let socket = try #require(peer.socket)
+            if !retireBeforeReservation {
+                try await readyWait { state.hold.entered.withLockedValue { $0 } && state.events(.admitted).count == 1 }
+                let captured = try #require(oldKey.withLockedValue { $0 })
+                #expect(captured.hasPrefix("unopened:") && captured != state.key)
+                try await socket.close()
+                try await peer.wait { $0.closed }
+                // Any wrongly submitted old-key native cleanup would precede
+                // this real sentinel. Correct cleanup waits behind held new IO.
+                try await readyWait { staleLaneDrained.withLockedValue { $0 } }
+                #expect(mount.retiredNativeSessionCount == 0)
+                #expect(mount.sessionCount == 1)
+                #expect(state.events(.ownerReleased).isEmpty)
+                state.hold.release()
+            }
+            try await peer.wait { $0.closed }
+            try await readyWait { mount.sessionCount == 0 && state.facts.withLockedValue { $0.finished == 1 } }
+            #expect(failure.withLockedValue { $0 } == nil)
+            #expect(state.registrations.calls.withLockedValue { $0 } == 0)
+            if retireBeforeReservation {
+                #expect(state.events(.ownerOpened).isEmpty)
+                #expect(state.events(.attemptEntered).isEmpty)
+                #expect(state.facts.withLockedValue { $0.configurationCalls == 0 })
+            } else {
+                #expect(state.events(.ownerReleased).count == 1)
+                #expect(state.events(.admitted).count == 1)
+                #expect(state.facts.withLockedValue { $0.configurationCalls == 1 })
+            }
+            withExtendedLifetime(socket) {}
+        } catch { first = error }
+        state.releaseHolds(); peer.socket?.close(promise: nil); mount.retire()
+        do { try await app.asyncShutdown() } catch { if first == nil { first = error } }
+        do { try await readyWait { mount.sessionCount == 0 } } catch { if first == nil { first = error } }
+        #expect(!state.hold.timedOut.withLockedValue { $0 })
+        #expect(!state.facts.withLockedValue { $0.observationOverflow })
+        if let first { throw first }
+    }
+}
