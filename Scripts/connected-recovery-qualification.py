@@ -134,7 +134,20 @@ FAILURE_ERROR_DOMAINS = ('none',
  'fixture',
  'recoveryConfiguration')
 FAILURE_CALLBACK_PHASES = ('trustEvaluation', 'completion', 'receive', 'send', 'connect')
-FAILURE_RECORD_PREFIX = b'LATTICE_CONNECTED_FAILURE_V1 '
+FAILURE_ERROR_CATEGORIES = (
+    'writeDuringTLSShutdown', 'unableToAllocate', 'noSuchFilesystemObject',
+    'failedToLoadCertificate', 'failedToLoadPrivateKey', 'handshakeFailed',
+    'shutdownFailed', 'cannotMatchULabel', 'noCertificateToValidate',
+    'unableToValidateCertificate', 'cannotFindPeerIP', 'readInInvalidTLSState',
+    'uncleanShutdown', 'noError', 'zeroReturn', 'wantRead', 'wantWrite',
+    'wantConnect', 'wantAccept', 'wantX509Lookup', 'wantCertificateVerify',
+    'syscallError', 'sslError', 'unknownError', 'invalidSNIName', 'failedToSetALPN',
+)
+FAILURE_GUARD_OUTCOMES = (
+    'missingAttempt', 'staleTaskOrSession', 'nonServerTrust',
+    'missingServerTrust', 'currentServerTrust',
+)
+FAILURE_RECORD_PREFIX = b'LATTICE_CONNECTED_FAILURE_V2 '
 
 
 class GateFailure(Exception):
@@ -756,7 +769,7 @@ def case_outcomes(root):
 
 def validate_failure_record(value):
     require(type(value) is dict and set(value) == set(FAILURE_RECORD_KEYS))
-    require(type(value['version']) is int and value['version'] == 1)
+    require(type(value['version']) is int and value['version'] == 2)
     require(type(value['name']) is str and value['name'] in CASE_NAMES)
     require(type(value['phase']) is str and value['phase'] in FAILURE_RECORD_PHASES)
     require(type(value['completed']) is bool and type(value['callbackOverflow']) is bool)
@@ -764,27 +777,51 @@ def validate_failure_record(value):
             (type(value['cleanupPhase']) is str and value['cleanupPhase'] in FAILURE_CLEANUP_PHASES))
 
     def error_fact(error):
-        require(type(error) is dict and set(error) == {'kind', 'domain', 'code'})
+        require(type(error) is dict and set(error) == {'kind', 'domain', 'code', 'category'})
         require(type(error['kind']) is str and error['kind'] in FAILURE_ERROR_KINDS)
         require(type(error['domain']) is str and error['domain'] in FAILURE_ERROR_DOMAINS)
         code = error['code']
         require(code is None or (type(code) is int and -(2**31) <= code < 2**31))
         if code is not None:
             require(error['domain'] in ('url', 'osStatus', 'posix', 'cocoa', 'nioWebSocket'))
-        return {'kind': error['kind'], 'domain': error['domain'], 'code': code}
+        category = error['category']
+        require(category is None or (type(category) is str and category in FAILURE_ERROR_CATEGORIES))
+        if category is not None:
+            require(error['kind'] == 'tls' and error['domain'] == 'nioSSL' and code is None)
+        return {'kind': error['kind'], 'domain': error['domain'], 'code': code, 'category': category}
 
     copied = {key: value[key] for key in ('version', 'name', 'completed', 'phase', 'cleanupPhase', 'callbackOverflow')}
     for key in ('failure', 'cleanupFailure'):
         copied[key] = None if value[key] is None else error_fact(value[key])
     require(type(value['callbacks']) is list and len(value['callbacks']) <= 8)
     copied['callbacks'] = []
+    underlying_count = 0
     for callback in value['callbacks']:
-        require(type(callback) is dict and set(callback) == {'phase', 'error', 'trustAccepted'})
+        require(type(callback) is dict and set(callback) == {
+            'phase', 'error', 'trustAccepted', 'guardOutcome',
+            'underlyingErrors', 'underlyingTruncated', 'underlyingCycle'})
         require(type(callback['phase']) is str and callback['phase'] in FAILURE_CALLBACK_PHASES)
         require(callback['trustAccepted'] is None or type(callback['trustAccepted']) is bool)
-        require(callback['phase'] == 'trustEvaluation' or callback['trustAccepted'] is None)
-        copied['callbacks'].append({'phase': callback['phase'], 'error': error_fact(callback['error']),
-                                    'trustAccepted': callback['trustAccepted']})
+        guard = callback['guardOutcome']
+        require(guard is None or (type(guard) is str and guard in FAILURE_GUARD_OUTCOMES))
+        error = error_fact(callback['error'])
+        require(type(callback['underlyingErrors']) is list and len(callback['underlyingErrors']) <= 4)
+        underlying_count += len(callback['underlyingErrors'])
+        require(underlying_count <= 8)
+        require(type(callback['underlyingTruncated']) is bool and type(callback['underlyingCycle']) is bool)
+        if callback['phase'] == 'trustEvaluation':
+            require(guard is not None)
+            if guard == 'currentServerTrust':
+                require(type(callback['trustAccepted']) is bool)
+            else:
+                require(callback['trustAccepted'] is None and error == {
+                    'kind': 'none', 'domain': 'none', 'code': None, 'category': None})
+        else:
+            require(guard is None and callback['trustAccepted'] is None)
+        copied['callbacks'].append({
+            'phase': callback['phase'], 'error': error, 'trustAccepted': callback['trustAccepted'],
+            'guardOutcome': guard, 'underlyingErrors': [error_fact(item) for item in callback['underlyingErrors']],
+            'underlyingTruncated': callback['underlyingTruncated'], 'underlyingCycle': callback['underlyingCycle']})
     facts = value['facts']
     require(type(facts) is dict and set(facts) <= {
         'opens', 'errors', 'systemTLS', 'identityFailure', 'listenerPublished', 'mounts', 'bootstrapPeers', 'receivers'})
@@ -817,7 +854,7 @@ def parse_failure_records(raw):
     for line in raw.splitlines():
         if not line.startswith(FAILURE_RECORD_PREFIX):
             continue
-        require(len(line) <= 4096 and len(records) < 3)
+        require(len(line) <= 4096 and len(line) - len(FAILURE_RECORD_PREFIX) <= 4064 and len(records) < 3)
         total += len(line)
         require(total <= 16384)
         value = json.loads(line[len(FAILURE_RECORD_PREFIX):].decode('utf-8'),
