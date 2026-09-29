@@ -28,11 +28,13 @@ private enum ConnectedRecoveryFailure: Error { case environment, deadline(String
 
 private struct ConnectedTLSEnvironment: Sendable {
     let root, certificate, key, wrongCertificate, wrongKey: URL
-    init() throws {
+    init(observation: ConnectedFailureObservation? = nil) throws {
+        observation?.phase(.environmentMarkers)
         let env = ProcessInfo.processInfo.environment
         guard env["LATTICE_CONNECTED_RECOVERY_GATE"] == "1",
               env["GITHUB_ACTIONS"] == "true", env["RUNNER_ENVIRONMENT"] == "github-hosted",
               let raw = env["LATTICE_CONNECTED_RECOVERY_RUN_DIR"] else { throw ConnectedRecoveryFailure.environment }
+        observation?.phase(.environmentRoot)
         let localdev = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("localdev").standardizedFileURL
         let runRoot = URL(fileURLWithPath: raw).standardizedFileURL
         root = runRoot
@@ -45,14 +47,18 @@ private struct ConnectedTLSEnvironment: Sendable {
                   FileManager.default.fileExists(atPath: url.path) else { throw ConnectedRecoveryFailure.environment }
             return url
         }
+        observation?.phase(.environmentPrivateFiles)
         certificate = try privateFile("LATTICE_CONNECTED_RECOVERY_TLS_CERT")
         key = try privateFile("LATTICE_CONNECTED_RECOVERY_TLS_KEY")
         wrongCertificate = try privateFile("LATTICE_CONNECTED_RECOVERY_WRONG_HOST_CERT")
         wrongKey = try privateFile("LATTICE_CONNECTED_RECOVERY_WRONG_HOST_KEY")
+        observation?.phase(.environmentReceiptPath)
         guard let receiptPath = env["LATTICE_CONNECTED_RECOVERY_TLS_RECEIPT"],
               URL(fileURLWithPath: receiptPath).standardizedFileURL.path == root.appendingPathComponent("receipts/tls-material.json").path
         else { throw ConnectedRecoveryFailure.environment }
+        observation?.phase(.environmentReceiptRead)
         let bytes = try Data(contentsOf: URL(fileURLWithPath: receiptPath))
+        observation?.phase(.environmentReceiptDecode)
         guard bytes.count <= 16_384,
               let receipt = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
               receipt["version"] as? Int == 1,
@@ -61,6 +67,7 @@ private struct ConnectedTLSEnvironment: Sendable {
               receipt["minimumTLS"] as? String == "1.2",
               ["bothChainsVerified", "matchingIPVerified", "wrongHostIPRejected", "keyMatches", "validNow"].allSatisfy({ receipt[$0] as? Bool == true })
         else { throw ConnectedRecoveryFailure.receipt }
+        observation?.phase(.environmentReceiptFields)
         for field in ["caSHA256", "matchingSHA256", "wrongHostSHA256"] {
             guard let hash = receipt[field] as? String, hash.utf8.count == 64,
                   hash.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { throw ConnectedRecoveryFailure.receipt }
@@ -80,9 +87,12 @@ private func connectedWait(_ phase: String, until deadline: ContinuousClock.Inst
 }
 
 @MainActor
-private func connectedApplication(_ certificate: URL, _ key: URL) async throws -> Application {
+private func connectedApplication(_ certificate: URL, _ key: URL, observation: ConnectedFailureObservation? = nil) async throws -> Application {
+    observation?.phase(.applicationEnvironment)
     var environment = try Environment.detect(); environment.arguments = ["vapor"]
+    observation?.phase(.applicationCreate)
     let app = try await Application.make(environment)
+    observation?.phase(.applicationTLS)
     var tls = TLSConfiguration.makeServerConfiguration(certificateChain: [.file(certificate.path)], privateKey: .file(key.path))
     tls.minimumTLSVersion = .tlsv12
     app.http.server.configuration.hostname = "127.0.0.1"
@@ -408,54 +418,103 @@ private final class ConnectedReceiver {
     }
 }
 
+private func connectedFailureFact(_ error: any Error) -> ConnectedFailureObservation.ErrorFact {
+    if let value = error as? ConnectedRecoveryFailure {
+        switch value {
+        case .environment: return .init(.environment)
+        case .deadline: return .init(.deadline)
+        case .metadata: return .init(.metadata)
+        case .receipt: return .init(.receipt)
+        case .unexpectedOriginal: return .init(.unexpectedOriginal)
+        }
+    }
+    return .init(error)
+}
+
+@MainActor
+private func connectedObserved(_ name: ConnectedFailureObservation.Case,
+                               _ body: (ConnectedFailureObservation) async throws -> Void) async throws {
+    let observation = ConnectedFailureObservation(name)
+    defer { observation.emit() }
+    do { try await body(observation); observation.completed() }
+    catch { observation.failed(connectedFailureFact(error)); throw error }
+}
+
 @Suite("Public connected automatic recovery", .serialized,
        .enabled(if: ProcessInfo.processInfo.environment["LATTICE_CONNECTED_RECOVERY_GATE"] == "1"))
 @MainActor
 struct PublicConnectedAutomaticRecoveryTests {
     @Test func stockTLSAcceptsMatchingHostedCertificate() async throws {
-        try await stockTLS(wrongHost: false)
+        try await connectedObserved(.stockTLSAcceptsMatchingHostedCertificate) { try await stockTLS(wrongHost: false, observation: $0) }
     }
     @Test func stockTLSRejectsReachableWrongHostCertificate() async throws {
-        try await stockTLS(wrongHost: true)
+        try await connectedObserved(.stockTLSRejectsReachableWrongHostCertificate) { try await stockTLS(wrongHost: true, observation: $0) }
     }
-    private func stockTLS(wrongHost: Bool) async throws {
-        let env = try ConnectedTLSEnvironment()
-        let app = try await connectedApplication(wrongHost ? env.wrongCertificate : env.certificate, wrongHost ? env.wrongKey : env.key)
+    private func stockTLS(wrongHost: Bool, observation: ConnectedFailureObservation) async throws {
+        let env = try ConnectedTLSEnvironment(observation: observation)
+        let app = try await connectedApplication(wrongHost ? env.wrongCertificate : env.certificate, wrongHost ? env.wrongKey : env.key, observation: observation)
         app.webSocket("tls") { _, _ in }
         let identityFailure = NIOLockedValueBox(false)
         let client = ConnectedStockClient(onIdentityVerificationFailure: {
             identityFailure.withLockedValue { $0 = true }
-        })
+        }, onFailureObservation: { observation.callback($0) })
+        observation.phase(.tlsDriver)
         var driver = lattice.platform_tls_test_driver(try #require(client.createCxxClient()))
+        func captureTLS() {
+            observation.tlsFacts(opens: Int(driver.opens()), errors: Int(driver.errors()), systemTLS: driver.system_tls(),
+                identityFailure: identityFailure.withLockedValue { $0 }, listenerPublished: app.http.server.shared.localAddress?.port != nil)
+        }
         do {
+            observation.phase(.serverStartup)
             try await app.startup()
+            observation.phase(.serverAddress)
             let port = try #require(app.http.server.shared.localAddress?.port)
+            observation.phase(.tlsConnect)
             driver.connect(std.string("wss://127.0.0.1:\(port)/tls"))
+            observation.phase(.tlsTerminal)
             try await connectedWait("stock TLS terminal result", until: ContinuousClock.now.advanced(by: .seconds(10))) { driver.opens() > 0 || driver.errors() > 0 }
             // A timeout, failed startup or absent result fails this case. The
             // wrapper proves the valid same-CA chain differs by hostname SAN.
             try #require(app.http.server.shared.localAddress?.port == port)
+            captureTLS()
             if wrongHost {
+                observation.phase(.tlsWrongHostOracle)
                 try #require(driver.errors() > 0); try #require(driver.opens() == 0); try #require(!driver.system_tls())
                 try #require(identityFailure.withLockedValue { $0 })
             } else {
+                observation.phase(.tlsMatchingOracle)
                 try #require(driver.errors() == 0); try #require(driver.opens() == 1); try #require(driver.system_tls())
                 try #require(!identityFailure.withLockedValue { $0 })
             }
             let opens = Int(driver.opens()), errors = Int(driver.errors()), systemTLS = driver.system_tls()
+            observation.phase(.tlsClose)
             driver.close(); try #require(!driver.system_tls())
+            observation.phase(.applicationShutdown)
             try await app.asyncShutdown()
+            observation.phase(.successReceipt)
             try connectedReceipt(env, name: wrongHost ? "stockTLSRejectsReachableWrongHostCertificate" : "stockTLSAcceptsMatchingHostedCertificate",
                 facts: ["stockOpens": opens, "stockErrors": errors, "stockTLS": systemTLS, "serverListening": true,
                         "identityFailureObserved": identityFailure.withLockedValue { $0 }])
-        } catch { driver.close(); try? await app.asyncShutdown(); throw error }
+        } catch {
+            observation.failed(connectedFailureFact(error)); captureTLS()
+            driver.close()
+            observation.cleanup(.shutdownApplication)
+            do { try await app.asyncShutdown(); observation.cleanup(.completed) }
+            catch { observation.cleanupFailed(connectedFailureFact(error)) }
+            throw error
+        }
     }
 
     @Test func twoIndependentPublicReceiversRecoverOfflineEditsAcrossTwoChannels() async throws {
-        let env = try ConnectedTLSEnvironment(), deadline = ContinuousClock.now.advanced(by: .seconds(120))
+        try await connectedObserved(.twoIndependentPublicReceiversRecoverOfflineEditsAcrossTwoChannels) { try await recover(observation: $0) }
+    }
+    private func recover(observation: ConnectedFailureObservation) async throws {
+        let env = try ConnectedTLSEnvironment(observation: observation), deadline = ContinuousClock.now.advanced(by: .seconds(120))
         let directory = env.root.appendingPathComponent("private/connected-" + UUID().uuidString)
+        observation.phase(.directoryCreate)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let storage = directory.appendingPathComponent("source")
+        observation.phase(.sourceDirectoryCreate)
         try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         func seedSource() throws -> ([ConnectedRow], Set<String>) {
             let seed = try Lattice(for: [ConnectedRecoverySharedRow.self, ConnectedRecoveryLocalRow.self], configuration: .init(fileURL: storage.appendingPathComponent("source.sqlite")))
@@ -470,8 +529,10 @@ struct PublicConnectedAutomaticRecoveryTests {
             try #require(initial.count == 6 && seededOriginals.count == 6)
             return (initial, seededOriginals)
         }
+        observation.phase(.sourceSeed)
         let (initial, seededOriginals) = try seedSource()
-        let registrations = ConnectedRegistrations(), app = try await connectedApplication(env.certificate, env.key)
+        observation.phase(.registrations)
+        let registrations = ConnectedRegistrations(), app = try await connectedApplication(env.certificate, env.key, observation: observation)
         let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in }, didFinishAsyncSetup: {},
             parkRecoveryReadySend: { registrations.gate.park($0, $1) },
             didRecoveryReadyDecision: { registrations.gate.decision($0, $1) },
@@ -479,20 +540,29 @@ struct PublicConnectedAutomaticRecoveryTests {
         RelayIngressTesting.install(hooks, for: storage)
         var mounts: [SyncRelayHandle] = [], bootstrap: [ConnectedBootstrapPeer] = [], receivers: [ConnectedReceiver] = []
         func cleanup() async throws {
+            observation.cleanup(.releaseHeldSend)
             registrations.gate.release()
+            observation.cleanup(.closeReceivers)
             for receiver in receivers { receiver.close() }
+            observation.cleanup(.closeBootstrap)
             for peer in bootstrap { peer.close() }
+            observation.cleanup(.retireAuthorization)
             for mount in mounts { await mount.retireRecoveryAuthorization() }
+            observation.cleanup(.shutdownApplication)
             try await app.asyncShutdown()
+            observation.cleanup(.waitRetirement)
             try await connectedWait("all real authorization and held-result retirement", until: ContinuousClock.now.advanced(by: .seconds(10))) {
                 mounts.allSatisfy { $0.recoverySessionCount == 0 } && bootstrap.allSatisfy(\.closed)
             }
+            observation.cleanup(.removeHooks)
             RelayIngressTesting.remove(hooks, for: storage)
+            observation.cleanup(.completed)
             // The source checkpoint governor may retain an ordinary owner.
             // The wrapper removes this private UUID directory only after the
             // actual test process is reaped; never unlink live WAL/custody.
         }
         do {
+            observation.phase(.relayConfigure)
             for index in 0..<2 {
                 let namespace = index == 0 ? "a" : "b"
                 mounts.append(try Lattice.configureSyncRelay(on: app.routes, path: [.constant(namespace)],
@@ -501,7 +571,9 @@ struct PublicConnectedAutomaticRecoveryTests {
                     recovery: registrations.policy(index), channelExtractor: { try registrations.channel($0, index: index) },
                     recoveryAuthorization: { try registrations.authorize($0, $1, index: index) }))
             }
+            observation.phase(.serverStartup)
             try await app.startup()
+            observation.phase(.serverAddress)
             let port = try #require(app.http.server.shared.localAddress?.port)
             let endpoints = ["wss://127.0.0.1:\(port)/a", "wss://127.0.0.1:\(port)/b"]
             let channels = endpoints.map { "wss:" + $0 }; try #require(channels.allSatisfy { $0.utf8.count <= 64 })
@@ -511,29 +583,38 @@ struct PublicConnectedAutomaticRecoveryTests {
                 let query = "?recovery-v=1&recovery-replica=\(declared.replicaID)&recovery-receiver=\(declared.receiverIncarnation)&recovery-channel=\(declared.channelIncarnation)"
                 var headers = HTTPHeaders(); headers.add(name: "Authorization", value: "Bearer " + registrations.bootstrap.token)
                 // This real default-verifying socket sends no protocol frame.
+                observation.phase(.bootstrapConnect)
                 try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get()
+                observation.phase(.bootstrapCatchup)
                 try await connectedWait("real enrolled source metadata and authorized seeded catch-up", until: deadline) {
                     !peer.invalid && peer.ids == seededOriginals && registrations.contexts.withLockedValue { $0[index] != nil }
                 }
             }
+            observation.phase(.bootstrapContext)
             let captured = registrations.contexts.withLockedValue { $0 }
             let contextA = try #require(captured[0]), contextB = try #require(captured[1])
+            observation.phase(.bootstrapRetire)
             for peer in bootstrap { peer.close() }
             try await connectedWait("bootstrap native registration retirement", until: deadline) {
                 bootstrap.allSatisfy(\.closed) && mounts.allSatisfy { $0.recoverySessionCount == 0 }
             }
+            observation.phase(.receiverCreate)
             let a = try ConnectedReceiver(root: directory, registration: registrations.a, contexts: [contextA, contextB], endpoints: endpoints)
             let b = try ConnectedReceiver(root: directory, registration: registrations.b, contexts: [contextA, contextB], endpoints: endpoints)
             receivers = [a, b]
             try #require(a.file != b.file && registrations.a.producer != registrations.b.producer)
+            observation.phase(.receiverOpen)
             try a.open(connected: true); try b.open(connected: true)
+            observation.phase(.initialRecovery)
             try await connectedWait("both fresh public receivers installed through both actual channels", until: deadline) {
                 try a.rows() == initial && b.rows() == initial && a.openGate() && b.openGate()
                     && registrations.gate.hasCanonicalReads(replica: registrations.a.replica, channels: channels)
                     && registrations.gate.hasCanonicalReads(replica: registrations.b.replica, channels: channels)
             }
+            observation.phase(.receiverRetire)
             a.close(); b.close()
             try await connectedWait("all configured facades retired before offline edits", until: deadline) { mounts.allSatisfy { $0.recoverySessionCount == 0 } }
+            observation.phase(.offlineEdit)
             try a.open(connected: false); try b.open(connected: false)
             let ownA = try a.offlineEdit(update: "r1", delete: "r2", insert: "a", value: 11)
             let ownB = try b.offlineEdit(update: "r3", delete: "r4", insert: "b", value: 33)
@@ -544,9 +625,12 @@ struct PublicConnectedAutomaticRecoveryTests {
             } + [insertedA, insertedB]).sorted { $0.label < $1.label }
             try #require(expected.count == 6)
             a.close(); b.close()
+            observation.phase(.recoveryReopen)
             registrations.gate.arm(replica: registrations.a.replica, channel: channels[0])
             try a.open(connected: true); try b.open(connected: true)
+            observation.phase(.heldCanonicalRead)
             try await connectedWait("selected actual positive canonical manifest retained", until: deadline) { registrations.gate.held }
+            observation.phase(.heldBarrierOracle)
             let held = try #require(registrations.gate.selected)
             try #require(held.peer == registrations.a.peer(0) && held.channel == channels[0])
             try #require(held.operation == "read" && held.index == "0" && held.canonicalKind == "manifest")
@@ -557,6 +641,7 @@ struct PublicConnectedAutomaticRecoveryTests {
             registrations.gate.release()
             try await connectedWait("actual retained read publication", until: deadline) { registrations.gate.allowed != nil }
             try #require(registrations.gate.allowed == true)
+            observation.phase(.combinedRecovery)
             try await connectedWait("whole cohorts converge with original identities and local-only values", until: deadline) {
                 try a.rows() == expected && b.rows() == expected && a.openGate() && b.openGate()
                     && a.preserves(ownA) && b.preserves(ownB)
@@ -565,6 +650,7 @@ struct PublicConnectedAutomaticRecoveryTests {
             try #require(!registrations.gate.overflow)
             let routes = registrations.gate.canonicalRoutes(replicas: [registrations.a.replica, registrations.b.replica])
             try #require(routes.count == 4)
+            observation.phase(.postRecoveryWrite)
             try a.postRecoveryWrite()
             try await connectedWait("new public write works after recovery and reaches the other receiver", until: deadline) {
                 let ar = try a.rows(), br = try b.rows()
@@ -574,14 +660,21 @@ struct PublicConnectedAutomaticRecoveryTests {
                     && a.localValue() == [registrations.a.replica + "-local"] && b.localValue() == [registrations.b.replica + "-local"]
             }
             try #require(!registrations.gate.overflow)
+            observation.phase(.cleanup)
             try await cleanup()
+            observation.phase(.successReceipt)
             try connectedReceipt(env, name: "twoIndependentPublicReceiversRecoverOfflineEditsAcrossTwoChannels", facts: [
                 "receiverCount": 2, "channelsPerReceiver": 2, "initialRowsPerReceiver": 6, "finalSharedRowsPerReceiver": 6,
                 "preservedSharedOriginals": ownA.count + ownB.count, "heldCanonicalReads": 1, "heldBarrierObserved": true,
                 "canonicalRoutesObserved": routes.count, "postRecoveryWriteObserved": true])
         } catch {
             let original = error
-            do { try await cleanup() } catch { Issue.record("connected fixture cleanup failed") }
+            observation.failed(connectedFailureFact(original))
+            observation.topology(mounts: mounts.count, bootstrapPeers: bootstrap.count, receivers: receivers.count)
+            do { try await cleanup() } catch {
+                observation.cleanupFailed(connectedFailureFact(error))
+                Issue.record("connected fixture cleanup failed")
+            }
             RelayIngressTesting.remove(hooks, for: storage)
             throw original
         }

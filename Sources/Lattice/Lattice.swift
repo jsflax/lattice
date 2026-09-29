@@ -112,8 +112,11 @@ public struct Lattice {
         // Passive per-instance test observation only; never changes TLS policy,
         // challenge disposition, native callbacks or source authority.
         private let onIdentityVerificationFailure: (@Sendable () -> Void)?
-        init(onIdentityVerificationFailure: (@Sendable () -> Void)? = nil) {
+        private let onFailureObservation: (@Sendable (PlatformTransportFailureObservation) -> Void)?
+        init(onIdentityVerificationFailure: (@Sendable () -> Void)? = nil,
+             onFailureObservation: (@Sendable (PlatformTransportFailureObservation) -> Void)? = nil) {
             self.onIdentityVerificationFailure = onIdentityVerificationFailure
+            self.onFailureObservation = onFailureObservation
         }
         private final class Attempt: @unchecked Sendable {
             let callbacks: PlatformTransportCallbacks
@@ -177,8 +180,9 @@ public struct Lattice {
                 // decision for this task; default challenge handling still owns
                 // the actual TLS connection, and didOpen must follow on it.
                 let observer = client?.onIdentityVerificationFailure
+                let failureObserver = client?.onFailureObservation
                 var failure: CFError?
-                let accepted = observer == nil ? SecTrustEvaluateWithError(trust, nil)
+                let accepted = observer == nil && failureObserver == nil ? SecTrustEvaluateWithError(trust, nil)
                     : SecTrustEvaluateWithError(trust, &failure)
                 attempt.recordSystemTrust(host: challenge.protectionSpace.host,
                     port: challenge.protectionSpace.port, accepted: accepted)
@@ -191,6 +195,14 @@ public struct Lattice {
                    requested.host == challenge.protectionSpace.host.lowercased(),
                    requested.port == challenge.protectionSpace.port, attempt.callbacks.isCurrent {
                     observer()
+                }
+                if let failureObserver, attempt.callbacks.isCurrent {
+                    let osStatus = failure.map { CFEqual(CFErrorGetDomain($0), kCFErrorDomainOSStatus) } ?? false
+                    let code = osStatus ? failure.flatMap { Int32(exactly: CFErrorGetCode($0)).map(Int.init) } : nil
+                    let kind: PlatformTransportErrorFact.Kind = accepted ? .none
+                        : (osStatus && code == Int(errSecHostNameMismatch) ? .identity : .tls)
+                    failureObserver(.init(phase: .trustEvaluation,
+                        error: .init(kind: kind, domain: osStatus ? .osStatus : .none, code: code), trustAccepted: accepted))
                 }
             }
             func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
@@ -225,6 +237,7 @@ public struct Lattice {
             func urlSession(_ session: URLSession, task: URLSessionTask,
                             didCompleteWithError error: (any Swift.Error)?) {
                 guard let attempt = current(session, task), let error else { return }
+                client?.onFailureObservation?(.init(phase: .completion, error: .copy(error), trustAccepted: nil))
                 attempt.callbacks.error(error.localizedDescription)
             }
         }
@@ -273,8 +286,9 @@ public struct Lattice {
             let outgoing: URLSessionWebSocketTask.Message
             if message.msg_type == .text { outgoing = .string(String(message.as_string())) }
             else { outgoing = .data(Data(message.data)) }
-            attempt.task.send(outgoing) { [weak attempt] error in
+            attempt.task.send(outgoing) { [weak attempt, observer = onFailureObservation] error in
                 guard let attempt, let error else { return }
+                if attempt.callbacks.isCurrent { observer?(.init(phase: .send, error: .copy(error), trustAccepted: nil)) }
                 attempt.callbacks.error(error.localizedDescription)
             }
         }
@@ -299,6 +313,7 @@ public struct Lattice {
                     }
                     if attempt.callbacks.message(incoming) { self.startReceiving(attempt) }
                 case .failure(let error):
+                    self.onFailureObservation?(.init(phase: .receive, error: .copy(error), trustAccepted: nil))
                     attempt.callbacks.error(error.localizedDescription)
                 }
             }
