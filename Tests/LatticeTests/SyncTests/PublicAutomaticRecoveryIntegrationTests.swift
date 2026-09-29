@@ -1285,6 +1285,7 @@ private final class KillRecoveryGate: Sendable {
         var decisions: [String: Bool] = [:]
         var bytes = 0, overflow = false, invalid = false, armed = false, held = false
         var peer: SyncRecoveryPeerIdentity?, channel = "", cut: KillRecoveryCut = .request
+        var excludedConnections = Set<UUID>()
         var prepare: RelayReadyControlObservation?, manifest: RelayReadyControlObservation?, firstPage: RelayReadyControlObservation?
         var selected: RelayReadyControlObservation?, send: (@Sendable () -> Void)?
     }
@@ -1316,7 +1317,8 @@ private final class KillRecoveryGate: Sendable {
             let bytes = strings.reduce(256) { $0 + $1.utf8.count }
             guard s.observations.count < 256, bytes <= 131_072 - s.bytes else { s.overflow = true; return }
             s.bytes += bytes; s.observations.append(observation)
-            guard s.armed, s.selected == nil, observation.peer == s.peer, observation.channel == s.channel,
+            guard s.armed, s.selected == nil, !s.excludedConnections.contains(observation.connectionID),
+                  observation.peer == s.peer, observation.channel == s.channel,
                   let cutpoint = observation.cutpoint else { return }
             if s.prepare == nil {
                 guard observation.operation == "prepare", cutpoint.kind == .positivePrepareLease else { return }
@@ -1344,6 +1346,8 @@ private final class KillRecoveryGate: Sendable {
     func arm(peer: SyncRecoveryPeerIdentity, channel: String, cut: KillRecoveryCut) throws {
         try state.withLockedValue { s in
             guard !s.armed, s.prepare == nil, s.send == nil, !s.overflow, !s.invalid else { throw KillRecoveryFailure.state }
+            s.excludedConnections = Set(s.connections.values.filter { $0.peer == peer && $0.channel == channel }.map(\.connectionID))
+            guard !s.excludedConnections.isEmpty else { throw KillRecoveryFailure.state }
             s.armed = true; s.peer = peer; s.channel = channel; s.cut = cut
         }
     }
@@ -1383,12 +1387,16 @@ private final class KillRecoveryGate: Sendable {
         }
     }
     func handle(_ id: UUID) -> RelayRecoveryConnectionObservation? { state.withLockedValue { $0.connections[id] } }
-    func handles(peer: ConnectedRegistration, channels: [String], after: Int = 0) throws -> [RelayRecoveryConnectionObservation] {
+    func connectionIDs(replica: String) -> Set<UUID> {
+        state.withLockedValue { s in Set(s.connections.values.filter { $0.peer.replicaID == replica }.map(\.connectionID)) }
+    }
+    func handles(peer: ConnectedRegistration, channels: [String], after: Int = 0, excluding: Set<UUID> = []) throws -> [RelayRecoveryConnectionObservation] {
         try state.withLockedValue { s in
             guard after >= 0, after <= s.observations.count, !s.overflow, !s.invalid else { throw KillRecoveryFailure.bounds }
             return try channels.enumerated().map { index, channel in
                 let ids = Set(s.observations.dropFirst(after).filter {
-                    $0.peer == peer.peer(index) && $0.channel == channel && $0.operation == "read" && $0.cutpoint != nil
+                    !excluding.contains($0.connectionID) && $0.peer == peer.peer(index) && $0.channel == channel &&
+                        $0.operation == "read" && $0.cutpoint != nil && s.decisions[$0.requestID] == true
                 }.map(\.connectionID))
                 guard ids.count == 1, let id = ids.first, let handle = s.connections[id] else { throw KillRecoveryFailure.state }
                 return handle
@@ -1662,7 +1670,8 @@ struct PublicReceiverKillRecoveryTests {
             try #require(initialA.committedOpen == true && initialA.image != nil)
             let initialB = try await b.settle(expected: initial)
             let liveB = try gate.handles(peer: registrations.b, channels: channels)
-            _ = try gate.handles(peer: registrations.a, channels: channels)
+            let initialHandlesA = try gate.handles(peer: registrations.a, channels: channels)
+            try await killRecoveryLive(initialHandlesA, until: deadline)
             try await killRecoveryLive(liveB, until: deadline)
             facts.receiverCount = 2; facts.channelsPerReceiver = 2
             phase = .offline
@@ -1674,6 +1683,8 @@ struct PublicReceiverKillRecoveryTests {
             phase = .cut
             try await connectedWait("C selected actual retained source cut", until: deadline) { gate.held }
             let evidence = try gate.evidence(), oldConnection = try #require(gate.handle(evidence.prepare.connectionID))
+            try #require(!initialHandlesA.contains { $0.connectionID == oldConnection.connectionID })
+            let killedConnectionIDs = gate.connectionIDs(replica: registrations.a.replica)
             retirementObservation = oldConnection.retirementObservation()
             try #require(retirementObservation?.connectionID == evidence.prepare.connectionID && retirementObservation?.peer == registrations.a.peer(0) && retirementObservation?.channel == channels[0])
             let held = try await killRecoverySample(try #require(retirementObservation), until: deadline)
@@ -1694,6 +1705,8 @@ struct PublicReceiverKillRecoveryTests {
             phase = .retirement
             try await killRecoveryRetired(try #require(retirementObservation), drained: false, until: deadline)
             facts.oldConnectionRetired = true
+            try await connectedWait("C old A setups retired with B still enrolled", until: deadline) { mounts.allSatisfy { $0.recoverySessionCount == 1 } }
+            try await killRecoveryLive(liveB, until: deadline)
             try #require(gate.held && gate.staleDecision == nil)
             gate.release()
             try await connectedWait("C stale held READY send refused", until: deadline) { gate.staleDecision != nil }
@@ -1718,8 +1731,8 @@ struct PublicReceiverKillRecoveryTests {
                 preimage.originals.allSatisfy { original in recoveredImage.originals.filter { $0.id == original.id } == [original] })
             let expectedB = RecoveryProcessImage(rows: preimage.rows, localValues: initialB.localValues, originals: initialB.originals)
             _ = try await b.settle(expected: expectedB)
-            let freshA = try gate.handles(peer: registrations.a, channels: channels, after: resumedFrom)
-            try #require(freshA.allSatisfy { $0.connectionID != oldConnection.connectionID })
+            let freshA = try gate.handles(peer: registrations.a, channels: channels, after: resumedFrom, excluding: killedConnectionIDs)
+            try #require(freshA.allSatisfy { !killedConnectionIDs.contains($0.connectionID) })
             try await killRecoveryLive(freshA, until: deadline)
             try await killRecoveryLive(liveB, until: deadline)
             let refrozen = try #require(gate.recoveryBranch(after: resumedFrom, old: evidence))
