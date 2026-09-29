@@ -3,6 +3,8 @@ name: Connected automatic recovery and stock TLS
 # Explicit, separately reviewed hosted gate. This does not replace development,
 # full-suite, benchmark or release qualification. Never use a self-hosted runner.
 on:
+  push:
+    branches: ['codex/sdk-connected-recovery-registration-20260929']
   workflow_dispatch:
     inputs:
       connected_gate:
