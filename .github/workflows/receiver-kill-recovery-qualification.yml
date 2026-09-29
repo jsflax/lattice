@@ -1,0 +1,152 @@
+name: Public receiver kill and reopen recovery
+
+# Explicit, separately reviewed hosted gate. This does not replace development,
+# full-suite, benchmark or release qualification. Never use a self-hosted runner.
+on:
+  workflow_dispatch:
+    inputs:
+      receiver_kill_gate:
+        description: 'Run reviewed C receiver kill/reopen tests on disposable hosted machines; installs and removes a unique ephemeral CA'
+        type: boolean
+        required: true
+        default: false
+      core_commit:
+        description: 'Reviewed exact private Core commit (must equal development-core.json)'
+        type: string
+        required: true
+      core_tree:
+        description: 'Reviewed exact private Core tree (must equal development-core.json)'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  connected:
+    if: inputs.receiver_kill_gate == true
+    name: Receiver kill/reopen recovery (${{ matrix.leg }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: linux
+            runner: ubuntu-24.04
+            container: swift:6.3-noble
+            disposableContainer: '1'
+          - leg: macos
+            runner: macos-26
+            container: null
+            disposableContainer: '0'
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 180
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      CONNECTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+      LATTICE_CONNECTED_HOSTED_GATE: '1'
+      LATTICE_RECEIVER_KILL_HOSTED_GATE: '1'
+      LATTICE_CONNECTED_DISPOSABLE_CONTAINER: ${{ matrix.disposableContainer }}
+      REVIEWED_CORE_COMMIT: ${{ inputs.core_commit }}
+      REVIEWED_CORE_TREE: ${{ inputs.core_tree }}
+    steps:
+      - name: Establish disposable localdev workspace
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = jsflax/lattice
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REVIEWED_CORE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REVIEWED_CORE_TREE" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            test "$LATTICE_CONNECTED_DISPOSABLE_CONTAINER" = 1
+            test -f /.dockerenv
+            test "$(id -u)" = 0
+          else
+            test "$RUNNER_OS" = macOS
+          fi
+          umask 077
+          CONNECTED_ROOT="$HOME/localdev/connected-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RUNNER_OS}"
+          test ! -e "$CONNECTED_ROOT"
+          mkdir -p "$CONNECTED_ROOT/tmp" "$CONNECTED_ROOT/bootstrap"
+          echo "CONNECTED_ROOT=$CONNECTED_ROOT" >> "$GITHUB_ENV"
+          echo "TMPDIR=$CONNECTED_ROOT/tmp" >> "$GITHUB_ENV"
+          echo "TMP=$CONNECTED_ROOT/tmp" >> "$GITHUB_ENV"
+          echo "TEMP=$CONNECTED_ROOT/tmp" >> "$GITHUB_ENV"
+          echo "HOMEBREW_CACHE=$CONNECTED_ROOT/bootstrap/brew-cache" >> "$GITHUB_ENV"
+          echo "HOMEBREW_TEMP=$CONNECTED_ROOT/tmp" >> "$GITHUB_ENV"
+
+      - name: Install hosted prerequisites
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            apt-get update > "$CONNECTED_ROOT/bootstrap/prerequisites.log" 2>&1
+            apt-get install -y git python3 libsqlite3-dev ca-certificates openssl >> "$CONNECTED_ROOT/bootstrap/prerequisites.log" 2>&1
+            echo "CONNECTED_OPENSSL=/usr/bin/openssl" >> "$GITHUB_ENV"
+          else
+            if ! brew --prefix openssl@3 > "$CONNECTED_ROOT/bootstrap/openssl-prefix" 2> "$CONNECTED_ROOT/bootstrap/prerequisites.log"; then
+              brew install openssl@3 >> "$CONNECTED_ROOT/bootstrap/prerequisites.log" 2>&1
+              brew --prefix openssl@3 > "$CONNECTED_ROOT/bootstrap/openssl-prefix"
+            fi
+            CONNECTED_OPENSSL="$(cat "$CONNECTED_ROOT/bootstrap/openssl-prefix")/bin/openssl"
+            test -x "$CONNECTED_OPENSSL"
+            echo "CONNECTED_OPENSSL=$CONNECTED_OPENSSL" >> "$GITHUB_ENV"
+          fi
+
+      - name: Fetch exact reviewed SDK source
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -c core.hooksPath=/dev/null init "$CONNECTED_ROOT/lattice" > "$CONNECTED_ROOT/bootstrap/checkout.log" 2>&1
+          git -c core.hooksPath=/dev/null -C "$CONNECTED_ROOT/lattice" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA" >> "$CONNECTED_ROOT/bootstrap/checkout.log" 2>&1
+          git -c core.hooksPath=/dev/null -C "$CONNECTED_ROOT/lattice" checkout --detach "$GITHUB_SHA" >> "$CONNECTED_ROOT/bootstrap/checkout.log" 2>&1
+          test "$(git -C "$CONNECTED_ROOT/lattice" rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Build exact graph and run receiver kill/reopen cases
+        timeout-minutes: 132
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -c 0
+          python3 "$CONNECTED_ROOT/lattice/Scripts/receiver-kill-recovery-qualification.py" \
+            --root "$CONNECTED_ROOT" --core-sha "$REVIEWED_CORE_COMMIT" \
+            --core-tree "$REVIEWED_CORE_TREE" --openssl "$CONNECTED_OPENSSL"
+
+      - name: Independently verify exact trust and key cleanup
+        if: always() && env.CONNECTED_ROOT != ''
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -c 0
+          test -f "$CONNECTED_ROOT/lattice/Scripts/receiver-kill-recovery-qualification.py"
+          python3 "$CONNECTED_ROOT/lattice/Scripts/receiver-kill-recovery-qualification.py" --root "$CONNECTED_ROOT" --cleanup-only
+
+      - name: Retain only reconstructed nonsecret receipts
+        if: always() && env.CONNECTED_ROOT != ''
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: receiver-kill-recovery-${{ matrix.leg }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ env.CONNECTED_ROOT }}/public-evidence/result.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/commands.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/always-cleanup.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/tls-material.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/receiver-kill-recovery-cases.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/source-bindings.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/source-inputs.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/source-graph.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/compiler-inputs.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/child-executable.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/child-executable-final.json
+            ${{ env.CONNECTED_ROOT }}/public-evidence/case-outcomes.json
+          if-no-files-found: error
+          retention-days: 14
