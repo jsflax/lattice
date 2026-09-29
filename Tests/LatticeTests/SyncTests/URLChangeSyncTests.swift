@@ -102,18 +102,50 @@ actor URLChangeSyncTests {
 
         // Pre-kick write: lands on server A.
         let preKickValue = 100
+        let preKickConfiguration = serverConfigA
+        let preKickReady = AsyncThrowingStream<Void, any Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let preKickArrived: Task<Void, any Error> = Task.detached {
-            let serverLattice = try Lattice(for: [SimpleSyncObject.self],
-                                            configuration: self.serverConfigA)
-            for try await changes in serverLattice.changeStream {
-                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
-                let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
-                if touched, serverLattice.objects(SimpleSyncObject.self)
-                    .first(where: { $0.value == preKickValue }) != nil { break }
+            do {
+                try Task.checkCancellation()
+                let serverLattice = try Lattice(for: [SimpleSyncObject.self],
+                                                configuration: preKickConfiguration)
+                // Constructing the stream registers the observer before the write is allowed.
+                let changeStream = serverLattice.changeStream
+                preKickReady.continuation.yield(())
+                preKickReady.continuation.finish()
+                for try await changes in changeStream {
+                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
+                    let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
+                    if touched, serverLattice.objects(SimpleSyncObject.self)
+                        .first(where: { $0.value == preKickValue }) != nil { break }
+                }
+                try Task.checkCancellation()
+            } catch {
+                preKickReady.continuation.finish(throwing: error)
+                throw error
             }
         }
-        try latticeA.add(SimpleSyncObject(value: preKickValue, floatValue: 1.0))
-        try await preKickArrived.value
+        defer {
+            preKickArrived.cancel(); preKickReady.continuation.finish()
+        }
+        do {
+            try await withTaskCancellationHandler {
+                for try await _ in preKickReady.stream { break }
+                try Task.checkCancellation()
+                try latticeA.add(SimpleSyncObject(value: preKickValue, floatValue: 1.0))
+                try await preKickArrived.value
+                try Task.checkCancellation()
+            } onCancel: {
+                preKickArrived.cancel()
+                preKickReady.continuation.finish(throwing: CancellationError())
+            }
+        } catch {
+            // Keep the original readiness/write error while joining the observer task.
+            preKickArrived.cancel()
+            preKickReady.continuation.finish()
+            _ = await preKickArrived.result
+            throw error
+        }
 
         // Open B with a different URL on the same path. The fix kicks A
         // synchronously inside B's `setup_sync_if_configured` —
@@ -130,18 +162,50 @@ actor URLChangeSyncTests {
 
         // Post-kick write: lands on server B (B's URL).
         let postKickValue = 7
+        let postKickConfiguration = serverConfigB
+        let postKickReady = AsyncThrowingStream<Void, any Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let postKickArrived: Task<Void, any Error> = Task.detached {
-            let serverLattice = try Lattice(for: [SimpleSyncObject.self],
-                                            configuration: self.serverConfigB)
-            for try await changes in serverLattice.changeStream {
-                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
-                let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
-                if touched, serverLattice.objects(SimpleSyncObject.self)
-                    .first(where: { $0.value == postKickValue }) != nil { break }
+            do {
+                try Task.checkCancellation()
+                let serverLattice = try Lattice(for: [SimpleSyncObject.self],
+                                                configuration: postKickConfiguration)
+                // Constructing the stream registers the observer before the write is allowed.
+                let changeStream = serverLattice.changeStream
+                postKickReady.continuation.yield(())
+                postKickReady.continuation.finish()
+                for try await changes in changeStream {
+                    let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
+                    let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
+                    if touched, serverLattice.objects(SimpleSyncObject.self)
+                        .first(where: { $0.value == postKickValue }) != nil { break }
+                }
+                try Task.checkCancellation()
+            } catch {
+                postKickReady.continuation.finish(throwing: error)
+                throw error
             }
         }
-        try latticeB.add(SimpleSyncObject(value: postKickValue, floatValue: 7.0))
-        try await postKickArrived.value
+        defer {
+            postKickArrived.cancel(); postKickReady.continuation.finish()
+        }
+        do {
+            try await withTaskCancellationHandler {
+                for try await _ in postKickReady.stream { break }
+                try Task.checkCancellation()
+                try latticeB.add(SimpleSyncObject(value: postKickValue, floatValue: 7.0))
+                try await postKickArrived.value
+                try Task.checkCancellation()
+            } onCancel: {
+                postKickArrived.cancel()
+                postKickReady.continuation.finish(throwing: CancellationError())
+            }
+        } catch {
+            // Keep the original readiness/write error while joining the observer task.
+            postKickArrived.cancel()
+            postKickReady.continuation.finish()
+            _ = await postKickArrived.result
+            throw error
+        }
 
         // Server A should NOT have received the post-kick write.
         let serverA = try Lattice(for: [SimpleSyncObject.self], configuration: serverConfigA)
