@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import Testing
 import Vapor
 import WebSocketKit
@@ -80,15 +81,85 @@ private final class RegisteredRecoveryPeers: @unchecked Sendable {
                      authorizationRevision: "registration-7", validForMilliseconds: mode == .readyLarge ? 600_000 : 60_000)
     }
 }
+// Failure-only diagnostics. Retain no control/request/page payloads here.
+// Strings and entry counts have separate bounds; these facts grant no authority.
+private func readyDiagnosticText(_ text: String, limit: Int = 64) -> String {
+    String(decoding: text.utf8.prefix(limit), as: UTF8.self)
+}
+private func readyDiagnosticReply(_ value: [String: Any]) -> String {
+    func scalar(_ key: String, in object: [String: Any]) -> String {
+        guard let field = object[key] else { return "missing" }
+        if let text = field as? String { return "text:" + String(reflecting: readyDiagnosticText(text)) }
+        if let number = field as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() {
+            return number.boolValue ? "bool:true" : "bool:false"
+        }
+        return "wrongType"
+    }
+    var fields = ["operation", "requestID", "leaseAvailable", "requiresFullRequest", "frameAvailable", "captureError", "error"]
+        .map { "\($0)=\(scalar($0, in: value))" }
+    for key in ["expiration", "preparation", "publication", "settlement"] {
+        guard let part = value[key] as? [String: Any] else {
+            fields.append("\(key)=\(value[key] == nil ? "missing" : "wrongType")"); continue
+        }
+        for member in ["state", "unexpectedCommitObserved", "primaryError", "cleanupError", "postcommitError", "notificationError"] {
+            fields.append("\(key).\(member)=\(scalar(member, in: part))")
+        }
+    }
+    return readyDiagnosticText(fields.joined(separator: " "), limit: 2_048)
+}
+private struct ReadyPeerObservation: Sendable {
+    var operation: String = "unknown"
+    var requestedDuration: Int64?
+    var sendRequestedAt: UInt64?, sendCompletedAt: UInt64?
+    var firstReceivedAt: UInt64?, lastReceivedAt: UInt64?
+    var receivedCount: UInt64 = 0
+    var reply = "unobserved"
+    var waitStartedAt: UInt64?, nominalWaitDeadline: UInt64?, nominalWaitDeadlineUpper: UInt64?, waitReturnedAt: UInt64?
+    var summary: String {
+        "operation=\(String(reflecting: operation)) durationMs=\(String(reflecting: requestedDuration)) " +
+        "sendRequestedNs=\(String(reflecting: sendRequestedAt)) sendCompletedNs=\(String(reflecting: sendCompletedAt)) " +
+        "firstReceivedNs=\(String(reflecting: firstReceivedAt)) lastReceivedNs=\(String(reflecting: lastReceivedAt)) receivedCount=\(receivedCount) " +
+        "waitStartedNs=\(String(reflecting: waitStartedAt)) nominalWaitDeadlineLowerNs=\(String(reflecting: nominalWaitDeadline)) nominalWaitDeadlineUpperNs=\(String(reflecting: nominalWaitDeadlineUpper)) waitReturnedNs=\(String(reflecting: waitReturnedAt)) reply={\(reply)}"
+    }
+}
 private final class RecoveryAuthorizationPeer: @unchecked Sendable {
-    struct Facts { var kinds: [String] = []; var acks: [String] = []; var audits: [String] = []; var closed = false; var ready: [String: Data] = [:]; var canonical: [Data] = []; var firstRejection: String? }
+    struct Facts { var kinds: [String] = []; var acks: [String] = []; var audits: [String] = []; var closed = false; var ready: [String: Data] = [:]; var canonical: [Data] = []; var firstRejection: String?
+        var readyObservations: [String: ReadyPeerObservation] = [:]
+        var observationsOmitted = false
+        mutating func observe(_ id: String, _ update: (inout ReadyPeerObservation) -> Void) {
+            guard id.utf8.prefix(65).count <= 64, readyObservations[id] != nil || readyObservations.count < 64 else {
+                observationsOmitted = true; return
+            }
+            var record = readyObservations[id] ?? ReadyPeerObservation()
+            update(&record); readyObservations[id] = record
+        }
+    }
     let facts = NIOLockedValueBox(Facts())
     private let transport = NIOLockedValueBox<WebSocket?>(nil)
+    private weak var diagnosticSendGate: RecoveryReadySendGate?
+    init(diagnosticSendGate: RecoveryReadySendGate? = nil) { self.diagnosticSendGate = diagnosticSendGate }
+    func observeReadySend(_ command: ReadyTestControl, completed: Bool = false) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        facts.withLockedValue { value in value.observe(command.requestID) {
+            $0.operation = readyDiagnosticText(command.operation, limit: 16); $0.requestedDuration = command.durationMilliseconds
+            if completed { $0.sendCompletedAt = now } else { $0.sendRequestedAt = now }
+        } }
+    }
+    func readyObservation(_ id: String) -> String {
+        let snapshot = facts.withLockedValue { value in
+            "requestID=\(String(reflecting: readyDiagnosticText(id))) presentNow=\(value.ready[id] != nil) omitted=\(value.observationsOmitted) " +
+            (value.readyObservations[id]?.summary ?? "metadata=unobserved")
+        }
+        return snapshot + " sendDecision=\(String(reflecting: diagnosticSendGate?.decision(id)))"
+    }
     var socket: WebSocket? { transport.withLockedValue { $0 } }
     func attach(_ socket: WebSocket) {
         transport.withLockedValue { $0 = socket }
         socket.onBinary { [weak self] _, bytes in
             guard let self, let root = (try? JSONSerialization.jsonObject(with: Data(buffer: bytes))) as? [String: Any] else { return }
+            // Timestamp the parsed callback before taking the facts lock; this
+            // is not a transport/kernel arrival timestamp.
+            let readyReceivedAt = root["kind"] as? String == "recoveryReady" ? DispatchTime.now().uptimeNanoseconds : nil
             facts.withLockedValue { value in
                 value.kinds.append(root["kind"] as? String ?? "?")
                 if root["kind"] as? String == "rejected", value.firstRejection == nil,
@@ -101,17 +172,49 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
                 if root["latticeCanonicalRange"] != nil, value.canonical.count < 16 { value.canonical.append(Data(buffer: bytes)) }
                 value.acks += (root["ack"] as? [String] ?? []).map { $0.lowercased() }
                 value.audits += (root["auditLog"] as? [[String: Any]] ?? []).compactMap { ($0["globalId"] as? String)?.lowercased() }
+                if let receivedAt = readyReceivedAt, let id = root["requestID"] as? String {
+                    value.observe(id) {
+                        if $0.firstReceivedAt == nil { $0.firstReceivedAt = receivedAt }
+                        $0.lastReceivedAt = receivedAt
+                        if $0.receivedCount < UInt64.max { $0.receivedCount += 1 }
+                        $0.reply = readyDiagnosticReply(root)
+                    }
+                }
             }
         }
         socket.onClose.whenComplete { [weak self] _ in self?.facts.withLockedValue { $0.closed = true } }
     }
-    func wait(_ phase: String = "peer state", _ predicate: @escaping @Sendable (Facts) -> Bool) async throws {
+    func wait(_ phase: String = "peer state", diagnosticRequestID: String? = nil, _ predicate: @escaping @Sendable (Facts) -> Bool) async throws {
+        let startedAt = DispatchTime.now().uptimeNanoseconds
         let deadline = Date().addingTimeInterval(10)
+        // Bracket the unchanged Date deadline with monotonic samples. These
+        // are nominal bounds, not a replacement for the actual wall clock.
+        let capturedAt = DispatchTime.now().uptimeNanoseconds
+        let sum = startedAt.addingReportingOverflow(10_000_000_000)
+        let nominalDeadline = sum.overflow ? UInt64.max : sum.partialValue
+        let upperSum = capturedAt.addingReportingOverflow(10_000_000_000)
+        let nominalDeadlineUpper = upperSum.overflow ? UInt64.max : upperSum.partialValue
+        if let id = diagnosticRequestID { facts.withLockedValue { value in value.observe(id) {
+            $0.waitStartedAt = startedAt; $0.nominalWaitDeadline = nominalDeadline; $0.nominalWaitDeadlineUpper = nominalDeadlineUpper
+        } } }
+        var lastPredicateAt: UInt64?
         while Date() < deadline, !Task.isCancelled {
-            if facts.withLockedValue({ predicate($0) }) { return }
+            lastPredicateAt = DispatchTime.now().uptimeNanoseconds
+            if facts.withLockedValue({ predicate($0) }) {
+                if let id = diagnosticRequestID { facts.withLockedValue { value in value.observe(id) {
+                    $0.waitReturnedAt = DispatchTime.now().uptimeNanoseconds
+                } } }
+                return
+            }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         let state = diagnosticState
+        let finalAt = DispatchTime.now().uptimeNanoseconds
+        let retained = facts.withLockedValue { value in
+            "count=\(value.ready.count) first8=[" + value.ready.keys.prefix(8).map { String(reflecting: readyDiagnosticText($0)) }.joined(separator: ",") + "]"
+        }
+        let observed = diagnosticRequestID.map { readyObservation($0) } ?? "requestID=unspecified"
+        print("READY_WAIT_TIMEOUT phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) startNs=\(startedAt) nominalDeadlineLowerNs=\(nominalDeadline) nominalDeadlineUpperNs=\(nominalDeadlineUpper) wallDeadline=\(deadline.timeIntervalSince1970) lastPredicateAttemptNs=\(String(reflecting: lastPredicateAt)) finalNs=\(finalAt) wallFinal=\(Date().timeIntervalSince1970) retainedIDs=[\(retained)] \(observed)")
         throw RecoveryAuthorizationFixtureError.timeout("\(phase.prefix(128)); \(state); cancelled=\(Task.isCancelled)")
     }
     var diagnosticState: String {
@@ -189,7 +292,7 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
         let declared = peer ?? registrations.first
         let query = "recovery-v=1&recovery-replica=\(declared.replicaID)&recovery-receiver=\(declared.receiverIncarnation)&recovery-channel=\(declared.channelIncarnation)"
             + (duplicateDeclaration ? "&recovery-v=1" : "")
-        let client = RecoveryAuthorizationPeer(); peers.withLockedValue { $0.append(client) }
+        let client = RecoveryAuthorizationPeer(diagnosticSendGate: registrations.readySendGate); peers.withLockedValue { $0.append(client) }
         var headers = HTTPHeaders(); headers.add(name: "X-Registered-Session", value: registrations.token)
         headers.add(name: "X-Registered-Group", value: group)
         var configuration = WebSocketClient.Configuration(); configuration.maxFrameSize = registrations.mode == .readyLarge ? 8 << 20 : 1 << 20
@@ -420,14 +523,18 @@ private extension RecoveryAuthorizationPeer {
     func ready(_ command: ReadyTestControl) async throws -> Data {
         let id = command.requestID, data = try command.data()
         let actual = try #require(socket)
+        observeReadySend(command)
         try await actual.send(Array(data))
-        try await wait("READY \(command.operation) reply") { $0.ready[id] != nil }
+        observeReadySend(command, completed: true)
+        try await wait("READY \(command.operation) reply", diagnosticRequestID: id) { $0.ready[id] != nil }
         return try #require(facts.withLockedValue { $0.ready.removeValue(forKey: id) })
     }
     func readyFrame(_ command: ReadyTestControl) async throws -> Data {
         let actual = try #require(socket)
+        observeReadySend(command)
         try await actual.send(Array(try command.data()))
-        try await wait("READY \(command.operation) frame index=\(command.index ?? "missing")") { !$0.canonical.isEmpty }
+        observeReadySend(command, completed: true)
+        try await wait("READY \(command.operation) frame index=\(command.index ?? "missing")", diagnosticRequestID: command.requestID) { !$0.canonical.isEmpty }
         return facts.withLockedValue { $0.canonical.removeFirst() }
     }
 }
@@ -505,8 +612,12 @@ private func readyOffer(_ request: ReadyTestRequest, descriptor: Data, op: Strin
     var c = ReadyTestControl(operation: op); c.routeGeneration = try #require(readyObject(descriptor)["routeGeneration"] as? String)
     c.request = request.wire; if op != "discard" { c.durationMilliseconds = duration }; return c
 }
-private func readyRead(_ offer: Data, index: Int) throws -> ReadyTestControl {
+private func readyRead(_ offer: Data, index: Int, diagnosticPeer: RecoveryAuthorizationPeer? = nil) throws -> ReadyTestControl {
     let d = try readyObject(offer); var c = ReadyTestControl(operation: "read")
+    if d["leaseID"] as? String == nil {
+        let observed = (d["requestID"] as? String).map { diagnosticPeer?.readyObservation($0) ?? "peerMetadata=unavailable" } ?? "requestID=missing"
+        print("READY_MISSING_LEASE \(readyDiagnosticReply(d)) \(observed)")
+    }
     c.routeGeneration = try #require(d["routeGeneration"] as? String); c.leaseID = try #require(d["leaseID"] as? String)
     c.requestDigest = try #require(d["requestDigest"] as? String); c.attemptID = try #require(d["attemptID"] as? String)
     c.sequence = try #require(d["sequence"] as? String); c.index = String(index); return c
@@ -580,26 +691,28 @@ private struct RelayAuthenticatedReadyTests {
         let mode: RegisteredRecoveryPeers.Mode = deny ? .heldSecondDenied : .heldSecondApproved
         try await withRecoveryAuthorizationHarness(mode) { h in
             let peer = try await h.connect(h.registrations.second); let describe = ReadyTestControl(operation: "describe")
+            peer.observeReadySend(describe)
             try await peer.socket!.send(Array(try describe.data()))
+            peer.observeReadySend(describe, completed: true)
             try await readyWait("held describe authorization entry deny=\(deny)") { h.registrations.heldSecondEntered.withLockedValue { $0 } }
             #expect(peer.facts.withLockedValue { $0.ready.isEmpty && $0.canonical.isEmpty })
             h.registrations.gate.release()
             if deny { try await peer.wait { $0.closed }; #expect(peer.facts.withLockedValue { $0.ready.isEmpty && $0.canonical.isEmpty }) }
-            else { let id = describe.requestID; try await peer.wait("held describe after authorization release") { $0.ready[id] != nil } }
+            else { let id = describe.requestID; try await peer.wait("held describe after authorization release", diagnosticRequestID: id) { $0.ready[id] != nil } }
         }
     }
     @Test func keeperReconnectResumesSameCapsuleWithFreshPhysicalGeneration() async throws {
         try await withRecoveryAuthorizationHarness { h in
             let first = try await h.connect(), keeper = try await h.connect(h.registrations.second)
             let before = try await first.ready(.init(operation: "describe")); let q = try readyRequest(before)
-            let offer = try await first.ready(readyOffer(q, descriptor: before)); let original = try await first.readyFrame(readyRead(offer, index: 0))
+            let offer = try await first.ready(readyOffer(q, descriptor: before)); let original = try await first.readyFrame(readyRead(offer, index: 0, diagnosticPeer: first))
             try await first.socket!.close(); try await first.wait { $0.closed }
             let next = try await h.connect(), after = try await next.ready(.init(operation: "describe"))
             var raw = try readyObject(Data(q.wire.utf8)), inner = try #require(raw["latticeCanonicalRange"] as? [String: Any])
             inner["route_generation"] = try readyObject(after)["routeGeneration"]; raw["latticeCanonicalRange"] = inner
             let replacement = ReadyTestRequest(wire: String(decoding: try JSONSerialization.data(withJSONObject: raw), as: UTF8.self), digest: q.digest, attempt: q.attempt, sequence: q.sequence)
             let renewed = try await next.ready(readyOffer(replacement, descriptor: after, op: "resume"))
-            let current = try readyObject(await next.readyFrame(readyRead(renewed, index: 0)))
+            let current = try readyObject(await next.readyFrame(readyRead(renewed, index: 0, diagnosticPeer: next)))
             var old = try readyObject(original), oldInner = try #require(old["latticeCanonicalRange"] as? [String: Any])
             oldInner["route_generation"] = try readyObject(after)["routeGeneration"]; old["latticeCanonicalRange"] = oldInner
             #expect(NSDictionary(dictionary: old).isEqual(to: current)); #expect(!keeper.facts.withLockedValue { $0.closed })
@@ -611,8 +724,10 @@ private struct RelayAuthenticatedReadyTests {
             let first = try await h.connect(), other = try await h.connect()
             let d = try await first.ready(.init(operation: "describe")), q = try readyRequest(d)
             let offer = try await first.ready(readyOffer(q, descriptor: d, duration: action == "expiry" ? 1_000 : 10_000))
-            let command = try readyRead(offer, index: 0), id = command.requestID
+            let command = try readyRead(offer, index: 0, diagnosticPeer: first), id = command.requestID
+            first.observeReadySend(command)
             h.registrations.readySendGate.arm(id); try await first.socket!.send(Array(try command.data()))
+            first.observeReadySend(command, completed: true)
             do {
                 try await readyWait("parked send entry action=\(action)") { h.registrations.readySendGate.parked }
             } catch {
@@ -631,7 +746,7 @@ private struct RelayAuthenticatedReadyTests {
                 inner["route_generation"] = try readyObject(next)["routeGeneration"]; raw["latticeCanonicalRange"] = inner
                 let same = ReadyTestRequest(wire: String(decoding: try JSONSerialization.data(withJSONObject: raw), as: UTF8.self), digest: q.digest, attempt: q.attempt, sequence: q.sequence)
                 let reply = try await other.ready(readyOffer(same, descriptor: next, op: action))
-                if action == "resume" { _ = try await other.readyFrame(readyRead(reply, index: 0)) }
+                if action == "resume" { _ = try await other.readyFrame(readyRead(reply, index: 0, diagnosticPeer: other)) }
             }
             h.registrations.readySendGate.release(); try await readyWait("parked send decision action=\(action)") { h.registrations.readySendGate.decision(id) != nil }
             #expect(h.registrations.readySendGate.decision(id) == false); #expect(first.facts.withLockedValue { $0.canonical.isEmpty })
