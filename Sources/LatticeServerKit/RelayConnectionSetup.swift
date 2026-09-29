@@ -621,7 +621,8 @@ private final class RelayCatchUpReadState {
             native?.clear()
             if let connectionID { observer?(.init(connectionID: connectionID, stage: .ownerReleased,
                                                   owner: nil, budget: budget, onIO: RelayExecutionPool.io.isCurrentWorker)) }
-            Task { @RelayControlActor in
+            Task { @RelayControlActor [setupWork] in
+                defer { withExtendedLifetime(setupWork) {} }
                 self.phase = .finished
                 self.input.didFinish()
             }
