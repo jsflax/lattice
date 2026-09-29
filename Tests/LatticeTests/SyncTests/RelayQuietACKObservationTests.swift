@@ -21,11 +21,11 @@ private struct QuietACKInputs: Sendable {
          "changedFieldsNames": ["value"],
          "originalIdentity": ["version": 1, "changedFieldsNames": ["value"], "digest": digest]]
     }
-    func frame(_ entry: [String: Any]) throws -> RelayFrame {
-        RelayFrame(try JSONSerialization.data(withJSONObject: ["auditLog": [entry]], options: [.sortedKeys]))
+    func frame(_ entry: [String: Any]) throws -> Data {
+        try JSONSerialization.data(withJSONObject: ["auditLog": [entry]], options: [.sortedKeys])
     }
     func copy(_ entry: [String: Any]) throws -> RelayRecoveryACKObservation? {
-        RelayRecoveryACKObservation.copy(frame: try frame(entry), acceptedIDs: [original],
+        RelayRecoveryACKObservation.copy(data: try frame(entry), acceptedIDs: [original],
             connectionID: connection, peer: peer, channel: channel)
     }
     func changedInteger(_ value: Any, kind: Any = 0) -> [String: Any] {
@@ -103,12 +103,12 @@ struct RelayQuietACKObservationTests {
 
     @Test func malformedAndNonSingletonUploadsCannotBecomeDropEvidence() throws {
         let input = QuietACKInputs()
-        let malformed = RelayFrame(Data("{".utf8))
-        let empty = RelayFrame(Data("{\"auditLog\":[]}".utf8))
-        let ack = RelayFrame(Data("{\"ack\":[]}".utf8))
-        let two = RelayFrame(try JSONSerialization.data(withJSONObject: ["auditLog": [input.entry(), input.entry()]]))
+        let malformed = Data("{".utf8)
+        let empty = Data("{\"auditLog\":[]}".utf8)
+        let ack = Data("{\"ack\":[]}".utf8)
+        let two = try JSONSerialization.data(withJSONObject: ["auditLog": [input.entry(), input.entry()]])
         for frame in [malformed, empty, ack, two] {
-            let observation = try #require(RelayRecoveryACKObservation.copy(frame: frame, acceptedIDs: [input.original],
+            let observation = try #require(RelayRecoveryACKObservation.copy(data: frame, acceptedIDs: [input.original],
                 connectionID: input.connection, peer: input.peer, channel: input.channel))
             #expect(observation.entry == nil && observation.metadataFailure != nil)
             let requestsDrop = RelayRecoveryACKObservation.requestsDrop(observation, connectionID: input.connection, peer: input.peer, decision: { _ in true })
@@ -120,7 +120,7 @@ struct RelayQuietACKObservationTests {
         let input = QuietACKInputs()
         let frame = try input.frame(input.entry())
         for ids in [[], [UUID()], [input.original, input.original]] as [[UUID]] {
-            let observation = try #require(RelayRecoveryACKObservation.copy(frame: frame, acceptedIDs: ids,
+            let observation = try #require(RelayRecoveryACKObservation.copy(data: frame, acceptedIDs: ids,
                 connectionID: input.connection, peer: input.peer, channel: input.channel))
             #expect(observation.entry == nil && observation.metadataFailure != nil)
         }
@@ -189,11 +189,11 @@ struct RelayQuietACKObservationTests {
         let observation = try #require(try input.copy(entry))
         #expect(observation.entry == nil && observation.metadataFailure != nil)
         let frame = try input.frame(input.entry())
-        #expect(RelayRecoveryACKObservation.copy(frame: frame, acceptedIDs: [input.original], connectionID: input.connection,
+        #expect(RelayRecoveryACKObservation.copy(data: frame, acceptedIDs: [input.original], connectionID: input.connection,
             peer: input.peer, channel: String(repeating: "c", count: 65)) == nil)
         let peer = SyncRecoveryPeerIdentity(replicaID: String(repeating: "r", count: 257),
             receiverIncarnation: input.peer.receiverIncarnation, channelIncarnation: input.peer.channelIncarnation)
-        #expect(RelayRecoveryACKObservation.copy(frame: frame, acceptedIDs: [input.original], connectionID: input.connection,
+        #expect(RelayRecoveryACKObservation.copy(data: frame, acceptedIDs: [input.original], connectionID: input.connection,
             peer: peer, channel: input.channel) == nil)
     }
 

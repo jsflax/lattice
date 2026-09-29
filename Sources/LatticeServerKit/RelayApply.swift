@@ -264,7 +264,7 @@ struct RelayRecoveryACKObservation: Sendable {
 
     // Pure copied-input validation. Only the authenticated status-1 branch
     // below may attach the result to a real ACK. Do not retain the parse tree.
-    static func copy(frame: RelayFrame, acceptedIDs: [UUID], connectionID: UUID,
+    static func copy(data: Data, acceptedIDs: [UUID], connectionID: UUID,
                      peer: SyncRecoveryPeerIdentity, channel: String) -> Self? {
         func bounded(_ text: String, _ cap: Int) -> Bool {
             !text.isEmpty && text.utf8.prefix(cap + 1).count <= cap && !text.contains("\0")
@@ -273,7 +273,10 @@ struct RelayRecoveryACKObservation: Sendable {
         func failed(_ reason: RelayACKMetadataFailure) -> Self {
             .init(connectionID: connectionID, peer: peer, channel: channel, entry: nil, metadataFailure: reason)
         }
-        guard frame.byteCount <= 1_048_576 else { return failed(.frameBound) }
+        guard !data.isEmpty, data.count <= RelayACKSyntax.byteLimit else { return failed(.frameBound) }
+        var syntax = RelayACKSyntax(data)
+        guard let lexical = try? syntax.scan() else { return failed(.shape) }
+        let frame = RelayFrame(data) // same bytes; optional observer-only shape view
         guard let raw = frame.rawEntries, raw.count == 1, frame.requestedIds.count == 1,
               acceptedIDs.count == 1 else { return failed(.singleton) }
         guard let item = raw[0] as? [String: Any],
@@ -289,29 +292,23 @@ struct RelayRecoveryACKObservation: Sendable {
               let value = fields[field] as? [String: Any], Set(value.keys) == ["kind", "value"],
               let identity = item["originalIdentity"] as? [String: Any],
               Set(identity.keys) == ["version", "changedFieldsNames", "digest"],
-              let originalNames = identity["changedFieldsNames"] as? [String], originalNames == [field],
+              let originalNames = identity["changedFieldsNames"] as? [String], originalNames.count == 1,
+              originalNames[0].utf8.elementsEqual(field.utf8),
+              fields.count == lexical.fields.count,
+              Set(fields.keys.map { Data($0.utf8) }) == Set(lexical.fields.keys),
               let digest = identity["digest"] as? String, digest.utf8.count == 64,
               digest.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else { return failed(.shape) }
-        func integer(_ raw: Any?) -> Int64? {
-            guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
-                  ["c", "s", "i", "l", "q", "C", "S", "I", "L", "Q"].contains(String(cString: number.objCType))
-            else { return nil }
-            // String conversion is bounded and exact, rejecting UInt64 overflow
-            // instead of accepting NSNumber's truncating int64Value coercion.
-            let text = number.stringValue
-            guard text.utf8.count <= 20 else { return nil }
-            return Int64(text)
-        }
         // Generated UPDATE frames retain every schema field, with unchanged
         // columns encoded as typed null placeholders. Copy only the one named
         // changed value, and never accept an extra nonnull value as equivalent.
-        for (name, raw) in fields where name != field {
+        for (name, raw) in fields where !name.utf8.elementsEqual(field.utf8) {
             guard bounded(name, 64), let placeholder = raw as? [String: Any],
-                  Set(placeholder.keys) == ["kind", "value"], integer(placeholder["kind"]) == 4,
+                  Set(placeholder.keys) == ["kind", "value"], lexical.fields[Data(name.utf8)]?.kind == 4,
                   placeholder["value"] is NSNull else { return failed(.shape) }
         }
-        guard let kind = integer(value["kind"]), kind == 0 || kind == 1,
-              let number = integer(value["value"]), let version = integer(identity["version"]), version == 1
+        guard let selected = lexical.fields[Data(field.utf8)],
+              let kind = selected.kind, kind == 0 || kind == 1,
+              let number = selected.value, let version = lexical.version, version == 1
         else { return failed(.integer) }
         return .init(connectionID: connectionID, peer: peer, channel: channel,
             entry: .init(originalID: originalID, targetID: targetID, table: table, operation: operation,
@@ -597,7 +594,7 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
             if actual.status == 1 {
                 recoveryResult = actual
                 if observeRecoveryACK, !actual.ids.isEmpty {
-                    recoveryACKObservation = .copy(frame: frame, acceptedIDs: actual.ids,
+                    recoveryACKObservation = .copy(data: data, acceptedIDs: actual.ids,
                         connectionID: recovery.id, peer: recovery.peer, channel: channel.id)
                 }
             }
