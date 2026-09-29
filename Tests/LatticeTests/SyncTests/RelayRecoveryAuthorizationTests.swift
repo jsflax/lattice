@@ -1665,10 +1665,7 @@ private struct AutomaticSourceSetupTests {
         #expect(!state.facts.withLockedValue { $0.observationOverflow })
         if let first { throw first }
     }
-}
 
-@Suite("Automatic setup final callback custody", .serialized, .timeLimit(.minutes(2)))
-private struct AutomaticSourceSetupFinalCallbackTests {
     @Test func closedSetupKeepsCapacityThroughActualFinalCompletionCallbackReturn() async throws {
         let state = try AutomaticSetupCase(constructorHold: true)
         let completionHold = AutomaticSetupIOHold()
