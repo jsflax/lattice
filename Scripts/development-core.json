@@ -1,5 +1,5 @@
 {
-  "scope": "Private full hosted qualification of the reviewed recovery admission, terminal renewal and orphan lifecycle, registered producer receipt coverage, scheduler ownership, and callback lifetime corrections, together with the SDK explicit lifecycle policy and relay retirement retention. Earlier qualification failures are preserved. Final integrated source review and hosted runtime acceptance remain pending; no performance improvement, existing-store adoption, stock TLS behavior, historical crash cause, or public release acceptance is claimed.",
-  "coreCommit": "4e97e42f0eda4df1c334cb32d1c59f921f4ed350",
-  "coreTree": "4b1b40e7bfe2271d6989bc5fc415c3af5853023a"
+  "scope": "Private full hosted qualification of the reviewed recovery admission, terminal renewal and orphan lifecycle, registered producer receipt coverage, scheduler ownership and callback lifetime corrections, including the three compiler corrections identified by the preceding failed qualification. SDK explicit lifecycle policy and relay retirement retention remain included. Earlier failures are preserved. Hosted compilation and runtime acceptance remain pending; no performance improvement, existing-store adoption, stock TLS behavior, historical crash cause or public release acceptance is claimed.",
+  "coreCommit": "47366d139a470e2342802c5cd2d926a20572c34b",
+  "coreTree": "e50fb878dd491488aec6ac385aba7d2f6547ad8a"
 }
