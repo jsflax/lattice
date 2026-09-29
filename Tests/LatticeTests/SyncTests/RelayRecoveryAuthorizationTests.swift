@@ -999,7 +999,8 @@ private struct RelayLifecycleAdministrationTests {
             let value = try readyObject(resumed); #expect(value["leaseAvailable"] as? Bool == true)
             #expect(value["requestDigest"] as? String == q.digest); #expect(value["attemptID"] as? String == q.attempt)
             #expect(value["sequence"] as? String == q.sequence)
-            let count = try #require(Int(try #require(value["frames"] as? String)))
+            let encodedCount = try #require(value["frames"] as? String)
+            let count = try #require(Int(encodedCount))
             var kinds: [String] = [], positives: [String] = []
             for index in 0..<count {
                 let frame = try readyObject(await successor.readyFrame(readyRead(resumed, index: index)))
