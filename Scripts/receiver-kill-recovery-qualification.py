@@ -18,7 +18,7 @@ import sys
 import time
 
 sys.dont_write_bytecode = True
-COMMON_SHA256 = 'bf1a0f0f9c9ed9eea769626c66cbfb61fb3de2378430ac2bdef30054c21ba94e'
+COMMON_SHA256 = '59cd4bfd9d0690dbea9baffce0af066ec9777543d1c49f687dd640b30cf03759'
 CASE_NAMES = ('killedReceiverReopensFromDurableQ', 'killedReceiverReopensFromCommittedPartialRange')
 # Exact fixed interface frozen with the two C scenarios. No receipt alone
 # establishes a passing test or grants process/native authority.
