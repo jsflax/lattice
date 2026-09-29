@@ -222,11 +222,16 @@ private final class RelayCatchUpReadState {
         admissionObserver = observer
         let admission = RelaySetupAdmission()
         self.admission = admission
+        let connectionID = recovery.id
         let stop = RecoveryRelaySetupStopObservation { [weak self, work, admission] in
             admission.cancel() // Immediate veto, even if control/IO is queued.
             Task { @RelayControlActor [weak self, work] in
                 defer { withExtendedLifetime(work) {} }
                 self?.automaticStopped()
+                if let observer {
+                    observer(.init(connectionID: connectionID, stage: .stopCallbackReturning,
+                                   owner: nil, budget: admission.snapshot, onIO: RelayExecutionPool.io.isCurrentWorker))
+                }
             }
         }
         setupStop = stop

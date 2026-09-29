@@ -98,7 +98,7 @@ final class RelaySetupAdmissionTimer: @unchecked Sendable {
 /// Exact-route scalar observations only. No callback can replace the native
 /// attempt result or change the policy/clock. The mount hook is absent by default.
 struct RelaySetupAdmissionObservation: Sendable {
-    enum Stage: Sendable { case ownerOpened, attemptQueued, attemptEntered, busy, waiting, timerDrained, admitted, failed, ownerReleased }
+    enum Stage: Sendable { case stopCallbackReturning, ownerOpened, attemptQueued, attemptEntered, busy, waiting, timerDrained, admitted, failed, ownerReleased }
     let observedAt: UInt64 = DispatchTime.now().uptimeNanoseconds
     let connectionID: UUID
     let stage: Stage
