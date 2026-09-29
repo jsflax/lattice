@@ -1248,10 +1248,13 @@ private final class KillRecoveryRegistrations: Sendable {
 /// Receives real ordinary catch-up only. It never emits READY/audit/ACK frames
 /// and never serves as a receiver or an installation authority.
 private final class KillRecoveryBootstrapPeer: Sendable {
-    private struct State { var socket: WebSocket?; var ids = Set<String>(); var closed = false; var invalid = false }
+    private struct State { var socket: WebSocket?; var ids = Set<String>(); var lifecycle = ConnectedBootstrapLifecycle(); var invalid = false }
     private let state = NIOLockedValueBox(State())
     func attach(_ socket: WebSocket) {
-        state.withLockedValue { $0.socket = socket }
+        let closeAfterAttach = state.withLockedValue { value in
+            value.socket = socket
+            return value.lifecycle.didAttach()
+        }
         socket.onBinary { [weak self] _, bytes in
             guard let self else { return }
             guard bytes.readableBytes <= 1_048_576,
@@ -1266,12 +1269,20 @@ private final class KillRecoveryBootstrapPeer: Sendable {
                 }
             }
         }
-        socket.onClose.whenComplete { [weak self] _ in self?.state.withLockedValue { $0.closed = true; $0.socket = nil } }
+        socket.onClose.whenComplete { [weak self] _ in self?.state.withLockedValue { $0.lifecycle.didClose(); $0.socket = nil } }
+        if closeAfterAttach { socket.close(promise: nil) }
     }
     var ids: Set<String> { state.withLockedValue { $0.ids } }
     var invalid: Bool { state.withLockedValue { $0.invalid } }
-    var closed: Bool { state.withLockedValue { $0.closed } }
-    func close() { state.withLockedValue { $0.socket }?.close(promise: nil) }
+    var closed: Bool { state.withLockedValue { $0.lifecycle.closed } }
+    func connectFailed() { state.withLockedValue { $0.lifecycle.connectFailed() } }
+    func cleanupRetired(ownedGroupJoined: Bool) -> Bool {
+        state.withLockedValue { $0.lifecycle.cleanupRetired(ownedGroupJoined: ownedGroupJoined) }
+    }
+    func close() {
+        let socket = state.withLockedValue { value in value.lifecycle.requestClose(); return value.socket }
+        socket?.close(promise: nil)
+    }
 }
 
 private enum KillRecoveryPhase: String, Codable { case environment, bootstrap, initial, offline, cut, kill, snapshot, retirement, reopen, recovery, postWrite, finalSnapshot, cleanup, complete }
@@ -1447,6 +1458,37 @@ private final class KillRecoveryGate: Sendable {
 }
 
 @MainActor
+private func killRecoveryApplication(_ certificate: URL, _ key: URL) async throws -> Application {
+    var environment = try Environment.detect(); environment.arguments = ["vapor"]
+    // C owns the group used by both its server and bootstrap clients. Final
+    // cleanup observes the checked join, including failed pre-upgrade channels.
+    let app = try await Application.make(environment, .createNew)
+    var tls = TLSConfiguration.makeServerConfiguration(certificateChain: [.file(certificate.path)], privateKey: .file(key.path))
+    tls.minimumTLSVersion = .tlsv12
+    app.http.server.configuration.hostname = "127.0.0.1"
+    app.http.server.configuration.port = 0
+    app.http.server.configuration.supportVersions = [.one]
+    app.http.server.configuration.tlsConfiguration = tls
+    app.http.server.configuration.shutdownTimeout = .seconds(1)
+    return app
+}
+
+@MainActor
+private func killRecoveryShutdown(_ app: Application) async throws {
+    guard case .createNew = app.eventLoopGroupProvider else { throw ConnectedRecoveryFailure.metadata }
+    var firstError: (any Error)?
+    if !app.didShutdown {
+        do { try await app.asyncShutdown() } catch { firstError = error }
+    }
+    // Vapor logs and suppresses group-shutdown errors. Pinned NIO explicitly
+    // permits this second call: it returns the retained result after all
+    // registered channels close and all owned event-loop threads are joined.
+    do { try await app.eventLoopGroup.shutdownGracefully() }
+    catch { if firstError == nil { firstError = error } }
+    if let firstError { throw firstError }
+}
+
+@MainActor
 private func killRecoveryConfiguration(registration: ConnectedRegistration, contexts: [SyncRecoveryAuthorizationContext],
                                        endpoints: [String], store: String, deadline: UInt64) throws -> RecoveryProcessConfiguration {
     guard contexts.count == 2, endpoints.count == 2, contexts[0].incomingScope == contexts[1].incomingScope else { throw KillRecoveryFailure.metadata }
@@ -1571,7 +1613,7 @@ struct PublicReceiverKillRecoveryTests {
         try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let sourceFile = storage.appendingPathComponent("source.sqlite")
         let registrations = KillRecoveryRegistrations()
-        let app = try await connectedApplication(environment.certificate, environment.key)
+        let app = try await killRecoveryApplication(environment.certificate, environment.key)
         let gate = registrations.gate
         let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in }, didFinishAsyncSetup: {},
             parkRecoveryReadySend: { gate.park($0, $1) }, didRecoveryReadyDecision: { gate.decision($0, $1) },
@@ -1580,28 +1622,31 @@ struct PublicReceiverKillRecoveryTests {
         var mounts: [SyncRelayHandle] = [], bootstrap: [KillRecoveryBootstrapPeer] = []
         var parentB: RecoveryProcessReceiver?, process: RecoveryProcessOwner?
         var retirementObservation: RelayRecoveryRetirementObservation?
-        var cleanupCompleted = false
+        var cleanupResult: Result<Void, any Error>?
         func cleanup() async throws {
-            guard !cleanupCompleted else { return }
+            if let cleanupResult { return try cleanupResult.get() }
+            var firstError: (any Error)?
+            func failed(_ error: any Error) { if firstError == nil { firstError = error } }
             gate.release()
             retirementObservation = nil // Release the payload-free budget/fence reference too.
-            var valid = true
             if let process {
                 let result = await process.cleanup()
-                valid = valid && result.allSpawnedReaped && result.descriptorsClosed
+                if !result.allSpawnedReaped || !result.descriptorsClosed { failed(KillRecoveryFailure.cleanup) }
             }
-            do { try parentB?.close() } catch { valid = false }
+            do { try parentB?.close() } catch { failed(error) }
             for peer in bootstrap { peer.close() }
             for mount in mounts { await mount.retireRecoveryAuthorization() }
-            do { try await app.asyncShutdown() } catch { valid = false }
+            var ownedGroupJoined = false
+            do { try await killRecoveryShutdown(app); ownedGroupJoined = true } catch { failed(error) }
             do {
                 try await connectedWait("C source authorization retirement", until: min(deadline, ContinuousClock.now.advanced(by: .seconds(10)))) {
-                    mounts.allSatisfy { $0.recoverySessionCount == 0 } && bootstrap.allSatisfy(\.closed)
+                    mounts.allSatisfy { $0.recoverySessionCount == 0 }
+                        && bootstrap.allSatisfy { $0.cleanupRetired(ownedGroupJoined: ownedGroupJoined) }
                 }
-            } catch { valid = false }
+            } catch { failed(error) }
             RelayIngressTesting.remove(hooks, for: storage)
-            cleanupCompleted = true
-            guard valid else { throw KillRecoveryFailure.cleanup }
+            if let firstError { cleanupResult = .failure(firstError); throw firstError }
+            cleanupResult = .success(())
             // Source governor ownership can outlive setup. No store/WAL is
             // unlinked here; the wrapper removes files only after group reap.
         }
@@ -1641,7 +1686,12 @@ struct PublicReceiverKillRecoveryTests {
                 let peer = KillRecoveryBootstrapPeer(), declared = registrations.bootstrap.peer(index); bootstrap.append(peer)
                 let query = "?recovery-v=1&recovery-replica=\(declared.replicaID)&recovery-receiver=\(declared.receiverIncarnation)&recovery-channel=\(declared.channelIncarnation)"
                 var headers = HTTPHeaders(); headers.add(name: "Authorization", value: "Bearer " + registrations.bootstrap.token)
-                try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get()
+                do {
+                    try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get()
+                } catch {
+                    peer.connectFailed()
+                    throw error
+                }
                 try await connectedWait("C actual source metadata and authorized seeded catch-up", until: deadline) {
                     !peer.invalid && peer.ids == seededIDs && registrations.contexts.withLockedValue { $0[index] != nil }
                 }
