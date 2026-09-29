@@ -123,6 +123,7 @@ package final class RecoveryRelayNativeResult: @unchecked Sendable {
 private final class RecoveryRelayRouteContext {
     let onIO: @Sendable () -> Bool
     let current: @Sendable () -> Bool
+    var admissible: (@Sendable () -> Bool)? // IO only; cleared before any successful handoff
     init(onIO: @escaping @Sendable () -> Bool, current: @escaping @Sendable () -> Bool) {
         self.onIO = onIO; self.current = current
     }
@@ -162,6 +163,52 @@ package final class RecoveryRelayNativeSetup {
             handle.closeOnIO(); throw RecoveryRelayNativeError.refused(recoveryRelayMessage())
         }
         self.onIO = onIO; value = handle; stop = .init(handle.stopToken()); descriptor = Data(text.utf8)
+    }
+    /// Automatic setup alone may return nil for the bridge's exact pre-enrollment
+    /// mutex-busy outcome. Every other invalid result remains a terminal error.
+    /// The same already-opened owner must be supplied by the bounded caller.
+    package static func openAutomatic(owner: Lattice, policy: Data, connection: Data,
+        onIO: @escaping @Sendable () -> Bool, current: @escaping @Sendable () -> Bool,
+        admissible: @escaping @Sendable () -> Bool) throws -> RecoveryRelayNativeSetup? {
+        precondition(onIO())
+        guard policy.count <= 32_768, connection.count <= 8_192,
+              let policyText = String(data: policy, encoding: .utf8),
+              let connectionText = String(data: connection, encoding: .utf8),
+              let ref = owner.backend.asCxxLatticeRef else {
+            throw RecoveryRelayNativeError.refused("relay bridge input or backend unavailable")
+        }
+        let route = RecoveryRelayRouteContext(onIO: onIO, current: current)
+        route.admissible = admissible
+        let retained = Unmanaged.passRetained(route).toOpaque()
+        let handle = ref.openRelayRecoverySetupAutomatic(policy: std.string(policyText), connection: std.string(connectionText),
+            context: retained, current: { pointer in
+                guard let pointer else { return 0 }
+                let route = Unmanaged<RecoveryRelayRouteContext>.fromOpaque(pointer).takeUnretainedValue()
+                precondition(route.onIO()); return route.current() ? 1 : 0
+            }, admissible: { pointer in
+                guard let pointer else { return 0 }
+                let route = Unmanaged<RecoveryRelayRouteContext>.fromOpaque(pointer).takeUnretainedValue()
+                precondition(route.onIO()); return route.admissible?() == true ? 1 : 0
+            }, destroy: { pointer in
+                guard let pointer else { return }
+                let route = Unmanaged<RecoveryRelayRouteContext>.fromOpaque(pointer).takeRetainedValue()
+                precondition(route.onIO()); withExtendedLifetime(route) {}
+            })
+        // Native never invokes this pre-effect-only callback after returning.
+        // Retained route liveness therefore has no setup deadline or work token.
+        route.admissible = nil
+        let pending = handle.pendingBeforeEnrollment(), valid = handle.valid()
+        if pending && !valid { return nil }
+        guard valid && !pending else { throw RecoveryRelayNativeError.refused(recoveryRelayMessage()) }
+        let text = String(handle.descriptor())
+        guard !text.isEmpty, text.utf8.count <= 32_768 else {
+            handle.closeOnIO(); throw RecoveryRelayNativeError.refused(recoveryRelayMessage())
+        }
+        return .init(automatic: handle, descriptor: Data(text.utf8), onIO: onIO)
+    }
+    private init(automatic handle: lattice.relay_recovery_setup, descriptor: Data,
+                 onIO: @escaping @Sendable () -> Bool) {
+        self.onIO = onIO; value = handle; stop = .init(handle.stopToken()); self.descriptor = descriptor
     }
     deinit { precondition(onIO()); value?.closeOnIO() }
     package func authorize(_ data: Data) throws {

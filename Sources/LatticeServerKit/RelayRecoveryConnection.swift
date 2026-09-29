@@ -46,6 +46,19 @@ final class RecoveryRelayAuthorizationWork: @unchecked Sendable {
     deinit { connection.releaseAuthorization() }
 }
 
+/// Covers actual constructor/capture/timer/IO drain before authorization owns
+/// the existing mount slot. A closed socket alone cannot settle this work.
+final class RecoveryRelaySetupWork: @unchecked Sendable {
+    private let connection: RecoveryRelayConnection
+    fileprivate init(_ connection: RecoveryRelayConnection) { self.connection = connection }
+    deinit { connection.releaseSetup() }
+}
+struct RecoveryRelayAutomaticRoute: Sendable {
+    let connection: Data
+    let channel: SyncChannel
+    let source: RecoveryRelayResolvedSource
+}
+
 struct RelayRecoveryConnectionSample: Sendable {
     let available, socketOpen, lifetimeLive: Bool
 }
@@ -161,14 +174,35 @@ final class RecoveryRelayConnection: @unchecked Sendable {
     private struct Retirement {
         var requested = false
         var nativeRetired = false
+        var setupKey: String?
+        var setupStarted = false
+        var setupReserved = false
         var authorizationReserved = false
         var removed = false
     }
     private let retirement = NIOLockedValueBox(Retirement())
 
     private static func removeIfSettled(_ state: inout Retirement) -> Bool {
-        guard state.nativeRetired, !state.authorizationReserved, !state.removed else { return false }
+        guard state.nativeRetired, !state.setupReserved, !state.authorizationReserved, !state.removed else { return false }
         state.removed = true; return true
+    }
+
+    func reserveSetup(for key: String) throws -> RecoveryRelaySetupWork {
+        try retirement.withLockedValue { state in
+            guard !state.requested, !state.setupStarted, !state.setupReserved, !state.authorizationReserved else {
+                throw SyncRecoveryConfigurationError.staleAuthorization
+            }
+            state.setupKey = key; state.setupStarted = true; state.setupReserved = true
+        }
+        return RecoveryRelaySetupWork(self)
+    }
+    fileprivate func releaseSetup() {
+        let remove = retirement.withLockedValue { state in
+            precondition(state.setupReserved)
+            state.setupReserved = false
+            return Self.removeIfSettled(&state)
+        }
+        if remove { mount.remove(id) }
     }
 
     func reserveAuthorization() throws -> RecoveryRelayAuthorizationWork {
@@ -245,6 +279,49 @@ final class RecoveryRelayConnection: @unchecked Sendable {
             return .init(context: .init(channel: channel, declaredPeer: peer, source: resolved.source,
                                         incomingScope: resolved.incomingScope), wire: actual.descriptor,
                          maximumAuthorizationMilliseconds: source.configuration.maximumAuthorizationMilliseconds)
+        } catch { actual.close(); throw error }
+    }
+    /// Freeze the real route once, before the first automatic capture attempt.
+    func automaticRoute(channel: SyncChannel, source: RecoveryRelayResolvedSource) throws -> RecoveryRelayAutomaticRoute {
+        precondition(RelayExecutionPool.io.isCurrentWorker)
+        guard let socket, !lifetime.isStopped, !revocation.isRevoked, !socket.isClosed, native == nil,
+              !channel.id.isEmpty, channel.id.utf8.count <= 64 else { throw SyncRecoveryConfigurationError.staleAuthorization }
+        struct Route: Encodable { let mount: UUID; let connection: UUID; let channel: String; let authenticatedUserID: UUID; let peer: SyncRecoveryPeerIdentity }
+        let bytes = try JSONEncoder().encode(Route(mount: mount.id, connection: id, channel: channel.id,
+                                                  authenticatedUserID: channel.userId, peer: peer))
+        return .init(connection: bytes, channel: channel, source: source)
+    }
+    func openAutomatic(owner: Lattice, route: RecoveryRelayAutomaticRoute,
+        admissible: @escaping @Sendable () -> Bool) throws -> RecoveryRelayAuthorizationTurn? {
+        precondition(RelayExecutionPool.io.isCurrentWorker)
+        guard let socket, !lifetime.isStopped, !revocation.isRevoked, !socket.isClosed, native == nil else {
+            throw SyncRecoveryConfigurationError.staleAuthorization
+        }
+        let lifetime = lifetime, revocation = revocation
+        guard let actual = try RecoveryRelayNativeSetup.openAutomatic(owner: owner,
+            policy: route.source.policy, connection: route.connection,
+            onIO: { RelayExecutionPool.io.isCurrentWorker }, current: { [weak socket] in
+                !lifetime.isStopped && !revocation.isRevoked && socket?.isClosed == false
+            }, admissible: admissible) else { return nil }
+        lifetime.bind(actual.stop)
+        guard !lifetime.isStopped, !socket.isClosed else { actual.close(); throw SyncRecoveryConfigurationError.staleAuthorization }
+        struct Wire: Decodable {
+            struct Route: Decodable { let authenticatedUserID: UUID; let peer: SyncRecoveryPeerIdentity }
+            let route: Route; let source: SyncRecoverySourceDescriptor; let incomingScope: SyncRecoveryIncomingScope
+        }
+        do {
+            let resolved = try JSONDecoder().decode(Wire.self, from: actual.descriptor)
+            guard resolved.route.authenticatedUserID == route.channel.userId, resolved.route.peer == peer,
+                  resolved.source.sourceID == route.source.configuration.sourceID,
+                  resolved.source.epoch == route.source.configuration.epoch,
+                  resolved.source.receiptNamespace == route.source.configuration.receiptNamespace,
+                  resolved.source.receiptCoverage == route.source.configuration.receiptCoverageFact else {
+                throw SyncRecoveryConfigurationError.staleAuthorization
+            }
+            native = actual; resolvedScope = resolved.incomingScope
+            return .init(context: .init(channel: route.channel, declaredPeer: peer, source: resolved.source,
+                                       incomingScope: resolved.incomingScope), wire: actual.descriptor,
+                         maximumAuthorizationMilliseconds: route.source.configuration.maximumAuthorizationMilliseconds)
         } catch { actual.close(); throw error }
     }
     /// Executes off native/SQL/control locks. The app's actual request/session
@@ -346,11 +423,16 @@ final class RecoveryRelayConnection: @unchecked Sendable {
         lifetime.stop()
         let releasedRequest = request.withLockedValue { value in let held = value; value = nil; return held }
         withExtendedLifetime(releasedRequest) {}
-        let first = retirement.withLockedValue { state in
-            if state.requested { return false }; state.requested = true; return true
+        let cleanupKey = retirement.withLockedValue { state -> String? in
+            if state.requested { return nil }
+            state.requested = true
+            // An onClose caller may have captured its old unopened key before
+            // setup published the real one. Reservation and this transition
+            // choose one immutable lane under the same leaf lock.
+            return state.setupKey ?? key
         }
-        if first {
-            RelayExecutionPool.io.submitRequired(for: key) {
+        if let cleanupKey {
+            RelayExecutionPool.io.submitRequired(for: cleanupKey) {
                 self.native?.close(); self.native = nil; self.resolvedScope = nil
                 self.lifetime.finishNativeRetirement()
                 // Native retirement and actual app authorization are separate

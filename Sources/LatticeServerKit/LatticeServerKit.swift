@@ -46,6 +46,8 @@ final class RelayIngressTestHooks: Sendable {
     // ACK-only fault decision after actual native acceptance and final send
     // fences. Absent by default; copied facts never grant publication.
     let shouldDropRecoveryACK: (@Sendable (RelayRecoveryACKObservation) -> Bool)?
+    let didOpenRecoverySetupOwnerForTesting: (@Sendable (Lattice) -> Void)?
+    let didObserveRecoverySetup: (@Sendable (RelaySetupAdmissionObservation) -> Void)?
     let didObserveRecoveryConnection: (@Sendable (RelayRecoveryConnectionObservation) -> Void)?
 
     init(beforeAsyncSetup: @escaping @Sendable () async -> Void,
@@ -58,7 +60,9 @@ final class RelayIngressTestHooks: Sendable {
          didRecoveryReadyDecision: (@Sendable (String, Bool) -> Void)? = nil,
          didRecoveryReadyControl: (@Sendable (RelayReadyControlObservation) -> Void)? = nil,
          shouldDropRecoveryACK: (@Sendable (RelayRecoveryACKObservation) -> Bool)? = nil,
-         didObserveRecoveryConnection: (@Sendable (RelayRecoveryConnectionObservation) -> Void)? = nil) {
+         didObserveRecoveryConnection: (@Sendable (RelayRecoveryConnectionObservation) -> Void)? = nil,
+         didObserveRecoverySetup: (@Sendable (RelaySetupAdmissionObservation) -> Void)? = nil,
+         didOpenRecoverySetupOwnerForTesting: (@Sendable (Lattice) -> Void)? = nil) {
         self.beforeAsyncSetup = beforeAsyncSetup
         self.didBufferFrame = didBufferFrame
         self.didFinishAsyncSetup = didFinishAsyncSetup
@@ -70,6 +74,8 @@ final class RelayIngressTestHooks: Sendable {
         self.didRecoveryReadyControl = didRecoveryReadyControl
         self.shouldDropRecoveryACK = shouldDropRecoveryACK
         self.didObserveRecoveryConnection = didObserveRecoveryConnection
+        self.didObserveRecoverySetup = didObserveRecoverySetup
+        self.didOpenRecoverySetupOwnerForTesting = didOpenRecoverySetupOwnerForTesting
     }
 }
 
@@ -1422,7 +1428,9 @@ extension Lattice {
                     storeConfiguration: storeConfiguration, lastEventId: lastEventId,
                     processFrame: processFrame, diagnostic: ackPath,
                     sendCatchUp: ingressHooks?.sendCatchUp,
-                    didFinish: { ingressHooks?.didFinishAsyncSetup() })
+                    didFinish: { ingressHooks?.didFinishAsyncSetup() },
+                    didObserveRecoverySetup: ingressHooks?.didObserveRecoverySetup,
+                    didOpenRecoverySetupOwnerForTesting: ingressHooks?.didOpenRecoverySetupOwnerForTesting)
                 setupHandedOff = true
                 Task { @RelayControlActor in
                     RelayConnectionSetup(input: input).start()

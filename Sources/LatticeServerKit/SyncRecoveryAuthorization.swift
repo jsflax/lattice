@@ -275,8 +275,14 @@ struct RecoveryRelayResolvedSource: Sendable {
     let policy: Data
 }
 
+/// One pending setup's payload-free stop notification. Lifetime copies and
+/// releases it outside its leaf lock; pending callbacks retain their work charge.
+final class RecoveryRelaySetupStopObservation: Sendable {
+    let stopped: @Sendable () -> Void
+    init(_ stopped: @escaping @Sendable () -> Void) { self.stopped = stopped }
+}
 final class RecoveryRelayLifetime: @unchecked Sendable {
-    private struct State { var stopped = false; var authorized = false; var nativeRetired = false; var native: RecoveryRelayNativeStop?; var readScope: [String: Set<String>] = [:] }
+    private struct State { var setupStop: RecoveryRelaySetupStopObservation?; var stopped = false; var authorized = false; var nativeRetired = false; var native: RecoveryRelayNativeStop?; var readScope: [String: Set<String>] = [:] }
     private let state = NIOLockedValueBox(State())
     var isStopped: Bool { state.withLockedValue { $0.stopped } }
     var hasRetiredNative: Bool { state.withLockedValue { $0.nativeRetired } }
@@ -300,9 +306,29 @@ final class RecoveryRelayLifetime: @unchecked Sendable {
         }
         if stop { native.stop() }
     }
+    func observeSetupStop(_ observation: RecoveryRelaySetupStopObservation) {
+        let stopped = state.withLockedValue { s in
+            precondition(s.setupStop == nil)
+            if s.stopped { return true }
+            s.setupStop = observation; return false
+        }
+        if stopped { observation.stopped() }
+    }
+    func removeSetupStop(_ observation: RecoveryRelaySetupStopObservation) {
+        let released = state.withLockedValue { s -> RecoveryRelaySetupStopObservation? in
+            guard s.setupStop === observation else { return nil }
+            let held = s.setupStop; s.setupStop = nil; return held
+        }
+        withExtendedLifetime(released) {}
+    }
     func stop() {
-        let native = state.withLockedValue { s in s.stopped = true; return s.native }
+        let (native, observation) = state.withLockedValue { s in
+            s.stopped = true
+            let observation = s.setupStop; s.setupStop = nil
+            return (s.native, observation)
+        }
         native?.stop()
+        observation?.stopped()
     }
     /// Called after the actual setup is released on its file IO lane. A closed
     /// socket can retain this cell indefinitely; it must not keep the native

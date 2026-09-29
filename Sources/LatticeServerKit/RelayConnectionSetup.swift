@@ -23,6 +23,14 @@ struct RelayConnectionSetupInput: @unchecked Sendable {
     let diagnostic: ACKPathConnection?
     let sendCatchUp: (@Sendable (WebSocket, Data, EventLoopPromise<Void>) -> Void)?
     let didFinish: @Sendable () -> Void
+    let didObserveRecoverySetup: (@Sendable (RelaySetupAdmissionObservation) -> Void)?
+    let didOpenRecoverySetupOwnerForTesting: (@Sendable (Lattice) -> Void)?
+}
+
+private enum RelayAutomaticSetupStep: Sendable {
+    case busy(until: UInt64)
+    case opened(RecoveryRelayAuthorizationTurn)
+    case failed(any Error)
 }
 
 private enum RelayCatchUpStep: Sendable {
@@ -48,6 +56,7 @@ private final class RelayCatchUpReadState {
     private var events: TableResults<AuditLog>?
     private var count = 0
     private var offset = 0
+    var automaticRoute: RecoveryRelayAutomaticRoute? // frozen once on this IO lane
     var hasSubscription = false
     let probe: ObserverSendBoundaryProbe?
 
@@ -149,6 +158,12 @@ private final class RelayCatchUpReadState {
     private var boundary: Int64 = 0
     private var subscription: PushSubscription?
     private var authorizationWork: RecoveryRelayAuthorizationWork?
+    private var setupWork: RecoveryRelaySetupWork?
+    private var setupStop: RecoveryRelaySetupStopObservation?
+    private var admission: RelaySetupAdmission?
+    private var admissionTimer: RelaySetupAdmissionTimer?
+    private var admissionIO = false
+    private var admissionObserver: (@Sendable (RelaySetupAdmissionObservation) -> Void)?
 
     init(input: RelayConnectionSetupInput) { self.input = input }
 
@@ -171,6 +186,10 @@ private final class RelayCatchUpReadState {
         if let candidate = input.pushContext?.options._sendBoundaryProbeForTesting,
            candidate.channelID == input.channel.id { probe = candidate }
         else { probe = nil }
+        if let recovery = input.state.recovery {
+            startAutomatic(recovery, probe: probe)
+            return
+        }
         RelayExecutionPool.io.submitRequired(for: input.applyKey) {
             try? FileManager.default.createDirectory(at: input.storageURL, withIntermediateDirectories: true)
             let configuration = SyncRelayApplyPolicy.configuration(
@@ -194,6 +213,165 @@ private final class RelayCatchUpReadState {
         }
     }
 
+    private func startAutomatic(_ recovery: RecoveryRelayConnection, probe: ObserverSendBoundaryProbe?) {
+        let work: RecoveryRelaySetupWork
+        do { work = try recovery.reserveSetup(for: input.applyKey) }
+        catch { fail(error); return }
+        setupWork = work
+        let observer = input.didObserveRecoverySetup
+        admissionObserver = observer
+        let admission = RelaySetupAdmission()
+        self.admission = admission
+        let stop = RecoveryRelaySetupStopObservation { [weak self, work, admission] in
+            admission.cancel() // Immediate veto, even if control/IO is queued.
+            Task { @RelayControlActor [weak self, work] in
+                defer { withExtendedLifetime(work) {} }
+                self?.automaticStopped()
+            }
+        }
+        setupStop = stop
+        recovery.lifetime.observeSetupStop(stop)
+        admissionIO = true
+        let input = input
+        RelayExecutionPool.io.submitRequired(for: input.applyKey) { [work] in
+            defer { withExtendedLifetime(work) {} }
+            let opened: UnsafeSendableBox<RelayCatchUpReadState>?
+            do {
+                guard !admission.isCancelled, !input.socket.isClosed, !input.state.revocation.isRevoked else {
+                    throw SyncRecoveryConfigurationError.staleAuthorization
+                }
+                try? FileManager.default.createDirectory(at: input.storageURL, withIntermediateDirectories: true)
+                let configuration = SyncRelayApplyPolicy.configuration(
+                    fileURL: input.fileURL, storeConfiguration: input.storeConfiguration)
+                input.diagnostic?.record(.storeOpenBegin)
+                let lattice = try Lattice(isolation: nil, for: input.schema, configuration: configuration)
+                guard let source = input.recoverySource else { throw SyncRecoveryConfigurationError.staleAuthorization }
+                let state = RelayCatchUpReadState(lattice: lattice, input: input, probe: probe)
+                state.automaticRoute = try recovery.automaticRoute(channel: input.channel, source: source)
+                // Test-only synchronous borrow, off locks; it cannot replace the
+                // owner/route/result. Real mutex holding lives in a test target.
+                input.didOpenRecoverySetupOwnerForTesting?(lattice)
+                opened = UnsafeSendableBox(state)
+                observer?(.init(connectionID: recovery.id, stage: .ownerOpened, owner: ObjectIdentifier(state),
+                                budget: nil, onIO: RelayExecutionPool.io.isCurrentWorker))
+            } catch {
+                opened = nil
+                input.diagnostic?.record(.storeOpenFailure)
+            }
+            Task { @RelayControlActor [work] in
+                defer { withExtendedLifetime(work) {} }
+                self.automaticOwnerOpened(opened, probe: probe)
+            }
+        }
+    }
+
+    private func automaticOwnerOpened(_ opened: UnsafeSendableBox<RelayCatchUpReadState>?, probe: ObserverSendBoundaryProbe?) {
+        precondition(phase == .opening && admissionIO)
+        admissionIO = false
+        native = opened
+        guard opened != nil else { self.opened(nil, turn: nil, probe: probe); return }
+        guard isLive, let admission, !admission.isCancelled else { finish(); return }
+        // Construction is never retried. The fixed capture budget begins before
+        // its first IO enqueue, so subsequent keyed-queue delay counts against it.
+        admission.start()
+        attemptAutomatic(probe: probe)
+    }
+
+    private func attemptAutomatic(probe: ObserverSendBoundaryProbe?) {
+        precondition(phase == .opening && !admissionIO && admissionTimer == nil)
+        guard isLive, let admission, !admission.isCancelled, let native, let work = setupWork,
+              let recovery = input.state.recovery else { finish(); return }
+        admissionIO = true
+        let observer = admissionObserver
+        let diagnostic = input.diagnostic
+        observer?(.init(connectionID: recovery.id, stage: .attemptQueued, owner: nil,
+                        budget: admission.snapshot, onIO: RelayExecutionPool.io.isCurrentWorker))
+        RelayExecutionPool.io.submitRequired(for: input.applyKey) { [work] in
+            defer { withExtendedLifetime(work) {} }
+            let step: RelayAutomaticSetupStep
+            do {
+                guard admission.beginAttempt(), let state = native.valueIfPresent, let route = state.automaticRoute else {
+                    throw SyncRecoveryConfigurationError.staleAuthorization
+                }
+                observer?(.init(connectionID: recovery.id, stage: .attemptEntered, owner: ObjectIdentifier(state),
+                                budget: admission.snapshot, onIO: RelayExecutionPool.io.isCurrentWorker))
+                if let turn = try recovery.openAutomatic(owner: state.lattice, route: route,
+                                                         admissible: { admission.admissible() }) {
+                    diagnostic?.record(.storeOpenEnd)
+                    observer?(.init(connectionID: recovery.id, stage: .admitted, owner: ObjectIdentifier(state),
+                                    budget: admission.snapshot, onIO: RelayExecutionPool.io.isCurrentWorker))
+                    step = .opened(turn)
+                } else if let next = admission.busyReturned() {
+                    observer?(.init(connectionID: recovery.id, stage: .busy, owner: ObjectIdentifier(state),
+                                    budget: admission.snapshot, onIO: RelayExecutionPool.io.isCurrentWorker))
+                    step = .busy(until: next)
+                } else { throw SyncRecoveryConfigurationError.staleAuthorization }
+            } catch {
+                diagnostic?.record(.storeOpenFailure)
+                observer?(.init(connectionID: recovery.id, stage: .failed, owner: native.valueIfPresent.map { ObjectIdentifier($0) },
+                                budget: admission.snapshot, onIO: RelayExecutionPool.io.isCurrentWorker))
+                step = .failed(error)
+            }
+            Task { @RelayControlActor [work] in
+                defer { withExtendedLifetime(work) {} }
+                self.automaticReturned(step, probe: probe)
+            }
+        }
+    }
+
+    private func automaticReturned(_ step: RelayAutomaticSetupStep, probe: ObserverSendBoundaryProbe?) {
+        precondition(phase == .opening && admissionIO)
+        admissionIO = false
+        guard isLive, let admission, !admission.isCancelled else { finish(); return }
+        switch step {
+        case .failed(let error): fail(error)
+        case .opened(let turn):
+            // The pre-effect boundary already admitted this attempt. A later
+            // deadline cannot undo enrollment or turn a successful result into
+            // another attempt; ordinary exact-route liveness remains required.
+            opened(native, turn: turn, probe: probe)
+        case .busy(let deadline):
+            guard let work = setupWork else { preconditionFailure("automatic setup lost its charge") }
+            precondition(admissionTimer == nil)
+            admissionTimer = RelaySetupAdmissionTimer(deadline: deadline) { [self, work] in
+                Task { @RelayControlActor [work] in
+                    defer { withExtendedLifetime(work) {} }
+                    self.automaticTimerDrained(probe: probe)
+                }
+            }
+            if let connectionID = input.state.recovery?.id {
+                admissionObserver?(.init(connectionID: connectionID, stage: .waiting, owner: nil,
+                                         budget: admission.snapshot, onIO: RelayExecutionPool.io.isCurrentWorker))
+            }
+        }
+    }
+
+    private func automaticTimerDrained(probe: ObserverSendBoundaryProbe?) {
+        precondition(phase == .opening && admissionTimer != nil && !admissionIO)
+        admissionTimer = nil
+        if let connectionID = input.state.recovery?.id {
+            admissionObserver?(.init(connectionID: connectionID, stage: .timerDrained, owner: nil,
+                                     budget: admission?.snapshot, onIO: RelayExecutionPool.io.isCurrentWorker))
+        }
+        guard isLive, let admission, !admission.isCancelled else { finish(); return }
+        attemptAutomatic(probe: probe)
+    }
+
+    private func automaticStopped() {
+        guard admission != nil, phase == .opening else { return }
+        admission?.cancel()
+        if let admissionTimer { admissionTimer.cancel() }
+        else if !admissionIO { finish() }
+    }
+
+    private func releaseAutomaticSetup() {
+        precondition(!admissionIO && admissionTimer == nil)
+        admission?.complete()
+        if let stop = setupStop { input.state.recovery?.lifetime.removeSetupStop(stop) }
+        setupStop = nil; admission = nil
+        setupWork = nil
+    }
+
     private var isLive: Bool {
         !input.socket.isClosed && !input.state.revocation.isRevoked && !input.state.isRefused
     }
@@ -214,6 +392,8 @@ private final class RelayCatchUpReadState {
             do { work = try recovery.reserveAuthorization() }
             catch { fail(error); return }
             authorizationWork = work
+            // Authorization owns the mount slot before setup custody drops.
+            releaseAutomaticSetup()
             phase = .authorizingRecovery
             // External auth never runs while an IO worker or native lock is
             // held. A closed connection retains its finite mount charge until
@@ -426,10 +606,21 @@ private final class RelayCatchUpReadState {
         subscription = nil
         let native = native
         self.native = nil
+        // Do not release setup custody until its retained owner is cleared on
+        // IO. Already-copied stop/control/cancel callbacks retain their own copy.
+        let setupWork = setupWork
+        let observer = admissionObserver
+        let connectionID = input.state.recovery?.id
+        let budget = admission?.snapshot
+        releaseAutomaticSetup()
+        admissionObserver = nil
         // Final query/native releases are serialized with the last native page.
         // No IO worker waits for a socket or for a control-actor completion.
         RelayExecutionPool.io.submitRequired(for: input.applyKey) {
+            defer { withExtendedLifetime(setupWork) {} }
             native?.clear()
+            if let connectionID { observer?(.init(connectionID: connectionID, stage: .ownerReleased,
+                                                  owner: nil, budget: budget, onIO: RelayExecutionPool.io.isCurrentWorker)) }
             Task { @RelayControlActor in
                 self.phase = .finished
                 self.input.didFinish()
