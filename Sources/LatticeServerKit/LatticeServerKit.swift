@@ -1407,16 +1407,16 @@ extension Lattice {
                 // registration; callers cannot supply another source or path.
                 let (prior, next, configuration) = try recoveryMount.migrationPolicies(channel, cohort: cohort)
                 let file = storageURL.appending(path: channel.databaseFileName)
+                // Evaluate the app's declaration once, before native IO. Only
+                // the exact intended path, version and bounded timeout survive.
+                let open = try RecoveryReceiptAdministrativeOpen.resolve(fileURL: file, storeConfiguration: storeConfiguration)
                 let key = FileWatchManager.canonicalKey(for: file)
                 return try await withCheckedThrowingContinuation { continuation in
                     RelayExecutionPool.io.submitRequired(for: key) {
                         do {
-                            var directory: ObjCBool = false
-                            guard FileManager.default.fileExists(atPath: file.path, isDirectory: &directory), !directory.boolValue
-                            else { throw SyncRecoveryConfigurationError.staleAuthorization }
-                            let open = SyncRelayApplyPolicy.configuration(fileURL: file, storeConfiguration: storeConfiguration)
-                            let owner = try Lattice(isolation: nil, for: schema, configuration: open)
-                            let committed = try migrateRecoveryRelayReceiptCoverage(owner: owner, prior: prior, next: next)
+                            let committed = try migrateRecoveryRelayReceiptCoverage(fileURL: open.fileURL, schema: schema,
+                                schemaVersion: open.schemaVersion, busyTimeoutMilliseconds: open.busyTimeoutMilliseconds,
+                                prior: prior, next: next)
                             continuation.resume(returning: committed ? .migrated(configuration) : .pendingQuiescence)
                         } catch { continuation.resume(throwing: error) }
                     }

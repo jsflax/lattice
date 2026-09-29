@@ -3,15 +3,20 @@ import LatticeSwiftCppBridge
 import CxxStdlib
 
 package enum RecoveryRelayNativeError: Error, Sendable { case refused(String) }
-/// Invoked only by ServerKit's resolved, retired mount on its actual IO lane.
-/// A thrown error establishes neither rollback nor durable absence.
-package func migrateRecoveryRelayReceiptCoverage(owner: Lattice, prior: Data, next: Data) throws -> Bool {
-    guard !prior.isEmpty, !next.isEmpty, prior.count <= 32_768, next.count <= 32_768,
-          let before = String(data: prior, encoding: .utf8), let after = String(data: next, encoding: .utf8),
-          let ref = owner.backend.asCxxLatticeRef else {
-        throw RecoveryRelayNativeError.refused("receipt migration input or actual backend unavailable")
+/// One-shot administration of the resolved existing mount file. No general
+/// Lattice constructor, instance cache, scheduler or migration callback enters
+/// this path. A thrown error establishes neither rollback nor durable absence.
+package func migrateRecoveryRelayReceiptCoverage(fileURL: URL, schema: [any Model.Type],
+    schemaVersion: Int64, busyTimeoutMilliseconds: Int32, prior: Data, next: Data) throws -> Bool {
+    guard fileURL.isFileURL, !prior.isEmpty, !next.isEmpty, prior.count <= 32_768, next.count <= 32_768,
+          schemaVersion > 0, schemaVersion <= Int64(Int32.max),
+          busyTimeoutMilliseconds >= 0, busyTimeoutMilliseconds <= 30_000,
+          let before = String(data: prior, encoding: .utf8), let after = String(data: next, encoding: .utf8) else {
+        throw RecoveryRelayNativeError.refused("receipt migration bounded file/catalog contract unavailable")
     }
-    switch ref.migrateRelayReceiptCoverage(prior: std.string(before), next: std.string(after)) {
+    switch lattice.swift_lattice_ref.migrateRelayReceiptCoverageFile(path: std.string(fileURL.path), schemas: schema.cxxSchema,
+        schemaVersion: schemaVersion, busyTimeoutMilliseconds: busyTimeoutMilliseconds,
+        prior: std.string(before), next: std.string(after)) {
     case 1: return true
     case 2: return false
     default: throw RecoveryRelayNativeError.refused("receipt migration did not establish a known result; inspect exact-profile reopen: " + recoveryRelayMessage())

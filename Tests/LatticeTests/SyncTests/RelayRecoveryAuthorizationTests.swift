@@ -121,7 +121,8 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
     let observer: SyncRelayHandle
     let port: Int
     private let peers = NIOLockedValueBox<[RecoveryAuthorizationPeer]>([])
-    init(_ registrations: RegisteredRecoveryPeers = .init(), seedHidden: Bool = false) async throws {
+    init(_ registrations: RegisteredRecoveryPeers = .init(), seedHidden: Bool = false,
+         administrativeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil) async throws {
         self.registrations = registrations
         directory = FileManager.default.temporaryDirectory.appending(path: "relay-recovery-auth-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -153,7 +154,7 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
             ? [SimpleSyncObject.self, RecoveryAuthorizationHiddenRow.self, RecoveryReadyPayloadRow.self]
             : [SimpleSyncObject.self, RecoveryAuthorizationHiddenRow.self]
         writer = Lattice.configureSyncRelay(on: app.routes, path: ["writer"],
-            for: relaySchema, storageURL: directory,
+            for: relaySchema, storageURL: directory, storeConfiguration: administrativeConfiguration,
             recoverySource: { try registrations.source($0) }, channelExtractor: { try registrations.channel($0) },
             recoveryAuthorization: { try await registrations.authorize($0, $1) })
         observer = Lattice.configureSyncRelay(on: app.routes, path: ["observer"],
@@ -817,5 +818,87 @@ private struct RelayRecoveryRetirementTests {
             // Native retirement must not depend on this wrapper's destruction.
             withExtendedLifetime(socket) {}
         }
+    }
+}
+
+
+@Suite("Receipt administration fixed intended file", .timeLimit(.minutes(2)))
+private struct RelayReceiptAdministrativeFileTests {
+    @Test func redirectedProviderRefusesBeforeOpeningAlternateFile() async throws {
+        let redirect = NIOLockedValueBox(false)
+        let calls = NIOLockedValueBox(0)
+        let alternate = FileManager.default.temporaryDirectory.appending(path: "receipt-admin-never-create-\(UUID().uuidString).sqlite")
+        let h = try await RecoveryAuthorizationHarness(administrativeConfiguration: { url in
+            if redirect.withLockedValue({ $0 }) {
+                calls.withLockedValue { $0 += 1 }
+                return .init(fileURL: alternate)
+            }
+            return .init(fileURL: url)
+        })
+        do {
+            let peer = try await h.connect()
+            let (frame, ids) = try recoveryDonorFrame(173)
+            try await peer.socket!.send(Array(frame))
+            try await peer.wait { Set(ids).isSubset(of: Set($0.acks)) }
+            let before = try await h.inspect()
+            redirect.withLockedValue { $0 = true }
+            let cohort = try SyncRecoveryReceiptCohort(id: UUID(), revision: 1, namespaces: [
+                .init(namespaceID: "application", coverageID: "registered-peers-v1", revision: 7)
+            ])
+            do {
+                _ = try await h.writer.migrateRecoveryReceiptCoverage(channel: .init(id: "group-a", userId: h.registrations.user), cohort: cohort)
+                Issue.record("redirected administration unexpectedly succeeded")
+            } catch { #expect(error is SyncRecoveryConfigurationError) }
+            #expect(calls.withLockedValue { $0 } == 1)
+            #expect(!FileManager.default.fileExists(atPath: alternate.path))
+            let after = try await h.inspect()
+            #expect(after.0 == before.0); #expect(after.1 == before.1); #expect(after.2 == before.2)
+            try await h.shutdown()
+        } catch { let original = error; try? await h.shutdown(); throw original }
+    }
+}
+
+
+@Suite("Receipt administration cannot run app schema migration", .timeLimit(.minutes(2)))
+private struct RelayReceiptAdministrativeSchemaTests {
+    @Test func declaredVersionMismatchRefusesWithoutExecutingMigrationBody() async throws {
+        let changed = NIOLockedValueBox(false)
+        let bodies = NIOLockedValueBox(0)
+        let h = try await RecoveryAuthorizationHarness(administrativeConfiguration: { url in
+            if changed.withLockedValue({ $0 }) {
+                let forbidden = Migration().add(from: SimpleSyncObject.self, to: SimpleSyncObject.self) { _, _ in
+                    bodies.withLockedValue { $0 += 1 }
+                }
+                return .init(fileURL: url, migration: [2: forbidden])
+            }
+            return .init(fileURL: url)
+        })
+        do {
+            let peer = try await h.connect()
+            let (frame, ids) = try recoveryDonorFrame(174)
+            try await peer.socket!.send(Array(frame))
+            try await peer.wait { Set(ids).isSubset(of: Set($0.acks)) }
+            let before = try await h.inspect()
+            changed.withLockedValue { $0 = true }
+            let cohort = try SyncRecoveryReceiptCohort(id: UUID(), revision: 1, namespaces: [
+                .init(namespaceID: "application", coverageID: "registered-peers-v1", revision: 7)
+            ])
+            let deadline = Date().addingTimeInterval(10)
+            var refused = false
+            while Date() < deadline, !refused {
+                do {
+                    switch try await h.writer.migrateRecoveryReceiptCoverage(channel: .init(id: "group-a", userId: h.registrations.user), cohort: cohort) {
+                    case .pendingQuiescence: try await Task.sleep(nanoseconds: 10_000_000)
+                    case .migrated: Issue.record("administration silently changed the declared schema version"); refused = true
+                    }
+                } catch {
+                    #expect(String(describing: error).contains("declared schema version differs")); refused = true
+                }
+            }
+            #expect(refused); #expect(bodies.withLockedValue { $0 } == 0)
+            let after = try await h.inspect()
+            #expect(after.0 == before.0); #expect(after.1 == before.1); #expect(after.2 == before.2)
+            try await h.shutdown()
+        } catch { let original = error; try? await h.shutdown(); throw original }
     }
 }

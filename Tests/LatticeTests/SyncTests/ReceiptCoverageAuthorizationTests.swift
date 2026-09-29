@@ -336,3 +336,50 @@ import Testing
         }
     }
 }
+
+
+@Suite("Receipt administration declared open contract")
+struct ReceiptAdministrativeOpenTests {
+    private let intended = URL(fileURLWithPath: "/source-only-contract/intended.sqlite")
+    @Test func declaredVersionIsExtractedWithoutCallingMigrationBodies() throws {
+        let value = try RecoveryReceiptAdministrativeOpen.resolve(fileURL: intended) { url in
+            .init(fileURL: url, migration: [2: Migration(), 7: Migration()], busyTimeoutMs: 123)
+        }
+        #expect(value.fileURL == intended); #expect(value.schemaVersion == 7); #expect(value.busyTimeoutMilliseconds == 123)
+    }
+    @Test func defaultVersionRetainsExistingMountContract() throws {
+        let value = try RecoveryReceiptAdministrativeOpen.resolve(fileURL: intended, storeConfiguration: nil)
+        #expect(value.schemaVersion == 1); #expect(value.fileURL == intended)
+        #expect(value.busyTimeoutMilliseconds == Int32(SyncRelayApplyPolicy.busyTimeoutMs))
+    }
+    @Test func redirectedAndMemoryRecipesRefuseBeforeNativeIO() {
+        #expect(throws: (any Error).self) {
+            try RecoveryReceiptAdministrativeOpen.resolve(fileURL: intended) { _ in .init(fileURL: URL(fileURLWithPath: "/source-only-contract/other.sqlite")) }
+        }
+        #expect(throws: (any Error).self) {
+            try RecoveryReceiptAdministrativeOpen.resolve(fileURL: intended) { _ in .init(storage: .memory()) }
+        }
+    }
+    @Test func unrelatedRuntimeSettingsAreNotAdministrativeAuthority() {
+        for setting in 0..<4 {
+            #expect(throws: (any Error).self) {
+                try RecoveryReceiptAdministrativeOpen.resolve(fileURL: intended) { url in
+                    var value = Lattice.Configuration(fileURL: url)
+                    if setting == 0 { value.isReadOnly = true }
+                    if setting == 1 { value.wssEndpoint = URL(string: "wss://example.invalid/forbidden")! }
+                    if setting == 2 { value.auditRetention = 1 }
+                    if setting == 3 { value.busyTimeoutMs = 30_001 }
+                    return value
+                }
+            }
+        }
+    }
+    @Test func invalidDeclaredVersionIsNotClampedOrMigrated() {
+        #expect(throws: (any Error).self) {
+            try RecoveryReceiptAdministrativeOpen.resolve(fileURL: intended) { url in .init(fileURL: url, migration: [0: Migration()]) }
+        }
+        #expect(throws: (any Error).self) {
+            try RecoveryReceiptAdministrativeOpen.resolve(fileURL: intended) { url in .init(fileURL: url, migration: [Int(Int32.max) + 1: Migration()]) }
+        }
+    }
+}
