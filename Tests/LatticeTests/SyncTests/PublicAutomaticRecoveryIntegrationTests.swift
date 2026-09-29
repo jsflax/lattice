@@ -1191,3 +1191,587 @@ struct PublicQuietACKLossRecoveryTests {
         }
     }
 }
+
+// C uses a dedicated executable and two real process incarnations. A/B above
+// remain byte-exact; no test-binary respawn or receiver installation seam.
+import RecoveryProcessSupport
+
+private final class KillRecoveryRegistrations: Sendable {
+    let user = UUID(), sourceID = UUID(), epoch = UUID(), cohortID = UUID()
+    let bootstrap = ConnectedRegistration("kill-bootstrap"), a = ConnectedRegistration("kill-a"), b = ConnectedRegistration("kill-b")
+    let contexts = NIOLockedValueBox<[Int: SyncRecoveryAuthorizationContext]>([:])
+    let endpoints = NIOLockedValueBox<[String]>([])
+    let gate = KillRecoveryGate()
+    private var namespaces: [SyncRecoveryNamespace] {
+        [.init(namespaceID: "local", coverageID: "local-v1", revision: 1),
+         .init(namespaceID: "a", coverageID: "shared-v1", revision: 1),
+         .init(namespaceID: "b", coverageID: "shared-v1", revision: 1)]
+    }
+    func channel(_ request: Request, index: Int) throws -> SyncChannel {
+        _ = try registration(request)
+        let endpoints = endpoints.withLockedValue { $0 }
+        guard endpoints.count == 2 else { throw Abort(.serviceUnavailable) }
+        return .init(id: "wss:" + endpoints[index], userId: user, databaseFileName: "source.sqlite")
+    }
+    private func registration(_ request: Request) throws -> ConnectedRegistration {
+        guard let header = request.headers.first(name: "Authorization"),
+              request.headers["Authorization"].count == 1,
+              let found = [bootstrap, a, b].first(where: { header == "Bearer " + $0.token }) else { throw Abort(.unauthorized) }
+        return found
+    }
+    func policy(_ index: Int) throws -> SyncRecoveryMountConfiguration {
+        let cohort = try SyncRecoveryReceiptCohort(id: cohortID, revision: 1, namespaces: Array(namespaces.dropFirst()))
+        return try .init(authority: "receiver-kill-service", sourceID: sourceID, epoch: epoch, localNamespace: "local",
+            namespaces: namespaces, receiptNamespace: index == 0 ? "a" : "b", models: ["RecoveryProcessSharedRow"],
+            durability: .walFull, maximumAuthorizationMilliseconds: 600_000,
+            readyProfile: .bounded48MiBOrphanV1(orphanResumeGraceMilliseconds: 10_000), receiptCoverage: .registeredProducerV3(cohort))
+    }
+    func authorize(_ request: Request, _ context: SyncRecoveryAuthorizationContext, index: Int) throws -> SyncRecoveryAuthorization {
+        let registered = try registration(request), expectedChannel = try channel(request, index: index)
+        guard context.channel.id == expectedChannel.id, context.channel.userId == user,
+              context.declaredPeer == registered.peer(index), context.source.authority == "receiver-kill-service",
+              context.source.sourceID == sourceID, context.source.epoch == epoch,
+              context.source.receiptNamespace == (index == 0 ? "a" : "b"), context.source.coverageID == "shared-v1",
+              context.source.coverageRevision == 1, context.source.receiptCoverage?.cohortID == cohortID.uuidString.lowercased(),
+              context.source.receiptCoverage?.cohortRevision == 1, context.source.receiptCoverage?.namespaces == ["a", "b"],
+              context.incomingScope.models.count == 1, context.incomingScope.models[0].table == "RecoveryProcessSharedRow",
+              context.incomingScope.models[0].incomingOperations == [.insert, .update, .delete],
+              context.incomingScope.relations.isEmpty, context.incomingScope.scopedLinkTables.isEmpty,
+              context.incomingScope.catalogDigest == context.source.schemaDigest else { throw Abort(.forbidden) }
+        if registered.replica == bootstrap.replica { contexts.withLockedValue { $0[index] = context } }
+        return .init(authenticatedUserID: user, peer: registered.peer(index), source: context.source,
+            incomingScope: context.incomingScope, authorizationRevision: "receiver-kill-registration-v1", validForMilliseconds: 600_000,
+            receiptCoverage: .registeredProducer(registered.producer, cohortID: cohortID, cohortRevision: 1))
+    }
+}
+
+/// Receives real ordinary catch-up only. It never emits READY/audit/ACK frames
+/// and never serves as a receiver or an installation authority.
+private final class KillRecoveryBootstrapPeer: Sendable {
+    private struct State { var socket: WebSocket?; var ids = Set<String>(); var closed = false; var invalid = false }
+    private let state = NIOLockedValueBox(State())
+    func attach(_ socket: WebSocket) {
+        state.withLockedValue { $0.socket = socket }
+        socket.onBinary { [weak self] _, bytes in
+            guard let self else { return }
+            guard bytes.readableBytes <= 1_048_576,
+                  let object = (try? JSONSerialization.jsonObject(with: Data(buffer: bytes))) as? [String: Any]
+            else { self.state.withLockedValue { $0.invalid = true }; return }
+            guard let audits = object["auditLog"] as? [[String: Any]] else { return }
+            self.state.withLockedValue { value in
+                for audit in audits {
+                    guard value.ids.count < 64, audit["tableName"] as? String == "RecoveryProcessSharedRow",
+                          let id = audit["globalId"] as? String, UUID(uuidString: id) != nil else { value.invalid = true; return }
+                    value.ids.insert(id.lowercased())
+                }
+            }
+        }
+        socket.onClose.whenComplete { [weak self] _ in self?.state.withLockedValue { $0.closed = true; $0.socket = nil } }
+    }
+    var ids: Set<String> { state.withLockedValue { $0.ids } }
+    var invalid: Bool { state.withLockedValue { $0.invalid } }
+    var closed: Bool { state.withLockedValue { $0.closed } }
+    func close() { state.withLockedValue { $0.socket }?.close(promise: nil) }
+}
+
+private enum KillRecoveryPhase: String, Codable { case environment, bootstrap, initial, offline, cut, kill, snapshot, retirement, reopen, recovery, postWrite, finalSnapshot, cleanup, complete }
+private enum KillRecoveryFailure: Error { case environment, metadata, bounds, state, deadline, cleanup }
+private enum KillRecoveryCut: String, Sendable, Equatable, Codable { case request, partial }
+
+private final class KillRecoveryGate: Sendable {
+    private struct State {
+        var observations: [RelayReadyControlObservation] = []
+        var connections: [UUID: RelayRecoveryConnectionObservation] = [:]
+        var decisions: [String: Bool] = [:]
+        var bytes = 0, overflow = false, invalid = false, armed = false, held = false
+        var peer: SyncRecoveryPeerIdentity?, channel = "", cut: KillRecoveryCut = .request
+        var prepare: RelayReadyControlObservation?, manifest: RelayReadyControlObservation?, firstPage: RelayReadyControlObservation?
+        var selected: RelayReadyControlObservation?, send: (@Sendable () -> Void)?
+    }
+    private let state = NIOLockedValueBox(State())
+    func connection(_ observation: RelayRecoveryConnectionObservation) {
+        state.withLockedValue { s in
+            guard s.connections.count < 16 || s.connections[observation.connectionID] != nil else { s.overflow = true; return }
+            s.connections[observation.connectionID] = observation
+        }
+    }
+    private static func same(_ actual: RelayReadyControlObservation, _ prepare: RelayReadyControlObservation) -> Bool {
+        guard let a = actual.cutpoint, let p = prepare.cutpoint else { return false }
+        return actual.connectionID == prepare.connectionID && actual.peer == prepare.peer && actual.channel == prepare.channel &&
+            a.frame.canonicalVersion == p.frame.canonicalVersion && a.requestDigest == p.requestDigest &&
+            a.frame.attemptID == p.frame.attemptID && a.frame.sequence == p.frame.sequence &&
+            a.frame.receiverIncarnation == p.frame.receiverIncarnation && a.frame.channelIncarnation == p.frame.channelIncarnation &&
+            a.frame.routeGeneration == p.frame.routeGeneration
+    }
+    func observe(_ observation: RelayReadyControlObservation) {
+        state.withLockedValue { s in
+            let frame = observation.cutpoint?.frame
+            let strings = [observation.channel, observation.requestID, observation.operation, observation.peer.replicaID,
+                observation.routeGeneration ?? "", observation.requestDigest ?? "", observation.attemptID ?? "", observation.sequence ?? "",
+                observation.index ?? "", observation.canonicalKind ?? "", observation.cutpoint?.requestDigest ?? "",
+                observation.cutpoint?.requestFrameSHA256 ?? "", frame?.receiverIncarnation ?? "", frame?.channelIncarnation ?? "",
+                frame?.channel ?? "", frame?.attemptID ?? "", frame?.sequence ?? "", frame?.routeGeneration ?? "", frame?.requestDigest ?? "",
+                frame?.manifestDigest ?? "", frame?.pageIndex ?? "", frame?.itemCount ?? "", frame?.payloadBytes ?? "",
+                frame?.nativePageDigest ?? "", frame?.normalizedFrameSHA256 ?? ""]
+            let bytes = strings.reduce(256) { $0 + $1.utf8.count }
+            guard s.observations.count < 256, bytes <= 131_072 - s.bytes else { s.overflow = true; return }
+            s.bytes += bytes; s.observations.append(observation)
+            guard s.armed, s.selected == nil, observation.peer == s.peer, observation.channel == s.channel,
+                  let cutpoint = observation.cutpoint else { return }
+            if s.prepare == nil {
+                guard observation.operation == "prepare", cutpoint.kind == .positivePrepareLease else { return }
+                s.prepare = observation
+                if s.cut == .request { s.selected = observation }
+                return
+            }
+            guard let prepare = s.prepare, Self.same(observation, prepare), observation.operation == "read" else { return }
+            switch observation.index {
+            case "0":
+                guard cutpoint.kind == .manifest, s.manifest == nil, s.decisions[prepare.requestID] == true else { s.invalid = true; return }
+                s.manifest = observation
+            case "1":
+                guard let manifest = s.manifest, s.decisions[manifest.requestID] == true,
+                      s.firstPage == nil, cutpoint.kind == .contentPage || cutpoint.kind == .receiptPage else { s.invalid = true; return }
+                s.firstPage = observation
+            case "2":
+                guard let first = s.firstPage, s.decisions[first.requestID] == true,
+                      cutpoint.kind == .contentPage || cutpoint.kind == .receiptPage || cutpoint.kind == .end else { s.invalid = true; return }
+                s.selected = observation
+            default: break
+            }
+        }
+    }
+    func arm(peer: SyncRecoveryPeerIdentity, channel: String, cut: KillRecoveryCut) throws {
+        try state.withLockedValue { s in
+            guard !s.armed, s.prepare == nil, s.send == nil, !s.overflow, !s.invalid else { throw KillRecoveryFailure.state }
+            s.armed = true; s.peer = peer; s.channel = channel; s.cut = cut
+        }
+    }
+    func park(_ id: String, _ send: @escaping @Sendable () -> Void) -> Bool {
+        state.withLockedValue { s in
+            guard s.selected?.requestID == id, !s.held, s.send == nil else { return false }
+            s.send = send; s.held = true; return true
+        }
+    }
+    func decision(_ id: String, _ allowed: Bool) {
+        state.withLockedValue { s in
+            guard s.observations.contains(where: { $0.requestID == id }) else { return }
+            guard s.decisions.count < 256 || s.decisions[id] != nil else { s.overflow = true; return }
+            if let prior = s.decisions[id], prior != allowed { s.invalid = true }
+            s.decisions[id] = allowed
+        }
+    }
+    func release() {
+        let send = state.withLockedValue { s in let send = s.send; s.send = nil; s.armed = false; return send }
+        send?() // The real send closure rechecks socket/lifetime/result itself.
+    }
+    var healthy: Bool { state.withLockedValue { !$0.overflow && !$0.invalid } }
+    var held: Bool { state.withLockedValue { $0.held && $0.send != nil } }
+    var staleDecision: Bool? { state.withLockedValue { s in s.selected.flatMap { s.decisions[$0.requestID] } } }
+    var count: Int { state.withLockedValue { $0.observations.count } }
+    func evidence() throws -> ReceiverReapCutEvidence {
+        try state.withLockedValue { s in
+            guard s.held, s.send != nil, let prepare = s.prepare, let selected = s.selected, !s.overflow, !s.invalid else { throw KillRecoveryFailure.state }
+            if s.cut == .request {
+                guard selected.requestID == prepare.requestID, s.manifest == nil, s.firstPage == nil else { throw KillRecoveryFailure.metadata }
+                return .init(prepare: prepare, manifest: nil, firstPage: nil, heldSecondRead: nil)
+            }
+            guard let manifest = s.manifest, let first = s.firstPage,
+                  s.decisions[prepare.requestID] == true, s.decisions[manifest.requestID] == true,
+                  s.decisions[first.requestID] == true, selected.index == "2" else { throw KillRecoveryFailure.metadata }
+            return .init(prepare: prepare, manifest: manifest, firstPage: first, heldSecondRead: selected)
+        }
+    }
+    func handle(_ id: UUID) -> RelayRecoveryConnectionObservation? { state.withLockedValue { $0.connections[id] } }
+    func handles(peer: ConnectedRegistration, channels: [String], after: Int = 0) throws -> [RelayRecoveryConnectionObservation] {
+        try state.withLockedValue { s in
+            guard after >= 0, after <= s.observations.count, !s.overflow, !s.invalid else { throw KillRecoveryFailure.bounds }
+            return try channels.enumerated().map { index, channel in
+                let ids = Set(s.observations.dropFirst(after).filter {
+                    $0.peer == peer.peer(index) && $0.channel == channel && $0.operation == "read" && $0.cutpoint != nil
+                }.map(\.connectionID))
+                guard ids.count == 1, let id = ids.first, let handle = s.connections[id] else { throw KillRecoveryFailure.state }
+                return handle
+            }
+        }
+    }
+    func completedRounds(peer: ConnectedRegistration, channels: [String], after: Int) -> Bool {
+        state.withLockedValue { s in
+            guard after >= 0, after <= s.observations.count, !s.overflow, !s.invalid else { return false }
+            let observed = Array(s.observations.dropFirst(after))
+            return channels.enumerated().allSatisfy { index, channel in
+                observed.contains { prepare in
+                    guard prepare.peer == peer.peer(index), prepare.channel == channel,
+                          prepare.operation == "prepare", prepare.cutpoint?.kind == .positivePrepareLease,
+                          s.decisions[prepare.requestID] == true else { return false }
+                    return observed.contains { end in
+                        Self.same(end, prepare) && end.operation == "read" && end.cutpoint?.kind == .end && s.decisions[end.requestID] == true
+                    }
+                }
+            }
+        }
+    }
+    // Same-Q actual read proves the newly authorized connection obtained a
+    // usable lease. A fresh positive higher-Q prepare/read proves refreeze.
+    // Neither copied result is supplied to the controller as authority.
+    func recoveryBranch(after: Int, old: ReceiverReapCutEvidence) throws -> Bool? {
+        try state.withLockedValue { s in
+            guard after >= 0, after <= s.observations.count, let oldQ = old.prepare.cutpoint,
+                  let sequence = Int64(oldQ.frame.sequence), !s.overflow, !s.invalid else { throw KillRecoveryFailure.metadata }
+            let observed = Array(s.observations.dropFirst(after))
+            for read in observed where read.connectionID != old.prepare.connectionID && read.peer == old.prepare.peer &&
+                read.channel == old.prepare.channel && read.operation == "read" && s.decisions[read.requestID] == true {
+                guard let r = read.cutpoint else { continue }
+                if r.requestDigest == oldQ.requestDigest && r.frame.attemptID == oldQ.frame.attemptID && r.frame.sequence == oldQ.frame.sequence {
+                    return false // exact retained Q, fresh actual connection/lease
+                }
+                guard let next = Int64(r.frame.sequence), next > sequence else { continue }
+                if observed.contains(where: { candidate in
+                    guard let q = candidate.cutpoint else { return false }
+                    return candidate.connectionID == read.connectionID && candidate.peer == read.peer && candidate.channel == read.channel &&
+                        candidate.operation == "prepare" && q.kind == .positivePrepareLease && s.decisions[candidate.requestID] == true &&
+                        q.requestDigest == r.requestDigest && q.frame.attemptID == r.frame.attemptID && q.frame.sequence == r.frame.sequence
+                }) { return true }
+            }
+            return nil
+        }
+    }
+}
+
+@MainActor
+private func killRecoveryConfiguration(registration: ConnectedRegistration, contexts: [SyncRecoveryAuthorizationContext],
+                                       endpoints: [String], store: String, deadline: UInt64) throws -> RecoveryProcessConfiguration {
+    guard contexts.count == 2, endpoints.count == 2, contexts[0].incomingScope == contexts[1].incomingScope else { throw KillRecoveryFailure.metadata }
+    let claim = try RecoveryProcessCodec.encode(contexts[0].incomingScope)
+    let channels = try contexts.enumerated().map { index, context in
+        let source = context.source, scope = context.incomingScope, peer = registration.peer(index)
+        guard let endpoint = URL(string: endpoints[index]) else { throw KillRecoveryFailure.metadata }
+        let expectation = try Lattice.RecoverySourceExpectation(endpoint: endpoint,
+            source: .init(authority: source.authority, sourceID: source.sourceID, epoch: source.epoch,
+                scopeDigest: source.scopeDigest, schemaDigest: source.schemaDigest, receiptNamespace: source.receiptNamespace,
+                coverageID: source.coverageID, coverageRevision: source.coverageRevision, descriptorDigest: source.descriptorDigest,
+                receiptCoverage: source.receiptCoverage),
+            peer: .init(replicaID: peer.replicaID, receiverIncarnation: peer.receiverIncarnation, channelIncarnation: peer.channelIncarnation),
+            incomingScope: .init(models: scope.models.map { .init(table: $0.table, incomingOperations: $0.incomingOperations.map { .init(rawValue: $0.rawValue)! }) },
+                relations: [], scopedLinkTables: [], catalogDigest: scope.catalogDigest),
+            channel: "wss:" + endpoints[index], validForMilliseconds: 600_000)
+        return try RecoveryProcessChannelConfiguration(expectation: expectation, incomingGrantClaim: claim)
+    }
+    return try .init(nonce: UUID(), deadlineNanoseconds: deadline, storeDirectory: store,
+                     authorizationToken: registration.token, channels: channels)
+}
+
+@MainActor
+private func killRecoverySample(_ handle: RelayRecoveryConnectionObservation, until deadline: ContinuousClock.Instant) async throws -> RelayRecoveryConnectionSample {
+    let pending = QuietACKOneShot<RelayRecoveryConnectionSample>()
+    handle.sample { pending.resolve(.success($0)) }
+    return try await pending.wait(until: deadline)
+}
+@MainActor
+private func killRecoverySample(_ handle: RelayRecoveryRetirementObservation, until deadline: ContinuousClock.Instant) async throws -> RelayRecoveryRetirementSample {
+    let pending = QuietACKOneShot<RelayRecoveryRetirementSample>()
+    handle.sample { pending.resolve(.success($0)) }
+    return try await pending.wait(until: deadline)
+}
+@MainActor
+private func killRecoveryLive(_ handles: [RelayRecoveryConnectionObservation], until deadline: ContinuousClock.Instant) async throws {
+    guard handles.count == 2, Set(handles.map(\.connectionID)).count == 2 else { throw KillRecoveryFailure.metadata }
+    for handle in handles {
+        let sample = try await killRecoverySample(handle, until: deadline)
+        try #require(sample.available && sample.socketOpen && sample.lifetimeLive)
+    }
+}
+@MainActor
+private func killRecoveryRetired(_ handle: RelayRecoveryRetirementObservation, drained: Bool,
+                                 until deadline: ContinuousClock.Instant) async throws {
+    while true {
+        guard ContinuousClock.now < deadline, !Task.isCancelled else { throw KillRecoveryFailure.deadline }
+        let value = try await killRecoverySample(handle, until: deadline)
+        if drained ? value.operationsDrained : (value.connectionRetired && value.nativeAvailable && !value.nativeDrained) { return }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+}
+private func killRecoverySourceIdentity(_ file: URL) throws -> [UInt64] {
+    guard file.isFileURL, file.standardizedFileURL == file, file.resolvingSymlinksInPath() == file else { throw KillRecoveryFailure.state }
+    let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+    guard attributes[.type] as? FileAttributeType == .typeRegular,
+          (attributes[.referenceCount] as? NSNumber)?.intValue == 1,
+          let device = attributes[.systemNumber] as? NSNumber, let inode = attributes[.systemFileNumber] as? NSNumber else { throw KillRecoveryFailure.state }
+    return [device.uint64Value, inode.uint64Value]
+}
+
+private enum KillRecoveryCaseName: String, Codable, CaseIterable, Hashable {
+    case killedReceiverReopensFromDurableQ, killedReceiverReopensFromCommittedPartialRange
+}
+private struct KillRecoveryFacts: Codable {
+    var receiverCount: Int?, channelsPerReceiver: Int?, childSpawnCount: Int?, preservedSharedOriginals: Int?
+    var sharedRowsBeforePostWrite: Int?, sharedRowsAfterPostWrite: Int?
+    var killedByOwnedSIGKILL: Bool?, exactReapBeforeSnapshot: Bool?, durableCutValidated: Bool?
+    var sameSavedConfiguration: Bool?, freshPhysicalIncarnation: Bool?, oldConnectionRetired: Bool?
+    var staleSendRefused: Bool?, heldResultDrained: Bool?, sourceAndBStayedLive: Bool?
+    var actualResumeObserved: Bool?, actualRefreezeObserved: Bool?, finalInstallLinksValidated: Bool?, postRecoveryWriteObserved: Bool?
+    var matchedQ: Bool?, matchedManifest: Bool?, matchedPage: Bool?, distinctChildInstances: Bool?
+    var exactRowsPreserved: Bool?, localOnlyPreserved: Bool?, finalCommittedOpen: Bool?
+    var allChildrenReaped: Bool?, descriptorsClosed: Bool?, sourceAuthorizationRetired: Bool?, heldCallbacksReleased: Bool?
+    var cut: KillRecoveryCut?, observedCanonicalKind: String?, observedReadIndex: Int?
+    var configurationSHA256: String?, executableSHA256: String?
+}
+private struct KillRecoveryCaseReceipt: Codable {
+    let name: KillRecoveryCaseName
+    let passed: Bool
+    let phase: KillRecoveryPhase
+    let scalarFacts: KillRecoveryFacts
+}
+private struct KillRecoveryReceipt: Codable { let version: Int; var cases: [KillRecoveryCaseReceipt] }
+@MainActor
+private func killRecoveryReceipt(_ environment: ConnectedTLSEnvironment, name: KillRecoveryCaseName,
+                                 passed: Bool, phase: KillRecoveryPhase, facts: KillRecoveryFacts) throws {
+    let file = environment.root.appendingPathComponent("receipts/receiver-kill-recovery-cases.json")
+    var receipt = KillRecoveryReceipt(version: 1, cases: [])
+    if FileManager.default.fileExists(atPath: file.path) {
+        let data = try Data(contentsOf: file)
+        guard data.count <= 16_384 else { throw KillRecoveryFailure.bounds }
+        receipt = try JSONDecoder().decode(KillRecoveryReceipt.self, from: data)
+        guard receipt.version == 1, receipt.cases.count < 2, Set(receipt.cases.map(\.name)).count == receipt.cases.count,
+              !receipt.cases.contains(where: { $0.name == name }) else { throw KillRecoveryFailure.state }
+    }
+    receipt.cases.append(.init(name: name, passed: passed, phase: phase, scalarFacts: facts))
+    let bytes = try RecoveryProcessCodec.encode(receipt)
+    guard bytes.count <= 16_384 else { throw KillRecoveryFailure.bounds }
+    try bytes.write(to: file, options: .atomic)
+}
+
+@Suite("Public receiver kill recovery", .serialized,
+       .enabled(if: ProcessInfo.processInfo.environment["LATTICE_RECEIVER_KILL_RECOVERY_GATE"] == "1"))
+@MainActor
+struct PublicReceiverKillRecoveryTests {
+    @Test func killedReceiverReopensFromDurableQ() async throws { try await run(.request) }
+    @Test func killedReceiverReopensFromCommittedPartialRange() async throws { try await run(.partial) }
+
+    private func run(_ cut: KillRecoveryCut) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(120))
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now <= UInt64(Int64.max) - 120_000_000_000 else { throw KillRecoveryFailure.deadline }
+        let nativeDeadline = now + 120_000_000_000
+        let name: KillRecoveryCaseName = cut == .request ? .killedReceiverReopensFromDurableQ : .killedReceiverReopensFromCommittedPartialRange
+        var phase = KillRecoveryPhase.environment, facts = KillRecoveryFacts()
+        facts.cut = cut
+        let environment = try ConnectedTLSEnvironment()
+        let directory = environment.root.appendingPathComponent("private/connected-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let storage = directory.appendingPathComponent("source")
+        try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let sourceFile = storage.appendingPathComponent("source.sqlite")
+        let registrations = KillRecoveryRegistrations()
+        let app = try await connectedApplication(environment.certificate, environment.key)
+        let gate = registrations.gate
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in }, didFinishAsyncSetup: {},
+            parkRecoveryReadySend: { gate.park($0, $1) }, didRecoveryReadyDecision: { gate.decision($0, $1) },
+            didRecoveryReadyControl: { gate.observe($0) }, didObserveRecoveryConnection: { gate.connection($0) })
+        RelayIngressTesting.install(hooks, for: storage)
+        var mounts: [SyncRelayHandle] = [], bootstrap: [KillRecoveryBootstrapPeer] = []
+        var parentB: RecoveryProcessReceiver?, process: RecoveryProcessOwner?
+        var retirementObservation: RelayRecoveryRetirementObservation?
+        var cleanupCompleted = false
+        func cleanup() async throws {
+            guard !cleanupCompleted else { return }
+            gate.release()
+            retirementObservation = nil // Release the payload-free budget/fence reference too.
+            var valid = true
+            if let process {
+                let result = await process.cleanup()
+                valid = valid && result.allSpawnedReaped && result.descriptorsClosed
+            }
+            do { try parentB?.close() } catch { valid = false }
+            for peer in bootstrap { peer.close() }
+            for mount in mounts { await mount.retireRecoveryAuthorization() }
+            do { try await app.asyncShutdown() } catch { valid = false }
+            do {
+                try await connectedWait("C source authorization retirement", until: min(deadline, ContinuousClock.now.advanced(by: .seconds(10)))) {
+                    mounts.allSatisfy { $0.recoverySessionCount == 0 } && bootstrap.allSatisfy(\.closed)
+                }
+            } catch { valid = false }
+            RelayIngressTesting.remove(hooks, for: storage)
+            cleanupCompleted = true
+            guard valid else { throw KillRecoveryFailure.cleanup }
+            // Source governor ownership can outlive setup. No store/WAL is
+            // unlinked here; the wrapper removes files only after group reap.
+        }
+        do {
+            phase = .bootstrap
+            func seed() throws -> (RecoveryProcessImage, Set<String>) {
+                let owner = try Lattice(for: [RecoveryProcessSharedRow.self, RecoveryProcessLocalRow.self], configuration: .init(fileURL: sourceFile))
+                func copied() throws -> (RecoveryProcessImage, Set<String>) {
+                    try owner.withTransaction { for i in 1...6 { try owner.add(RecoveryProcessSharedRow(label: "r\(i)", value: i)) } }
+                    let rows = try Array(owner.objects(RecoveryProcessSharedRow.self)).map {
+                        RecoveryProcessRow(id: try #require($0.globalId), label: $0.label, value: $0.value)
+                    }.sorted { $0.label < $1.label }
+                    let ids = Set(Array(owner.eventsAfter(globalId: nil)).compactMap { $0.globalId?.uuidString.lowercased() })
+                    try #require(rows.count == 6 && ids.count == 6)
+                    return (.init(rows: rows, localValues: [], originals: []), ids)
+                }
+                do {
+                    let image = try copied(), closed = owner.closeChecked()
+                    try #require(closed.cleanupComplete && !closed.failed && !closed.cleanupFailed && closed.errorMessage == nil && !closed.errorMessageUnavailable)
+                    return image
+                } catch { owner.close(); throw error }
+            }
+            let (initial, seededIDs) = try seed()
+            for index in 0..<2 {
+                mounts.append(try Lattice.configureSyncRelay(on: app.routes, path: [.constant(index == 0 ? "a" : "b")],
+                    for: [RecoveryProcessSharedRow.self, RecoveryProcessLocalRow.self], storageURL: storage,
+                    writePolicy: .init(allowedOperations: ["RecoveryProcessSharedRow": [.insert, .update, .delete]], unlistedTables: .deny),
+                    recovery: registrations.policy(index), channelExtractor: { try registrations.channel($0, index: index) },
+                    recoveryAuthorization: { try registrations.authorize($0, $1, index: index) }))
+            }
+            try await app.startup()
+            let port = try #require(app.http.server.shared.localAddress?.port)
+            let endpoints = ["wss://127.0.0.1:\(port)/a", "wss://127.0.0.1:\(port)/b"], channels = endpoints.map { "wss:" + $0 }
+            try #require(channels.allSatisfy { $0.utf8.count <= 64 })
+            registrations.endpoints.withLockedValue { $0 = endpoints }
+            for index in 0..<2 {
+                let peer = KillRecoveryBootstrapPeer(), declared = registrations.bootstrap.peer(index); bootstrap.append(peer)
+                let query = "?recovery-v=1&recovery-replica=\(declared.replicaID)&recovery-receiver=\(declared.receiverIncarnation)&recovery-channel=\(declared.channelIncarnation)"
+                var headers = HTTPHeaders(); headers.add(name: "Authorization", value: "Bearer " + registrations.bootstrap.token)
+                try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get()
+                try await connectedWait("C actual source metadata and authorized seeded catch-up", until: deadline) {
+                    !peer.invalid && peer.ids == seededIDs && registrations.contexts.withLockedValue { $0[index] != nil }
+                }
+            }
+            let context = registrations.contexts.withLockedValue { $0 }
+            let contexts = [try #require(context[0]), try #require(context[1])]
+            for peer in bootstrap { peer.close() }
+            try await connectedWait("C bootstrap registration retirement", until: deadline) {
+                bootstrap.allSatisfy(\.closed) && mounts.allSatisfy { $0.recoverySessionCount == 0 }
+            }
+            let sourceIdentity = try killRecoverySourceIdentity(sourceFile)
+            let configA = try killRecoveryConfiguration(registration: registrations.a, contexts: contexts, endpoints: endpoints,
+                store: "receiver-a.lattice-continuous", deadline: nativeDeadline)
+            let configB = try killRecoveryConfiguration(registration: registrations.b, contexts: contexts, endpoints: endpoints,
+                store: "receiver-b.lattice-continuous", deadline: nativeDeadline)
+            let b = try RecoveryProcessReceiver(configuration: configB, caseDirectory: directory); parentB = b
+            let child = try RecoveryProcessOwner(configuration: configA, caseDirectory: directory, executable: RecoveryProcessOwner.executableURL()); process = child
+            try #require(configA.channels.map(\.channel) == configB.channels.map(\.channel))
+            try #require(registrations.a.producer != registrations.b.producer && b.file != directory.appendingPathComponent(configA.storeDirectory + "/store.sqlite"))
+            facts.configurationSHA256 = child.configurationSHA256; facts.executableSHA256 = child.executableSHA256
+            phase = .initial
+            try b.open(connected: true)
+            let firstHello = try await child.spawn()
+            _ = try await child.command(.start)
+            let initialA = try await child.command(.settle, expected: initial)
+            try #require(initialA.committedOpen == true && initialA.image != nil)
+            let initialB = try await b.settle(expected: initial)
+            let liveB = try gate.handles(peer: registrations.b, channels: channels)
+            _ = try gate.handles(peer: registrations.a, channels: channels)
+            try await killRecoveryLive(liveB, until: deadline)
+            facts.receiverCount = 2; facts.channelsPerReceiver = 2
+            phase = .offline
+            let edit = try await child.command(.offlineEdit)
+            let preimage = try #require(edit.image), pending = try #require(edit.createdShared)
+            try #require(pending.count == 3 && preimage.rows.count == 6 && preimage.localValues == ["receiver-a-local"])
+            try gate.arm(peer: registrations.a.peer(0), channel: channels[0], cut: cut)
+            _ = try await child.command(.reconnect)
+            phase = .cut
+            try await connectedWait("C selected actual retained source cut", until: deadline) { gate.held }
+            let evidence = try gate.evidence(), oldConnection = try #require(gate.handle(evidence.prepare.connectionID))
+            retirementObservation = oldConnection.retirementObservation()
+            try #require(retirementObservation?.connectionID == evidence.prepare.connectionID && retirementObservation?.peer == registrations.a.peer(0) && retirementObservation?.channel == channels[0])
+            let held = try await killRecoverySample(try #require(retirementObservation), until: deadline)
+            try #require(held.available && held.socketOpen && !held.lifetimeStopped && !held.nativeSetupRetired && held.nativeAvailable && held.nativeLive && !held.nativeDrained)
+            try await killRecoveryLive(liveB, until: deadline)
+            // No public query or child command between reconnect/cut and kill.
+            phase = .kill
+            let killed = try await child.killAtObservedCut()
+            try #require(killed.reaped && killed.killedByOwnedSIGKILL && !killed.exitedZero && killed.spawnOrdinal == 1 && killed.instanceID == firstHello.instanceID)
+            facts.killedByOwnedSIGKILL = true; facts.exactReapBeforeSnapshot = true
+            phase = .snapshot
+            let rawCut = try await ReceiverReapReadOnlySnapshot.capture(owner: child, retirement: killed, deadline: deadline)
+            try ReceiverReapComparison.validateCut(rawCut, evidence: evidence, preimage: preimage, pendingOriginals: pending)
+            facts.durableCutValidated = true; facts.matchedQ = true
+            facts.matchedManifest = cut == .partial; facts.matchedPage = cut == .partial
+            facts.observedCanonicalKind = (evidence.heldSecondRead ?? evidence.prepare).cutpoint?.frame.kind.rawValue
+            if cut == .partial { facts.observedReadIndex = 2 }
+            phase = .retirement
+            try await killRecoveryRetired(try #require(retirementObservation), drained: false, until: deadline)
+            facts.oldConnectionRetired = true
+            try #require(gate.held && gate.staleDecision == nil)
+            gate.release()
+            try await connectedWait("C stale held READY send refused", until: deadline) { gate.staleDecision != nil }
+            try #require(gate.staleDecision == false)
+            facts.staleSendRefused = true
+            try await killRecoveryRetired(try #require(retirementObservation), drained: true, until: deadline)
+            facts.heldResultDrained = true
+            retirementObservation = nil // Operation drain is not registry/migration quiescence.
+            try await killRecoveryLive(liveB, until: deadline)
+            try #require(app.http.server.shared.localAddress?.port == port && (try killRecoverySourceIdentity(sourceFile)) == sourceIdentity)
+            phase = .reopen
+            let resumedFrom = gate.count
+            let secondHello = try await child.spawn()
+            try #require(secondHello.instanceID != firstHello.instanceID && secondHello.processID != firstHello.processID &&
+                secondHello.configurationSHA256 == firstHello.configurationSHA256 && secondHello.configurationSHA256 == child.configurationSHA256)
+            facts.sameSavedConfiguration = true; facts.distinctChildInstances = true
+            _ = try await child.command(.start)
+            phase = .recovery
+            let recovered = try await child.command(.settle, expected: preimage)
+            let recoveredImage = try #require(recovered.image)
+            try #require(recovered.committedOpen == true && recoveredImage.rows == preimage.rows && recoveredImage.localValues == preimage.localValues &&
+                preimage.originals.allSatisfy { original in recoveredImage.originals.filter { $0.id == original.id } == [original] })
+            let expectedB = RecoveryProcessImage(rows: preimage.rows, localValues: initialB.localValues, originals: initialB.originals)
+            _ = try await b.settle(expected: expectedB)
+            let freshA = try gate.handles(peer: registrations.a, channels: channels, after: resumedFrom)
+            try #require(freshA.allSatisfy { $0.connectionID != oldConnection.connectionID })
+            try await killRecoveryLive(freshA, until: deadline)
+            try await killRecoveryLive(liveB, until: deadline)
+            let refrozen = try #require(gate.recoveryBranch(after: resumedFrom, old: evidence))
+            facts.actualResumeObserved = !refrozen; facts.actualRefreezeObserved = refrozen
+            facts.preservedSharedOriginals = pending.count; facts.sharedRowsBeforePostWrite = recoveredImage.rows.count
+            phase = .postWrite
+            let postRounds = gate.count
+            let write = try await child.command(.postWrite), postImage = try #require(write.image)
+            try #require(postImage.rows.count == 7 && postImage.rows.filter { $0.label != "post" } == preimage.rows &&
+                postImage.rows.filter { $0.label == "post" && $0.value == 99 }.count == 1 && postImage.localValues == preimage.localValues &&
+                preimage.originals.allSatisfy { original in postImage.originals.filter { $0.id == original.id } == [original] })
+            // Wait for actual post-write source round completion before the
+            // public open-gate check; an earlier transient open is insufficient.
+            try await connectedWait("C post-write canonical round on both channels", until: deadline) {
+                gate.completedRounds(peer: registrations.a, channels: channels, after: postRounds)
+            }
+            let settledPost = try await child.command(.settle, expected: postImage)
+            try #require(settledPost.committedOpen == true)
+            let bPost = RecoveryProcessImage(rows: postImage.rows, localValues: initialB.localValues, originals: initialB.originals)
+            _ = try await b.settle(expected: bPost)
+            try await killRecoveryLive(liveB, until: deadline)
+            try await killRecoveryLive(freshA, until: deadline)
+            try #require(app.http.server.shared.localAddress?.port == port && (try killRecoverySourceIdentity(sourceFile)) == sourceIdentity && gate.healthy)
+            facts.postRecoveryWriteObserved = true; facts.sharedRowsAfterPostWrite = postImage.rows.count; facts.sourceAndBStayedLive = true
+            facts.exactRowsPreserved = true; facts.localOnlyPreserved = true; facts.finalCommittedOpen = true
+            let normal = try await child.closeAndReap()
+            try #require(normal.reaped && normal.exitedZero && !normal.killedByOwnedSIGKILL && normal.spawnOrdinal == 2 && normal.instanceID == secondHello.instanceID)
+            phase = .finalSnapshot
+            let final = try await ReceiverReapReadOnlySnapshot.capture(owner: child, retirement: normal, deadline: deadline)
+            try ReceiverReapComparison.validateFinal(final, after: rawCut, expected: postImage, pendingOriginals: pending)
+            let oldIncarnation = try rawCut.storage.one("_lattice_producer_continuity").integer("incarnation")
+            let newIncarnation = try final.storage.one("_lattice_producer_continuity").integer("incarnation")
+            try #require(oldIncarnation < Int64.max && newIncarnation == oldIncarnation + 1)
+            facts.finalInstallLinksValidated = true; facts.freshPhysicalIncarnation = true
+            let allChildren = await child.cleanup()
+            try #require(allChildren.allSpawnedReaped && allChildren.descriptorsClosed && allChildren.successfulCase && allChildren.spawnCount == 2)
+            facts.childSpawnCount = allChildren.spawnCount; facts.allChildrenReaped = true; facts.descriptorsClosed = true
+            phase = .cleanup
+            try await cleanup()
+            try #require(gate.healthy && !gate.held)
+            facts.sourceAuthorizationRetired = true; facts.heldCallbacksReleased = true
+            phase = .complete
+            try killRecoveryReceipt(environment, name: name, passed: true, phase: phase, facts: facts)
+        } catch {
+            let original = error
+            // Only observed scalar facts and the fixed failing phase are saved.
+            // Neither cleanup nor a late callback can turn this into a pass.
+            do { try killRecoveryReceipt(environment, name: name, passed: false, phase: phase, facts: facts) }
+            catch { Issue.record("C bounded failure receipt unavailable") }
+            do { try await cleanup() } catch { Issue.record("C process/source cleanup failed") }
+            RelayIngressTesting.remove(hooks, for: storage)
+            throw original
+        }
+    }
+}
