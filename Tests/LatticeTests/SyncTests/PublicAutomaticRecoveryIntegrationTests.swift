@@ -587,3 +587,606 @@ struct PublicConnectedAutomaticRecoveryTests {
         }
     }
 }
+
+// B is a distinct opt-in experiment. Everything above, including A/TLS bodies,
+// their receipt allowlist and their budgets, remains byte-exact.
+private final class QuietACKOneShot<Value: Sendable>: Sendable {
+    private struct State {
+        var result: Result<Value, QuietACKFailure>?
+        var continuation: CheckedContinuation<Value, any Error>?
+    }
+    private let state = NIOLockedValueBox(State())
+    func resolve(_ result: Result<Value, QuietACKFailure>) {
+        let continuation = state.withLockedValue { state -> CheckedContinuation<Value, any Error>? in
+            guard state.result == nil else { return nil }
+            state.result = result; let continuation = state.continuation; state.continuation = nil; return continuation
+        }
+        if let continuation { continuation.resume(with: result.mapError { $0 as any Error }) }
+    }
+    private func value() async throws -> Value {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let result = state.withLockedValue { state -> Result<Value, QuietACKFailure>? in
+                    if let result = state.result { return result }
+                    guard state.continuation == nil else { return .failure(.metadata) }
+                    state.continuation = continuation; return nil
+                }
+                if let result { continuation.resume(with: result.mapError { $0 as any Error }) }
+            }
+        } onCancel: { self.resolve(.failure(.deadline)) }
+    }
+    func wait(until deadline: ContinuousClock.Instant) async throws -> Value {
+        try await withThrowingTaskGroup(of: Value.self) { group in
+            group.addTask { try await self.value() }
+            group.addTask { try await ContinuousClock().sleep(until: deadline); throw QuietACKFailure.deadline }
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else { throw QuietACKFailure.deadline }
+            return first
+        }
+    }
+}
+
+private final class QuietACKProbe: Sendable {
+    private struct State {
+        var connections: [UUID: RelayRecoveryConnectionObservation] = [:]
+        var canonicalRoutes: Set<String> = []
+        var setup = 0, authorized = 0, closed = 0, syncErrors = 0, disconnected = 0
+        var baseline: [Int] = [], events = 0, overflow = false, failure = false
+        var armed = false, selectedConnection: UUID?, selectedPeer: SyncRecoveryPeerIdentity?
+        var selectedChannel = "", target: UUID?, selected: RelayAcknowledgedEntryObservation?
+        var drops = 0
+    }
+    private let state = NIOLockedValueBox(State())
+    let dropped = QuietACKOneShot<RelayAcknowledgedEntryObservation>()
+    private func update(_ body: (inout State) -> Void) {
+        state.withLockedValue { state in
+            if state.armed {
+                guard state.events < 256 else { state.overflow = true; return }
+                state.events += 1
+            }
+            body(&state)
+        }
+    }
+    func setup() { update { if $0.setup < 256 { $0.setup += 1 } else { $0.overflow = true } } }
+    func authorized() { update { if $0.authorized < 256 { $0.authorized += 1 } else { $0.overflow = true } } }
+    func closed() { update { if $0.closed < 256 { $0.closed += 1 } else { $0.overflow = true } } }
+    func syncError() { update { if $0.syncErrors < 256 { $0.syncErrors += 1 } else { $0.overflow = true } } }
+    func syncState(_ connected: Bool) { if !connected { update { if $0.disconnected < 256 { $0.disconnected += 1 } else { $0.overflow = true } } } }
+    func observe(_ handle: RelayRecoveryConnectionObservation) {
+        update { state in
+            if let old = state.connections[handle.connectionID] {
+                if old.peer != handle.peer || old.channel != handle.channel { state.failure = true }
+            } else if state.connections.count < 4 { state.connections[handle.connectionID] = handle }
+            else { state.overflow = true }
+        }
+    }
+    func ready(_ observation: RelayReadyControlObservation) {
+        update { state in
+            guard observation.operation == "read", observation.canonicalKind == "manifest" else { return }
+            guard observation.channel.utf8.count <= 64, observation.peer.replicaID.utf8.count <= 256,
+                  let handle = state.connections[observation.connectionID], handle.peer == observation.peer,
+                  handle.channel == observation.channel else { state.failure = true; return }
+            let key = observation.peer.replicaID + "\n" + observation.channel
+            if state.canonicalRoutes.contains(key) { return }
+            guard state.canonicalRoutes.count < 4 else { state.overflow = true; return }
+            state.canonicalRoutes.insert(key)
+        }
+    }
+    func hasCanonicalReads(replica: String, channels: [String]) -> Bool {
+        state.withLockedValue { state in channels.allSatisfy { state.canonicalRoutes.contains(replica + "\n" + $0) } }
+    }
+    func resetRetiredConnections() throws {
+        try state.withLockedValue { state in
+            guard !state.armed else { throw QuietACKFailure.metadata }; state.connections.removeAll(); state.canonicalRoutes.removeAll()
+        }
+    }
+    func handles() throws -> [RelayRecoveryConnectionObservation] {
+        try state.withLockedValue { state in
+            guard state.connections.count == 4, !state.overflow, !state.failure else { throw QuietACKFailure.connections }
+            return Array(state.connections.values)
+        }
+    }
+    func arm(connection: RelayRecoveryConnectionObservation, target: UUID) throws {
+        try state.withLockedValue { state in
+            guard !state.armed, !state.overflow, !state.failure, state.connections.count == 4 else { throw QuietACKFailure.connections }
+            state.baseline = [state.setup, state.authorized, state.closed, state.syncErrors, state.disconnected]
+            state.selectedConnection = connection.connectionID; state.selectedPeer = connection.peer
+            state.selectedChannel = connection.channel; state.target = target; state.armed = true
+        }
+    }
+    func shouldDrop(_ observation: RelayRecoveryACKObservation) -> Bool {
+        var signal: Result<RelayAcknowledgedEntryObservation, QuietACKFailure>?
+        let drop = state.withLockedValue { state -> Bool in
+            guard state.armed, !state.failure, !state.overflow else { return false }
+            guard state.events < 256 else { state.overflow = true; signal = .failure(.metadata); return false }
+            state.events += 1
+            guard observation.connectionID == state.selectedConnection, observation.peer == state.selectedPeer,
+                  observation.channel == state.selectedChannel else { return false }
+            guard observation.metadataFailure == nil, let entry = observation.entry else {
+                state.failure = true; signal = .failure(.metadata); return false
+            }
+            guard entry.targetID == state.target else { return false }
+            guard entry.table == "ConnectedRecoverySharedRow", entry.operation == "UPDATE", entry.fieldName == "value",
+                  (entry.integerKind == 0 || entry.integerKind == 1), entry.integerValue == 55, entry.originalIdentityVersion == 1,
+                  entry.originalIdentityDigest.utf8.count == 64,
+                  entry.originalIdentityDigest.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+                state.failure = true; signal = .failure(.metadata); return false
+            }
+            if let selected = state.selected {
+                if selected != entry { state.failure = true }
+                return false // A retransmission keeps its real ACK; never drop twice.
+            }
+            state.selected = entry; state.drops = 1; signal = .success(entry); return true
+        }
+        if let signal { dropped.resolve(signal) } // No continuation under leaf lock.
+        return drop
+    }
+    func checkQuiet() throws {
+        try state.withLockedValue { state in
+            guard state.armed, state.drops == 1, state.selected != nil, !state.overflow, !state.failure,
+                  state.baseline == [state.setup, state.authorized, state.closed, state.syncErrors, state.disconnected],
+                  state.connections.count == 4 else { throw QuietACKFailure.connections }
+        }
+    }
+    func dropCount() -> Int { state.withLockedValue { $0.drops } }
+    func disarm() {
+        state.withLockedValue { $0.armed = false; $0.connections.removeAll() }
+        dropped.resolve(.failure(.deadline))
+    }
+}
+
+@MainActor
+private func quietACKSample(_ handles: [RelayRecoveryConnectionObservation], until deadline: ContinuousClock.Instant) async throws {
+    guard handles.count == 4, Set(handles.map(\.connectionID)).count == 4 else { throw QuietACKFailure.connections }
+    for handle in handles {
+        let result = QuietACKOneShot<RelayRecoveryConnectionSample>()
+        handle.sample { result.resolve(.success($0)) }
+        let sample = try await result.wait(until: min(deadline, ContinuousClock.now.advanced(by: .seconds(2))))
+        try quietACKRequire(sample.available && sample.socketOpen && sample.lifetimeLive, .connections)
+    }
+}
+
+@MainActor
+private final class QuietACKMutation {
+    private var action: (@MainActor () throws -> Void)?
+    init(_ action: @escaping @MainActor () throws -> Void) { self.action = action }
+    func perform() throws {
+        guard let action else { throw QuietACKFailure.metadata }
+        self.action = nil
+        // Release the captured model/owner at this call's return; no retained
+        // Results or managed-object reads can be introduced during quiet.
+        try action()
+    }
+}
+
+@MainActor
+private extension ConnectedReceiver {
+    func quietObserve(_ probe: QuietACKProbe) {
+        for owner in owners {
+            owner.onSyncError { _ in probe.syncError() }
+            owner.onSyncStateChange { probe.syncState($0) }
+        }
+    }
+    func quietUpdate() throws -> (UUID, QuietACKMutation) {
+        let row = try #require(Array(owner.objects(ConnectedRecoverySharedRow.self)).first { $0.label == "r5" })
+        let id = try #require(row.globalId)
+        try quietACKRequire(row.value != 55, .metadata)
+        return (id, QuietACKMutation { try self.owner.withTransaction { row.value = 55 } })
+    }
+}
+
+private typealias Q = QuietACKReadOnlySnapshot
+private func quietKey(_ value: String) -> Data { Data(value.utf8) }
+private func quietUUID(_ id: UUID) -> Data { quietKey(id.uuidString.lowercased()) }
+private func quietModel(_ snapshot: QuietACKSnapshot) throws -> [ConnectedRow] {
+    let values = try snapshot.rows(Q.shared).map { row -> ConnectedRow in
+        guard let id = UUID(uuidString: try row.text("globalId")), let value = Int(exactly: try row.integer("value")) else { throw QuietACKFailure.sqliteType }
+        return ConnectedRow(id: id, label: try row.text("label"), value: value)
+    }
+    guard values.count == 6, Set(values.map(\.id)).count == 6, Set(values.map(\.label)).count == 6 else { throw QuietACKFailure.receiverImage }
+    return values.sorted { $0.label < $1.label }
+}
+private func quietFind(_ rows: [QuietACKRow], key: String, value: QuietACKCell, phase: QuietACKFailure) throws -> QuietACKRow {
+    let found = rows.filter { $0.cells[key] == value }
+    guard found.count == 1 else { throw phase }; return found[0]
+}
+private func quietAudit(_ snapshot: QuietACKSnapshot, id: UUID) throws -> QuietACKRow {
+    let matches = try snapshot.rows("AuditLog").filter { UUID(uuidString: try $0.text("globalId")) == id }
+    guard matches.count == 1 else { throw QuietACKFailure.originals }; return matches[0]
+}
+private func quietPreserves(_ before: QuietACKSnapshot, _ after: QuietACKSnapshot, originals: [ConnectedOriginal]) throws {
+    for original in originals {
+        try quietACKRequire(try quietAudit(before, id: original.id) == quietAudit(after, id: original.id), .originals)
+    }
+    // Local-only originals must also retain their exact tuple, independently of
+    // mutable isSynchronized bookkeeping that is intentionally not projected.
+    for row in try before.rows("AuditLog") where try row.text("tableName") == Q.local {
+        let id = try row.text("globalId")
+        let found = try quietFind(after.rows("AuditLog"), key: "globalId", value: .text(id), phase: .originals)
+        try quietACKRequire(row == found, .originals)
+    }
+}
+private func quietCanonicalBaseline(_ source: QuietACKSnapshot, originals: [ConnectedOriginal]) throws {
+    let profile = try source.one(Q.coverageProfile)
+    try quietACKRequire(try profile.integer("version") == 3 && profile.integer("codec") == 1, .sourceCoverage)
+    try quietACKRequire(try profile.integer("cells") == profile.integer("mutation"), .sourceCoverage)
+    let members = try source.rows("_lattice_canonical_receipt_member").map { try $0.blob("namespace_id") }
+    try quietACKRequire(Set(members) == Set([quietKey("a"), quietKey("b")]), .sourceCoverage)
+    for original in originals {
+        _ = try quietFind(source.rows(Q.receipt), key: "original_id", value: .blob(quietUUID(original.id)), phase: .sourceCoverage)
+        _ = try quietFind(source.rows(Q.origin), key: "original_id", value: .blob(quietUUID(original.id)), phase: .sourceCoverage)
+        let cells = try source.rows(Q.coverage).filter { $0.cells["original_id"] == .blob(quietUUID(original.id)) }
+        try quietACKRequire(cells.count == 2 && Set(try cells.map { try $0.blob("namespace_id") }) == Set([quietKey("a"), quietKey("b")]), .sourceCoverage)
+    }
+}
+private func quietReceiverOpen(_ snapshot: QuietACKSnapshot, channels: [String], contexts: [SyncRecoveryAuthorizationContext], head: Int64) throws {
+    let continuity = try snapshot.one(Q.continuity), store = try snapshot.one("_lattice_install_store")
+    try quietACKRequire(try continuity.integer("id") == 1 && continuity.integer("phase") == 0, .receiverSettlement)
+    try quietACKRequire(try store.integer("id") == 1 && store.integer("version") == 2 && store.integer("channels") == 2, .receiverSettlement)
+    try quietACKRequire(try snapshot.rows(Q.scopes).count == 2 && snapshot.rows(Q.installs).count == 2, .receiverSettlement)
+    for (index, channel) in channels.enumerated() {
+        let scope = try quietFind(snapshot.rows(Q.scopes), key: "channel", value: .blob(quietKey(channel)), phase: .receiverSettlement)
+        let installed = try quietFind(snapshot.rows(Q.installs), key: "channel", value: .blob(quietKey(channel)), phase: .receiverSettlement)
+        let source = contexts[index].source
+        let binding = ["authority": source.authority, "source": source.sourceID.uuidString.lowercased(), "epoch": source.epoch.uuidString.lowercased(), "scope": source.scopeDigest, "schema_digest": source.schemaDigest]
+        for (key, value) in binding {
+            try quietACKRequire(try scope.blob(key) == quietKey(value) && installed.blob(key) == quietKey(value), .receiverSettlement)
+        }
+        try quietACKRequire(try scope.blob("receipt_namespace") == quietKey(source.receiptNamespace), .receiverSettlement)
+        try quietACKRequire(try scope.integer("mode") == 0 && scope.integer("installed_head") == head, .receiverSettlement)
+        try quietACKRequire(try installed.integer("frontier_kind") == 2 && installed.integer("frontier") == head && installed.cell("active") == .null, .receiverSettlement)
+        let sequence = try scope.integer("installed_sequence")
+        try quietACKRequire(try sequence > 0 && sequence == continuity.integer("attempt") && sequence == installed.integer("last_sequence"), .receiverSettlement)
+        try quietACKRequire(try scope.integer("installed_revision") == installed.integer("revision") && installed.integer("revision") > 0, .receiverSettlement)
+        try quietACKRequire(try !scope.blob("installed_manifest").isEmpty && !installed.blob("last_install").isEmpty, .receiverSettlement)
+    }
+}
+private func quietSettled(_ snapshot: QuietACKSnapshot, channels: [String], id: UUID, target: UUID, position: Int64? = nil) throws {
+    let audit = try quietAudit(snapshot, id: id)
+    let entries = try snapshot.rows(Q.entries).filter { $0.cells["original"] == .blob(quietUUID(id)) }
+    try quietACKRequire(entries.count == 2, .receiverSettlement)
+    for channel in channels {
+        let entry = try quietFind(entries, key: "channel", value: .blob(quietKey(channel)), phase: .receiverSettlement)
+        let scope = try quietFind(snapshot.rows(Q.scopes), key: "channel", value: .blob(quietKey(channel)), phase: .receiverSettlement)
+        try quietACKRequire(try entry.integer("stage") == 2 && entry.integer("origin") == 0 && entry.integer("first_export") > 0, .receiverSettlement)
+        try quietACKRequire(try entry.integer("settled_sequence") > 0 && entry.integer("settled_sequence") <= scope.integer("installed_sequence"), .receiverSettlement)
+        try quietACKRequire(try entry.integer("audit_id") == audit.integer("id") && entry.blob("actual_original") == quietKey(audit.text("globalId")), .originals)
+        try quietACKRequire(try entry.blob("target") == quietUUID(target) && entry.blob("actual_target") == quietKey(audit.text("globalRowId")) && entry.blob("table_name") == quietKey(Q.shared), .originals)
+        if let position { try quietACKRequire(try entry.integer("ack_position") == position && entry.integer("ack_outcome") == 0, .receiverSettlement) }
+    }
+}
+private func quietDelta(_ before: QuietACKRow, _ after: QuietACKRow, _ key: String, _ expected: Int64, phase: QuietACKFailure) throws {
+    let old = try before.integer(key), new = try after.integer(key)
+    let difference = new.subtractingReportingOverflow(old)
+    try quietACKRequire(!difference.overflow && difference.partialValue == expected, phase)
+}
+private func quietPreserveRows(_ before: [QuietACKRow], _ after: [QuietACKRow], key: String) throws {
+    for row in before {
+        let found = try quietFind(after, key: key, value: row.cell(key), phase: .originals)
+        try quietACKRequire(found == row, .originals)
+    }
+}
+private func quietSourceFinal(_ before: QuietACKSnapshot, _ after: QuietACKSnapshot, entry: RelayAcknowledgedEntryObservation,
+                              producer: SyncRecoveryProducerRegistration) throws -> Int64 {
+    try quietACKRequire(before.schemas == after.schemas, .sqliteSchema)
+    let old = try before.one(Q.canonical), current = try after.one(Q.canonical)
+    let oldProfile = try before.one(Q.coverageProfile), profile = try after.one(Q.coverageProfile)
+    let added = try old.integer("head").addingReportingOverflow(2)
+    guard !added.overflow else { throw QuietACKFailure.sourceCounters }; let head = added.partialValue
+    try quietDelta(old, current, "head", 2, phase: .sourceCounters)
+    try quietDelta(old, current, "receipts", 1, phase: .sourceCounters)
+    try quietDelta(oldProfile, profile, "origins", 1, phase: .sourceCoverage)
+    try quietDelta(oldProfile, profile, "cells", 2, phase: .sourceCoverage)
+    try quietDelta(oldProfile, profile, "mutation", 2, phase: .sourceCoverage)
+    let selected = quietUUID(entry.originalID), target = quietUUID(entry.targetID)
+    let receipts = try after.rows(Q.receipt), origins = try after.rows(Q.origin), cells = try after.rows(Q.coverage)
+    let receipt = try quietFind(receipts, key: "original_id", value: .blob(selected), phase: .sourceCounters)
+    let origin = try quietFind(origins, key: "original_id", value: .blob(selected), phase: .sourceCoverage)
+    try quietACKRequire(try receipt.integer("position") == head && receipt.integer("outcome") == 1
+        && receipt.blob("relation") == quietKey(Q.shared) && receipt.blob("identity") == target, .sourceCounters)
+    try quietACKRequire(try [quietKey("a"), quietKey("b")].contains(receipt.blob("namespace_id")), .sourceCoverage)
+    try quietACKRequire(try origin.blob("producer") == quietKey(producer.registrationID)
+        && origin.blob("incarnation") == quietUUID(producer.incarnation)
+        && origin.blob("digest") == quietKey(entry.originalIdentityDigest) && origin.blob("operation") == quietKey("UPDATE"), .sourceCoverage)
+    let selectedCells = cells.filter { $0.cells["original_id"] == .blob(selected) }
+    try quietACKRequire(selectedCells.count == 2 && Set(try selectedCells.map { try $0.blob("namespace_id") }) == Set([quietKey("a"), quietKey("b")]), .sourceCoverage)
+    let mutation = try oldProfile.integer("mutation"), next = mutation.addingReportingOverflow(2)
+    guard !next.overflow else { throw QuietACKFailure.sourceCoverage }
+    try quietACKRequire(Set(try selectedCells.map { try $0.integer("revision") }) == Set([mutation + 1, next.partialValue]), .sourceCoverage)
+    for (table, extra) in [(Q.receipt, 1), (Q.origin, 1), (Q.coverage, 2)] {
+        let prior = try before.rows(table), actual = try after.rows(table)
+        try quietACKRequire(actual.count == prior.count + extra, .sourceCoverage)
+        if table == Q.coverage {
+            for row in prior { try quietACKRequire(actual.filter { $0 == row }.count == 1, .sourceCoverage) }
+        } else { try quietPreserveRows(prior, actual, key: "original_id") }
+        try quietACKRequire(!prior.contains { $0.cells["original_id"] == .blob(selected) }, .originals)
+    }
+    try quietDelta(old, current, "receipt_bytes", receipt.integer("charge"), phase: .sourceCounters)
+    try quietDelta(oldProfile, profile, "origin_bytes", origin.integer("charge"), phase: .sourceCoverage)
+    let cellCharges = try selectedCells.map { try $0.integer("charge") }
+    let charge = cellCharges[0].addingReportingOverflow(cellCharges[1])
+    guard !charge.overflow else { throw QuietACKFailure.sourceCoverage }
+    try quietDelta(oldProfile, profile, "cell_bytes", charge.partialValue, phase: .sourceCoverage)
+    let oldTouches = try before.rows(Q.touch), newTouches = try after.rows(Q.touch)
+    let isTarget: (QuietACKRow) -> Bool = { $0.cells["relation"] == .blob(quietKey(Q.shared)) && $0.cells["identity"] == .blob(target) }
+    let was = oldTouches.filter(isTarget), now = newTouches.filter(isTarget)
+    try quietACKRequire(was.count <= 1 && now.count == 1, .sourceCounters)
+    try quietACKRequire(try now[0].integer("position") == head - 1, .sourceCounters)
+    if let previous = was.first { try quietACKRequire(try previous.integer("charge") == now[0].integer("charge"), .sourceCounters) }
+    let fresh: Int64 = was.isEmpty ? 1 : 0
+    try quietACKRequire(newTouches.count == oldTouches.count + Int(fresh), .sourceCounters)
+    for row in oldTouches where !isTarget(row) { try quietACKRequire(newTouches.filter { $0 == row }.count == 1, .sourceCounters) }
+    try quietDelta(old, current, "markers", fresh, phase: .sourceCounters)
+    try quietDelta(old, current, "marker_bytes", fresh == 1 ? now[0].integer("charge") : 0, phase: .sourceCounters)
+    let immutable = old.cells.keys.filter { !["head", "receipts", "receipt_bytes", "markers", "marker_bytes"].contains($0) }
+    try quietACKRequire(try old.selecting(immutable) == current.selecting(immutable), .sourceCounters)
+    let immutableProfile = oldProfile.cells.keys.filter { !["mutation", "origins", "origin_bytes", "cells", "cell_bytes"].contains($0) }
+    try quietACKRequire(try oldProfile.selecting(immutableProfile) == profile.selecting(immutableProfile), .sourceCoverage)
+    for table in ["_lattice_canonical_namespace", "_lattice_canonical_receipt_member"] {
+        let prior = try before.rows(table), actual = try after.rows(table)
+        try quietACKRequire(prior.count == actual.count && prior.allSatisfy { row in actual.filter { $0 == row }.count == 1 }, .sourceCoverage)
+    }
+    let oldAudit = try before.rows("AuditLog"), newAudit = try after.rows("AuditLog")
+    try quietACKRequire(newAudit.count == oldAudit.count + 1, .originals)
+    try quietPreserveRows(oldAudit, newAudit, key: "globalId")
+    let selectedAudit = try quietAudit(after, id: entry.originalID)
+    try quietACKRequire(try selectedAudit.text("operation") == "UPDATE" && selectedAudit.text("tableName") == Q.shared
+        && UUID(uuidString: selectedAudit.text("globalRowId")) == entry.targetID, .originals)
+    return head
+}
+private func quietReceiverFinal(_ before: QuietACKSnapshot, _ after: QuietACKSnapshot, originals: [ConnectedOriginal]) throws {
+    try quietACKRequire(before.schemas == after.schemas, .sqliteSchema)
+    let old = try before.one(Q.continuity), current = try after.one(Q.continuity)
+    let immutable = old.cells.keys.filter { !["phase", "barrier", "attempt"].contains($0) }
+    try quietACKRequire(try old.selecting(immutable) == current.selecting(immutable), .receiverSettlement)
+    try quietPreserves(before, after, originals: originals)
+    let beforeLocal = try before.rows(Q.local), afterLocal = try after.rows(Q.local)
+    try quietACKRequire(beforeLocal.count == 1 && beforeLocal == afterLocal, .receiverImage)
+}
+private func quietOriginalValue(_ snapshot: QuietACKSnapshot, entry: RelayAcknowledgedEntryObservation) throws {
+    let audit = try quietAudit(snapshot, id: entry.originalID)
+    try quietACKRequire(try audit.text("tableName") == Q.shared && audit.text("operation") == "UPDATE"
+        && UUID(uuidString: audit.text("globalRowId")) == entry.targetID, .originals)
+    // The actual generated AuditLog stores flat values and NULL placeholders
+    // for unchanged columns/names. Restricted export later types those values;
+    // do not invent a persisted Int-vs-Int64 tag or erase the original tuple.
+    guard let fields = try JSONSerialization.jsonObject(with: Data(audit.text("changedFields").utf8)) as? [String: Any],
+          let names = try JSONSerialization.jsonObject(with: Data(audit.text("changedFieldsNames").utf8)) as? [Any]
+    else { throw QuietACKFailure.originals }
+    try quietACKRequire(Set(fields.keys) == Set(["label", "value"]) && fields["label"] is NSNull, .originals)
+    try quietACKRequire(try quietACKJSONInteger(fields["value"]) == 55, .originals)
+    try quietACKRequire(names.count == 2 && names.compactMap { $0 as? String } == ["value"]
+        && names.filter { $0 is NSNull }.count == 1, .originals)
+}
+
+@MainActor
+private func quietACKReceipt(_ environment: ConnectedTLSEnvironment, passed: Bool, phase: String, facts: [String: Any]) throws {
+    let allowed: Set<String> = ["receiverCount", "channelsPerReceiver", "sharedRowsPerReceiver", "preservedSharedOriginals",
+        "localOnlyRowsPreserved", "appWriteCount", "ackDropCount", "quietMilliseconds", "physicalConnections",
+        "sameConnectionsLive", "noReconnectObserved", "noSyncErrorsObserved", "sourceHeadDelta", "sourceReceiptDelta",
+        "sourceOriginDelta", "sourceCoverageDelta", "receiverSettledClaims", "installedChannels", "cohortsOpen", "rawSnapshotsBeforePublicInspection"]
+    guard Set(facts.keys).isSubset(of: allowed), !passed || Set(facts.keys) == allowed else { throw QuietACKFailure.receipt }
+    let path = environment.root.appendingPathComponent("receipts/quiet-ack-recovery-case.json")
+    let record: [String: Any] = ["version": 1, "cases": [["name": "oneDroppedACKRecoversOnLiveConnectionWithoutAppActivity",
+        "passed": passed, "phase": phase, "scalarFacts": facts]]]
+    let bytes = try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
+    guard bytes.count <= 16_384 else { throw QuietACKFailure.receipt }
+    try bytes.write(to: path, options: .atomic)
+}
+
+@Suite("Public quiet ACK-loss recovery", .serialized,
+       .enabled(if: ProcessInfo.processInfo.environment["LATTICE_QUIET_ACK_RECOVERY_GATE"] == "1"))
+@MainActor
+struct PublicQuietACKLossRecoveryTests {
+    @Test func oneDroppedACKRecoversOnLiveConnectionWithoutAppActivity() async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(120))
+        let env = try ConnectedTLSEnvironment()
+        try quietACKRequire(ProcessInfo.processInfo.environment["LATTICE_QUIET_ACK_RECOVERY_GATE"] == "1", .environment)
+        let directory = env.root.appendingPathComponent("private/connected-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let storage = directory.appendingPathComponent("source"), sourceFile = storage.appendingPathComponent("source.sqlite")
+        try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let initial: [ConnectedRow], seededOriginals: Set<String>
+        do {
+            let seed = try Lattice(for: [ConnectedRecoverySharedRow.self, ConnectedRecoveryLocalRow.self], configuration: .init(fileURL: sourceFile))
+            defer { seed.close() }
+            try seed.withTransaction { for number in 1...6 { try seed.add(ConnectedRecoverySharedRow(label: "r\(number)", value: number)) } }
+            initial = try Array(seed.objects(ConnectedRecoverySharedRow.self)).map {
+                let id = try #require($0.globalId); return ConnectedRow(id: id, label: $0.label, value: $0.value)
+            }.sorted { $0.label < $1.label }
+            seededOriginals = Set(Array(seed.eventsAfter(globalId: nil)).compactMap { $0.globalId?.uuidString.lowercased() })
+            try quietACKRequire(initial.count == 6 && seededOriginals.count == 6, .metadata)
+        }
+        let registrations = ConnectedRegistrations(), probe = QuietACKProbe()
+        let app = try await connectedApplication(env.certificate, env.key)
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: { probe.setup() }, didBufferFrame: { _ in }, didFinishAsyncSetup: {},
+            didCloseConnection: { probe.closed() }, didRecoveryReadyControl: { probe.ready($0) },
+            shouldDropRecoveryACK: { probe.shouldDrop($0) }, didObserveRecoveryConnection: { probe.observe($0) })
+        RelayIngressTesting.install(hooks, for: storage)
+        var mounts: [SyncRelayHandle] = [], bootstrap: [ConnectedBootstrapPeer] = [], receivers: [ConnectedReceiver] = []
+        var facts: [String: Any] = [:], phase = QuietACKFailure.metadata, cleanupAttempted = false
+        func cleanup() async throws {
+            cleanupAttempted = true; probe.disarm()
+            for receiver in receivers { receiver.close() }
+            for peer in bootstrap { peer.close() }
+            for mount in mounts { await mount.retireRecoveryAuthorization() }
+            try await app.asyncShutdown()
+            try await connectedWait("quiet ACK actual authorization retirement", until: ContinuousClock.now.advanced(by: .seconds(10))) {
+                mounts.allSatisfy { $0.recoverySessionCount == 0 } && bootstrap.allSatisfy(\.closed)
+            }
+            RelayIngressTesting.remove(hooks, for: storage)
+            // No live-file deletion: the existing wrapper owns exact UUID
+            // directory cleanup only after the actual test process is reaped.
+        }
+        do {
+            for index in 0..<2 {
+                let namespace = index == 0 ? "a" : "b"
+                mounts.append(try Lattice.configureSyncRelay(on: app.routes, path: [.constant(namespace)],
+                    for: [ConnectedRecoverySharedRow.self, ConnectedRecoveryLocalRow.self], storageURL: storage,
+                    writePolicy: .init(allowedOperations: ["ConnectedRecoverySharedRow": [.insert, .update, .delete]], unlistedTables: .deny),
+                    recovery: registrations.policy(index), channelExtractor: { try registrations.channel($0, index: index) },
+                    recoveryAuthorization: { request, context in
+                        let authorization = try registrations.authorize(request, context, index: index)
+                        probe.authorized(); return authorization
+                    }))
+            }
+            try await app.startup()
+            let port = try #require(app.http.server.shared.localAddress?.port)
+            let endpoints = ["wss://127.0.0.1:\(port)/a", "wss://127.0.0.1:\(port)/b"], channels = endpoints.map { "wss:" + $0 }
+            try quietACKRequire(channels.allSatisfy { $0.utf8.count <= 64 }, .metadata)
+            registrations.endpoints.withLockedValue { $0 = endpoints }
+            for index in 0..<2 {
+                let declared = registrations.bootstrap.peer(index), peer = ConnectedBootstrapPeer(); bootstrap.append(peer)
+                let query = "?recovery-v=1&recovery-replica=\(declared.replicaID)&recovery-receiver=\(declared.receiverIncarnation)&recovery-channel=\(declared.channelIncarnation)"
+                var headers = HTTPHeaders(); headers.add(name: "Authorization", value: "Bearer " + registrations.bootstrap.token)
+                try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get()
+                try await connectedWait("quiet ACK real bootstrap metadata", until: deadline) {
+                    !peer.invalid && peer.ids == seededOriginals && registrations.contexts.withLockedValue { $0[index] != nil }
+                }
+            }
+            let captured = registrations.contexts.withLockedValue { $0 }
+            let contextA = try #require(captured[0]), contextB = try #require(captured[1]), contexts = [contextA, contextB]
+            for peer in bootstrap { peer.close() }
+            try await connectedWait("quiet ACK bootstrap retired", until: deadline) {
+                bootstrap.allSatisfy(\.closed) && mounts.allSatisfy { $0.recoverySessionCount == 0 }
+            }
+            let a = try ConnectedReceiver(root: directory, registration: registrations.a, contexts: contexts, endpoints: endpoints)
+            let b = try ConnectedReceiver(root: directory, registration: registrations.b, contexts: contexts, endpoints: endpoints)
+            receivers = [a, b]
+            try quietACKRequire(a.file != b.file && registrations.a.producer != registrations.b.producer, .metadata)
+            try a.open(connected: true); try b.open(connected: true)
+            try await connectedWait("quiet ACK initial two public cohorts", until: deadline) {
+                try a.rows() == initial && b.rows() == initial && a.openGate() && b.openGate()
+                    && probe.hasCanonicalReads(replica: registrations.a.replica, channels: channels)
+                    && probe.hasCanonicalReads(replica: registrations.b.replica, channels: channels)
+            }
+            a.close(); b.close()
+            try await connectedWait("quiet ACK before offline edits retirement", until: deadline) { mounts.allSatisfy { $0.recoverySessionCount == 0 } }
+            try a.open(connected: false); try b.open(connected: false)
+            let ownA = try a.offlineEdit(update: "r1", delete: "r2", insert: "a", value: 11)
+            let ownB = try b.offlineEdit(update: "r3", delete: "r4", insert: "b", value: 33)
+            let insertedA = try #require(a.rows().first { $0.label == "a" }), insertedB = try #require(b.rows().first { $0.label == "b" })
+            let expected = (initial.filter { !["r2", "r4"].contains($0.label) }.map {
+                ConnectedRow(id: $0.id, label: $0.label, value: $0.label == "r1" ? 11 : ($0.label == "r3" ? 33 : $0.value))
+            } + [insertedA, insertedB]).sorted { $0.label < $1.label }
+            a.close(); b.close(); try probe.resetRetiredConnections()
+            try a.open(connected: true); try b.open(connected: true)
+            a.quietObserve(probe); b.quietObserve(probe)
+            try await connectedWait("quiet ACK settled six-original baseline", until: deadline) {
+                try a.rows() == expected && b.rows() == expected && a.openGate() && b.openGate()
+                    && a.preserves(ownA) && b.preserves(ownB)
+                    && a.localValue() == [registrations.a.replica + "-local"] && b.localValue() == [registrations.b.replica + "-local"]
+            }
+            try quietACKRequire(probe.hasCanonicalReads(replica: registrations.a.replica, channels: channels)
+                && probe.hasCanonicalReads(replica: registrations.b.replica, channels: channels), .connections)
+            let handles = try probe.handles()
+            for registration in [registrations.a, registrations.b] {
+                for index in 0..<2 {
+                    try quietACKRequire(handles.filter { $0.peer == registration.peer(index) && $0.channel == channels[index] }.count == 1, .connections)
+                }
+            }
+            try await quietACKSample(handles, until: deadline)
+            let selected = try #require(handles.first { $0.peer == registrations.a.peer(0) && $0.channel == channels[0] })
+            let (target, update) = try a.quietUpdate()
+            let finalExpected = expected.map { $0.id == target ? ConnectedRow(id: $0.id, label: $0.label, value: 55) : $0 }
+            try quietACKRequire(expected.filter { $0.id == target }.count == 1, .metadata)
+            phase = .sqliteOpen
+            let sourceBefore = try Q.capture(file: sourceFile, root: directory, source: true, deadline: deadline)
+            let aBefore = try Q.capture(file: a.file, root: directory, source: false, deadline: deadline)
+            let bBefore = try Q.capture(file: b.file, root: directory, source: false, deadline: deadline)
+            try quietACKRequire(try quietModel(sourceBefore) == expected && quietModel(aBefore) == expected && quietModel(bBefore) == expected, .receiverImage)
+            try quietACKRequire(try sourceBefore.rows(Q.local).isEmpty, .sourceImage)
+            try quietCanonicalBaseline(sourceBefore, originals: ownA + ownB)
+            let head = try sourceBefore.one(Q.canonical).integer("head")
+            try quietACKRequire(head >= 0 && head <= Int64.max - 2, .sourceCounters)
+            try quietReceiverOpen(aBefore, channels: channels, contexts: contexts, head: head)
+            try quietReceiverOpen(bBefore, channels: channels, contexts: contexts, head: head)
+            for original in ownA { try quietSettled(aBefore, channels: channels, id: original.id, target: original.target) }
+            for original in ownB { try quietSettled(bBefore, channels: channels, id: original.id, target: original.target) }
+            facts["receiverCount"] = 2; facts["channelsPerReceiver"] = 2; facts["physicalConnections"] = 4
+            try quietACKRequire(ContinuousClock.now.advanced(by: .seconds(53)) < deadline, .deadline)
+            try probe.arm(connection: selected, target: target)
+            phase = .drop
+            try update.perform()
+            facts["appWriteCount"] = 1
+            // From this actual write return until all three final raw snapshots:
+            // no public query/result access/inspection, sync/drain, write,
+            // reopen, socket sample or extra network stimulus. Only this one
+            // passive actual-drop continuation and one absolute clock sleep.
+            let entry = try await probe.dropped.wait(until: deadline)
+            facts["ackDropCount"] = probe.dropCount()
+            let quietStart = ContinuousClock.now, quietEnd = quietStart.advanced(by: .seconds(45))
+            try quietACKRequire(quietEnd.advanced(by: .seconds(8)) < deadline, .deadline)
+            phase = .deadline
+            try await ContinuousClock().sleep(until: quietEnd)
+            let components = quietStart.duration(to: ContinuousClock.now).components
+            try quietACKRequire(components.seconds >= 0 && components.seconds < 120 && components.attoseconds >= 0, .deadline)
+            let elapsed = components.seconds * 1000 + components.attoseconds / 1_000_000_000_000_000
+            try quietACKRequire(elapsed >= 45_000 && elapsed < 120_000, .deadline)
+            facts["quietMilliseconds"] = Int(elapsed)
+            try probe.checkQuiet()
+            phase = .sqliteOpen
+            let sourceAfter = try Q.capture(file: sourceFile, root: directory, source: true, deadline: deadline)
+            let aAfter = try Q.capture(file: a.file, root: directory, source: false, deadline: deadline)
+            let bAfter = try Q.capture(file: b.file, root: directory, source: false, deadline: deadline)
+            facts["rawSnapshotsBeforePublicInspection"] = true
+            // Snapshot verdicts cannot be rescued by any later public query.
+            phase = .sourceImage
+            try quietACKRequire(try quietModel(sourceAfter) == finalExpected && sourceAfter.rows(Q.local).isEmpty, .sourceImage)
+            let finalHead = try quietSourceFinal(sourceBefore, sourceAfter, entry: entry, producer: registrations.a.producer)
+            facts["sourceHeadDelta"] = 2; facts["sourceReceiptDelta"] = 1
+            facts["sourceOriginDelta"] = 1; facts["sourceCoverageDelta"] = 2
+            phase = .receiverImage
+            try quietACKRequire(try quietModel(aAfter) == finalExpected && quietModel(bAfter) == finalExpected, .receiverImage)
+            try quietReceiverFinal(aBefore, aAfter, originals: ownA); try quietReceiverFinal(bBefore, bAfter, originals: ownB)
+            // Canonical installation suppresses AuditLog creation (actual Core
+            // install checks _SyncControl); no replacement original is minted.
+            try quietACKRequire(try aAfter.rows("AuditLog").count == aBefore.rows("AuditLog").count + 1
+                && bAfter.rows("AuditLog").count == bBefore.rows("AuditLog").count, .originals)
+            try quietPreserveRows(aBefore.rows("AuditLog"), aAfter.rows("AuditLog"), key: "globalId")
+            try quietPreserveRows(bBefore.rows("AuditLog"), bAfter.rows("AuditLog"), key: "globalId")
+            try quietACKRequire(!ownA.contains { $0.id == entry.originalID } && !ownB.contains { $0.id == entry.originalID }, .originals)
+            try quietACKRequire(try !aBefore.rows("AuditLog").contains { UUID(uuidString: try $0.text("globalId")) == entry.originalID }, .originals)
+            try quietOriginalValue(aAfter, entry: entry)
+            facts["sharedRowsPerReceiver"] = 6; facts["preservedSharedOriginals"] = 6; facts["localOnlyRowsPreserved"] = 2
+            phase = .receiverSettlement
+            try quietReceiverOpen(aAfter, channels: channels, contexts: contexts, head: finalHead)
+            try quietReceiverOpen(bAfter, channels: channels, contexts: contexts, head: finalHead)
+            try quietSettled(aAfter, channels: channels, id: entry.originalID, target: target, position: finalHead)
+            facts["receiverSettledClaims"] = 2; facts["installedChannels"] = 4; facts["cohortsOpen"] = 2
+            phase = .connections
+            // The only final liveness samples occur after frozen raw evidence.
+            let finalHandles = try probe.handles()
+            try quietACKRequire(Set(finalHandles.map(\.connectionID)) == Set(handles.map(\.connectionID)), .connections)
+            try await quietACKSample(finalHandles, until: deadline)
+            try probe.checkQuiet(); try quietACKRequire(ContinuousClock.now < deadline, .deadline)
+            facts["sameConnectionsLive"] = true; facts["noReconnectObserved"] = true; facts["noSyncErrorsObserved"] = true
+            phase = .fixtureCleanup
+            try await cleanup()
+            try quietACKRequire(ContinuousClock.now < deadline, .deadline)
+            phase = .receipt
+            try quietACKReceipt(env, passed: true, phase: "completed", facts: facts)
+        } catch {
+            let failure: QuietACKFailure
+            if phase == .fixtureCleanup { failure = .fixtureCleanup }
+            else if let fixed = error as? QuietACKFailure { failure = fixed }
+            else if error is CancellationError { failure = .deadline }
+            else if let existing = error as? ConnectedRecoveryFailure {
+                switch existing {
+                case .deadline: failure = .deadline
+                case .environment: failure = .environment
+                case .receipt: failure = .receipt
+                case .metadata, .unexpectedOriginal: failure = .metadata
+                }
+            } else { failure = phase }
+            // Preserve first failure before teardown. Unknown facts are omitted;
+            // cleanup cannot transform it into success or publish a late pass.
+            try? quietACKReceipt(env, passed: false, phase: failure.rawValue, facts: facts)
+            if !cleanupAttempted {
+                do { try await cleanup() } catch { Issue.record("quiet ACK fixtureCleanup") }
+            }
+            probe.disarm(); RelayIngressTesting.remove(hooks, for: storage)
+            throw failure
+        }
+    }
+}
