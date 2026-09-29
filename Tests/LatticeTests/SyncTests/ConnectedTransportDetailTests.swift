@@ -101,22 +101,36 @@ struct ConnectedTransportDetailTests {
 
     @Test func challengeGuardFactsNeverSynthesizeVerification() throws {
         let observation = ConnectedFailureObservation(.stockTLSRejectsReachableWrongHostCertificate)
-        for outcome in PlatformTransportFailureObservation.GuardOutcome.allCases {
+        for outcome in PlatformTransportFailureObservation.GuardOutcome.allCases.filter({ $0 != .currentServerTrust }) {
             let value = PlatformTransportFailureObservation.rejectedChallenge(outcome)
             #expect(value.error.kind == .none && value.trustAccepted == nil && value.underlyingErrors.isEmpty)
             observation.callback(value)
         }
+        // Current challenges carry the copied result of the actual evaluation;
+        // rejected guard paths above do not manufacture that result.
+        observation.callback(.init(phase: .trustEvaluation, error: .init(kind: .none, domain: .none, code: nil),
+            trustAccepted: true, guardOutcome: .currentServerTrust))
+        observation.callback(.init(phase: .trustEvaluation, error: .init(kind: .tls, domain: .osStatus, code: -1),
+            trustAccepted: false, guardOutcome: .currentServerTrust))
         let value = try record(observation)
         #expect(value["version"] as? Int == 2)
         let callbacks = try #require(value["callbacks"] as? [[String: Any]])
-        #expect(callbacks.count == 5)
+        #expect(callbacks.count == 6)
         for item in callbacks {
             #expect(Set(item.keys) == ["phase", "error", "trustAccepted", "guardOutcome", "underlyingErrors", "underlyingTruncated", "underlyingCycle"])
-            #expect(item["trustAccepted"] is NSNull)
             let error = try #require(item["error"] as? [String: Any])
             #expect(Set(error.keys) == ["kind", "domain", "code", "category"])
-            #expect(error["code"] is NSNull && error["category"] is NSNull)
+            #expect(error["category"] is NSNull)
         }
+        for item in callbacks.prefix(4) {
+            #expect(item["trustAccepted"] is NSNull)
+            let error = try #require(item["error"] as? [String: Any])
+            #expect(error["kind"] as? String == "none" && error["code"] is NSNull)
+        }
+        #expect(callbacks.suffix(2).allSatisfy { $0["guardOutcome"] as? String == "currentServerTrust" })
+        #expect(callbacks.suffix(2).compactMap { $0["trustAccepted"] as? Bool } == [true, false])
+        let refused = try #require(callbacks.last?["error"] as? [String: Any])
+        #expect(refused["kind"] as? String == "tls" && refused["domain"] as? String == "osStatus" && refused["code"] as? Int == -1)
     }
 
     @Test func actualPinnedNIOTypesYieldOnlyClosedCategories() {
