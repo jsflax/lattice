@@ -2486,12 +2486,19 @@ private struct RecoveryOrdinaryFactWaiterTests {
         .init(kinds: [], acks: acks, audits: [], closed: false, firstRejection: nil)
     }
     @Test(.timeLimit(.minutes(1)))
-    func deadlineCannotOvertakePublicationBetweenTimestampAndSampleAdmission() async {
+    func deadlineCannotOvertakePublicationBetweenTimestampAndSampleAdmission() async throws {
         let peer = RecoveryAuthorizationPeer()
         let start = ContinuousClock.now, deadline = start.advanced(by: .seconds(10))
         let waiter = RecoveryOrdinaryFactWait(deadline: deadline) { $0.acks == ["timely"] }
         let attempted = DispatchSemaphore(value: 0), returned = DispatchSemaphore(value: 0)
-        var deadlineTask: Task<Void, Never>?
+        // The publication deliberately blocks while holding its leaf. The
+        // competing deadline needs its own thread; a detached Swift task still
+        // needs a cooperative executor worker that this rendezvous can occupy.
+        let deadlineThread = Thread {
+            attempted.signal()
+            peer.observeOrdinaryDeadline(waiter, at: deadline)
+            returned.signal()
+        }
         let result = await withCheckedContinuation { continuation in
             waiter.install(continuation)
             let publication = peer.facts.withLockedValue { value in
@@ -2500,11 +2507,7 @@ private struct RecoveryOrdinaryFactWaiterTests {
                 // Controlled timestamps exercise the fixture's ordering only;
                 // they are not evidence about a historical socket arrival.
                 let publishedAt = start
-                deadlineTask = Task.detached {
-                    attempted.signal()
-                    peer.observeOrdinaryDeadline(waiter, at: deadline)
-                    returned.signal()
-                }
+                deadlineThread.start()
                 #expect(attempted.wait(timeout: .now() + .seconds(10)) == .success)
                 // The deadline call must wait for the publication leaf. A
                 // direct waiter-state timer can return here and lose the ACK.
@@ -2513,7 +2516,10 @@ private struct RecoveryOrdinaryFactWaiterTests {
             }
             publication.perform()
         }
-        await deadlineTask?.value
+        // Retain the actual worker until its body has returned. The async
+        // consumer yields while observing completion instead of blocking a
+        // cooperative worker on another semaphore.
+        try await readyWait("ordinary deadline: actual worker finished") { deadlineThread.isFinished }
         #expect(result == .matched)
         let detached = peer.facts.withLockedValue { value in
             let detached = value.ordinaryWait
