@@ -14,6 +14,41 @@ private typealias RetirementActualClient = Lattice.WebsocketClient
 #endif
 private enum RetirementActualError: Error { case timeout, missingPort }
 
+private enum RetirementActualFailurePhase: String, Sendable {
+    case connect, open, send, echo, request, adapterCleanup, nativeCollection, clientRelease, serverClose, assertions
+}
+private final class RetirementActualFailureObservation: Sendable {
+    private let current = NIOLockedValueBox(RetirementActualFailurePhase.connect)
+    func phase(_ value: RetirementActualFailurePhase) { current.withLockedValue { $0 = value } }
+    func record(_ fixture: RetirementActualFixture, _ probe: RetirementActualProbe, _ serverCloses: NIOLockedValueBox<Int>) {
+        let facts = fixture.native.facts()
+        // Sequential copied facts, not an atomic cross-platform snapshot.
+        // No endpoint, callback, receipt, error text or source payload is saved.
+        let value: [String: Any] = [
+            "schema": "platform-retirement-failure-v1", "phase": current.withLockedValue { $0.rawValue },
+            "snapshot": "sequentialFailureOnly", "issued": facts.issued, "requested": facts.requested,
+            "adapterComplete": facts.adapter_complete, "nativeComplete": facts.native_complete,
+            "quarantined": facts.quarantined, "closing": facts.closing, "collected": facts.collected,
+            "firstError": facts.first_error, "bridgeUses": facts.bridge_uses, "callbackUses": facts.callback_uses,
+            "opens": facts.opens, "messages": facts.messages, "errors": facts.errors, "closes": facts.closes,
+            "chargedOwners": facts.charged_owners, "nativeSafetyRelease": facts.safety_release,
+            "clientReleased": fixture.client == nil, "serverCloses": serverCloses.withLockedValue { $0 },
+            "probeSafetyRelease": probe.safetyReleased, "probeOverflow": probe.overflowed,
+            "appleInvalidatedOK": probe.count(.appleSessionInvalidated(0)),
+            "appleInvalidatedError": probe.count(.appleSessionInvalidated(2)),
+            "appleFenceOK": probe.count(.appleInvalidationFence(0)),
+            "appleFenceError": probe.count(.appleInvalidationFence(2)),
+            "dnsReturned": probe.count(.dnsWorkReturned), "dnsPublished": probe.count(.dnsQueriesPublished),
+            "dnsNotify": probe.count(.dnsNotifyEnqueued), "nioJoinedOK": probe.count(.nioGroupShutdown(0)),
+            "nioJoinError": probe.count(.nioGroupShutdown(1))
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+           data.count <= 4096, let line = String(data: data, encoding: .utf8) {
+            print("PLATFORM_RETIREMENT_FAILURE " + line)
+        } else { print("PLATFORM_RETIREMENT_FAILURE snapshot_unavailable") }
+    }
+}
+
 // Holds only a real lifecycle callback, never a synthetic cleanup completion.
 // Its fixed safety release is an explicit failing observation, not success.
 private final class RetirementActualProbe: @unchecked Sendable {
@@ -116,7 +151,8 @@ private final class RetirementActualFixture: @unchecked Sendable {
         #expect(!native.request_retirement())
         #expect(deliveries.withLockedValue { $0.count } == 1)
     }
-    func collectActualCompletion() async throws {
+    func collectActualCompletion(observation: RetirementActualFailureObservation? = nil) async throws {
+        observation?.phase(.adapterCleanup)
         try await wait { native.facts().adapter_complete || native.facts().first_error != 0 }
         let before = native.facts()
         try #require(before.adapter_complete)
@@ -127,9 +163,11 @@ private final class RetirementActualFixture: @unchecked Sendable {
         #expect(!before.safety_release)
         // Native settlement cannot precede this actual adapter result. The
         // driver drops its final transport alias before explicit collection.
+        observation?.phase(.nativeCollection)
         try #require(native.collect_if_settled())
         #expect(!originalReceipt.valid())
         #expect(native.facts().collected)
+        observation?.phase(.clientRelease)
         try await wait { client == nil }
         #expect(probe?.safetyReleased != true)
         #expect(probe?.overflowed != true)
@@ -186,23 +224,35 @@ private func withRetirementActualPeer(_ body: (String, NIOLockedValueBox<Int>) a
         try await withRetirementActualPeer { url, closes in
             let probe = RetirementActualProbe()
             let fixture = try RetirementActualFixture(probe: probe)
-            try #require(fixture.native.connect(std.string(url)))
-            try await fixture.wait { fixture.native.facts().opens == 1 || fixture.native.facts().errors > 0 }
-            try #require(fixture.native.facts().opens == 1)
-            #expect(fixture.native.facts().errors == 0)
-            try #require(fixture.native.send_text(std.string("actual-retirement-echo")))
-            try await fixture.wait { fixture.native.facts().messages == 1 }
-            try fixture.request()
-            try await fixture.collectActualCompletion()
-            try await fixture.wait { closes.withLockedValue { $0 } == 1 }
-            #if os(Linux)
-            #expect(probe.saw(.dnsWorkReturned))
-            #expect(probe.precedes(.dnsWorkReturned, .dnsQueriesPublished))
-            #expect(probe.saw(.nioGroupShutdown(0)))
-            #else
-            #expect(probe.precedes(.appleSessionInvalidated(0), .appleInvalidationFence(0)))
-            #endif
-            #expect(!probe.safetyReleased)
+            let observation = RetirementActualFailureObservation()
+            do {
+                try #require(fixture.native.connect(std.string(url)))
+                observation.phase(.open)
+                try await fixture.wait { fixture.native.facts().opens == 1 || fixture.native.facts().errors > 0 }
+                try #require(fixture.native.facts().opens == 1)
+                #expect(fixture.native.facts().errors == 0)
+                observation.phase(.send)
+                try #require(fixture.native.send_text(std.string("actual-retirement-echo")))
+                observation.phase(.echo)
+                try await fixture.wait { fixture.native.facts().messages == 1 }
+                observation.phase(.request)
+                try fixture.request()
+                try await fixture.collectActualCompletion(observation: observation)
+                observation.phase(.serverClose)
+                try await fixture.wait { closes.withLockedValue { $0 } == 1 }
+                observation.phase(.assertions)
+                #if os(Linux)
+                #expect(probe.saw(.dnsWorkReturned))
+                #expect(probe.precedes(.dnsWorkReturned, .dnsQueriesPublished))
+                #expect(probe.saw(.nioGroupShutdown(0)))
+                #else
+                #expect(probe.precedes(.appleSessionInvalidated(0), .appleInvalidationFence(0)))
+                #endif
+                #expect(!probe.safetyReleased)
+            } catch {
+                observation.record(fixture, probe, closes)
+                throw error
+            }
         }
     }
 

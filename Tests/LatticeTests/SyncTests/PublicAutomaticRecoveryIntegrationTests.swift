@@ -1993,3 +1993,397 @@ struct PublicReceiverKillRecoveryTests {
         }
     }
 }
+
+// Separate hosted gate for the actual normal public configured-owner path.
+// Existing A/B/C cases, permission defaults, and receipt allowlists stay exact.
+private enum ConfiguredRenewalFailure: String, Error {
+    case environment, opening, initial, replacement, delivery, cleanup, facts, receipt
+}
+
+private final class ConfiguredRenewalProbe: Sendable {
+    private struct State {
+        var connections: [UUID: RelayRecoveryConnectionObservation] = [:]
+        var ready = Set<UUID>(), acknowledgments: [RelayRecoveryACKObservation] = []
+        var target: UUID?, authorizations = 0, invalid = false
+    }
+    private let state = NIOLockedValueBox(State())
+    private let replicas: Set<String>
+    init(_ registrations: ConnectedRegistrations) { replicas = [registrations.a.replica, registrations.b.replica] }
+    func authorized(_ peer: SyncRecoveryPeerIdentity) {
+        guard replicas.contains(peer.replicaID) else { return }
+        state.withLockedValue { s in
+            guard s.authorizations < 32 else { s.invalid = true; return }
+            s.authorizations += 1
+        }
+    }
+    func observe(_ observation: RelayRecoveryConnectionObservation) {
+        guard replicas.contains(observation.peer.replicaID) else { return }
+        state.withLockedValue { s in
+            guard observation.channel.utf8.count <= 64, observation.peer.replicaID.utf8.count <= 256,
+                  s.connections[observation.connectionID] == nil, s.connections.count < 16 else { s.invalid = true; return }
+            s.connections[observation.connectionID] = observation // Only weak resource handles.
+        }
+    }
+    func ready(_ observation: RelayReadyControlObservation) {
+        guard replicas.contains(observation.peer.replicaID), observation.operation == "read",
+              observation.canonicalKind != nil else { return }
+        state.withLockedValue { s in
+            guard s.ready.contains(observation.connectionID) || s.ready.count < 16 else { s.invalid = true; return }
+            s.ready.insert(observation.connectionID) // No frame/control payload retained.
+        }
+    }
+    func acknowledge(_ observation: RelayRecoveryACKObservation) -> Bool {
+        state.withLockedValue { s in
+            guard replicas.contains(observation.peer.replicaID), let target = s.target,
+                  let entry = observation.entry, entry.targetID == target else { return }
+            guard observation.metadataFailure == nil, s.acknowledgments.count < 16,
+                  observation.channel.utf8.count <= 64, entry.originalIdentityDigest.utf8.count == 64
+            else { s.invalid = true; return }
+            s.acknowledgments.append(observation)
+        }
+        return false // Observe the actual accepted ACK; never suppress or fabricate it.
+    }
+    func arm(_ target: UUID) throws {
+        try state.withLockedValue { s in
+            guard s.target == nil, !s.invalid else { throw ConfiguredRenewalFailure.facts }
+            s.target = target
+        }
+    }
+    func handles(_ registrations: [ConnectedRegistration], channels: [String], excluding: Set<UUID> = []) -> [RelayRecoveryConnectionObservation]? {
+        state.withLockedValue { s in
+            guard !s.invalid, channels.count == 2 else { return nil }
+            var result: [RelayRecoveryConnectionObservation] = []
+            for registration in registrations {
+                for index in 0..<2 {
+                    let matches = s.connections.values.filter {
+                        !excluding.contains($0.connectionID) && s.ready.contains($0.connectionID) &&
+                            $0.peer == registration.peer(index) && $0.channel == channels[index]
+                    }
+                    guard matches.count == 1, let only = matches.first else { return nil }
+                    result.append(only)
+                }
+            }
+            return result
+        }
+    }
+    func acknowledged(_ original: ConnectedOriginal, peer: ConnectedRegistration, channels: [String], fresh: Set<UUID>) -> Bool {
+        state.withLockedValue { s in
+            !s.invalid && channels.enumerated().allSatisfy { index, channel in
+                s.acknowledgments.contains {
+                    guard let entry = $0.entry else { return false }
+                    return fresh.contains($0.connectionID) && $0.peer == peer.peer(index) && $0.channel == channel &&
+                        entry.originalID == original.id && entry.targetID == original.target &&
+                        entry.table == original.table && entry.operation == "UPDATE" && entry.fieldName == "value" &&
+                        (entry.integerKind == 0 || entry.integerKind == 1) && entry.integerValue == 55 && entry.originalIdentityVersion == 1
+                }
+            }
+        }
+    }
+    var healthy: Bool { state.withLockedValue { !$0.invalid } }
+    var connections: Int { state.withLockedValue { $0.connections.count } }
+    var authorizations: Int { state.withLockedValue { $0.authorizations } }
+}
+
+@MainActor
+private final class ConfiguredRenewalConstruction {
+    let action: @MainActor () throws -> Void
+    var outcome: Result<Void, any Error>?
+    init(_ action: @escaping @MainActor () throws -> Void) { self.action = action }
+    func invoke() {
+        guard outcome == nil else { outcome = .failure(ConfiguredRenewalFailure.opening); return }
+        outcome = Result { try action() }
+    }
+}
+
+@MainActor
+private func configuredRenewalOpen(_ trace: lattice.configured_recovery_qualification,
+                                   _ action: @escaping @MainActor () throws -> Void) throws {
+    let context = ConfiguredRenewalConstruction(action)
+    // run invokes this borrowed callback synchronously on this same actor.
+    // No Swift pointer or construction closure escapes into native work.
+    trace.run(Unmanaged.passUnretained(context).toOpaque(), { pointer in
+        guard let pointer else { return }
+        let context = Unmanaged<ConfiguredRenewalConstruction>.fromOpaque(pointer).takeUnretainedValue()
+        MainActor.assumeIsolated { context.invoke() }
+    })
+    guard let outcome = context.outcome else { throw ConfiguredRenewalFailure.opening }
+    try outcome.get()
+}
+
+@MainActor
+private extension ConnectedReceiver {
+    func renewalCloseChecked() throws {
+        var failed = false
+        for owner in owners.reversed() {
+            let result = owner.closeChecked()
+            if result.failed || result.cleanupFailed || !result.cleanupComplete { failed = true }
+        }
+        // A failed close remains retained for the bounded cleanup retry.
+        guard !failed else { throw ConfiguredRenewalFailure.cleanup }
+        owners.removeAll()
+    }
+    var renewalConnected: Bool { owners.count == 2 && owners.allSatisfy(\.isSyncConnected) }
+    var renewalPending: Int { owners.reduce(0) { $0 + $1.pendingSyncEntryCount } }
+    func renewalReplay(_ observations: NIOLockedValueBox<Set<Int>>) {
+        for (index, owner) in owners.enumerated() {
+            owner.onSyncStateChange { connected in if connected { observations.withLockedValue { _ = $0.insert(index) } } }
+        }
+    }
+    func renewalOpenWithLongRetry() throws {
+        precondition(owners.isEmpty)
+        // Only this new failure case: separate the first actual failure from a
+        // possible retry. This is not a change to any existing wait or budget.
+        for index in 0..<2 {
+            var config = Lattice.Configuration(fileURL: file, busyTimeoutMs: 100)
+            config.resultsTuning.crossProcessBeltIntervalMs = nil
+            config.wssEndpoint = expectations[index].endpoint; config.authorizationToken = registration.token
+            config.recoverySourceExpectation = expectations[index]
+            config.syncTuning = .init(baseDelaySeconds: 60, maxDelaySeconds: 60)
+            owners.append(try Lattice(for: [ConnectedRecoverySharedRow.self, ConnectedRecoveryLocalRow.self],
+                configuration: config, continuousProducer: policy))
+        }
+    }
+}
+
+@MainActor
+private func configuredRenewalTrace(_ trace: lattice.configured_recovery_qualification) throws -> [lattice.configured_recovery_qualification_record] {
+    guard !trace.overflowed(), !trace.invalid(), trace.count() <= 64 else { throw ConfiguredRenewalFailure.facts }
+    return (0..<Int(trace.count())).map { trace.record($0) }
+}
+
+@MainActor
+private func configuredRenewalSettled(_ trace: lattice.configured_recovery_qualification, owners: Int, attempts: Int) throws {
+    let events = try configuredRenewalTrace(trace)
+    let created = events.filter { $0.stage == 1 }, native = events.filter { $0.stage == 2 }
+    let collected = events.filter { $0.stage == 3 }, closed = events.filter { $0.stage == 4 }
+    guard created.count == attempts, native.count == attempts, collected.count == attempts, closed.count == owners,
+          Set(created.map(\.owner)).count == owners, Set(created.map(\.attempt)).count == attempts,
+          Set(native.map(\.attempt)) == Set(created.map(\.attempt)),
+          Set(collected.map(\.attempt)) == Set(created.map(\.attempt)),
+          Set(closed.map(\.owner)) == Set(created.map(\.owner)) else { throw ConfiguredRenewalFailure.facts }
+    for owner in Set(created.map(\.owner)) {
+        guard created.filter({ $0.owner == owner }).count == attempts / owners else { throw ConfiguredRenewalFailure.facts }
+    }
+    for attempt in created.map(\.attempt) {
+        guard let made = events.firstIndex(where: { $0.stage == 1 && $0.attempt == attempt }),
+              let nativeDone = events.firstIndex(where: { $0.stage == 2 && $0.attempt == attempt && $0.native_complete }),
+              let collectedAt = events.firstIndex(where: { $0.stage == 3 && $0.attempt == attempt }),
+              made < nativeDone, nativeDone < collectedAt else { throw ConfiguredRenewalFailure.facts }
+    }
+    for event in collected {
+        guard event.commands == 0, event.payloads == 0, event.workers == 0,
+              event.adapter_complete, event.native_complete, !event.quarantined, event.first_error == 0,
+              event.lane_complete, event.disconnect_returned, event.pacer_present, event.pacer_joined,
+              event.callbacks_settled, event.wrapper_destroyed, event.route_unregistered, event.receipt_invalid
+        else { throw ConfiguredRenewalFailure.cleanup }
+    }
+    for event in closed {
+        guard event.child_closed, event.scheduler_joined else { throw ConfiguredRenewalFailure.cleanup }
+    }
+    // The native recorder additionally refuses a new physical interval until
+    // actual collection ends its predecessor, even if allocation reuses an address.
+}
+
+@MainActor
+private func configuredRenewalReceipt(_ environment: ConnectedTLSEnvironment, wrongHost: Bool, passed: Bool,
+                                      phase: ConfiguredRenewalFailure, facts: [String: Int]) throws {
+    let name = wrongHost ? "publicConfiguredWrongHostFailureRetiresStockAttempt" : "publicConfiguredStockRenewalDeliversCommittedEdit"
+    let path = environment.root.appendingPathComponent("receipts/" + name + ".json")
+    guard !FileManager.default.fileExists(atPath: path.path), facts.count <= 16,
+          facts.keys.allSatisfy({ $0.utf8.count <= 64 }), facts.values.allSatisfy({ $0 >= 0 && $0 <= 1024 })
+    else { throw ConfiguredRenewalFailure.receipt }
+    let data = try JSONSerialization.data(withJSONObject: ["version": 1, "name": name, "passed": passed,
+        "phase": phase.rawValue, "scalarFacts": facts], options: [.sortedKeys])
+    guard data.count <= 4096 else { throw ConfiguredRenewalFailure.receipt }
+    try data.write(to: path, options: .atomic)
+}
+
+@Suite("Public configured stock transport renewal", .serialized,
+       .enabled(if: ProcessInfo.processInfo.environment["LATTICE_CONFIGURED_RENEWAL_GATE"] == "1"))
+@MainActor
+struct PublicConfiguredStockRenewalTests {
+    @Test func publicConfiguredStockRenewalDeliversCommittedEdit() async throws { try await exercise(wrongHost: false) }
+    @Test func publicConfiguredWrongHostFailureRetiresStockAttempt() async throws { try await exercise(wrongHost: true) }
+
+    private func exercise(wrongHost: Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(120))
+        let environment = try ConnectedTLSEnvironment()
+        guard ProcessInfo.processInfo.environment["LATTICE_CONFIGURED_RENEWAL_GATE"] == "1" else { throw ConfiguredRenewalFailure.environment }
+        let directory = environment.root.appendingPathComponent("private/configured-" + UUID().uuidString)
+        let storage = directory.appendingPathComponent("source"), sourceFile = storage.appendingPathComponent("source.sqlite")
+        try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let initial: [ConnectedRow], originals: Set<String>
+        do {
+            let seed = try Lattice(for: [ConnectedRecoverySharedRow.self, ConnectedRecoveryLocalRow.self], configuration: .init(fileURL: sourceFile))
+            defer { seed.close() }
+            try seed.withTransaction { for number in 1...6 { try seed.add(ConnectedRecoverySharedRow(label: "r\(number)", value: number)) } }
+            initial = try Array(seed.objects(ConnectedRecoverySharedRow.self)).map {
+                ConnectedRow(id: try #require($0.globalId), label: $0.label, value: $0.value)
+            }.sorted { $0.label < $1.label }
+            originals = Set(Array(seed.eventsAfter(globalId: nil)).compactMap { $0.globalId?.uuidString.lowercased() })
+            let closed = seed.closeChecked()
+            try #require(initial.count == 6 && originals.count == 6 && !closed.failed && !closed.cleanupFailed && closed.cleanupComplete)
+        }
+        let registrations = ConnectedRegistrations(), probe = ConfiguredRenewalProbe(registrations)
+        let app = try await connectedApplication(environment.certificate, environment.key)
+        var wrongApp: Application?
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in }, didFinishAsyncSetup: {},
+            didRecoveryReadyControl: { probe.ready($0) }, shouldDropRecoveryACK: { probe.acknowledge($0) },
+            didObserveRecoveryConnection: { probe.observe($0) })
+        RelayIngressTesting.install(hooks, for: storage)
+        let trace = lattice.configured_recovery_qualification()
+        var mounts: [SyncRelayHandle] = [], bootstrap: [ConnectedBootstrapPeer] = [], receivers: [ConnectedReceiver] = []
+        var phase = ConfiguredRenewalFailure.opening, facts: [String: Int] = [:], cleanupResult: Result<Void, any Error>?
+        func cleanup() async throws {
+            if let cleanupResult { return try cleanupResult.get() }
+            var firstError: (any Error)?
+            for receiver in receivers {
+                do { try receiver.renewalCloseChecked() } catch { if firstError == nil { firstError = error } }
+            }
+            for peer in bootstrap { peer.close() }
+            for mount in mounts { await mount.retireRecoveryAuthorization() }
+            if let wrongApp {
+                do { try await connectedShutdown(wrongApp) } catch { if firstError == nil { firstError = error } }
+            }
+            var groupJoined = false
+            do { try await connectedShutdown(app); groupJoined = true } catch { if firstError == nil { firstError = error } }
+            do {
+                try await connectedWait("configured source and bootstrap retirement", until: ContinuousClock.now.advanced(by: .seconds(10))) {
+                    mounts.allSatisfy { $0.recoverySessionCount == 0 } && bootstrap.allSatisfy { $0.cleanupRetired(ownedGroupJoined: groupJoined) }
+                }
+            } catch { if firstError == nil { firstError = error } }
+            RelayIngressTesting.remove(hooks, for: storage)
+            if let firstError { cleanupResult = .failure(firstError); throw firstError }
+            cleanupResult = .success(())
+        }
+        do {
+            for index in 0..<2 {
+                mounts.append(try Lattice.configureSyncRelay(on: app.routes, path: [.constant(index == 0 ? "a" : "b")],
+                    for: [ConnectedRecoverySharedRow.self, ConnectedRecoveryLocalRow.self], storageURL: storage,
+                    writePolicy: .init(allowedOperations: ["ConnectedRecoverySharedRow": [.insert, .update, .delete]], unlistedTables: .deny),
+                    recovery: registrations.policy(index), channelExtractor: { try registrations.channel($0, index: index) },
+                    recoveryAuthorization: { request, context in
+                        let result = try registrations.authorize(request, context, index: index)
+                        probe.authorized(result.peer); return result
+                    }))
+            }
+            try await app.startup()
+            let port = try #require(app.http.server.shared.localAddress?.port)
+            let endpoints = ["wss://127.0.0.1:\(port)/a", "wss://127.0.0.1:\(port)/b"], channels = endpoints.map { "wss:" + $0 }
+            try #require(channels.allSatisfy { $0.utf8.count <= 64 })
+            registrations.endpoints.withLockedValue { $0 = endpoints }
+            for index in 0..<2 {
+                let peer = ConnectedBootstrapPeer(), identity = registrations.bootstrap.peer(index); bootstrap.append(peer)
+                let query = "?recovery-v=1&recovery-replica=\(identity.replicaID)&recovery-receiver=\(identity.receiverIncarnation)&recovery-channel=\(identity.channelIncarnation)"
+                var headers = HTTPHeaders(); headers.add(name: "Authorization", value: "Bearer " + registrations.bootstrap.token)
+                do { try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get() }
+                catch { peer.connectFailed(); throw error }
+                try await connectedWait("configured real source metadata", until: deadline) {
+                    !peer.invalid && peer.ids == originals && registrations.contexts.withLockedValue { $0[index] != nil }
+                }
+            }
+            let captured = registrations.contexts.withLockedValue { $0 }
+            let contexts = [try #require(captured[0]), try #require(captured[1])]
+            for peer in bootstrap { peer.close() }
+            try await connectedWait("configured bootstrap closed", until: deadline) {
+                bootstrap.allSatisfy(\.closed) && mounts.allSatisfy { $0.recoverySessionCount == 0 }
+            }
+            if wrongHost {
+                let rejected = try await connectedApplication(environment.wrongCertificate, environment.wrongKey)
+                wrongApp = rejected
+                let upgrades = NIOLockedValueBox(0)
+                for path in ["a", "b"] { rejected.webSocket(.constant(path)) { _, socket in
+                    upgrades.withLockedValue { $0 = min(32, $0 + 1) }; socket.close(promise: nil)
+                } }
+                try await rejected.startup()
+                let wrongPort = try #require(rejected.http.server.shared.localAddress?.port)
+                let wrongEndpoints = ["wss://127.0.0.1:\(wrongPort)/a", "wss://127.0.0.1:\(wrongPort)/b"]
+                let receiver = try ConnectedReceiver(root: directory, registration: registrations.a, contexts: contexts, endpoints: wrongEndpoints)
+                receivers = [receiver]
+                try configuredRenewalOpen(trace) { try receiver.renewalOpenWithLongRetry() }
+                phase = .initial
+                // Actual native callbacks, not timeout inference or a late
+                // Swift error-listener registration, establish first failure.
+                try await connectedWait("configured wrong-host first attempts retired", until: min(deadline, ContinuousClock.now.advanced(by: .seconds(20)))) {
+                    let events = try configuredRenewalTrace(trace)
+                    let failed = Set(events.filter { $0.stage == 5 }.map(\.attempt))
+                    let collected = events.filter { $0.stage == 3 }
+                    return collected.count == 2 && Set(collected.map(\.attempt)).isSubset(of: failed)
+                }
+                try #require(!receiver.renewalConnected && upgrades.withLockedValue { $0 } == 0 && probe.connections == 0 && probe.authorizations == 0)
+                facts["actualFailedAttempts"] = 2; facts["unauthorizedUpgrades"] = 0
+            } else {
+                let a = try ConnectedReceiver(root: directory, registration: registrations.a, contexts: contexts, endpoints: endpoints)
+                let b = try ConnectedReceiver(root: directory, registration: registrations.b, contexts: contexts, endpoints: endpoints)
+                receivers = [a, b]
+                try configuredRenewalOpen(trace) { try a.open(connected: true); try b.open(connected: true) }
+                phase = .initial
+                try await connectedWait("configured first public cohorts", until: deadline) {
+                    try a.renewalConnected && b.renewalConnected && a.rows() == initial && b.rows() == initial &&
+                        a.openGate() && b.openGate() && a.renewalPending == 0 && b.renewalPending == 0 &&
+                        probe.handles([registrations.a, registrations.b], channels: channels) != nil
+                }
+                let old = try #require(probe.handles([registrations.a, registrations.b], channels: channels))
+                let oldIDs = Set(old.map(\.connectionID))
+                let oldRetirement = try old.map { try #require($0.retirementObservation()) }
+                for handle in old {
+                    let sample = try await killRecoverySample(handle, until: deadline)
+                    try #require(sample.available && sample.socketOpen && sample.lifetimeLive)
+                }
+                try #require(try configuredRenewalTrace(trace).filter { $0.stage == 1 }.count == 4)
+                phase = .replacement
+                for index in 0..<2 { await mounts[index].disconnectAll(channelId: channels[index]) }
+                // No explicit connect/sync/reopen and no direct transport fixture.
+                // The real close callback must cause the stable owner to redial.
+                try await connectedWait("configured fresh authenticated cohorts", until: deadline) {
+                    try a.renewalConnected && b.renewalConnected && a.openGate() && b.openGate() &&
+                        probe.handles([registrations.a, registrations.b], channels: channels, excluding: oldIDs) != nil
+                }
+                let fresh = try #require(probe.handles([registrations.a, registrations.b], channels: channels, excluding: oldIDs))
+                let freshIDs = Set(fresh.map(\.connectionID))
+                try #require(freshIDs.count == 4 && oldIDs.isDisjoint(with: freshIDs) && probe.connections == 8 && probe.authorizations == 8)
+                for handle in oldRetirement { try await killRecoveryRetired(handle, drained: true, until: deadline) }
+                for handle in fresh {
+                    let sample = try await killRecoverySample(handle, until: deadline)
+                    try #require(sample.available && sample.socketOpen && sample.lifetimeLive)
+                }
+                let replayA = NIOLockedValueBox(Set<Int>()), replayB = NIOLockedValueBox(Set<Int>())
+                a.renewalReplay(replayA); b.renewalReplay(replayB)
+                try await connectedWait("configured public late-listener replay", until: deadline) {
+                    replayA.withLockedValue { $0 == [0, 1] } && replayB.withLockedValue { $0 == [0, 1] }
+                }
+                phase = .delivery
+                let before = Set(try a.originals().map(\.id)), (target, mutation) = try a.quietUpdate()
+                try probe.arm(target); try mutation.perform()
+                let changes = try a.originals().filter { !before.contains($0.id) && $0.target == target && $0.operation == "UPDATE" }
+                try #require(changes.count == 1)
+                let original = try #require(changes.first)
+                let expected = initial.map { $0.id == target ? ConnectedRow(id: $0.id, label: $0.label, value: 55) : $0 }
+                try await connectedWait("configured committed edit ACK and peer delivery", until: deadline) {
+                    try probe.acknowledged(original, peer: registrations.a, channels: channels, fresh: freshIDs) &&
+                        a.rows() == expected && b.rows() == expected && a.openGate() && b.openGate() &&
+                        a.renewalPending == 0 && b.renewalPending == 0
+                }
+                facts["freshAuthorizedConnections"] = 4; facts["retiredConnectionsDrained"] = 4
+                facts["lateConnectedReplays"] = 4; facts["committedOriginals"] = 1; facts["peerVisibleRows"] = expected.count
+            }
+            phase = .cleanup
+            for receiver in receivers { try receiver.renewalCloseChecked() }
+            try await connectedWait("configured actual owner cleanup receipts", until: deadline) {
+                try configuredRenewalTrace(trace).filter { $0.stage == 4 }.count == (wrongHost ? 2 : 4)
+            }
+            try configuredRenewalSettled(trace, owners: wrongHost ? 2 : 4, attempts: wrongHost ? 2 : 8)
+            facts["actualCollectedAttempts"] = wrongHost ? 2 : 8
+            facts["actualChildClosesAndSchedulerJoins"] = wrongHost ? 2 : 4
+            try #require(probe.healthy)
+            try await cleanup()
+            try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: true, phase: phase, facts: facts)
+        } catch {
+            let original = error
+            do { try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: false, phase: phase, facts: facts) }
+            catch { Issue.record("Configured renewal bounded failure receipt unavailable") }
+            do { try await cleanup() } catch { Issue.record("Configured renewal actual cleanup failed") }
+            throw original
+        }
+    }
+}
