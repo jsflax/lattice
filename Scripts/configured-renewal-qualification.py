@@ -90,7 +90,7 @@ def unique_object(pairs):
     return result
 
 
-# Configured-only version-three diagnostic schema. Shared A/B/C ErrorFact and
+# Configured-only version-four diagnostic schema. Shared A/B/C ErrorFact and
 # every success scalar/oracle remain unchanged. No arbitrary strings are copied.
 BOOTSTRAP_UPGRADE_ERRORS = frozenset(['responseProtocolNotFound', 'invalidHTTPOrdering', 'upgraderDeniedUpgrade',
     'writingToHandlerDuringUpgrade', 'writingToHandlerAfterUpgradeCompleted', 'writingToHandlerAfterUpgradeFailed',
@@ -101,16 +101,7 @@ BOOTSTRAP_CHANNEL_FIELDS = frozenset(['clientAttempt', 'clientUpgrade', 'channel
                                      'authorizationEntered', 'authorizationAccepted'])
 
 
-def bootstrap_diagnostic(value):
-    require(type(value) is dict and set(value) == {'bootstrap', 'error'})
-    observed, error = value['bootstrap'], value['error']
-    require(type(observed) is dict and set(observed) == {'currentIndex', 'channels', 'sourceSetupEntered', 'sourceSetupFinished', 'overflow'})
-    require(observed['currentIndex'] is None or (type(observed['currentIndex']) is int and observed['currentIndex'] in (0, 1)))
-    require(type(observed['channels']) is list and len(observed['channels']) == 2 and type(observed['overflow']) is bool)
-    for row in observed['channels']:
-        require(type(row) is dict and set(row) == BOOTSTRAP_CHANNEL_FIELDS)
-        require(all(type(v) is int and 0 <= v <= 32 for v in row.values()))
-    require(all(type(observed[k]) is int and 0 <= observed[k] <= 32 for k in ('sourceSetupEntered', 'sourceSetupFinished')))
+def bootstrap_base_error(error):
     require(type(error) is dict and set(error) == {'family', 'upgrade', 'wrapper', 'tls', 'stackCount',
                                                   'stackTruncated', 'eofDuringHandshake', 'eofDuringAdditionalValidation'})
     require(type(error['family']) is str and error['family'] in ('unclassified', 'nioHTTPUpgrade', 'nioTLS'))
@@ -128,19 +119,87 @@ def bootstrap_diagnostic(value):
         require(error['stackCount'] == 0 and not error['stackTruncated'] and not error['eofDuringHandshake'] and not error['eofDuringAdditionalValidation'])
     require(not error['stackTruncated'] or error['stackCount'] == 8)
     require(not (error['eofDuringHandshake'] or error['eofDuringAdditionalValidation']) or error['stackCount'] > 0)
+    return {k: error[k] for k in sorted(error)}
+
+
+def bootstrap_errno(value):
+    require(value is None or (type(value) is int and -(2**31) <= value < 2**31))
+    return value
+
+
+def bootstrap_error_fact(error):
+    require(type(error) is dict and set(error) == {'kind', 'domain', 'code', 'category'})
+    require(type(error['kind']) is str and error['kind'] in COMMON.FAILURE_ERROR_KINDS)
+    require(type(error['domain']) is str and error['domain'] in COMMON.FAILURE_ERROR_DOMAINS)
+    code, category = error['code'], error['category']
+    require(code is None or (type(code) is int and -(2**31) <= code < 2**31))
+    if code is not None:
+        require(error['domain'] in ('url', 'osStatus', 'posix', 'cocoa', 'nioWebSocket'))
+    require(category is None or (type(category) is str and category in COMMON.FAILURE_ERROR_CATEGORIES))
+    if category is not None:
+        require(error['kind'] == 'tls' and error['domain'] == 'nioSSL' and code is None)
+    return {k: error[k] for k in sorted(error)}
+
+
+def bootstrap_error_leaf(value):
+    require(type(value) is dict and set(value) == {'fact', 'detail', 'errno', 'nestedConnection'})
+    require(type(value['nestedConnection']) is bool)
+    result = {'fact': bootstrap_error_fact(value['fact']), 'detail': bootstrap_base_error(value['detail']),
+              'errno': bootstrap_errno(value['errno']), 'nestedConnection': value['nestedConnection']}
+    if result['errno'] is not None or result['nestedConnection']:
+        require(result['detail']['family'] == 'unclassified')
+    if result['nestedConnection']:
+        require(result['errno'] is None)
+    return result
+
+
+def bootstrap_error(error):
+    base_keys = {'family', 'upgrade', 'wrapper', 'tls', 'stackCount', 'stackTruncated',
+                 'eofDuringHandshake', 'eofDuringAdditionalValidation'}
+    require(type(error) is dict and set(error) == base_keys | {'errno', 'connection'})
+    result = bootstrap_base_error({k: error[k] for k in base_keys})
+    result['errno'] = bootstrap_errno(error['errno'])
+    value = error['connection']
+    if value is None:
+        result['connection'] = None
+    else:
+        require(result['family'] == 'unclassified' and result['errno'] is None)
+        require(type(value) is dict and set(value) == {'dnsA', 'dnsAAAA', 'failures', 'failureCount', 'failuresTruncated'})
+        require(type(value['failures']) is list and len(value['failures']) <= 4)
+        require(type(value['failureCount']) is int and value['failureCount'] == len(value['failures']))
+        require(type(value['failuresTruncated']) is bool and (not value['failuresTruncated'] or value['failureCount'] == 4))
+        result['connection'] = {k: None if value[k] is None else bootstrap_error_leaf(value[k]) for k in ('dnsA', 'dnsAAAA')}
+        result['connection'].update(failures=[bootstrap_error_leaf(v) for v in value['failures']],
+                                   failureCount=value['failureCount'], failuresTruncated=value['failuresTruncated'])
+    if result['errno'] is not None:
+        require(result['family'] == 'unclassified')
+    return result
+
+
+def bootstrap_diagnostic(value):
+    require(type(value) is dict and set(value) == {'bootstrap', 'error'})
+    observed, error = value['bootstrap'], value['error']
+    require(type(observed) is dict and set(observed) == {'currentIndex', 'channels', 'sourceSetupEntered', 'sourceSetupFinished', 'overflow'})
+    require(observed['currentIndex'] is None or (type(observed['currentIndex']) is int and observed['currentIndex'] in (0, 1)))
+    require(type(observed['channels']) is list and len(observed['channels']) == 2 and type(observed['overflow']) is bool)
+    for row in observed['channels']:
+        require(type(row) is dict and set(row) == BOOTSTRAP_CHANNEL_FIELDS)
+        require(all(type(v) is int and 0 <= v <= 32 for v in row.values()))
+    require(all(type(observed[k]) is int and 0 <= observed[k] <= 32 for k in ('sourceSetupEntered', 'sourceSetupFinished')))
+    selected_error = bootstrap_error(error)
     # Reconstruct only exact allowlisted fields. These are observations, never
     # replacement passing facts or proof of an unobserved protocol stage.
     return {'bootstrap': {'currentIndex': observed['currentIndex'],
         'channels': [{k: row[k] for k in sorted(BOOTSTRAP_CHANNEL_FIELDS)} for row in observed['channels']],
         'sourceSetupEntered': observed['sourceSetupEntered'], 'sourceSetupFinished': observed['sourceSetupFinished'],
-        'overflow': observed['overflow']}, 'error': {k: error[k] for k in sorted(error)}}
+        'overflow': observed['overflow']}, 'error': selected_error}
 
 
 def case_receipt(root, name):
     require(name in CASE_NAMES)
     value = json.loads(read_file(root / ('receipts/' + name + '.json'), 4096), object_pairs_hook=unique_object)
     require(type(value) is dict and set(value) == {'version', 'name', 'passed', 'phase', 'scalarFacts', 'failure', 'diagnostic'}
-            and type(value['version']) is int and value['version'] == 3
+            and type(value['version']) is int and value['version'] == 4
             and value['name'] == name and type(value['passed']) is bool
             and type(value['phase']) is str and value['phase'] in PHASES)
     facts = value['scalarFacts']
@@ -162,7 +221,7 @@ def case_receipt(root, name):
             require(error['kind'] == 'tls' and error['domain'] == 'nioSSL' and code is None)
         diagnostic = bootstrap_diagnostic(value['diagnostic'])
     # Only reviewed scalar fields are exported, never raw errors or source data.
-    return {'version': 3, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
+    return {'version': 4, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
             'scalarFacts': {k: facts[k] for k in sorted(facts)}, 'failure': value['failure'],
             'diagnostic': None if value['passed'] else diagnostic}
 

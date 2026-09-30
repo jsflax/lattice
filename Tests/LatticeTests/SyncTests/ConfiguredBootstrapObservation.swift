@@ -1,6 +1,8 @@
 import Foundation
 import NIOConcurrencyHelpers
 import NIOHTTP1
+import NIOCore
+import NIOPosix
 import NIOSSL
 
 // Configured qualification only. Never retain a request, socket, peer, error,
@@ -64,7 +66,7 @@ final class ConfiguredBootstrapObservation: Sendable {
 
 // Public pinned NIO case/equality observations only. Unknown types remain
 // unclassified. The associated BoringSSL stack is not reflected or described.
-struct ConfiguredBootstrapErrorDetail {
+private struct ConfiguredBootstrapBaseErrorDetail {
     enum Family: String { case unclassified, nioHTTPUpgrade, nioTLS }
     enum Upgrade: String {
         case responseProtocolNotFound, invalidHTTPOrdering, upgraderDeniedUpgrade
@@ -140,5 +142,70 @@ struct ConfiguredBootstrapErrorDetail {
          "wrapper": wrapper.map { $0.rawValue as Any } ?? NSNull(), "tls": tls.map { $0.rawValue as Any } ?? NSNull(),
          "stackCount": stackCount, "stackTruncated": stackTruncated,
          "eofDuringHandshake": eofDuringHandshake, "eofDuringAdditionalValidation": eofDuringAdditionalValidation]
+    }
+}
+
+// One-level public wrapper inspection only. The original ErrorFact and TLS
+// detail remain intact; no error description, endpoint, target, userInfo or
+// nested arbitrary error graph is retained or traversed.
+struct ConfiguredBootstrapErrorLeaf {
+    private let fact: ConnectedFailureObservation.ErrorFact
+    private let detail: ConfiguredBootstrapBaseErrorDetail
+    let errno: Int?
+    let nestedConnection: Bool
+    init(_ error: any Error) {
+        fact = .init(error)
+        detail = .init(error)
+        #if os(Linux) || canImport(Darwin)
+        errno = (error as? IOError).map { Int($0.errnoCode) }
+        #else
+        errno = nil
+        #endif
+        nestedConnection = error is NIOConnectionError
+    }
+    var json: [String: Any] {
+        ["fact": fact.json, "detail": detail.json,
+         "errno": errno.map { $0 as Any } ?? NSNull(), "nestedConnection": nestedConnection]
+    }
+}
+
+struct ConfiguredBootstrapConnectionFailures {
+    let leaves: [ConfiguredBootstrapErrorLeaf]
+    let truncated: Bool
+    // Count is checked before indexing. Production reads only the first four
+    // actual SingleConnectionFailure.error values, never their targets.
+    init(count: Int, errorAt: (Int) -> any Error) {
+        precondition(count >= 0)
+        leaves = (0..<min(count, 4)).map { ConfiguredBootstrapErrorLeaf(errorAt($0)) }
+        truncated = count > 4
+    }
+}
+
+struct ConfiguredBootstrapErrorDetail {
+    private let base: ConfiguredBootstrapBaseErrorDetail
+    private let errno: Int?
+    private let connection: [String: Any]?
+    init(_ error: any Error) {
+        base = .init(error)
+        #if os(Linux) || canImport(Darwin)
+        errno = (error as? IOError).map { Int($0.errnoCode) }
+        #else
+        errno = nil
+        #endif
+        if let value = error as? NIOConnectionError {
+            let failures = ConfiguredBootstrapConnectionFailures(count: value.connectionErrors.count) {
+                value.connectionErrors[$0].error
+            }
+            connection = ["dnsA": value.dnsAError.map { ConfiguredBootstrapErrorLeaf($0).json as Any } ?? NSNull(),
+                "dnsAAAA": value.dnsAAAAError.map { ConfiguredBootstrapErrorLeaf($0).json as Any } ?? NSNull(),
+                "failures": failures.leaves.map(\.json), "failureCount": failures.leaves.count,
+                "failuresTruncated": failures.truncated]
+        } else { connection = nil }
+    }
+    var json: [String: Any] {
+        var result = base.json
+        result["errno"] = errno.map { $0 as Any } ?? NSNull()
+        result["connection"] = connection.map { $0 as Any } ?? NSNull()
+        return result
     }
 }

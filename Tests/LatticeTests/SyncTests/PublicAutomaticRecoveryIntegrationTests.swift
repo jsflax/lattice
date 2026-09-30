@@ -2199,7 +2199,7 @@ private func configuredRenewalReceipt(_ environment: ConnectedTLSEnvironment, wr
     else { throw ConfiguredRenewalFailure.receipt }
     // Reuse the finite copied-error schema; never serialize error descriptions,
     // dynamic type names, paths, bearer strings, or associated payloads.
-    let data = try JSONSerialization.data(withJSONObject: ["version": 3, "name": name, "passed": passed,
+    let data = try JSONSerialization.data(withJSONObject: ["version": 4, "name": name, "passed": passed,
         "phase": phase.rawValue, "scalarFacts": facts, "failure": failure.map { $0.json as Any } ?? NSNull(),
         "diagnostic": diagnostic.map { $0 as Any } ?? NSNull()], options: [.sortedKeys])
     guard data.count <= 4096 else { throw ConfiguredRenewalFailure.receipt }
