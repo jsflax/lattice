@@ -18,7 +18,7 @@ import sys
 import time
 
 sys.dont_write_bytecode = True
-COMMON_SHA256 = '59cd4bfd9d0690dbea9baffce0af066ec9777543d1c49f687dd640b30cf03759'
+COMMON_SHA256 = '4e0c25922cc79c297d94474664e48e5aac7c3bb337bdf41a6a4cc425eacdf795'
 CASE_NAMES = (
     'publicConfiguredStockRenewalDeliversCommittedEdit',
     'publicConfiguredWrongHostFailureRetiresStockAttempt',
