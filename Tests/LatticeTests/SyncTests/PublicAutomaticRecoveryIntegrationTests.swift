@@ -88,12 +88,13 @@ private func connectedWait(_ phase: String, until deadline: ContinuousClock.Inst
 private func connectedApplication(_ certificate: URL, _ key: URL, observation: ConnectedFailureObservation? = nil) async throws -> Application {
     observation?.phase(.applicationEnvironment)
     var environment = try Environment.detect(); environment.arguments = ["vapor"]
+    // Parse the declared PEM before owning an application group: refusal must not leak it.
+    var tls = TLSConfiguration.makeServerConfiguration(certificateChain: [.file(certificate.path)], privateKey: .privateKey(try NIOSSLPrivateKey(file: key.path, format: .pem)))
     observation?.phase(.applicationCreate)
     // The bootstrap client uses this same group. Own it so failed pre-upgrade
     // channels are closed and its threads joined by fixture cleanup.
     let app = try await Application.make(environment, .createNew)
     observation?.phase(.applicationTLS)
-    var tls = TLSConfiguration.makeServerConfiguration(certificateChain: [.file(certificate.path)], privateKey: .privateKey(try NIOSSLPrivateKey(file: key.path, format: .pem)))
     tls.minimumTLSVersion = .tlsv12
     app.http.server.configuration.hostname = "127.0.0.1"
     app.http.server.configuration.port = 0
