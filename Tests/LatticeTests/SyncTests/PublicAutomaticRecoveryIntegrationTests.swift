@@ -2199,7 +2199,7 @@ private func configuredRenewalReceipt(_ environment: ConnectedTLSEnvironment, wr
     else { throw ConfiguredRenewalFailure.receipt }
     // Reuse the finite copied-error schema; never serialize error descriptions,
     // dynamic type names, paths, bearer strings, or associated payloads.
-    let data = try JSONSerialization.data(withJSONObject: ["version": 4, "name": name, "passed": passed,
+    let data = try JSONSerialization.data(withJSONObject: ["version": 5, "name": name, "passed": passed,
         "phase": phase.rawValue, "scalarFacts": facts, "failure": failure.map { $0.json as Any } ?? NSNull(),
         "diagnostic": diagnostic.map { $0 as Any } ?? NSNull()], options: [.sortedKeys])
     guard data.count <= 4096 else { throw ConfiguredRenewalFailure.receipt }
@@ -2235,6 +2235,8 @@ struct PublicConfiguredStockRenewalTests {
         let registrations = ConnectedRegistrations(), probe = ConfiguredRenewalProbe(registrations)
         let app = try await connectedApplication(environment.certificate, environment.key)
         let bootstrapObservation = ConfiguredBootstrapObservation()
+        let serverTLSObservation = ConfiguredServerTLSObservation()
+        app.http.server.configuration.logger = serverTLSObservation.wrapping(app.http.server.configuration.logger, application: .bootstrap)
         var wrongApp: Application?
         let hooks = RelayIngressTestHooks(beforeAsyncSetup: { bootstrapObservation.setup(entered: true) }, didBufferFrame: { _ in },
             didFinishAsyncSetup: { bootstrapObservation.setup(entered: false) },
@@ -2318,6 +2320,7 @@ struct PublicConfiguredStockRenewalTests {
                 phase = .wrongApplication
                 let rejected = try await connectedApplication(environment.wrongCertificate, environment.wrongKey)
                 wrongApp = rejected
+                rejected.http.server.configuration.logger = serverTLSObservation.wrapping(rejected.http.server.configuration.logger, application: .wrongHost)
                 let upgrades = NIOLockedValueBox(0)
                 for path in ["a", "b"] { rejected.webSocket(.constant(path)) { _, socket in
                     upgrades.withLockedValue { $0 = min(32, $0 + 1) }; socket.close(promise: nil)
@@ -2414,7 +2417,8 @@ struct PublicConfiguredStockRenewalTests {
         } catch {
             let original = error
             do { try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: false, phase: phase, facts: facts, failure: connectedFailureFact(original),
-                diagnostic: ["bootstrap": bootstrapObservation.json, "error": ConfiguredBootstrapErrorDetail(original).json]) }
+                diagnostic: ["bootstrap": bootstrapObservation.json, "error": ConfiguredBootstrapErrorDetail(original).json,
+                             "serverTLS": serverTLSObservation.json]) }
             catch { Issue.record("Configured renewal bounded failure receipt unavailable") }
             do { try await cleanup() } catch { Issue.record("Configured renewal actual cleanup failed") }
             throw original

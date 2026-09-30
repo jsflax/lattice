@@ -177,7 +177,11 @@ def bootstrap_error(error):
 
 
 def bootstrap_diagnostic(value):
-    require(type(value) is dict and set(value) == {'bootstrap', 'error'})
+    require(type(value) is dict and set(value) == {'bootstrap', 'error', 'serverTLS'})
+    server_tls = value['serverTLS']
+    require(type(server_tls) is dict and set(server_tls) == {'bootstrapContextCatch', 'wrongHostContextCatch', 'overflow'})
+    require(all(type(server_tls[k]) is int and 0 <= server_tls[k] <= 32 for k in ('bootstrapContextCatch', 'wrongHostContextCatch')))
+    require(type(server_tls['overflow']) is bool)
     observed, error = value['bootstrap'], value['error']
     require(type(observed) is dict and set(observed) == {'currentIndex', 'channels', 'sourceSetupEntered', 'sourceSetupFinished', 'overflow'})
     require(observed['currentIndex'] is None or (type(observed['currentIndex']) is int and observed['currentIndex'] in (0, 1)))
@@ -192,14 +196,15 @@ def bootstrap_diagnostic(value):
     return {'bootstrap': {'currentIndex': observed['currentIndex'],
         'channels': [{k: row[k] for k in sorted(BOOTSTRAP_CHANNEL_FIELDS)} for row in observed['channels']],
         'sourceSetupEntered': observed['sourceSetupEntered'], 'sourceSetupFinished': observed['sourceSetupFinished'],
-        'overflow': observed['overflow']}, 'error': selected_error}
+        'overflow': observed['overflow']}, 'error': selected_error,
+        'serverTLS': {k: server_tls[k] for k in ('bootstrapContextCatch', 'wrongHostContextCatch', 'overflow')}}
 
 
 def case_receipt(root, name):
     require(name in CASE_NAMES)
     value = json.loads(read_file(root / ('receipts/' + name + '.json'), 4096), object_pairs_hook=unique_object)
     require(type(value) is dict and set(value) == {'version', 'name', 'passed', 'phase', 'scalarFacts', 'failure', 'diagnostic'}
-            and type(value['version']) is int and value['version'] == 4
+            and type(value['version']) is int and value['version'] == 5
             and value['name'] == name and type(value['passed']) is bool
             and type(value['phase']) is str and value['phase'] in PHASES)
     facts = value['scalarFacts']
@@ -221,7 +226,7 @@ def case_receipt(root, name):
             require(error['kind'] == 'tls' and error['domain'] == 'nioSSL' and code is None)
         diagnostic = bootstrap_diagnostic(value['diagnostic'])
     # Only reviewed scalar fields are exported, never raw errors or source data.
-    return {'version': 4, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
+    return {'version': 5, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
             'scalarFacts': {k: facts[k] for k in sorted(facts)}, 'failure': value['failure'],
             'diagnostic': None if value['passed'] else diagnostic}
 
