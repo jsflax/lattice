@@ -2199,7 +2199,7 @@ private func configuredRenewalReceipt(_ environment: ConnectedTLSEnvironment, wr
     else { throw ConfiguredRenewalFailure.receipt }
     // Reuse the finite copied-error schema; never serialize error descriptions,
     // dynamic type names, paths, bearer strings, or associated payloads.
-    let data = try JSONSerialization.data(withJSONObject: ["version": 5, "name": name, "passed": passed,
+    let data = try JSONSerialization.data(withJSONObject: ["version": 6, "name": name, "passed": passed,
         "phase": phase.rawValue, "scalarFacts": facts, "failure": failure.map { $0.json as Any } ?? NSNull(),
         "diagnostic": diagnostic.map { $0 as Any } ?? NSNull()], options: [.sortedKeys])
     guard data.count <= 4096 else { throw ConfiguredRenewalFailure.receipt }
@@ -2416,9 +2416,15 @@ struct PublicConfiguredStockRenewalTests {
             try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: true, phase: phase, facts: facts)
         } catch {
             let original = error
+            // The original operation is already failed. Do not replace it,
+            // retry the socket or pre-initialize TLS before the tested path.
+            let serverTLS = serverTLSObservation.json
+            let contextProbe: [String: Any]? = phase == .bootstrapConnect &&
+                (serverTLS["bootstrapContextCatch"] as? Int ?? 0) > 0
+                ? ConfiguredTLSContextProbe(configuration: app.http.server.configuration).json : nil
             do { try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: false, phase: phase, facts: facts, failure: connectedFailureFact(original),
                 diagnostic: ["bootstrap": bootstrapObservation.json, "error": ConfiguredBootstrapErrorDetail(original).json,
-                             "serverTLS": serverTLSObservation.json]) }
+                             "serverTLS": serverTLS, "serverContextProbe": contextProbe.map { $0 as Any } ?? NSNull()]) }
             catch { Issue.record("Configured renewal bounded failure receipt unavailable") }
             do { try await cleanup() } catch { Issue.record("Configured renewal actual cleanup failed") }
             throw original
