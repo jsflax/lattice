@@ -90,7 +90,7 @@ def unique_object(pairs):
     return result
 
 
-# Configured-only version-six diagnostic schema. Shared A/B/C ErrorFact and
+# Configured-only version-seven diagnostic schema. Shared A/B/C ErrorFact and
 # every success scalar/oracle remain unchanged. No arbitrary strings are copied.
 BOOTSTRAP_UPGRADE_ERRORS = frozenset(['responseProtocolNotFound', 'invalidHTTPOrdering', 'upgraderDeniedUpgrade',
     'writingToHandlerDuringUpgrade', 'writingToHandlerAfterUpgradeCompleted', 'writingToHandlerAfterUpgradeFailed',
@@ -191,8 +191,45 @@ def context_probe(value):
             'failure': failure, 'error': error}
 
 
+def initial_diagnostic(value):
+    if value is None:
+        return None
+    require(type(value) is dict and set(value) == {'lastPoll', 'probe', 'trace'})
+    poll, probe, trace = value['lastPoll'], value['probe'], value['trace']
+    require(type(poll) is dict and set(poll) == {'ordinal', 'overflow', 'stages'})
+    require(type(poll['ordinal']) is int and 0 <= poll['ordinal'] <= 65535 and type(poll['overflow']) is bool)
+    require(not poll['overflow'] or poll['ordinal'] == 65535)
+    stages = poll['stages']
+    require(type(stages) is list and len(stages) == 9 and all(type(v) is int and 0 <= v <= 4 for v in stages))
+    # The original && chain visits a contiguous prefix, stopping at false or
+    # throw. Zero polls cannot claim any predicate evaluation.
+    stopped = False
+    for v in stages:
+        require(not stopped or v == 0)
+        if v != 1:
+            stopped = True
+    require(poll['ordinal'] != 0 or (not poll['overflow'] and stages == [0] * 9))
+    require(type(probe) is dict and set(probe) == {'invalid', 'connections', 'readyConnections', 'authorizations', 'matches'})
+    require(type(probe['invalid']) is bool)
+    require(all(type(probe[k]) is int and 0 <= probe[k] <= 16 for k in ('connections', 'readyConnections')))
+    require(type(probe['authorizations']) is int and 0 <= probe['authorizations'] <= 32)
+    require(type(probe['matches']) is list and len(probe['matches']) == 4)
+    require(all(type(v) is int and 0 <= v <= min(probe['connections'], probe['readyConnections']) for v in probe['matches']))
+    require(type(trace) is dict and set(trace) == {'count', 'overflow', 'invalid', 'unknownStage', 'stages'})
+    require(type(trace['count']) is int and 0 <= trace['count'] <= 64)
+    require(all(type(trace[k]) is bool for k in ('overflow', 'invalid', 'unknownStage')))
+    require(type(trace['stages']) is list and len(trace['stages']) == 5 and all(type(v) is int and 0 <= v <= 64 for v in trace['stages']))
+    total = sum(trace['stages'])
+    require(total <= trace['count'] and (total < trace['count']) == trace['unknownStage'])
+    return {'lastPoll': {'ordinal': poll['ordinal'], 'overflow': poll['overflow'], 'stages': list(stages)},
+            'probe': {k: list(probe[k]) if k == 'matches' else probe[k]
+                      for k in ('invalid', 'connections', 'readyConnections', 'authorizations', 'matches')},
+            'trace': {k: list(trace[k]) if k == 'stages' else trace[k]
+                      for k in ('count', 'overflow', 'invalid', 'unknownStage', 'stages')}}
+
+
 def bootstrap_diagnostic(value):
-    require(type(value) is dict and set(value) == {'bootstrap', 'error', 'serverTLS', 'serverContextProbe'})
+    require(type(value) is dict and set(value) == {'bootstrap', 'error', 'serverTLS', 'serverContextProbe', 'initial'})
     server_tls = value['serverTLS']
     require(type(server_tls) is dict and set(server_tls) == {'bootstrapContextCatch', 'wrongHostContextCatch', 'overflow'})
     require(all(type(server_tls[k]) is int and 0 <= server_tls[k] <= 32 for k in ('bootstrapContextCatch', 'wrongHostContextCatch')))
@@ -215,14 +252,14 @@ def bootstrap_diagnostic(value):
         'sourceSetupEntered': observed['sourceSetupEntered'], 'sourceSetupFinished': observed['sourceSetupFinished'],
         'overflow': observed['overflow']}, 'error': selected_error,
         'serverTLS': {k: server_tls[k] for k in ('bootstrapContextCatch', 'wrongHostContextCatch', 'overflow')},
-        'serverContextProbe': probe}
+        'serverContextProbe': probe, 'initial': initial_diagnostic(value['initial'])}
 
 
 def case_receipt(root, name):
     require(name in CASE_NAMES)
     value = json.loads(read_file(root / ('receipts/' + name + '.json'), 4096), object_pairs_hook=unique_object)
     require(type(value) is dict and set(value) == {'version', 'name', 'passed', 'phase', 'scalarFacts', 'failure', 'diagnostic'}
-            and type(value['version']) is int and value['version'] == 6
+            and type(value['version']) is int and value['version'] == 7
             and value['name'] == name and type(value['passed']) is bool
             and type(value['phase']) is str and value['phase'] in PHASES)
     facts = value['scalarFacts']
@@ -244,8 +281,11 @@ def case_receipt(root, name):
             require(error['kind'] == 'tls' and error['domain'] == 'nioSSL' and code is None)
         diagnostic = bootstrap_diagnostic(value['diagnostic'])
         require(diagnostic['serverContextProbe'] is None or value['phase'] == 'bootstrapConnect')
+        initial_expected = name == CASE_NAMES[0] and value['phase'] == 'initial'
+        require((diagnostic['initial'] is not None) == initial_expected)
+        require(not initial_expected or (facts == {} and diagnostic['serverContextProbe'] is None))
     # Only reviewed scalar fields are exported, never raw errors or source data.
-    return {'version': 6, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
+    return {'version': 7, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
             'scalarFacts': {k: facts[k] for k in sorted(facts)}, 'failure': value['failure'],
             'diagnostic': None if value['passed'] else diagnostic}
 

@@ -2006,6 +2006,53 @@ private enum ConfiguredRenewalFailure: String, Error {
     case receiverCreate, receiverOpen
 }
 
+// Records only the original MainActor predicate evaluations. A failure snapshot
+// never re-queries a receiver, completes a stage, or changes short-circuit order.
+@MainActor
+private final class ConfiguredInitialObservation {
+    enum Stage: Int { case aConnected, bConnected, aRows, bRows, aGate, bGate, aPending, bPending, handles }
+    private(set) var ordinal = 0, overflow = false
+    private(set) var stages = Array(repeating: 0, count: 9)
+    func beginPoll() {
+        stages = Array(repeating: 0, count: 9)
+        if ordinal < 65_535 { ordinal += 1 } else { overflow = true }
+    }
+    func evaluate(_ stage: Stage, _ action: () throws -> Bool) rethrows -> Bool {
+        stages[stage.rawValue] = 3 // Entered, result not yet observed.
+        do {
+            let value = try action()
+            stages[stage.rawValue] = value ? 1 : 2
+            return value
+        } catch {
+            stages[stage.rawValue] = 4
+            throw error // Preserve the exact original error.
+        }
+    }
+    var json: [String: Any] { ["ordinal": ordinal, "overflow": overflow, "stages": stages] }
+}
+
+// Copy only the immutable prefix present at the first count read. Overflow and
+// invalid flags are subsequent passive reads, not an atomic controller snapshot.
+// Neither absent events nor a zero error count imply successful recovery.
+private struct ConfiguredInitialTraceObservation {
+    let count: Int, overflow: Bool, invalid: Bool
+    let unknownStage: Bool, stages: [Int]
+    init(count: Int, overflow: Bool, invalid: Bool, stageAt: (Int) -> UInt32) {
+        self.count = min(64, max(0, count)); self.overflow = overflow
+        self.invalid = invalid || count < 0 || count > 64
+        var totals = Array(repeating: 0, count: 5), unknown = false
+        for index in 0..<self.count {
+            let stage = stageAt(index)
+            if (1...5).contains(stage) { totals[Int(stage) - 1] += 1 } else { unknown = true }
+        }
+        self.stages = totals; self.unknownStage = unknown
+    }
+    var json: [String: Any] {
+        ["count": count, "overflow": overflow, "invalid": invalid,
+         "unknownStage": unknownStage, "stages": stages]
+    }
+}
+
 private final class ConfiguredRenewalProbe: Sendable {
     private struct State {
         var connections: [UUID: RelayRecoveryConnectionObservation] = [:]
@@ -2094,6 +2141,22 @@ private final class ConfiguredRenewalProbe: Sendable {
             }
         }
     }
+    // Later than the last original poll, before cleanup. All values come from
+    // this bounded lock-protected fixture state; no socket sampling or SQL.
+    func initialSnapshot(_ a: ConnectedRegistration, _ b: ConnectedRegistration,
+                         channels: (String, String)) -> [String: Any] {
+        state.withLockedValue { s in
+            let routes = [(a.peer(0), channels.0), (a.peer(1), channels.1),
+                          (b.peer(0), channels.0), (b.peer(1), channels.1)]
+            let matches = routes.map { peer, channel in
+                s.connections.values.filter {
+                    s.ready.contains($0.connectionID) && $0.peer == peer && $0.channel == channel
+                }.count
+            }
+            return ["invalid": s.invalid, "connections": s.connections.count,
+                    "readyConnections": s.ready.count, "authorizations": s.authorizations, "matches": matches]
+        }
+    }
     var healthy: Bool { state.withLockedValue { !$0.invalid } }
     var connections: Int { state.withLockedValue { $0.connections.count } }
     var authorizations: Int { state.withLockedValue { $0.authorizations } }
@@ -2146,6 +2209,134 @@ struct ConfiguredRenewalProbeIdentityTests {
         #expect(probe.healthy && probe.connections == 16)
         probe.observe(observations[16])
         #expect(!probe.healthy && probe.connections == 16)
+    }
+}
+
+@Suite("Configured initial failure observation")
+@MainActor
+struct ConfiguredInitialObservationTests {
+    @Test func shortCircuitDoesNotInventLaterResultsAndNextPollClearsThem() {
+        let observation = ConfiguredInitialObservation()
+        var calls: [Int] = []
+        observation.beginPoll()
+        for index in 0..<9 {
+            let result = observation.evaluate(ConfiguredInitialObservation.Stage(rawValue: index)!) {
+                calls.append(index); return true
+            }
+            #expect(result)
+        }
+        #expect(calls == Array(0..<9) && observation.stages == Array(repeating: 1, count: 9))
+        calls.removeAll(); observation.beginPoll()
+        let result = observation.evaluate(.aConnected) { calls.append(0); return false } &&
+            observation.evaluate(.bConnected) { calls.append(1); return true } &&
+            observation.evaluate(.aRows) { calls.append(2); return true }
+        #expect(!result && calls == [0])
+        #expect(observation.ordinal == 2 && !observation.overflow)
+        #expect(observation.stages == [2, 0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    @Test func exactThrownErrorAndEvaluatedPrefixAreRetained() {
+        final class Sentinel: Error, Sendable {}
+        let sentinel = Sentinel(), observation = ConfiguredInitialObservation()
+        var calls: [Int] = []
+        observation.beginPoll()
+        do {
+            _ = try observation.evaluate(.aConnected) { calls.append(0); return true } &&
+                observation.evaluate(.bConnected) { calls.append(1); throw sentinel } &&
+                observation.evaluate(.aRows) { calls.append(2); return true }
+            Issue.record("Expected the original sentinel error")
+        } catch { #expect((error as? Sentinel) === sentinel) }
+        #expect(calls == [0, 1] && observation.stages == [1, 4, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    @Test func pollOrdinalSaturatesWithoutPreservingStaleSuffix() {
+        let observation = ConfiguredInitialObservation()
+        for _ in 0..<65_535 { observation.beginPoll() }
+        #expect(observation.ordinal == 65_535 && !observation.overflow)
+        _ = observation.evaluate(.aConnected) { true }
+        observation.beginPoll()
+        #expect(observation.ordinal == 65_535 && observation.overflow)
+        #expect(observation.stages == Array(repeating: 0, count: 9))
+    }
+
+    @Test func passiveTraceCopiesOnlyCapturedPrefixAndKeepsUnknownStages() {
+        var reads: [Int] = []
+        let stages: [UInt32] = [1, 5, 99, 3, 2]
+        let observation = ConfiguredInitialTraceObservation(count: 4, overflow: true, invalid: true) {
+            reads.append($0); return stages[$0]
+        }
+        #expect(reads == [0, 1, 2, 3])
+        #expect(observation.count == 4 && observation.stages == [1, 0, 1, 0, 1])
+        #expect(observation.unknownStage && observation.invalid && observation.overflow)
+        let bounded = ConfiguredInitialTraceObservation(count: 65, overflow: false, invalid: false) { _ in 1 }
+        #expect(bounded.count == 64 && bounded.invalid && bounded.stages == [64, 0, 0, 0, 0])
+    }
+
+    @Test func passiveProbeReportsActualReadyMatchesWithoutChangingHealth() throws {
+        let registrations = ConnectedRegistrations(), probe = ConfiguredRenewalProbe(registrations)
+        let channels = ("fixture-a", "fixture-b")
+        let observation = RelayRecoveryConnectionObservation(connectionID: UUID(), peer: registrations.a.peer(0),
+            channel: channels.0, socket: nil, lifetime: nil)
+        probe.authorized(registrations.a.peer(0)); probe.observe(observation)
+        let before = probe.initialSnapshot(registrations.a, registrations.b, channels: channels)
+        #expect(before["matches"] as? [Int] == [0, 0, 0, 0])
+        probe.ready(.init(connectionID: observation.connectionID, peer: observation.peer, channel: channels.0,
+            requestID: "fixture-request", operation: "read", routeGeneration: nil, requestDigest: nil,
+            attemptID: nil, sequence: nil, index: "0", canonicalKind: "manifest"))
+        let after = probe.initialSnapshot(registrations.a, registrations.b, channels: channels)
+        #expect(after["connections"] as? Int == 1 && after["readyConnections"] as? Int == 1)
+        #expect(after["authorizations"] as? Int == 1 && after["matches"] as? [Int] == [1, 0, 0, 0])
+        #expect(probe.healthy && observation.retirementObservation() == nil)
+        #expect(probe.handles([registrations.a, registrations.b], channels: [channels.0, channels.1]) == nil)
+        probe.observe(.init(connectionID: observation.connectionID, peer: observation.peer,
+            channel: channels.0, socket: nil, lifetime: nil))
+        let invalid = probe.initialSnapshot(registrations.a, registrations.b, channels: channels)
+        #expect(invalid["invalid"] as? Bool == true && !probe.healthy)
+    }
+
+    @Test func allInitialCountersAndOriginalErrorsFitUnchangedReceiptLimit() throws {
+        // An upper bound, deliberately including mutually incompatible maximum
+        // fields: longest allowlisted strings, negative Int32, false (five bytes),
+        // all six leaves and every larger-case scalar key at its maximum. Actual
+        // valid receipts are no longer than this compact ASCII representation.
+        let base: [String: Any] = ["family": "nioHTTPUpgrade", "upgrade": "writingToHandlerAfterUpgradeCompleted",
+            "wrapper": "handshakeFailed", "tls": "wantCertificateVerify", "stackCount": 8,
+            "stackTruncated": false, "eofDuringHandshake": false, "eofDuringAdditionalValidation": false]
+        let fact: [String: Any] = ["kind": "administrationInProgress", "domain": "recoveryConfiguration",
+            "code": -2_147_483_648, "category": "unableToValidateCertificate"]
+        let leaf: [String: Any] = ["fact": fact, "detail": base, "errno": -2_147_483_648, "nestedConnection": false]
+        var detail = base
+        detail["errno"] = -2_147_483_648
+        detail["connection"] = ["dnsA": leaf, "dnsAAAA": leaf, "failures": Array(repeating: leaf, count: 4),
+                                "failureCount": 4, "failuresTruncated": false] as [String: Any]
+        let row = Dictionary(uniqueKeysWithValues: ["clientAttempt", "clientUpgrade", "channelEntered", "channelAccepted",
+                                                   "authorizationEntered", "authorizationAccepted"].map { ($0, 32) })
+        let observed: [String: Any] = ["currentIndex": NSNull(), "channels": [row, row], "sourceSetupEntered": 32,
+                                      "sourceSetupFinished": 32, "overflow": false]
+        let facts = Dictionary(uniqueKeysWithValues: ["freshAuthorizedConnections", "retiredConnectionsDrained",
+            "lateConnectedReplays", "committedOriginals", "peerVisibleRows", "actualCollectedAttempts",
+            "actualChildClosesAndSchedulerJoins"].map { ($0, 1024) })
+        var receipt: [String: Any] = ["version": 7, "name": "publicConfiguredWrongHostFailureRetiresStockAttempt",
+            "passed": false, "phase": "bootstrapRetirement", "scalarFacts": facts, "failure": fact,
+            "diagnostic": ["bootstrap": observed, "error": detail,
+                "serverTLS": ["bootstrapContextCatch": 32, "wrongHostContextCatch": 32, "overflow": false]]]
+        var diagnostic = try #require(receipt["diagnostic"] as? [String: Any])
+        diagnostic["serverContextProbe"] = NSNull(); diagnostic["initial"] = NSNull()
+        receipt["diagnostic"] = diagnostic
+        let absent = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+        #expect(absent.count == 3954 && absent.count <= 4096)
+        diagnostic["initial"] = [
+            "lastPoll": ["ordinal": 65_535, "overflow": false, "stages": Array(repeating: 4, count: 9)],
+            "probe": ["invalid": false, "connections": 16, "readyConnections": 16,
+                      "authorizations": 32, "matches": Array(repeating: 16, count: 4)],
+            "trace": ["count": 64, "overflow": false, "invalid": false, "unknownStage": false,
+                      "stages": Array(repeating: 64, count: 5)]
+        ] as [String: Any]
+        receipt["diagnostic"] = diagnostic; receipt["phase"] = "initial"; receipt["scalarFacts"] = [String: Int]()
+        let initial = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+        // Deliberately incompatible maximum fields give a conservative byte
+        // bound, not a valid passing receipt or an inferred runtime error.
+        #expect(initial.count == 4008 && initial.count <= 4096)
     }
 }
 
@@ -2261,7 +2452,7 @@ private func configuredRenewalReceipt(_ environment: ConnectedTLSEnvironment, wr
     else { throw ConfiguredRenewalFailure.receipt }
     // Reuse the finite copied-error schema; never serialize error descriptions,
     // dynamic type names, paths, bearer strings, or associated payloads.
-    let data = try JSONSerialization.data(withJSONObject: ["version": 6, "name": name, "passed": passed,
+    let data = try JSONSerialization.data(withJSONObject: ["version": 7, "name": name, "passed": passed,
         "phase": phase.rawValue, "scalarFacts": facts, "failure": failure.map { $0.json as Any } ?? NSNull(),
         "diagnostic": diagnostic.map { $0 as Any } ?? NSNull()], options: [.sortedKeys])
     guard data.count <= 4096 else { throw ConfiguredRenewalFailure.receipt }
@@ -2307,6 +2498,8 @@ struct PublicConfiguredStockRenewalTests {
         RelayIngressTesting.install(hooks, for: storage)
         let trace = lattice.configured_recovery_qualification()
         var mounts: [SyncRelayHandle] = [], bootstrap: [ConnectedBootstrapPeer] = [], receivers: [ConnectedReceiver] = []
+        let initialObservation = ConfiguredInitialObservation()
+        var initialChannels: (String, String)?
         var phase = ConfiguredRenewalFailure.opening, facts: [String: Int] = [:], cleanupResult: Result<Void, any Error>?
         func cleanup() async throws {
             if let cleanupResult { return try cleanupResult.get() }
@@ -2355,6 +2548,7 @@ struct PublicConfiguredStockRenewalTests {
             let endpoints = ["wss://127.0.0.1:\(port)/a", "wss://127.0.0.1:\(port)/b"], channels = endpoints.map { "wss:" + $0 }
             try #require(channels.allSatisfy { $0.utf8.count <= 64 })
             registrations.endpoints.withLockedValue { $0 = endpoints }
+            initialChannels = (channels[0], channels[1])
             for index in 0..<2 {
                 let peer = ConnectedBootstrapPeer(), identity = registrations.bootstrap.peer(index); bootstrap.append(peer)
                 let query = "?recovery-v=1&recovery-replica=\(identity.replicaID)&recovery-receiver=\(identity.receiverIncarnation)&recovery-channel=\(identity.channelIncarnation)"
@@ -2417,9 +2611,18 @@ struct PublicConfiguredStockRenewalTests {
                 try configuredRenewalOpen(trace) { try a.open(connected: true); try b.open(connected: true) }
                 phase = .initial
                 try await connectedWait("configured first public cohorts", until: deadline) {
-                    try a.renewalConnected && b.renewalConnected && a.rows() == initial && b.rows() == initial &&
-                        a.openGate() && b.openGate() && a.renewalPending == 0 && b.renewalPending == 0 &&
-                        probe.handles([registrations.a, registrations.b], channels: channels) != nil
+                    initialObservation.beginPoll()
+                    return try initialObservation.evaluate(.aConnected) { a.renewalConnected } &&
+                        initialObservation.evaluate(.bConnected) { b.renewalConnected } &&
+                        initialObservation.evaluate(.aRows) { try a.rows() == initial } &&
+                        initialObservation.evaluate(.bRows) { try b.rows() == initial } &&
+                        initialObservation.evaluate(.aGate) { try a.openGate() } &&
+                        initialObservation.evaluate(.bGate) { try b.openGate() } &&
+                        initialObservation.evaluate(.aPending) { a.renewalPending == 0 } &&
+                        initialObservation.evaluate(.bPending) { b.renewalPending == 0 } &&
+                        initialObservation.evaluate(.handles) {
+                            probe.handles([registrations.a, registrations.b], channels: channels) != nil
+                        }
                 }
                 let old = try #require(probe.handles([registrations.a, registrations.b], channels: channels))
                 let oldIDs = Set(old.map(\.connectionID))
@@ -2478,6 +2681,15 @@ struct PublicConfiguredStockRenewalTests {
             try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: true, phase: phase, facts: facts)
         } catch {
             let original = error
+            var initialDiagnostic: [String: Any]?
+            if !wrongHost, phase == .initial, let initialChannels {
+                let traceCount = Int(trace.count())
+                let copiedTrace = ConfiguredInitialTraceObservation(count: traceCount,
+                    overflow: trace.overflowed(), invalid: trace.invalid()) { trace.record($0).stage }
+                initialDiagnostic = ["lastPoll": initialObservation.json,
+                    "probe": probe.initialSnapshot(registrations.a, registrations.b, channels: initialChannels),
+                    "trace": copiedTrace.json]
+            }
             // The original operation is already failed. Do not replace it,
             // retry the socket or pre-initialize TLS before the tested path.
             let serverTLS = serverTLSObservation.json
@@ -2486,7 +2698,8 @@ struct PublicConfiguredStockRenewalTests {
                 ? ConfiguredTLSContextProbe(configuration: app.http.server.configuration).json : nil
             do { try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: false, phase: phase, facts: facts, failure: connectedFailureFact(original),
                 diagnostic: ["bootstrap": bootstrapObservation.json, "error": ConfiguredBootstrapErrorDetail(original).json,
-                             "serverTLS": serverTLS, "serverContextProbe": contextProbe.map { $0 as Any } ?? NSNull()]) }
+                             "serverTLS": serverTLS, "serverContextProbe": contextProbe.map { $0 as Any } ?? NSNull(),
+                             "initial": initialDiagnostic.map { $0 as Any } ?? NSNull()]) }
             catch { Issue.record("Configured renewal bounded failure receipt unavailable") }
             do { try await cleanup() } catch { Issue.record("Configured renewal actual cleanup failed") }
             throw original
