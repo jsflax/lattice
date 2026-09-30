@@ -191,10 +191,19 @@ def context_probe(value):
             'failure': failure, 'error': error}
 
 
+def native_diagnostic(value):
+    require(type(value) is list and len(value) == 7 and all(type(v) is int for v in value))
+    # Fixed gate bitfield, four finite source codes, differing-category mask.
+    require(all(v == 0 or (1 <= (v & 7) <= 5 and 0 < v <= 1021) for v in value[:2]))
+    require(all(0 <= v <= 216 for v in value[2:6]) and 0 <= value[6] <= 15)
+    require(all(not (value[6] & (1 << i)) or value[i + 2] != 0 for i in range(4)))
+    return list(value)
+
+
 def initial_diagnostic(value):
     if value is None:
         return None
-    require(type(value) is dict and set(value) == {'lastPoll', 'probe', 'trace'})
+    require(type(value) is dict and set(value) == {'native', 'lastPoll', 'probe', 'trace'})
     poll, probe, trace = value['lastPoll'], value['probe'], value['trace']
     require(type(poll) is dict and set(poll) == {'ordinal', 'overflow', 'stages'})
     require(type(poll['ordinal']) is int and 0 <= poll['ordinal'] <= 65535 and type(poll['overflow']) is bool)
@@ -221,7 +230,7 @@ def initial_diagnostic(value):
     require(type(trace['stages']) is list and len(trace['stages']) == 5 and all(type(v) is int and 0 <= v <= 64 for v in trace['stages']))
     total = sum(trace['stages'])
     require(total <= trace['count'] and (total < trace['count']) == trace['unknownStage'])
-    return {'lastPoll': {'ordinal': poll['ordinal'], 'overflow': poll['overflow'], 'stages': list(stages)},
+    return {'native': native_diagnostic(value['native']), 'lastPoll': {'ordinal': poll['ordinal'], 'overflow': poll['overflow'], 'stages': list(stages)},
             'probe': {k: list(probe[k]) if k == 'matches' else probe[k]
                       for k in ('invalid', 'connections', 'readyConnections', 'authorizations', 'matches')},
             'trace': {k: list(trace[k]) if k == 'stages' else trace[k]
@@ -231,7 +240,7 @@ def initial_diagnostic(value):
 def replacement_diagnostic(value):
     if value is None:
         return None
-    require(type(value) is dict and set(value) == {'wait', 'lastPoll', 'probe', 'trace'})
+    require(type(value) is dict and set(value) == {'native', 'wait', 'lastPoll', 'probe', 'trace'})
     wait, poll = value['wait'], value['lastPoll']
     require(type(wait) is int and wait in (0, 1, 2))
     require(type(poll) is dict and set(poll) == {'ordinal', 'overflow', 'stages'})
@@ -241,7 +250,7 @@ def replacement_diagnostic(value):
     require(wait != 2 or stages[2:] == [0] * 3)
     # Reuse the exact finite prefix/counter/trace validator with four unvisited
     # padding slots. These zeros neither sample nor invent a predicate result.
-    selected = initial_diagnostic({'lastPoll': dict(poll, stages=stages + [0] * 4),
+    selected = initial_diagnostic({'native': value['native'], 'lastPoll': dict(poll, stages=stages + [0] * 4),
                                    'probe': value['probe'], 'trace': value['trace']})
     selected['lastPoll']['stages'] = selected['lastPoll']['stages'][:5]
     return dict(wait=wait, **selected)
@@ -279,7 +288,7 @@ def case_receipt(root, name):
     require(name in CASE_NAMES)
     value = json.loads(read_file(root / ('receipts/' + name + '.json'), 4096), object_pairs_hook=unique_object)
     require(type(value) is dict and set(value) == {'version', 'name', 'passed', 'phase', 'scalarFacts', 'failure', 'diagnostic'}
-            and type(value['version']) is int and value['version'] == 8
+            and type(value['version']) is int and value['version'] == 9
             and value['name'] == name and type(value['passed']) is bool
             and type(value['phase']) is str and value['phase'] in PHASES)
     facts = value['scalarFacts']
@@ -309,7 +318,7 @@ def case_receipt(root, name):
         require(not replacement_expected or (facts == {} and diagnostic['serverContextProbe'] is None))
         require(diagnostic['initial'] is None or diagnostic['replacement'] is None)
     # Only reviewed scalar fields are exported, never raw errors or source data.
-    return {'version': 8, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
+    return {'version': 9, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
             'scalarFacts': {k: facts[k] for k in sorted(facts)}, 'failure': value['failure'],
             'diagnostic': None if value['passed'] else diagnostic}
 

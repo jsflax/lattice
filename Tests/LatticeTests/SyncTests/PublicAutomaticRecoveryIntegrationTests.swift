@@ -393,8 +393,9 @@ private final class ConnectedReceiver {
                 fields: try encoder.encode(event.changedFields), names: event.changedFieldsNames)
         }
     }
-    func openGate() throws -> Bool {
+    func openGate(observe: ((ContinuousProducerResult) -> Void)? = nil) throws -> Bool {
         let result = try owner.inspectContinuousProducer()
+        observe?(result)
         return result.settlement.phase == .committed && !result.settlement.hasError && !result.settlement.unexpectedCommitObserved && result.barrier == nil
     }
     func closedGate() throws -> Bool {
@@ -2555,6 +2556,12 @@ private extension ConnectedReceiver {
         guard !failed else { throw ConfiguredRenewalFailure.cleanup }
         owners.removeAll()
     }
+    func renewalObserveErrors(_ observation: ConfiguredReceiverFailureObservation, receiver: Int) {
+        for (index, owner) in owners.enumerated() {
+            let slot = receiver * 2 + index
+            owner.onSyncError { message in observation.received(message, slot: slot) }
+        }
+    }
     var renewalConnected: Bool { owners.count == 2 && owners.allSatisfy(\.isSyncConnected) }
     var renewalPending: Int { owners.reduce(0) { $0 + $1.pendingSyncEntryCount } }
     func renewalReplay(_ observations: NIOLockedValueBox<Set<Int>>) {
@@ -2629,7 +2636,7 @@ private func configuredRenewalReceipt(_ environment: ConnectedTLSEnvironment, wr
     else { throw ConfiguredRenewalFailure.receipt }
     // Reuse the finite copied-error schema; never serialize error descriptions,
     // dynamic type names, paths, bearer strings, or associated payloads.
-    let data = try JSONSerialization.data(withJSONObject: ["version": 8, "name": name, "passed": passed,
+    let data = try JSONSerialization.data(withJSONObject: ["version": 9, "name": name, "passed": passed,
         "phase": phase.rawValue, "scalarFacts": facts, "failure": failure.map { $0.json as Any } ?? NSNull(),
         "diagnostic": diagnostic.map { $0 as Any } ?? NSNull()], options: [.sortedKeys])
     guard data.count <= 4096 else { throw ConfiguredRenewalFailure.receipt }
@@ -2677,6 +2684,7 @@ struct PublicConfiguredStockRenewalTests {
         var mounts: [SyncRelayHandle] = [], bootstrap: [ConnectedBootstrapPeer] = [], receivers: [ConnectedReceiver] = []
         let initialObservation = ConfiguredInitialObservation()
         let replacementObservation = ConfiguredReplacementObservation()
+        let nativeObservation = ConfiguredReceiverFailureObservation()
         var replacementOldIDs = Set<UUID>()
         var initialChannels: (String, String)?
         var phase = ConfiguredRenewalFailure.opening, facts: [String: Int] = [:], cleanupResult: Result<Void, any Error>?
@@ -2788,15 +2796,18 @@ struct PublicConfiguredStockRenewalTests {
                 receivers = [a, b]
                 phase = .receiverOpen
                 try configuredRenewalOpen(trace) { try a.open(connected: true); try b.open(connected: true) }
+                a.renewalObserveErrors(nativeObservation, receiver: 0)
+                b.renewalObserveErrors(nativeObservation, receiver: 1)
                 phase = .initial
                 try await connectedWait("configured first public cohorts", until: deadline) {
                     initialObservation.beginPoll()
+                    nativeObservation.beginPoll()
                     return try initialObservation.evaluate(.aConnected) { a.renewalConnected } &&
                         initialObservation.evaluate(.bConnected) { b.renewalConnected } &&
                         initialObservation.evaluate(.aRows) { try a.rows() == initial } &&
                         initialObservation.evaluate(.bRows) { try b.rows() == initial } &&
-                        initialObservation.evaluate(.aGate) { try a.openGate() } &&
-                        initialObservation.evaluate(.bGate) { try b.openGate() } &&
+                        initialObservation.evaluate(.aGate) { try a.openGate { nativeObservation.inspected($0, receiver: 0) } } &&
+                        initialObservation.evaluate(.bGate) { try b.openGate { nativeObservation.inspected($0, receiver: 1) } } &&
                         initialObservation.evaluate(.aPending) { a.renewalPending == 0 } &&
                         initialObservation.evaluate(.bPending) { b.renewalPending == 0 } &&
                         initialObservation.evaluate(.handles) {
@@ -2813,16 +2824,18 @@ struct PublicConfiguredStockRenewalTests {
                 }
                 try #require(try configuredRenewalTrace(trace).filter { $0.stage == 1 }.count == 4)
                 phase = .replacement
+                nativeObservation.beginReplacement()
                 for index in 0..<2 { await mounts[index].disconnectAll(channelId: channels[index]) }
                 // No explicit connect/sync/reopen and no direct transport fixture.
                 // The real close callback must cause the stable owner to redial.
                 replacementObservation.select(.freshCohorts)
                 try await connectedWait("configured fresh authenticated cohorts", until: deadline) {
                     replacementObservation.beginPoll()
+                    nativeObservation.beginPoll()
                     return try replacementObservation.evaluate(.first) { a.renewalConnected } &&
                         replacementObservation.evaluate(.second) { b.renewalConnected } &&
-                        replacementObservation.evaluate(.third) { try a.openGate() } &&
-                        replacementObservation.evaluate(.fourth) { try b.openGate() } &&
+                        replacementObservation.evaluate(.third) { try a.openGate { nativeObservation.inspected($0, receiver: 0) } } &&
+                        replacementObservation.evaluate(.fourth) { try b.openGate { nativeObservation.inspected($0, receiver: 1) } } &&
                         replacementObservation.evaluate(.fifth) {
                             probe.handles([registrations.a, registrations.b], channels: channels, excluding: oldIDs) != nil
                         }
@@ -2840,6 +2853,7 @@ struct PublicConfiguredStockRenewalTests {
                 replacementObservation.select(.lateReplay)
                 try await connectedWait("configured public late-listener replay", until: deadline) {
                     replacementObservation.beginPoll()
+                    nativeObservation.beginPoll()
                     return replacementObservation.evaluate(.first) { replayA.withLockedValue { $0 == [0, 1] } } &&
                         replacementObservation.evaluate(.second) { replayB.withLockedValue { $0 == [0, 1] } }
                 }
@@ -2876,7 +2890,7 @@ struct PublicConfiguredStockRenewalTests {
                 let traceCount = Int(trace.count())
                 let copiedTrace = ConfiguredInitialTraceObservation(count: traceCount,
                     overflow: trace.overflowed(), invalid: trace.invalid()) { trace.record($0).stage }
-                initialDiagnostic = ["lastPoll": initialObservation.json,
+                initialDiagnostic = ["native": nativeObservation.json, "lastPoll": initialObservation.json,
                     "probe": probe.initialSnapshot(registrations.a, registrations.b, channels: initialChannels),
                     "trace": copiedTrace.json]
             }
@@ -2885,7 +2899,7 @@ struct PublicConfiguredStockRenewalTests {
                 let traceCount = Int(trace.count())
                 let copiedTrace = ConfiguredInitialTraceObservation(count: traceCount,
                     overflow: trace.overflowed(), invalid: trace.invalid()) { trace.record($0).stage }
-                replacementDiagnostic = ["wait": replacementObservation.wait.rawValue,
+                replacementDiagnostic = ["native": nativeObservation.json, "wait": replacementObservation.wait.rawValue,
                     "lastPoll": replacementObservation.json,
                     "probe": probe.replacementSnapshot(registrations.a, registrations.b,
                         channels: initialChannels, excluding: replacementOldIDs), "trace": copiedTrace.json]
