@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import Vapor
+import NIOSSL
 import NIOConcurrencyHelpers
 import CxxStdlib
 import LatticeServerExportTestSupport
