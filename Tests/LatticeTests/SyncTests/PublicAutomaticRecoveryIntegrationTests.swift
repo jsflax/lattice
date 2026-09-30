@@ -2031,6 +2031,37 @@ private final class ConfiguredInitialObservation {
     var json: [String: Any] { ["ordinal": ordinal, "overflow": overflow, "stages": stages] }
 }
 
+// Fixed identifiers distinguish the two original replacement waits. Code zero
+// means neither wait was entered; no observation grants protocol progress.
+@MainActor
+private final class ConfiguredReplacementObservation {
+    enum Wait: Int { case notEntered, freshCohorts, lateReplay }
+    enum Stage: Int { case first, second, third, fourth, fifth }
+    private(set) var wait = Wait.notEntered
+    private(set) var ordinal = 0, overflow = false
+    private(set) var stages = Array(repeating: 0, count: 5)
+    func select(_ value: Wait) {
+        wait = value; ordinal = 0; overflow = false
+        stages = Array(repeating: 0, count: 5)
+    }
+    func beginPoll() {
+        stages = Array(repeating: 0, count: 5)
+        if ordinal < 65_535 { ordinal += 1 } else { overflow = true }
+    }
+    func evaluate(_ stage: Stage, _ action: () throws -> Bool) rethrows -> Bool {
+        stages[stage.rawValue] = 3
+        do {
+            let value = try action()
+            stages[stage.rawValue] = value ? 1 : 2
+            return value
+        } catch {
+            stages[stage.rawValue] = 4
+            throw error
+        }
+    }
+    var json: [String: Any] { ["ordinal": ordinal, "overflow": overflow, "stages": stages] }
+}
+
 // Copy only the immutable prefix present at the first count read. Overflow and
 // invalid flags are subsequent passive reads, not an atomic controller snapshot.
 // Neither absent events nor a zero error count imply successful recovery.
@@ -2151,6 +2182,23 @@ private final class ConfiguredRenewalProbe: Sendable {
             let matches = routes.map { peer, channel in
                 s.connections.values.filter {
                     s.ready.contains($0.connectionID) && $0.peer == peer && $0.channel == channel
+                }.count
+            }
+            return ["invalid": s.invalid, "connections": s.connections.count,
+                    "readyConnections": s.ready.count, "authorizations": s.authorizations, "matches": matches]
+        }
+    }
+    // Same later passive snapshot, but route matches exclude the exact old IDs
+    // already selected by the scenario. Totals still describe all observations.
+    func replacementSnapshot(_ a: ConnectedRegistration, _ b: ConnectedRegistration,
+                             channels: (String, String), excluding: Set<UUID>) -> [String: Any] {
+        state.withLockedValue { s in
+            let routes = [(a.peer(0), channels.0), (a.peer(1), channels.1),
+                          (b.peer(0), channels.0), (b.peer(1), channels.1)]
+            let matches = routes.map { peer, channel in
+                s.connections.values.filter {
+                    !excluding.contains($0.connectionID) && s.ready.contains($0.connectionID) &&
+                        $0.peer == peer && $0.channel == channel
                 }.count
             }
             return ["invalid": s.invalid, "connections": s.connections.count,
@@ -2340,6 +2388,135 @@ struct ConfiguredInitialObservationTests {
     }
 }
 
+@Suite("Configured replacement failure observation")
+@MainActor
+struct ConfiguredReplacementObservationTests {
+    @Test func originalShortCircuitVisitsOnlyTheActualPrefixAndPreservesThrownIdentity() {
+        final class Sentinel: Error, Sendable {}
+        let sentinel = Sentinel(), observation = ConfiguredReplacementObservation()
+        var calls: [Int] = []
+        observation.select(.freshCohorts); observation.beginPoll()
+        let stopped = observation.evaluate(.first) { calls.append(0); return true } &&
+            observation.evaluate(.second) { calls.append(1); return false } &&
+            observation.evaluate(.third) { calls.append(2); return true }
+        #expect(!stopped && calls == [0, 1] && observation.stages == [1, 2, 0, 0, 0])
+        calls.removeAll(); observation.beginPoll()
+        do {
+            _ = try observation.evaluate(.first) { calls.append(0); return true } &&
+                observation.evaluate(.second) { calls.append(1); return true } &&
+                observation.evaluate(.third) { calls.append(2); throw sentinel } &&
+                observation.evaluate(.fourth) { calls.append(3); return true }
+            Issue.record("Expected the original replacement predicate error")
+        } catch { #expect((error as? Sentinel) === sentinel) }
+        #expect(calls == [0, 1, 2] && observation.stages == [1, 1, 4, 0, 0])
+        #expect(observation.ordinal == 2 && observation.wait == .freshCohorts)
+    }
+
+    @Test func changingWaitClearsPriorResultsAndRecordsBothActualReplayPredicates() {
+        let observation = ConfiguredReplacementObservation()
+        #expect(observation.wait == .notEntered && observation.ordinal == 0)
+        #expect(observation.stages == [0, 0, 0, 0, 0])
+        observation.select(.freshCohorts)
+        for _ in 0..<65_535 { observation.beginPoll() }
+        #expect(observation.ordinal == 65_535 && !observation.overflow)
+        _ = observation.evaluate(.first) { true }; observation.beginPoll()
+        #expect(observation.ordinal == 65_535 && observation.overflow && observation.stages == [0, 0, 0, 0, 0])
+        observation.select(.lateReplay)
+        #expect(observation.ordinal == 0 && !observation.overflow && observation.stages == [0, 0, 0, 0, 0])
+        let a = NIOLockedValueBox(Set([0, 1])), b = NIOLockedValueBox(Set([0]))
+        observation.beginPoll()
+        let waiting = observation.evaluate(.first) { a.withLockedValue { $0 == [0, 1] } } &&
+            observation.evaluate(.second) { b.withLockedValue { $0 == [0, 1] } }
+        #expect(!waiting && observation.stages == [1, 2, 0, 0, 0])
+        b.withLockedValue { _ = $0.insert(1) }; observation.beginPoll()
+        let done = observation.evaluate(.first) { a.withLockedValue { $0 == [0, 1] } } &&
+            observation.evaluate(.second) { b.withLockedValue { $0 == [0, 1] } }
+        #expect(done && observation.stages == [1, 1, 0, 0, 0] && observation.wait == .lateReplay)
+    }
+
+    @Test func replacementSnapshotExcludesOnlyOldReadyIDsAndKeepsActualTotals() throws {
+        let registrations = ConnectedRegistrations(), probe = ConfiguredRenewalProbe(registrations)
+        let channels = ("fixture-a", "fixture-b")
+        let old = RelayRecoveryConnectionObservation(connectionID: UUID(), peer: registrations.a.peer(0),
+            channel: channels.0, socket: nil, lifetime: nil)
+        let fresh = RelayRecoveryConnectionObservation(connectionID: UUID(), peer: registrations.a.peer(0),
+            channel: channels.0, socket: nil, lifetime: nil)
+        let other = RelayRecoveryConnectionObservation(connectionID: UUID(), peer: registrations.b.peer(1),
+            channel: channels.1, socket: nil, lifetime: nil)
+        for observation in [old, fresh, other] {
+            probe.authorized(observation.peer); probe.observe(observation)
+            probe.ready(.init(connectionID: observation.connectionID, peer: observation.peer, channel: observation.channel,
+                requestID: "fixture-request", operation: "read", routeGeneration: nil, requestDigest: nil,
+                attemptID: nil, sequence: nil, index: "0", canonicalKind: "manifest"))
+        }
+        let initial = probe.initialSnapshot(registrations.a, registrations.b, channels: channels)
+        let replacement = probe.replacementSnapshot(registrations.a, registrations.b, channels: channels, excluding: [old.connectionID])
+        #expect(initial["matches"] as? [Int] == [2, 0, 0, 1])
+        #expect(replacement["matches"] as? [Int] == [1, 0, 0, 1])
+        #expect(replacement["connections"] as? Int == 3 && replacement["readyConnections"] as? Int == 3)
+        #expect(replacement["authorizations"] as? Int == 3 && replacement["invalid"] as? Bool == false)
+        #expect(probe.healthy && probe.connections == 3 && probe.authorizations == 3)
+        // The copied route counts cannot create a live socket or a missing route.
+        #expect(old.retirementObservation() == nil && fresh.retirementObservation() == nil)
+        #expect(probe.handles([registrations.a, registrations.b], channels: [channels.0, channels.1], excluding: [old.connectionID]) == nil)
+    }
+
+    @Test func exclusiveInitialAndReplacementDiagnosticsFitTheOriginalReceiptLimit() throws {
+        // An upper bound, deliberately including mutually incompatible maximum
+        // fields: longest allowlisted strings, negative Int32, false (five bytes),
+        // all six leaves and every larger-case scalar key at its maximum. Actual
+        // valid receipts are no longer than this compact ASCII representation.
+        let base: [String: Any] = ["family": "nioHTTPUpgrade", "upgrade": "writingToHandlerAfterUpgradeCompleted",
+            "wrapper": "handshakeFailed", "tls": "wantCertificateVerify", "stackCount": 8,
+            "stackTruncated": false, "eofDuringHandshake": false, "eofDuringAdditionalValidation": false]
+        let fact: [String: Any] = ["kind": "administrationInProgress", "domain": "recoveryConfiguration",
+            "code": -2_147_483_648, "category": "unableToValidateCertificate"]
+        let leaf: [String: Any] = ["fact": fact, "detail": base, "errno": -2_147_483_648, "nestedConnection": false]
+        var detail = base
+        detail["errno"] = -2_147_483_648
+        detail["connection"] = ["dnsA": leaf, "dnsAAAA": leaf, "failures": Array(repeating: leaf, count: 4),
+                                "failureCount": 4, "failuresTruncated": false] as [String: Any]
+        let row = Dictionary(uniqueKeysWithValues: ["clientAttempt", "clientUpgrade", "channelEntered", "channelAccepted",
+                                                   "authorizationEntered", "authorizationAccepted"].map { ($0, 32) })
+        let observed: [String: Any] = ["currentIndex": NSNull(), "channels": [row, row], "sourceSetupEntered": 32,
+                                      "sourceSetupFinished": 32, "overflow": false]
+        let facts = Dictionary(uniqueKeysWithValues: ["freshAuthorizedConnections", "retiredConnectionsDrained",
+            "lateConnectedReplays", "committedOriginals", "peerVisibleRows", "actualCollectedAttempts",
+            "actualChildClosesAndSchedulerJoins"].map { ($0, 1024) })
+        var receipt: [String: Any] = ["version": 8, "name": "publicConfiguredWrongHostFailureRetiresStockAttempt",
+            "passed": false, "phase": "bootstrapRetirement", "scalarFacts": facts, "failure": fact,
+            "diagnostic": ["bootstrap": observed, "error": detail,
+                "serverTLS": ["bootstrapContextCatch": 32, "wrongHostContextCatch": 32, "overflow": false]]]
+        var diagnostic = try #require(receipt["diagnostic"] as? [String: Any])
+        diagnostic["serverContextProbe"] = NSNull(); diagnostic["initial"] = NSNull(); diagnostic["replacement"] = NSNull()
+        receipt["diagnostic"] = diagnostic
+        let absent = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+        #expect(absent.count == 3973 && absent.count <= 4096)
+        diagnostic["initial"] = [
+            "lastPoll": ["ordinal": 65_535, "overflow": false, "stages": Array(repeating: 4, count: 9)],
+            "probe": ["invalid": false, "connections": 16, "readyConnections": 16,
+                      "authorizations": 32, "matches": Array(repeating: 16, count: 4)],
+            "trace": ["count": 64, "overflow": false, "invalid": false, "unknownStage": false,
+                      "stages": Array(repeating: 64, count: 5)]
+        ] as [String: Any]
+        receipt["diagnostic"] = diagnostic; receipt["phase"] = "initial"; receipt["scalarFacts"] = [String: Int]()
+        let initial = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+        // Deliberately incompatible maximum fields give a conservative byte
+        // bound, not a valid passing receipt or an inferred runtime error.
+        #expect(initial.count == 4027 && initial.count <= 4096)
+        let prior = try #require(diagnostic["initial"] as? [String: Any])
+        let copiedProbe = try #require(prior["probe"])
+        let copiedTrace = try #require(prior["trace"])
+        let replacement: [String: Any] = ["wait": 2,
+            "lastPoll": ["ordinal": 65_535, "overflow": false, "stages": Array(repeating: 4, count: 5)],
+            "probe": copiedProbe, "trace": copiedTrace]
+        diagnostic["initial"] = NSNull(); diagnostic["replacement"] = replacement
+        receipt["diagnostic"] = diagnostic; receipt["phase"] = "replacement"
+        let data = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+        #expect(data.count == 4032 && data.count <= 4096)
+    }
+}
+
 @MainActor
 private final class ConfiguredRenewalConstruction {
     let action: @MainActor () throws -> Void
@@ -2452,7 +2629,7 @@ private func configuredRenewalReceipt(_ environment: ConnectedTLSEnvironment, wr
     else { throw ConfiguredRenewalFailure.receipt }
     // Reuse the finite copied-error schema; never serialize error descriptions,
     // dynamic type names, paths, bearer strings, or associated payloads.
-    let data = try JSONSerialization.data(withJSONObject: ["version": 7, "name": name, "passed": passed,
+    let data = try JSONSerialization.data(withJSONObject: ["version": 8, "name": name, "passed": passed,
         "phase": phase.rawValue, "scalarFacts": facts, "failure": failure.map { $0.json as Any } ?? NSNull(),
         "diagnostic": diagnostic.map { $0 as Any } ?? NSNull()], options: [.sortedKeys])
     guard data.count <= 4096 else { throw ConfiguredRenewalFailure.receipt }
@@ -2499,6 +2676,8 @@ struct PublicConfiguredStockRenewalTests {
         let trace = lattice.configured_recovery_qualification()
         var mounts: [SyncRelayHandle] = [], bootstrap: [ConnectedBootstrapPeer] = [], receivers: [ConnectedReceiver] = []
         let initialObservation = ConfiguredInitialObservation()
+        let replacementObservation = ConfiguredReplacementObservation()
+        var replacementOldIDs = Set<UUID>()
         var initialChannels: (String, String)?
         var phase = ConfiguredRenewalFailure.opening, facts: [String: Int] = [:], cleanupResult: Result<Void, any Error>?
         func cleanup() async throws {
@@ -2626,6 +2805,7 @@ struct PublicConfiguredStockRenewalTests {
                 }
                 let old = try #require(probe.handles([registrations.a, registrations.b], channels: channels))
                 let oldIDs = Set(old.map(\.connectionID))
+                replacementOldIDs = oldIDs // At most the four original route handles; no resource ownership.
                 let oldRetirement = try old.map { try #require($0.retirementObservation()) }
                 for handle in old {
                     let sample = try await killRecoverySample(handle, until: deadline)
@@ -2636,9 +2816,16 @@ struct PublicConfiguredStockRenewalTests {
                 for index in 0..<2 { await mounts[index].disconnectAll(channelId: channels[index]) }
                 // No explicit connect/sync/reopen and no direct transport fixture.
                 // The real close callback must cause the stable owner to redial.
+                replacementObservation.select(.freshCohorts)
                 try await connectedWait("configured fresh authenticated cohorts", until: deadline) {
-                    try a.renewalConnected && b.renewalConnected && a.openGate() && b.openGate() &&
-                        probe.handles([registrations.a, registrations.b], channels: channels, excluding: oldIDs) != nil
+                    replacementObservation.beginPoll()
+                    return try replacementObservation.evaluate(.first) { a.renewalConnected } &&
+                        replacementObservation.evaluate(.second) { b.renewalConnected } &&
+                        replacementObservation.evaluate(.third) { try a.openGate() } &&
+                        replacementObservation.evaluate(.fourth) { try b.openGate() } &&
+                        replacementObservation.evaluate(.fifth) {
+                            probe.handles([registrations.a, registrations.b], channels: channels, excluding: oldIDs) != nil
+                        }
                 }
                 let fresh = try #require(probe.handles([registrations.a, registrations.b], channels: channels, excluding: oldIDs))
                 let freshIDs = Set(fresh.map(\.connectionID))
@@ -2650,8 +2837,11 @@ struct PublicConfiguredStockRenewalTests {
                 }
                 let replayA = NIOLockedValueBox(Set<Int>()), replayB = NIOLockedValueBox(Set<Int>())
                 a.renewalReplay(replayA); b.renewalReplay(replayB)
+                replacementObservation.select(.lateReplay)
                 try await connectedWait("configured public late-listener replay", until: deadline) {
-                    replayA.withLockedValue { $0 == [0, 1] } && replayB.withLockedValue { $0 == [0, 1] }
+                    replacementObservation.beginPoll()
+                    return replacementObservation.evaluate(.first) { replayA.withLockedValue { $0 == [0, 1] } } &&
+                        replacementObservation.evaluate(.second) { replayB.withLockedValue { $0 == [0, 1] } }
                 }
                 phase = .delivery
                 let before = Set(try a.originals().map(\.id)), (target, mutation) = try a.quietUpdate()
@@ -2690,6 +2880,16 @@ struct PublicConfiguredStockRenewalTests {
                     "probe": probe.initialSnapshot(registrations.a, registrations.b, channels: initialChannels),
                     "trace": copiedTrace.json]
             }
+            var replacementDiagnostic: [String: Any]?
+            if !wrongHost, phase == .replacement, let initialChannels {
+                let traceCount = Int(trace.count())
+                let copiedTrace = ConfiguredInitialTraceObservation(count: traceCount,
+                    overflow: trace.overflowed(), invalid: trace.invalid()) { trace.record($0).stage }
+                replacementDiagnostic = ["wait": replacementObservation.wait.rawValue,
+                    "lastPoll": replacementObservation.json,
+                    "probe": probe.replacementSnapshot(registrations.a, registrations.b,
+                        channels: initialChannels, excluding: replacementOldIDs), "trace": copiedTrace.json]
+            }
             // The original operation is already failed. Do not replace it,
             // retry the socket or pre-initialize TLS before the tested path.
             let serverTLS = serverTLSObservation.json
@@ -2699,7 +2899,8 @@ struct PublicConfiguredStockRenewalTests {
             do { try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: false, phase: phase, facts: facts, failure: connectedFailureFact(original),
                 diagnostic: ["bootstrap": bootstrapObservation.json, "error": ConfiguredBootstrapErrorDetail(original).json,
                              "serverTLS": serverTLS, "serverContextProbe": contextProbe.map { $0 as Any } ?? NSNull(),
-                             "initial": initialDiagnostic.map { $0 as Any } ?? NSNull()]) }
+                             "initial": initialDiagnostic.map { $0 as Any } ?? NSNull(),
+                             "replacement": replacementDiagnostic.map { $0 as Any } ?? NSNull()]) }
             catch { Issue.record("Configured renewal bounded failure receipt unavailable") }
             do { try await cleanup() } catch { Issue.record("Configured renewal actual cleanup failed") }
             throw original

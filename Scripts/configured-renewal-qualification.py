@@ -228,8 +228,27 @@ def initial_diagnostic(value):
                       for k in ('count', 'overflow', 'invalid', 'unknownStage', 'stages')}}
 
 
+def replacement_diagnostic(value):
+    if value is None:
+        return None
+    require(type(value) is dict and set(value) == {'wait', 'lastPoll', 'probe', 'trace'})
+    wait, poll = value['wait'], value['lastPoll']
+    require(type(wait) is int and wait in (0, 1, 2))
+    require(type(poll) is dict and set(poll) == {'ordinal', 'overflow', 'stages'})
+    stages = poll['stages']
+    require(type(stages) is list and len(stages) == 5)
+    require(wait != 0 or (poll['ordinal'] == 0 and stages == [0] * 5))
+    require(wait != 2 or stages[2:] == [0] * 3)
+    # Reuse the exact finite prefix/counter/trace validator with four unvisited
+    # padding slots. These zeros neither sample nor invent a predicate result.
+    selected = initial_diagnostic({'lastPoll': dict(poll, stages=stages + [0] * 4),
+                                   'probe': value['probe'], 'trace': value['trace']})
+    selected['lastPoll']['stages'] = selected['lastPoll']['stages'][:5]
+    return dict(wait=wait, **selected)
+
+
 def bootstrap_diagnostic(value):
-    require(type(value) is dict and set(value) == {'bootstrap', 'error', 'serverTLS', 'serverContextProbe', 'initial'})
+    require(type(value) is dict and set(value) == {'bootstrap', 'error', 'serverTLS', 'serverContextProbe', 'initial', 'replacement'})
     server_tls = value['serverTLS']
     require(type(server_tls) is dict and set(server_tls) == {'bootstrapContextCatch', 'wrongHostContextCatch', 'overflow'})
     require(all(type(server_tls[k]) is int and 0 <= server_tls[k] <= 32 for k in ('bootstrapContextCatch', 'wrongHostContextCatch')))
@@ -252,14 +271,15 @@ def bootstrap_diagnostic(value):
         'sourceSetupEntered': observed['sourceSetupEntered'], 'sourceSetupFinished': observed['sourceSetupFinished'],
         'overflow': observed['overflow']}, 'error': selected_error,
         'serverTLS': {k: server_tls[k] for k in ('bootstrapContextCatch', 'wrongHostContextCatch', 'overflow')},
-        'serverContextProbe': probe, 'initial': initial_diagnostic(value['initial'])}
+        'serverContextProbe': probe, 'initial': initial_diagnostic(value['initial']),
+        'replacement': replacement_diagnostic(value['replacement'])}
 
 
 def case_receipt(root, name):
     require(name in CASE_NAMES)
     value = json.loads(read_file(root / ('receipts/' + name + '.json'), 4096), object_pairs_hook=unique_object)
     require(type(value) is dict and set(value) == {'version', 'name', 'passed', 'phase', 'scalarFacts', 'failure', 'diagnostic'}
-            and type(value['version']) is int and value['version'] == 7
+            and type(value['version']) is int and value['version'] == 8
             and value['name'] == name and type(value['passed']) is bool
             and type(value['phase']) is str and value['phase'] in PHASES)
     facts = value['scalarFacts']
@@ -284,8 +304,12 @@ def case_receipt(root, name):
         initial_expected = name == CASE_NAMES[0] and value['phase'] == 'initial'
         require((diagnostic['initial'] is not None) == initial_expected)
         require(not initial_expected or (facts == {} and diagnostic['serverContextProbe'] is None))
+        replacement_expected = name == CASE_NAMES[0] and value['phase'] == 'replacement'
+        require((diagnostic['replacement'] is not None) == replacement_expected)
+        require(not replacement_expected or (facts == {} and diagnostic['serverContextProbe'] is None))
+        require(diagnostic['initial'] is None or diagnostic['replacement'] is None)
     # Only reviewed scalar fields are exported, never raw errors or source data.
-    return {'version': 7, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
+    return {'version': 8, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
             'scalarFacts': {k: facts[k] for k in sorted(facts)}, 'failure': value['failure'],
             'diagnostic': None if value['passed'] else diagnostic}
 
