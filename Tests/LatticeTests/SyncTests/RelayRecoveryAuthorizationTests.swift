@@ -456,13 +456,16 @@ private final class RecoveryOrdinaryFactWait: @unchecked Sendable {
         }
         delivery?.perform()
     }
-    func deadlineReached(at now: ContinuousClock.Instant) {
-        guard now >= deadline else { return }
+    func deadlineEffect(at now: ContinuousClock.Instant) -> Effect {
+        guard now >= deadline else { return Effect(sample: nil, delivery: nil) }
         let delivery = state.withLockedValue { state in
             state.deadlineObserved = true
             return state.select()
         }
-        delivery?.perform()
+        return Effect(sample: nil, delivery: delivery)
+    }
+    func deadlineReached(at now: ContinuousClock.Instant) {
+        deadlineEffect(at: now).perform()
     }
     func cancel() {
         let delivery = state.withLockedValue { state in state.cancelled = true; return state.select() }
@@ -563,6 +566,15 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
         }
         effect?.perform()
     }
+    fileprivate func observeOrdinaryDeadline(_ waiter: RecoveryOrdinaryFactWait,
+                                             at now: ContinuousClock.Instant) {
+        // Publication and initial registration hold this same leaf through
+        // their timestamp and sample admission. A deadline cannot overtake a
+        // timely publication between those two operations. Delivery remains
+        // outside both locks, and the timer never samples or tests any facts.
+        let effect = facts.withLockedValue { _ in waiter.deadlineEffect(at: now) }
+        effect.perform()
+    }
     func wait(_ phase: String = "peer state",
               afterRegistration: (@Sendable () -> Void)? = nil,
               _ predicate: @escaping @Sendable (OrdinaryFacts) -> Bool) async throws {
@@ -572,7 +584,7 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
         let timer = Task {
             do { try await ContinuousClock().sleep(until: deadline) }
             catch { return } // Timer cancellation never evaluates the predicate.
-            waiter.deadlineReached(at: ContinuousClock.now)
+            observeOrdinaryDeadline(waiter, at: ContinuousClock.now)
         }
         let outcome = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
@@ -2472,6 +2484,43 @@ private final class OrdinaryWaitCaptureSentinel: @unchecked Sendable {
 private struct RecoveryOrdinaryFactWaiterTests {
     private func facts(acks: [String] = []) -> RecoveryAuthorizationPeer.OrdinaryFacts {
         .init(kinds: [], acks: acks, audits: [], closed: false, firstRejection: nil)
+    }
+    @Test(.timeLimit(.minutes(1)))
+    func deadlineCannotOvertakePublicationBetweenTimestampAndSampleAdmission() async {
+        let peer = RecoveryAuthorizationPeer()
+        let start = ContinuousClock.now, deadline = start.advanced(by: .seconds(10))
+        let waiter = RecoveryOrdinaryFactWait(deadline: deadline) { $0.acks == ["timely"] }
+        let attempted = DispatchSemaphore(value: 0), returned = DispatchSemaphore(value: 0)
+        var deadlineTask: Task<Void, Never>?
+        let result = await withCheckedContinuation { continuation in
+            waiter.install(continuation)
+            let publication = peer.facts.withLockedValue { value in
+                value.ordinaryWait = waiter
+                value.acks.append("timely")
+                // Controlled timestamps exercise the fixture's ordering only;
+                // they are not evidence about a historical socket arrival.
+                let publishedAt = start
+                deadlineTask = Task.detached {
+                    attempted.signal()
+                    peer.observeOrdinaryDeadline(waiter, at: deadline)
+                    returned.signal()
+                }
+                #expect(attempted.wait(timeout: .now() + .seconds(10)) == .success)
+                // The deadline call must wait for the publication leaf. A
+                // direct waiter-state timer can return here and lose the ACK.
+                #expect(returned.wait(timeout: .now() + .milliseconds(100)) == .timedOut)
+                return waiter.sample(value.ordinary, at: publishedAt)
+            }
+            publication.perform()
+        }
+        await deadlineTask?.value
+        #expect(result == .matched)
+        let detached = peer.facts.withLockedValue { value in
+            let detached = value.ordinaryWait
+            value.ordinaryWait = nil
+            return detached
+        }
+        withExtendedLifetime(detached) {}
     }
     @Test func timelyPublicationAlreadyBeingEvaluatedSurvivesDelayedDeadlineDelivery() async {
         let start = ContinuousClock.now, deadline = start.advanced(by: .seconds(10))
