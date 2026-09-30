@@ -2025,8 +2025,17 @@ private final class ConfiguredRenewalProbe: Sendable {
     func observe(_ observation: RelayRecoveryConnectionObservation) {
         guard replicas.contains(observation.peer.replicaID) else { return }
         state.withLockedValue { s in
-            guard observation.channel.utf8.count <= 64, observation.peer.replicaID.utf8.count <= 256,
-                  s.connections[observation.connectionID] == nil, s.connections.count < 16 else { s.invalid = true; return }
+            guard observation.channel.utf8.count <= 64, observation.peer.replicaID.utf8.count <= 256
+            else { s.invalid = true; return }
+            if let retained = s.connections[observation.connectionID] {
+                // The relay returns this same cached observation for each
+                // READY control. Repeats do not create another connection or
+                // readiness fact; an ID reused by another object still refuses.
+                guard retained === observation, retained.peer == observation.peer,
+                      retained.channel == observation.channel else { s.invalid = true; return }
+                return
+            }
+            guard s.connections.count < 16 else { s.invalid = true; return }
             s.connections[observation.connectionID] = observation // Only weak resource handles.
         }
     }
@@ -2088,6 +2097,56 @@ private final class ConfiguredRenewalProbe: Sendable {
     var healthy: Bool { state.withLockedValue { !$0.invalid } }
     var connections: Int { state.withLockedValue { $0.connections.count } }
     var authorizations: Int { state.withLockedValue { $0.authorizations } }
+}
+
+// Fixture-state regressions only: these payload-free observation objects have
+// no socket/lifetime and cannot establish real recovery or retirement facts.
+@Suite("Configured renewal probe observation identity")
+struct ConfiguredRenewalProbeIdentityTests {
+    @Test func repeatedActualObservationObjectIsIdempotentBeforeAndAfterReady() throws {
+        let registrations = ConnectedRegistrations(), probe = ConfiguredRenewalProbe(registrations)
+        let observation = RelayRecoveryConnectionObservation(connectionID: UUID(), peer: registrations.a.peer(0),
+            channel: "fixture-channel", socket: nil, lifetime: nil)
+        probe.observe(observation); probe.observe(observation)
+        #expect(probe.healthy && probe.connections == 1)
+        probe.ready(.init(connectionID: observation.connectionID, peer: observation.peer, channel: observation.channel,
+            requestID: "fixture-request", operation: "read", routeGeneration: nil, requestDigest: nil,
+            attemptID: nil, sequence: nil, index: "0", canonicalKind: "manifest"))
+        probe.observe(observation)
+        #expect(probe.healthy && probe.connections == 1)
+        // Neither this observer nor its repeat supplies a physical receipt.
+        #expect(observation.retirementObservation() == nil)
+    }
+
+    @Test func differentObservationObjectCannotReuseAnExistingConnectionID() throws {
+        let registrations = ConnectedRegistrations()
+        for variant in 0..<3 {
+            let probe = ConfiguredRenewalProbe(registrations), id = UUID()
+            let first = RelayRecoveryConnectionObservation(connectionID: id, peer: registrations.a.peer(0),
+                channel: "fixture-channel", socket: nil, lifetime: nil)
+            let second = RelayRecoveryConnectionObservation(connectionID: id,
+                peer: variant == 1 ? registrations.b.peer(0) : registrations.a.peer(0),
+                channel: variant == 2 ? "different-channel" : "fixture-channel", socket: nil, lifetime: nil)
+            probe.observe(first); probe.observe(second)
+            #expect(!probe.healthy && probe.connections == 1)
+            probe.observe(first)
+            #expect(!probe.healthy && probe.connections == 1) // Original refusal is sticky.
+        }
+    }
+
+    @Test func existingRepeatAtCapacityIsAcceptedButSeventeenthUniqueObjectRefuses() throws {
+        let registrations = ConnectedRegistrations(), probe = ConfiguredRenewalProbe(registrations)
+        let observations = (0..<17).map { _ in
+            RelayRecoveryConnectionObservation(connectionID: UUID(), peer: registrations.a.peer(0),
+                channel: "fixture-channel", socket: nil, lifetime: nil)
+        }
+        for observation in observations.prefix(16) { probe.observe(observation) }
+        #expect(probe.healthy && probe.connections == 16)
+        probe.observe(observations[0])
+        #expect(probe.healthy && probe.connections == 16)
+        probe.observe(observations[16])
+        #expect(!probe.healthy && probe.connections == 16)
+    }
 }
 
 @MainActor
