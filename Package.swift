@@ -105,6 +105,7 @@ let package = Package(
                 "WalEpochWriterChild",
                 "RecoveryProcessSupport",
                 "RecoveryProcessChild",
+                "ConfiguredPlatformFactoryChild",
                     .product(name: "Vapor", package: "vapor")
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]
@@ -143,6 +144,16 @@ let package = Package(
         .executableTarget(
             name: "RecoveryProcessChild",
             dependencies: ["Lattice", "RecoveryProcessSupport"],
+            swiftSettings: [.interoperabilityMode(.Cxx)]),
+        // Exercise real process-global factory replacement in a dedicated
+        // child, isolated from the parallel test suite. Not a shipped product.
+        .executableTarget(
+            name: "ConfiguredPlatformFactoryChild",
+            dependencies: [
+                "Lattice",
+                .product(name: "LatticeServerExportTestSupport", package: "LatticeCore"),
+            ],
+            path: "Tests/ConfiguredPlatformFactoryChild",
             swiftSettings: [.interoperabilityMode(.Cxx)]),
         // Cross-SDK conformance runner (plan WS-C item C4a): interprets the
         // declarative corpus in latticecore/conformance/corpus against the

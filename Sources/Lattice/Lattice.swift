@@ -513,27 +513,10 @@ public struct Lattice {
         deinit { if retirement != nil { destroy() } }
     }
 
-    /// Registers the Swift network factory with C++ layer. Called once on first Lattice init.
-    /// On Apple platforms, uses URLSession WebSocket. On Linux, uses NIO-based WebSocketKit.
-    private nonisolated(unsafe) static var networkFactoryRegistered = false
-    private static func registerNetworkFactoryIfNeeded() {
-        guard !networkFactoryRegistered else { return }
-        networkFactoryRegistered = true
-
-        lattice.register_generic_network_factory(
-            nil,  // no user_data needed
-            nil,  // http_fn - not implemented yet
-            // websocket_fn
-            { _ in
-                #if os(Linux)
-                let client = NIOWebsocketClient()
-                #else
-                let client = WebsocketClient()
-                #endif
-                return client.createCxxClient()
-            },
-            nil   // destroy_fn
-        )
+    /// Publish the legacy and configured stock adapters as one factory.
+    /// Actual registration occurs outside Swift/native ownership locks.
+    private static func registerNetworkFactoryIfNeeded() throws {
+        try registerConfiguredNetworkFactoryIfNeeded()
     }
     
     private struct Scheduler: Equatable, Hashable {
@@ -1150,7 +1133,7 @@ public struct Lattice {
             }
         }
         // Register Swift network factory on first use
-        Self.registerNetworkFactoryIfNeeded()
+        try Self.registerNetworkFactoryIfNeeded()
 
         self.isolation = isolation
         if isolation != nil {

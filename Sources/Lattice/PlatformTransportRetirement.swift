@@ -1,8 +1,8 @@
 import Foundation
 import LatticeSwiftCppBridge
 
-// Inactive until a configured native owner binds this receipt before creating
-// the adapter. Existing factories never construct or install one.
+// A configured native owner issues this receipt before adapter construction.
+// Legacy clients do not construct or install a retirement helper.
 internal final class PlatformTransportRetirement: @unchecked Sendable {
     private let receipt: lattice.platform_retirement_receipt
     let drain = PlatformRetirementDrain()
