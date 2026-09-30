@@ -9,12 +9,18 @@ import NIOSSL
 @_exported import LatticeSwiftModule
 
 /// NIO callbacks retain only the endpoint for their actual dial attempt.
-internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unchecked Sendable {
+internal final class NIOWebsocketClient: RetiringSystemTLSPlatformTransportClient, @unchecked Sendable {
     // Passive per-instance test observation; no TLS or callback authority.
     private let onIdentityVerificationFailure: (@Sendable () -> Void)?
     private let onFailureObservation: (@Sendable (PlatformTransportFailureObservation) -> Void)?
-    init(onIdentityVerificationFailure: (@Sendable () -> Void)? = nil,
+    private let retirement: PlatformTransportRetirement?
+    init(retirement: PlatformTransportRetirement? = nil,
+         onIdentityVerificationFailure: (@Sendable () -> Void)? = nil,
          onFailureObservation: (@Sendable (PlatformTransportFailureObservation) -> Void)? = nil) {
+        self.retirement = retirement
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        eventLoopGroup = group
+        connector = retirement == nil ? nil : OwnedNIOWebSocketConnector(group: group)
         self.onIdentityVerificationFailure = onIdentityVerificationFailure
         self.onFailureObservation = onFailureObservation
     }
@@ -54,16 +60,26 @@ internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unch
         var attempt: Attempt?
     }
     private let state = UnfairLock(initialState: State())
-    private let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+    private let eventLoopGroup: MultiThreadedEventLoopGroup
+    private let connector: OwnedNIOWebSocketConnector?
 
     func createCxxClient() -> UnsafeMutablePointer<lattice.sync_transport>? { makeSystemTLSPlatformTransport(self) }
     func verifiesSystemTLS(url: String, callbacks: PlatformTransportCallbacks) -> Bool {
+        let use = retirement?.drain.admit()
+        guard retirement == nil || use != nil else { return false }
+        defer { withExtendedLifetime(use) {} }
         let attempt = state.withLockUnchecked { $0.destroyed ? nil : $0.attempt }
         guard let attempt, attempt.callbacks.matches(callbacks) else { return false }
         return attempt.verified(url: url)
     }
 
     func performConnect(url urlString: String, headers: lattice.HeadersMap, callbacks: PlatformTransportCallbacks) {
+        let use = retirement?.drain.admit()
+        guard retirement == nil || use != nil else {
+            retirement?.reportAdmissionFailure(callbacks)
+            return
+        }
+        defer { withExtendedLifetime(use) {} }
         guard callbacks.isCurrent else { return }
         // Reject unsupported URLs instead of reaching WebSocketKit's scheme
         // precondition. Keep the existing http(s) compatibility conversion.
@@ -85,6 +101,7 @@ internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unch
         // stay legacy even when conversion happens to establish encrypted IO.
         let original = URL(string: urlString).flatMap { PlatformTLSEndpoint($0) }
         let actual = URL(string: url).flatMap { PlatformTLSEndpoint($0) }
+        if let retirement, let use, !retirement.drain.claimDial(use) { return }
         let attempt = Attempt(callbacks, url: urlString, systemTLS: original != nil && original == actual)
         let replaced: (Bool, Attempt?) = state.withLockUnchecked { state in
             guard !state.destroyed, callbacks.isCurrent else { return (false, nil) }
@@ -102,7 +119,12 @@ internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unch
         tls.certificateVerification = .fullVerification
         tls.trustRoots = .default
         let configuration = WebSocketClient.Configuration(tlsConfiguration: tls, maxFrameSize: 1 << 28)
-        WebSocket.connect(to: url, headers: httpHeaders, configuration: configuration, on: eventLoopGroup) {
+        let pending = use.flatMap { retirement?.drain.pending($0) }
+        guard retirement == nil || pending != nil else {
+            retirement?.reportAdmissionFailure(callbacks)
+            return
+        }
+        let onUpgrade: @Sendable (WebSocket) -> Void = {
             [weak self, attempt] webSocket in
             guard let self else { webSocket.close(code: .normalClosure, promise: nil); return }
             let current = self.state.withLockUnchecked {
@@ -128,7 +150,22 @@ internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unch
                 attempt.close()
             }
             attempt.callbacks.open()
-        }.whenFailure { [attempt, observer = onIdentityVerificationFailure, failureObserver = onFailureObservation] error in
+        }
+        let connected: EventLoopFuture<Void>
+        if let connector {
+            // The same admitted lifetime covers both final connection delivery
+            // and independent DNS work/notification captures. Group shutdown
+            // alone cannot prove those off-loop captures have been released.
+            guard let pending else { return }
+            connected = connector.connect(to: url, headers: httpHeaders,
+                configuration: configuration, lifetime: pending, onUpgrade: onUpgrade)
+        } else {
+            connected = WebSocket.connect(to: url, headers: httpHeaders,
+                configuration: configuration, on: eventLoopGroup, onUpgrade: onUpgrade)
+        }
+        connected.whenComplete { [attempt, pending, observer = onIdentityVerificationFailure, failureObserver = onFailureObservation] result in
+            defer { withExtendedLifetime(pending) {} }
+            guard case .failure(let error) = result else { return }
             // Pinned NIOSSL emits this typed error after chain validation when
             // the actual peer certificate does not match the requested host/IP.
             if attempt.systemTLS, attempt.callbacks.isCurrent,
@@ -143,6 +180,9 @@ internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unch
     }
 
     func performDisconnect() {
+        let use = retirement?.drain.admit()
+        guard retirement == nil || use != nil else { return }
+        defer { withExtendedLifetime(use) {} }
         let previous = state.withLockUnchecked { state in
             let previous = state.attempt
             state.attempt = nil
@@ -152,6 +192,12 @@ internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unch
     }
 
     func performSend(_ message: lattice.transport_message, callbacks: PlatformTransportCallbacks) {
+        let use = retirement?.drain.admit()
+        guard retirement == nil || use != nil else {
+            retirement?.reportAdmissionFailure(callbacks)
+            return
+        }
+        defer { withExtendedLifetime(use) {} }
         let attempt = state.withLockUnchecked { $0.attempt }
         guard let attempt, attempt.callbacks.matches(callbacks), callbacks.isCurrent,
               let socket = attempt.currentSocket() else { return }
@@ -168,19 +214,42 @@ internal final class NIOWebsocketClient: SystemTLSPlatformTransportClient, @unch
         }
     }
 
+    @discardableResult
+    func requestRetirement(_ receipt: lattice.platform_retirement_receipt) -> Bool {
+        guard let retirement, retirement.request(receipt) else { return false }
+        destroy()
+        return true
+    }
+
     func destroy() {
-        let retired: (Bool, Attempt?) = state.withLockUnchecked { state in
-            guard !state.destroyed else { return (false, nil) }
-            state.destroyed = true
-            let previous = state.attempt
-            state.attempt = nil
-            return (true, previous)
+        // Capture resource owners, never an escaping self from deinit. Stop
+        // refuses new bridge uses and lets previously admitted calls enqueue
+        // their IO before shutdown. Its platform completion is not a timeout.
+        let cleanup: PlatformRetirementDrain.Cleanup = { [state, eventLoopGroup, connector] done in
+            let retired: (Bool, Attempt?) = state.withLockUnchecked { state in
+                guard !state.destroyed else { return (false, nil) }
+                state.destroyed = true
+                let previous = state.attempt
+                state.attempt = nil
+                return (true, previous)
+            }
+            guard retired.0 else { return }
+            retired.1?.close()
+            // This callback is delivered after the group's actual shutdown;
+            // never synchronously join this group's own callback thread.
+            let shutdown: @Sendable () -> Void = {
+                eventLoopGroup.shutdownGracefully(queue: .global()) { error in
+                    done(error == nil ? 0 : 1) // SDK code 1: NIO group shutdown failed.
+                }
+            }
+            // The stock resolver can outlive a failed connect future. Keep
+            // the group alive until the owned resolver's actual worker returns
+            // and its query promises have been published on that live loop.
+            if let connector { connector.stopResolution(whenDrained: shutdown) }
+            else { shutdown() }
         }
-        guard retired.0 else { return }
-        retired.1?.close()
-        // Native deletion can happen on this group's own callback thread.
-        // Asynchronous shutdown avoids joining that thread from itself.
-        eventLoopGroup.shutdownGracefully(queue: .global()) { _ in }
+        if let retirement { retirement.drain.stop(cleanup) }
+        else { cleanup { _ in } }
     }
 
     deinit { destroy() }

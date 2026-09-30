@@ -108,15 +108,68 @@ public struct Lattice {
     
     /// Each URLSession attempt owns a retained native callback endpoint. Late
     /// receive/send completions cannot address a replacement task or freed C++.
-    internal final class WebsocketClient: SystemTLSPlatformTransportClient, @unchecked Sendable {
+    internal final class WebsocketClient: RetiringSystemTLSPlatformTransportClient, @unchecked Sendable {
         // Passive per-instance test observation only; never changes TLS policy,
         // challenge disposition, native callbacks or source authority.
         private let onIdentityVerificationFailure: (@Sendable () -> Void)?
         private let onFailureObservation: (@Sendable (PlatformTransportFailureObservation) -> Void)?
-        init(onIdentityVerificationFailure: (@Sendable () -> Void)? = nil,
+        private let retirement: PlatformTransportRetirement?
+        init(retirement: PlatformTransportRetirement? = nil,
+             onIdentityVerificationFailure: (@Sendable () -> Void)? = nil,
              onFailureObservation: (@Sendable (PlatformTransportFailureObservation) -> Void)? = nil) {
+            self.retirement = retirement
             self.onIdentityVerificationFailure = onIdentityVerificationFailure
             self.onFailureObservation = onFailureObservation
+        }
+        // Opt-in only. The serial delegate queue and its post-invalidation
+        // barrier fence the exact session's already dispatched delegate work.
+        private final class AttemptRetirement: @unchecked Sendable {
+            let queue: OperationQueue
+            private struct State {
+                var cancelling = false
+                var invalidationObserved = false
+                var result: Int32?
+                var completion: PlatformRetirementDrain.Completion?
+            }
+            private let state = UnfairLock(initialState: State())
+            init() {
+                queue = OperationQueue()
+                queue.maxConcurrentOperationCount = 1
+            }
+            func beginCancellation() -> Bool {
+                state.withLockUnchecked { state in
+                    guard !state.cancelling else { return false }
+                    state.cancelling = true
+                    return true
+                }
+            }
+            func invalidated(error: (any Swift.Error)?) {
+                let first = state.withLockUnchecked { state in
+                    guard !state.invalidationObserved else { return false }
+                    state.invalidationObserved = true
+                    return true
+                }
+                guard first else { return }
+                let code: Int32 = error == nil ? 0 : 2
+                queue.addBarrierBlock { [self] in
+                    let completion: PlatformRetirementDrain.Completion? = state.withLockUnchecked { state in
+                        state.result = code
+                        let completion = state.completion
+                        state.completion = nil
+                        return completion
+                    }
+                    completion?(code)
+                }
+            }
+            func whenInvalidated(_ completion: @escaping PlatformRetirementDrain.Completion) {
+                let result: Int32? = state.withLockUnchecked { state in
+                    if let result = state.result { return result }
+                    guard state.completion == nil else { return nil }
+                    state.completion = completion
+                    return nil
+                }
+                if let result { completion(result) }
+            }
         }
         private final class Attempt: @unchecked Sendable {
             let callbacks: PlatformTransportCallbacks
@@ -124,6 +177,8 @@ public struct Lattice {
             let session: URLSession
             let task: URLSessionWebSocketTask
             let requestedURL: URL?
+            let retirement: PlatformTransportRetirement?
+            let cleanup: AttemptRetirement?
             private struct Trust { var evaluated = false; var redirected = false }
             private let trust = UnfairLock(initialState: Trust())
             func rejectRedirect() { trust.withLockUnchecked { $0.redirected = true; $0.evaluated = false } }
@@ -142,24 +197,36 @@ public struct Lattice {
             }
             init(client: WebsocketClient, request: URLRequest, callbacks: PlatformTransportCallbacks) {
                 self.callbacks = callbacks
+                retirement = client.retirement
+                cleanup = client.retirement == nil ? nil : AttemptRetirement()
                 requestedURL = request.url
                 delegate = WebSocketDelegateHandler()
                 // Fresh credential/cookie state on every attempt, including
                 // reconnect after an authentication failure.
-                session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+                session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: cleanup?.queue)
                 task = session.webSocketTask(with: request)
                 task.maximumMessageSize = 128 * 1024 * 1024
                 delegate.client = client
                 delegate.attempt = self
             }
             func cancel() {
-                task.cancel(with: .normalClosure, reason: nil)
-                session.invalidateAndCancel()
+                if let cleanup {
+                    guard cleanup.beginCancellation() else { return }
+                    task.cancel(with: .normalClosure, reason: nil)
+                    // Opt-in cleanup needs actual task/session completion;
+                    // invalidateAndCancel's early invalidation is insufficient.
+                    session.finishTasksAndInvalidate()
+                } else {
+                    task.cancel(with: .normalClosure, reason: nil)
+                    session.invalidateAndCancel()
+                }
             }
         }
         private struct State {
             var destroyed = false
             var attempt: Attempt?
+            // One claimed dial; retained even after disconnect/rejection.
+            var retirementAttempt: Attempt?
         }
         private let state = UnfairLock(initialState: State())
 
@@ -173,6 +240,10 @@ public struct Lattice {
             }
             #if canImport(Security)
             private func evaluate(_ session: URLSession, _ task: URLSessionTask, _ challenge: URLAuthenticationChallenge) {
+                let retirement = attempt?.retirement
+                let use = retirement?.drain.admit()
+                guard retirement == nil || use != nil else { return }
+                defer { withExtendedLifetime(use) {} }
                 let failureObserver = client?.onFailureObservation
                 guard let attempt = current(session, task) else {
                     failureObserver?(.rejectedChallenge(self.attempt == nil ? .missingAttempt : .staleTaskOrSession))
@@ -228,37 +299,62 @@ public struct Lattice {
             func urlSession(_ session: URLSession, task: URLSessionTask,
                             willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
                             completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-                current(session, task)?.rejectRedirect()
+                let attempt = current(session, task)
+                let use = attempt?.retirement?.drain.admit()
+                defer { withExtendedLifetime(use) {} }
+                if attempt?.retirement == nil || use != nil { attempt?.rejectRedirect() }
                 // Keep legacy redirect behavior, but it cannot issue source trust.
                 completionHandler(request)
             }
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didOpenWithProtocol protocol: String?) {
                 guard let attempt = current(session, webSocketTask) else { return }
+                let use = attempt.retirement?.drain.admit()
+                guard attempt.retirement == nil || use != nil else { return }
+                defer { withExtendedLifetime(use) {} }
                 if attempt.callbacks.open() { client?.startReceiving(attempt) }
             }
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
                 guard let attempt = current(session, webSocketTask) else { return }
+                let use = attempt.retirement?.drain.admit()
+                guard attempt.retirement == nil || use != nil else { return }
+                defer { withExtendedLifetime(use) {} }
                 attempt.callbacks.close(code: Int(closeCode.rawValue),
                     reason: reason.flatMap { String(data: $0, encoding: .utf8) } ?? "")
             }
             func urlSession(_ session: URLSession, task: URLSessionTask,
                             didCompleteWithError error: (any Swift.Error)?) {
                 guard let attempt = current(session, task), let error else { return }
+                let use = attempt.retirement?.drain.admit()
+                guard attempt.retirement == nil || use != nil else { return }
+                defer { withExtendedLifetime(use) {} }
                 PlatformTransportFailureObservation.report(client?.onFailureObservation, phase: .completion, error: error)
                 attempt.callbacks.error(error.localizedDescription)
+            }
+            func urlSession(_ session: URLSession, didBecomeInvalidWithError error: (any Swift.Error)?) {
+                guard let attempt, attempt.session === session, let cleanup = attempt.cleanup else { return }
+                cleanup.invalidated(error: error)
             }
         }
 
         func createCxxClient() -> UnsafeMutablePointer<lattice.sync_transport>? { makeSystemTLSPlatformTransport(self) }
         func verifiesSystemTLS(url: String, callbacks: PlatformTransportCallbacks) -> Bool {
+            let use = retirement?.drain.admit()
+            guard retirement == nil || use != nil else { return false }
+            defer { withExtendedLifetime(use) {} }
             let attempt = state.withLockUnchecked { $0.destroyed ? nil : $0.attempt }
             guard let attempt, attempt.callbacks.matches(callbacks) else { return false }
             return attempt.verified(url: url)
         }
 
         func performConnect(url urlString: String, headers: lattice.HeadersMap, callbacks: PlatformTransportCallbacks) {
+            let use = retirement?.drain.admit()
+            guard retirement == nil || use != nil else {
+                retirement?.reportAdmissionFailure(callbacks)
+                return
+            }
+            defer { withExtendedLifetime(use) {} }
             guard callbacks.isCurrent else { return }
             guard let url = URL(string: urlString) else {
                 callbacks.error("Invalid WebSocket URL")
@@ -268,8 +364,12 @@ public struct Lattice {
             headers.forEach { pair in
                 request.setValue(String(pair.second), forHTTPHeaderField: String(pair.first))
             }
+            if let retirement, let use, !retirement.drain.claimDial(use) { return }
             let attempt = Attempt(client: self, request: request, callbacks: callbacks)
             let replaced: (Bool, Attempt?) = state.withLockUnchecked { state in
+                // The admitted connect keeps stop's cleanup from starting
+                // until even a rejected or late-constructed session is held.
+                if retirement != nil { state.retirementAttempt = attempt }
                 guard !state.destroyed, callbacks.isCurrent else { return (false, nil) }
                 let previous = state.attempt
                 state.attempt = attempt
@@ -281,6 +381,9 @@ public struct Lattice {
         }
 
         func performDisconnect() {
+            let use = retirement?.drain.admit()
+            guard retirement == nil || use != nil else { return  }
+            defer { withExtendedLifetime(use) {} }
             let previous = state.withLockUnchecked { state in
                 let previous = state.attempt
                 state.attempt = nil
@@ -290,12 +393,28 @@ public struct Lattice {
         }
 
         func performSend(_ message: lattice.transport_message, callbacks: PlatformTransportCallbacks) {
+            let use = retirement?.drain.admit()
+            guard retirement == nil || use != nil else {
+                retirement?.reportAdmissionFailure(callbacks)
+                return
+            }
+            defer { withExtendedLifetime(use) {} }
             let attempt = state.withLockUnchecked { $0.attempt }
             guard let attempt, attempt.callbacks.matches(callbacks), callbacks.isCurrent else { return }
             let outgoing: URLSessionWebSocketTask.Message
             if message.msg_type == .text { outgoing = .string(String(message.as_string())) }
             else { outgoing = .data(Data(message.data)) }
-            attempt.task.send(outgoing) { [weak attempt, observer = onFailureObservation] error in
+            let pending = use.flatMap { retirement?.drain.pending($0) }
+            guard retirement == nil || pending != nil else {
+                retirement?.reportAdmissionFailure(callbacks)
+                return
+            }
+            let retainedAttempt = retirement == nil ? nil : attempt
+            attempt.task.send(outgoing) { [weak attempt, observer = onFailureObservation, pending, retainedAttempt] error in
+                defer { withExtendedLifetime((pending, retainedAttempt)) {} }
+                let use = attempt?.retirement?.drain.admit()
+                guard attempt?.retirement == nil || use != nil else { return }
+                defer { withExtendedLifetime(use) {} }
                 guard let attempt, let error else { return }
                 if attempt.callbacks.isCurrent { PlatformTransportFailureObservation.report(observer, phase: .send, error: error) }
                 attempt.callbacks.error(error.localizedDescription)
@@ -303,8 +422,24 @@ public struct Lattice {
         }
 
         private func startReceiving(_ attempt: Attempt) {
+            let use = retirement?.drain.admit()
+            guard retirement == nil || use != nil else {
+                retirement?.reportAdmissionFailure(attempt.callbacks)
+                return
+            }
+            defer { withExtendedLifetime(use) {} }
             guard attempt.callbacks.isCurrent else { return }
-            attempt.task.receive { [weak self, weak attempt] result in
+            let pending = use.flatMap { retirement?.drain.pending($0) }
+            guard retirement == nil || pending != nil else {
+                retirement?.reportAdmissionFailure(attempt.callbacks)
+                return
+            }
+            let retainedAttempt = retirement == nil ? nil : attempt
+            attempt.task.receive { [weak self, weak attempt, pending, retainedAttempt] result in
+                defer { withExtendedLifetime((pending, retainedAttempt)) {} }
+                let use = attempt?.retirement?.drain.admit()
+                guard attempt?.retirement == nil || use != nil else { return }
+                defer { withExtendedLifetime(use) {} }
                 guard let self, let attempt, attempt.callbacks.isCurrent else { return }
                 switch result {
                 case .success(let message):
@@ -328,7 +463,37 @@ public struct Lattice {
             }
         }
 
+        @discardableResult
+        func requestRetirement(_ receipt: lattice.platform_retirement_receipt) -> Bool {
+            guard let retirement, retirement.request(receipt) else { return false }
+            destroy()
+            return true
+        }
+
         func destroy() {
+            if let retirement {
+                let retainedState = state
+                retirement.drain.stop { [retainedState] done in
+                    let retained = retainedState.withLockUnchecked { state in
+                        state.destroyed = true
+                        let previous = state.attempt
+                        state.attempt = nil
+                        return (previous, state.retirementAttempt)
+                    }
+                    guard let attempt = retained.1, let cleanup = attempt.cleanup else { done(0); return }
+                    cleanup.whenInvalidated { [retainedState] error in
+                        let released = retainedState.withLockUnchecked { state in
+                            let released = state.retirementAttempt
+                            state.retirementAttempt = nil
+                            return released
+                        }
+                        withExtendedLifetime(released) { done(error) }
+                    }
+                    attempt.cancel()
+                    withExtendedLifetime(retained) {}
+                }
+                return
+            }
             let previous = state.withLockUnchecked { state in
                 state.destroyed = true
                 let previous = state.attempt
@@ -337,6 +502,8 @@ public struct Lattice {
             }
             previous?.cancel()
         }
+
+        deinit { if retirement != nil { destroy() } }
     }
 
     /// Registers the Swift network factory with C++ layer. Called once on first Lattice init.
