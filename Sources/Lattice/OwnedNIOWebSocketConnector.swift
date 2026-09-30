@@ -22,6 +22,7 @@ import WebSocketKit
 // owner observes actual off-loop work completion before allowing group shutdown.
 internal final class OwnedNIOWebSocketConnector: @unchecked Sendable {
     private let loop: any EventLoop
+    private let observation: PlatformRetirementLifecycleObserver?
     private struct State {
         var claimed = false
         var stopped = false
@@ -29,7 +30,8 @@ internal final class OwnedNIOWebSocketConnector: @unchecked Sendable {
     }
     private let state = UnfairLock(initialState: State())
 
-    init(group: MultiThreadedEventLoopGroup) {
+    init(group: MultiThreadedEventLoopGroup, observation: PlatformRetirementLifecycleObserver? = nil) {
+        self.observation = observation
         // This is the adapter's dedicated one-thread group. Pin both bootstrap
         // and resolver promises to this exact loop, including shutdown ordering.
         loop = group.next()
@@ -51,7 +53,7 @@ internal final class OwnedNIOWebSocketConnector: @unchecked Sendable {
         let resolver = state.withLockUnchecked { state -> OwnedNIOResolver? in
             guard !state.stopped, !state.claimed else { return nil }
             state.claimed = true
-            let resolver = OwnedNIOResolver(loop: loop, host: host, port: port, lifetime: lifetime)
+            let resolver = OwnedNIOResolver(loop: loop, host: host, port: port, lifetime: lifetime, observation: observation)
             state.resolver = resolver
             return resolver
         }
@@ -137,6 +139,7 @@ private final class OwnedNIOResolver: Resolver, @unchecked Sendable {
     private let loop: any EventLoop
     private let host: String
     private let port: Int
+    private let observation: PlatformRetirementLifecycleObserver?
     private let ipv4: EventLoopPromise<[SocketAddress]>
     private let ipv6: EventLoopPromise<[SocketAddress]>
     private let workerQueue = DispatchQueue(label: "lattice.owned-dns")
@@ -150,7 +153,9 @@ private final class OwnedNIOResolver: Resolver, @unchecked Sendable {
     private var drainCompletion: (@Sendable () -> Void)?
     private var resolutionLifetime: PlatformRetirementDrain.Pending?
 
-    init(loop: any EventLoop, host: String, port: Int, lifetime: PlatformRetirementDrain.Pending) {
+    init(loop: any EventLoop, host: String, port: Int, lifetime: PlatformRetirementDrain.Pending,
+         observation: PlatformRetirementLifecycleObserver?) {
+        self.observation = observation
         self.loop = loop; self.host = host; self.port = port
         resolutionLifetime = lifetime
         ipv4 = loop.makePromise(); ipv6 = loop.makePromise()
@@ -205,10 +210,11 @@ private final class OwnedNIOResolver: Resolver, @unchecked Sendable {
         resolutionLifetime = nil
         workerStarted = true
         let result = UnfairLock(initialState: Optional<Result<Addresses, LookupError>>.none)
-        let host = host, port = port
+        let host = host, port = port, observation = observation
         let work = DispatchWorkItem { [lifetime] in
             defer { withExtendedLifetime(lifetime) {} }
             let resolved = Self.resolve(host: host, port: port)
+            observation?(.dnsWorkReturned)
             result.withLockUnchecked { $0 = resolved }
         }
         // notify is registered before dispatch and fires after the actual work
@@ -222,8 +228,10 @@ private final class OwnedNIOResolver: Resolver, @unchecked Sendable {
                 defer { withExtendedLifetime(lifetime) {} }
                 workerFinished = true
                 publish(stopping ? .failure(.cancelled) : resolved)
+                observation?(.dnsQueriesPublished)
                 finishDrainIfPossible()
             }
+            observation?(.dnsNotifyEnqueued)
         }
         workerQueue.async(execute: work)
     }

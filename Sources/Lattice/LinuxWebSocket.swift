@@ -14,13 +14,16 @@ internal final class NIOWebsocketClient: RetiringSystemTLSPlatformTransportClien
     private let onIdentityVerificationFailure: (@Sendable () -> Void)?
     private let onFailureObservation: (@Sendable (PlatformTransportFailureObservation) -> Void)?
     private let retirement: PlatformTransportRetirement?
+    private let retirementObservation: PlatformRetirementLifecycleObserver?
     init(retirement: PlatformTransportRetirement? = nil,
+         retirementObservation: PlatformRetirementLifecycleObserver? = nil,
          onIdentityVerificationFailure: (@Sendable () -> Void)? = nil,
          onFailureObservation: (@Sendable (PlatformTransportFailureObservation) -> Void)? = nil) {
         self.retirement = retirement
+        self.retirementObservation = retirementObservation
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         eventLoopGroup = group
-        connector = retirement == nil ? nil : OwnedNIOWebSocketConnector(group: group)
+        connector = retirement == nil ? nil : OwnedNIOWebSocketConnector(group: group, observation: retirementObservation)
         self.onIdentityVerificationFailure = onIdentityVerificationFailure
         self.onFailureObservation = onFailureObservation
     }
@@ -225,7 +228,7 @@ internal final class NIOWebsocketClient: RetiringSystemTLSPlatformTransportClien
         // Capture resource owners, never an escaping self from deinit. Stop
         // refuses new bridge uses and lets previously admitted calls enqueue
         // their IO before shutdown. Its platform completion is not a timeout.
-        let cleanup: PlatformRetirementDrain.Cleanup = { [state, eventLoopGroup, connector] done in
+        let cleanup: PlatformRetirementDrain.Cleanup = { [state, eventLoopGroup, connector, retirementObservation] done in
             let retired: (Bool, Attempt?) = state.withLockUnchecked { state in
                 guard !state.destroyed else { return (false, nil) }
                 state.destroyed = true
@@ -239,7 +242,9 @@ internal final class NIOWebsocketClient: RetiringSystemTLSPlatformTransportClien
             // never synchronously join this group's own callback thread.
             let shutdown: @Sendable () -> Void = {
                 eventLoopGroup.shutdownGracefully(queue: .global()) { error in
-                    done(error == nil ? 0 : 1) // SDK code 1: NIO group shutdown failed.
+                    let code: Int32 = error == nil ? 0 : 1
+                    retirementObservation?(.nioGroupShutdown(code))
+                    done(code) // SDK code 1: NIO group shutdown failed.
                 }
             }
             // The stock resolver can outlive a failed connect future. Keep

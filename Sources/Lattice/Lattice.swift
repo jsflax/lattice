@@ -114,10 +114,13 @@ public struct Lattice {
         private let onIdentityVerificationFailure: (@Sendable () -> Void)?
         private let onFailureObservation: (@Sendable (PlatformTransportFailureObservation) -> Void)?
         private let retirement: PlatformTransportRetirement?
+        private let retirementObservation: PlatformRetirementLifecycleObserver?
         init(retirement: PlatformTransportRetirement? = nil,
+             retirementObservation: PlatformRetirementLifecycleObserver? = nil,
              onIdentityVerificationFailure: (@Sendable () -> Void)? = nil,
              onFailureObservation: (@Sendable (PlatformTransportFailureObservation) -> Void)? = nil) {
             self.retirement = retirement
+            self.retirementObservation = retirementObservation
             self.onIdentityVerificationFailure = onIdentityVerificationFailure
             self.onFailureObservation = onFailureObservation
         }
@@ -125,6 +128,7 @@ public struct Lattice {
         // barrier fence the exact session's already dispatched delegate work.
         private final class AttemptRetirement: @unchecked Sendable {
             let queue: OperationQueue
+            private let observation: PlatformRetirementLifecycleObserver?
             private struct State {
                 var cancelling = false
                 var invalidationObserved = false
@@ -132,7 +136,8 @@ public struct Lattice {
                 var completion: PlatformRetirementDrain.Completion?
             }
             private let state = UnfairLock(initialState: State())
-            init() {
+            init(observation: PlatformRetirementLifecycleObserver?) {
+                self.observation = observation
                 queue = OperationQueue()
                 queue.maxConcurrentOperationCount = 1
             }
@@ -151,7 +156,9 @@ public struct Lattice {
                 }
                 guard first else { return }
                 let code: Int32 = error == nil ? 0 : 2
+                observation?(.appleSessionInvalidated(code))
                 queue.addBarrierBlock { [self] in
+                    observation?(.appleInvalidationFence(code))
                     let completion: PlatformRetirementDrain.Completion? = state.withLockUnchecked { state in
                         state.result = code
                         let completion = state.completion
@@ -198,7 +205,7 @@ public struct Lattice {
             init(client: WebsocketClient, request: URLRequest, callbacks: PlatformTransportCallbacks) {
                 self.callbacks = callbacks
                 retirement = client.retirement
-                cleanup = client.retirement == nil ? nil : AttemptRetirement()
+                cleanup = client.retirement == nil ? nil : AttemptRetirement(observation: client.retirementObservation)
                 requestedURL = request.url
                 delegate = WebSocketDelegateHandler()
                 // Fresh credential/cookie state on every attempt, including
