@@ -116,8 +116,7 @@ private final class ExportFixture: @unchecked Sendable {
                 // The wrapper deliberately erases arbitrary factory errors.
                 // Record the native setup diagnostic here, on the owning IO
                 // lane, before another bridge call can clear it.
-                let nativeMessage = store.cxxLatticeRef.last_query_error()
-                let message = nativeMessage.__convertToBool() ? String(nativeMessage.pointee) : ""
+                let message = store.lastQueryError() ?? ""
                 Issue.record("export fixture enrollment failed: \(String(decoding: message.utf8.prefix(768), as: UTF8.self))")
                 throw ExportFixtureError.refused
             }
