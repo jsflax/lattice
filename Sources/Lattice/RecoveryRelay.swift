@@ -232,5 +232,16 @@ package final class RecoveryRelayNativeSetup {
         }
         return .init(value.ready(std.string(text), charge.value))
     }
+    package func readyObserved(_ data: Data, charge: RecoveryRelayNativeCharge) throws
+        -> (result: RecoveryRelayNativeReadyResult, diagnostics: RecoveryRelayNativeReadyDiagnostics) {
+        precondition(onIO())
+        guard data.count <= 8_388_608, let text = String(data: data, encoding: .utf8), let value else {
+            throw RecoveryRelayNativeError.refused("recovery control bound or retired setup")
+        }
+        var observed = value.readyObserved(std.string(text), charge: charge.value)
+        // Capture the original bridge error/result before diagnostic conversion.
+        let result = RecoveryRelayNativeReadyResult(observed.takeResult())
+        return (result, .init(observed.diagnostics()))
+    }
     package func close() { precondition(onIO()); value?.closeOnIO(); value = nil }
 }

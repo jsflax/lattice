@@ -352,9 +352,15 @@ final class RecoveryRelayConnection: @unchecked Sendable {
         return try native.receive(data)
     }
     func reserveInput(bytes: Int) throws -> RecoveryRelayNativeCharge { try lifetime.reserveReady(bytes: bytes) }
-    func ready(_ data: Data, charge: RecoveryRelayNativeCharge) throws -> RecoveryRelayNativeReadyResult {
+    func ready(_ data: Data, charge: RecoveryRelayNativeCharge,
+               diagnostics: (@Sendable (RecoveryRelayNativeReadyDiagnostics) -> Void)? = nil) throws -> RecoveryRelayNativeReadyResult {
         precondition(RelayExecutionPool.io.isCurrentWorker)
         guard lifetime.publishable, let native else { throw SyncRecoveryConfigurationError.staleAuthorization }
+        if let diagnostics {
+            let observed = try native.readyObserved(data, charge: charge)
+            diagnostics(observed.diagnostics)
+            return observed.result
+        }
         return try native.ready(data, charge: charge)
     }
     func connectionObservation(channel: String) -> RelayRecoveryConnectionObservation? {
@@ -369,17 +375,29 @@ final class RecoveryRelayConnection: @unchecked Sendable {
     }
     func sendReady(_ result: RecoveryRelayNativeReadyResult,
                    park: (@Sendable (String, @escaping @Sendable () -> Void) -> Bool)? = nil,
-                   didDecision: (@Sendable (String, Bool) -> Void)? = nil) {
-        guard let socket else { return }
+                   didDecision: (@Sendable (String, Bool) -> Void)? = nil,
+                   trace: RelayReadyControlTrace? = nil) {
+        guard let socket else { trace?.refuse(.socketUnavailable); return }
         let lifetime = lifetime
         let once = NIOLockedValueBox(false)
         let enqueue: @Sendable () -> Void = {
             guard once.withLockedValue({ used in if used { return false }; used = true; return true }) else { return }
+            trace?.record(.sendQueued)
             socket.eventLoop.execute {
-                guard !socket.isClosed, lifetime.publishable, result.publishable else { didDecision?(result.requestID, false); return }
+                trace?.record(.socketLoopEntered)
+                // Preserve the original order, one evaluation and short circuit.
+                guard !socket.isClosed else { trace?.refuse(.socketClosed); didDecision?(result.requestID, false); return }
+                guard lifetime.publishable else { trace?.refuse(.swiftLifetime); didDecision?(result.requestID, false); return }
+                guard result.publishable else { trace?.refuse(.nativeResult); didDecision?(result.requestID, false); return }
                 let promise = socket.eventLoop.makePromise(of: Void.self)
-                promise.futureResult.whenComplete { [self] _ in withExtendedLifetime((self, result)) {} }
+                promise.futureResult.whenComplete { [self] outcome in
+                    if let trace {
+                        switch outcome { case .success: trace.sendSettled(succeeded: true); case .failure: trace.sendSettled(succeeded: false) }
+                    }
+                    withExtendedLifetime((self, result)) {}
+                }
                 socket.send(raw: result.data, opcode: .binary, promise: promise)
+                trace?.record(.handedOff) // Existing send-call return, not delivery/receipt.
                 didDecision?(result.requestID, true)
             }
         }

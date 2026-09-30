@@ -43,6 +43,8 @@ final class RelayIngressTestHooks: Sendable {
     // Passive, bounded facts from an actual completed native control. This
     // cannot authorize a result; sendReady still owns every publication fence.
     let didRecoveryReadyControl: (@Sendable (RelayReadyControlObservation) -> Void)?
+    // Default nil. The selected fixture returns a payload-free bounded token.
+    let beginRecoveryReadyTrace: (@Sendable (UUID, Int) -> RelayReadyControlTrace?)?
     // ACK-only fault decision after actual native acceptance and final send
     // fences. Absent by default; copied facts never grant publication.
     let shouldDropRecoveryACK: (@Sendable (RelayRecoveryACKObservation) -> Bool)?
@@ -59,6 +61,7 @@ final class RelayIngressTestHooks: Sendable {
          parkRecoveryReadySend: (@Sendable (String, @escaping @Sendable () -> Void) -> Bool)? = nil,
          didRecoveryReadyDecision: (@Sendable (String, Bool) -> Void)? = nil,
          didRecoveryReadyControl: (@Sendable (RelayReadyControlObservation) -> Void)? = nil,
+         beginRecoveryReadyTrace: (@Sendable (UUID, Int) -> RelayReadyControlTrace?)? = nil,
          shouldDropRecoveryACK: (@Sendable (RelayRecoveryACKObservation) -> Bool)? = nil,
          didObserveRecoveryConnection: (@Sendable (RelayRecoveryConnectionObservation) -> Void)? = nil,
          didObserveRecoverySetup: (@Sendable (RelaySetupAdmissionObservation) -> Void)? = nil,
@@ -72,6 +75,7 @@ final class RelayIngressTestHooks: Sendable {
         self.parkRecoveryReadySend = parkRecoveryReadySend
         self.didRecoveryReadyDecision = didRecoveryReadyDecision
         self.didRecoveryReadyControl = didRecoveryReadyControl
+        self.beginRecoveryReadyTrace = beginRecoveryReadyTrace
         self.shouldDropRecoveryACK = shouldDropRecoveryACK
         self.didObserveRecoveryConnection = didObserveRecoveryConnection
         self.didObserveRecoverySetup = didObserveRecoverySetup
@@ -1198,10 +1202,15 @@ extension Lattice {
                 @Sendable func processFrame(_ ws: WebSocket, _ ingressFrame: RelayIngressFrame, _ lattice: Lattice) async {
                     defer { withExtendedLifetime(ingressFrame) {} }
                     ackPath?.record(.processEntered, bytes: ingressFrame.byteCount)
+                    let readyTrace: RelayReadyControlTrace?
+                    if let recovery = state.recovery, let begin = ingressHooks?.beginRecoveryReadyTrace {
+                        readyTrace = begin(recovery.id, ingressFrame.byteCount)
+                    } else { readyTrace = nil }
                     // Authoritative revocation: a kicked connection stops
                     // affecting the channel immediately, even if its transport
                     // lingers because the peer never answered the close frame.
                     guard !state.revocation.isRevoked, !state.applyAdmissionStopped.isRevoked else {
+                        readyTrace?.refuse(.ingressRevoked)
                         ackPath?.record(.processRevoked)
                         return
                     }
@@ -1218,6 +1227,8 @@ extension Lattice {
                         // copies/queues input. Pre-auth ingress has its existing
                         // separate process-wide pre-copy account.
                         let recoveryCharge = try state.recovery?.reserveInput(bytes: ingressFrame.byteCount)
+                        readyTrace?.record(.inputReserved)
+                        readyTrace?.record(.admissionRequested)
                         try await applyAdmission.withAdmission(for: applyKey, frame: ingressFrame,
                                                                diagnostic: admissionDiagnostic, operation: { data in
                             processRelayApplyOnWorker(data: data, lattice: applyOwner.value, channel: channel,
@@ -1226,15 +1237,17 @@ extension Lattice {
                                                       admissionSpan: admissionSpan, recovery: state.recovery,
                                                       recoveryCharge: recoveryCharge,
                                                       readyObservation: ingressHooks?.didRecoveryReadyControl,
+                                                      readyTrace: readyTrace,
                                                       observeRecoveryACK: ingressHooks?.shouldDropRecoveryACK != nil,
                                                       connectionObservation: ingressHooks?.didObserveRecoveryConnection)
                         }, completion: { processed in
-                            if let recovery = state.recovery, !recovery.lifetime.publishable { return }
+                            readyTrace?.record(.completionEntered)
+                            if let recovery = state.recovery, !recovery.lifetime.publishable { readyTrace?.refuse(.completionLifetime); return }
                             let frame: RelayAppliedFrame
                             switch processed {
                             case .ready(let result):
                                 state.recovery?.sendReady(result, park: ingressHooks?.parkRecoveryReadySend,
-                                                          didDecision: ingressHooks?.didRecoveryReadyDecision)
+                                                          didDecision: ingressHooks?.didRecoveryReadyDecision, trace: readyTrace)
                                 return
                             case .recoveryRefused(let reason, let capacity):
                                 if let encoded = try? JSONEncoder().encode(ServerSentEvent.rejected(reason: reason)) {
@@ -1401,6 +1414,7 @@ extension Lattice {
                     } catch {
                         // This frame never entered native apply. Leave it unACKed
                         // and close so upload/bookkeeping can replay on reconnect.
+                        readyTrace?.record(.admissionFailed)
                         ackPath?.record(.applyAdmissionRejected, bytes: ingressFrame.byteCount)
                         // Later upstream frames have not been service-admitted.
                         // Leave them unACKed for replay, rather than applying

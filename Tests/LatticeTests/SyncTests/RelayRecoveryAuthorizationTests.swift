@@ -539,6 +539,7 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
     let app: Application
     let directory: URL
     let registrations: RegisteredRecoveryPeers
+    let readyDiagnostics: RelayReadyControlRecorder
     let writer: SyncRelayHandle
     let observer: SyncRelayHandle
     let lifecycle: SyncRelayHandle?
@@ -548,6 +549,8 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
          administrativeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
          lifecycleTarget: NIOLockedValueBox<SyncRecoveryMountConfiguration?>? = nil) async throws {
         self.registrations = registrations
+        let readyDiagnostics = RelayReadyControlRecorder()
+        self.readyDiagnostics = readyDiagnostics
         directory = FileManager.default.temporaryDirectory.appending(path: "relay-recovery-auth-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         if seedHidden {
@@ -569,7 +572,13 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
                 didRecoveryFanoutDecision: { allowed in
                     registrations.fanoutDecisions.withLockedValue { if $0.count < 16 { $0.append(allowed) } }
                 }, parkRecoveryReadySend: { id, send in registrations.readySendGate.park(id, send) },
-                didRecoveryReadyDecision: { id, allowed in registrations.readySendGate.decision(id, allowed) })
+                didRecoveryReadyDecision: { id, allowed in registrations.readySendGate.decision(id, allowed) },
+                beginRecoveryReadyTrace: { readyDiagnostics.begin(connectionID: $0, inputBytes: $1) })
+            RelayIngressTesting.install(hooks!, for: directory)
+        } else if registrations.mode == .normal || registrations.mode == .readyLarge {
+            // Passive only: normal and large controls retain their original send path.
+            hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in }, didFinishAsyncSetup: {},
+                beginRecoveryReadyTrace: { readyDiagnostics.begin(connectionID: $0, inputBytes: $1) })
             RelayIngressTesting.install(hooks!, for: directory)
         } else { hooks = nil }
         let hookDirectory = directory
@@ -624,6 +633,13 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
             }
         }
     }
+    func recordReadyDiagnostics(_ phase: String) {
+        let snapshot: [String: Any] = ["phase": phase, "observation": readyDiagnostics.snapshotJSON()]
+        // Formatting failures are diagnostic-only and never replace the original error.
+        if let bytes = try? JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys]),
+           let text = String(data: bytes, encoding: .utf8) { print("READY_CONTROL_OBSERVATION \(text)") }
+        else { print("READY_CONTROL_OBSERVATION formattingUnavailable") }
+    }
     func shutdown() async throws {
         registrations.gate.release()
         registrations.readySendGate.release()
@@ -646,8 +662,16 @@ private final class RecoveryAuthorizationHarness: @unchecked Sendable {
 private func withRecoveryAuthorizationHarness(_ mode: RegisteredRecoveryPeers.Mode = .normal, seedHidden: Bool = false,
     _ body: @escaping (RecoveryAuthorizationHarness) async throws -> Void) async throws {
     let harness = try await RecoveryAuthorizationHarness(.init(mode), seedHidden: seedHidden)
-    do { try await body(harness); try await harness.shutdown() }
-    catch { let original = error; do { try await harness.shutdown() } catch { Issue.record("authorization cleanup: \(error)") }; throw original }
+    do {
+        try await body(harness); try await harness.shutdown()
+        harness.recordReadyDiagnostics("afterCleanupReturned")
+    } catch {
+        let original = error
+        harness.recordReadyDiagnostics("beforeFailureCleanup")
+        do { try await harness.shutdown(); harness.recordReadyDiagnostics("afterFailureCleanupReturned") }
+        catch { Issue.record("authorization cleanup: \(error)") }
+        throw original
+    }
 }
 private func recoveryDonorFrame(_ value: Int) throws -> (Data, [String]) {
     let donor = try Lattice(isolation: nil, SimpleSyncObject.self, configuration: .init(storage: .memory()))

@@ -547,13 +547,21 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
                               admissionSpan: UInt64 = 0, recovery: RecoveryRelayConnection? = nil,
                               recoveryCharge: RecoveryRelayNativeCharge? = nil,
                               readyObservation: (@Sendable (RelayReadyControlObservation) -> Void)? = nil,
+                              readyTrace: RelayReadyControlTrace? = nil,
                               observeRecoveryACK: Bool = false,
                               connectionObservation: (@Sendable (RelayRecoveryConnectionObservation) -> Void)? = nil) -> RelayProcessedFrame {
     guard !revocation.isRevoked else { return .revoked }
     if let recovery {
         guard data.count <= 8_388_608, let recoveryCharge else { return .refused("recovery source input admission required") }
         do {
-            let result = try recovery.ready(data, charge: recoveryCharge)
+            let result: RecoveryRelayNativeReadyResult
+            if let readyTrace {
+                readyTrace.record(.readyCallEntered)
+                result = try recovery.ready(data, charge: recoveryCharge, diagnostics: { readyTrace.nativeReturned($0) })
+                readyTrace.record(.readyCallReturned)
+            } else {
+                result = try recovery.ready(data, charge: recoveryCharge)
+            }
             if result.status == 1 {
                 if let connectionObservation, let observed = recovery.connectionObservation(channel: channel.id) {
                     connectionObservation(observed)
@@ -566,7 +574,10 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
             }
             if result.status == 2 { return .revoked }
             if result.status != 0 { return .recoveryRefused(result.error ?? "recovery control outcome unavailable", recoveryCharge) }
-        } catch { return .recoveryRefused(String(describing: error), recoveryCharge) }
+        } catch {
+            readyTrace?.record(.readyCallThrew)
+            return .recoveryRefused(String(describing: error), recoveryCharge)
+        }
         if data.count > 1_048_576 { return .recoveryRefused("recovery ordinary frame byte bound", recoveryCharge) }
     }
     diagnostic?.record(.frameParseBegin, span: admissionSpan, bytes: data.count)
