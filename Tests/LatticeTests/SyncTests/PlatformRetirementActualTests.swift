@@ -81,24 +81,26 @@ private final class RetirementActualFixture: @unchecked Sendable {
         self.probe = probe
         originalReceipt = native.issued_receipt()
         let retirement = try #require(PlatformTransportRetirement(originalReceipt))
-        let observation: PlatformRetirementLifecycleObserver? = probe.map { probe in
-            { event in probe.observe(event) }
-        }
+        let observation: PlatformRetirementLifecycleObserver?
+        if let probe { observation = { event in probe.observe(event) } }
+        else { observation = nil }
         let client = RetirementActualClient(retirement: retirement, retirementObservation: observation)
         self.client = client
-        try #require(native.install(try #require(client.createCxxClient())))
+        let transport = try #require(client.createCxxClient())
+        try #require(native.install(transport))
         let receiver = RetirementActualRequestReceiver(client, deliveries: deliveries)
         let userdata = Unmanaged.passRetained(receiver).toOpaque()
         // The native holder consumes userdata even on refusal and keeps it
         // alive through actual once-only request delivery before dereferencing.
-        try #require(native.bind_request(userdata, { pointer, receipt in
+        let requestBound = native.bind_request(userdata, { pointer, receipt in
             guard let pointer, let receipt else { return }
             let receiver = Unmanaged<RetirementActualRequestReceiver>.fromOpaque(pointer).takeUnretainedValue()
             receiver.request(receipt.assumingMemoryBound(to: lattice.platform_retirement_receipt.self).pointee)
         }, { pointer in
             guard let pointer else { return }
             _ = Unmanaged<RetirementActualRequestReceiver>.fromOpaque(pointer).takeRetainedValue()
-        }))
+        })
+        try #require(requestBound)
     }
     func wait(_ predicate: () -> Bool) async throws {
         let until = ContinuousClock.now.advanced(by: .seconds(10))

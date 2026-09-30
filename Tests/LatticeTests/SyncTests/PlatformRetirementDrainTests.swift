@@ -103,12 +103,13 @@ import Testing
     @Test func completionCanReenterWithoutLeafLockOrSecondSignal() {
         let drain = PlatformRetirementDrain()
         let count = UnfairLock(initialState: 0)
-        #expect(drain.request { _ in
+        let accepted = drain.request { _ in
             #expect(drain.admit() == nil)
             #expect(!drain.request { _ in count.withLockUnchecked { $0 += 100 } })
             drain.stop { $0(99) }
             count.withLockUnchecked { $0 += 1 }
-        })
+        }
+        #expect(accepted)
         drain.stop { $0(0) }
         #expect(count.withLockUnchecked { $0 } == 1)
     }
@@ -143,7 +144,9 @@ import Testing
         var use: PlatformRetirementDrain.Use? = try #require(drain.admit())
         var pending: [PlatformRetirementDrain.Pending] = []
         for _ in 0..<PlatformRetirementDrain.maximumPending {
-            pending.append(try #require(drain.pending(try #require(use))))
+            let admitted = try #require(use)
+            let callback = try #require(drain.pending(admitted))
+            pending.append(callback)
         }
         #expect(drain.pending(try #require(use)) == nil)
         #expect(drain.admit() == nil)
