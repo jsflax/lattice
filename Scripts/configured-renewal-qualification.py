@@ -90,18 +90,64 @@ def unique_object(pairs):
     return result
 
 
+# Configured-only version-three diagnostic schema. Shared A/B/C ErrorFact and
+# every success scalar/oracle remain unchanged. No arbitrary strings are copied.
+BOOTSTRAP_UPGRADE_ERRORS = frozenset(['responseProtocolNotFound', 'invalidHTTPOrdering', 'upgraderDeniedUpgrade',
+    'writingToHandlerDuringUpgrade', 'writingToHandlerAfterUpgradeCompleted', 'writingToHandlerAfterUpgradeFailed',
+    'receivedResponseBeforeRequestSent', 'receivedResponseAfterUpgradeCompleted', 'unclassified'])
+BOOTSTRAP_TLS_ERRORS = frozenset(['noError', 'zeroReturn', 'wantRead', 'wantWrite', 'wantConnect', 'wantAccept',
+    'wantX509Lookup', 'wantCertificateVerify', 'syscallError', 'sslError', 'unknownError', 'invalidSNIName', 'failedToSetALPN'])
+BOOTSTRAP_CHANNEL_FIELDS = frozenset(['clientAttempt', 'clientUpgrade', 'channelEntered', 'channelAccepted',
+                                     'authorizationEntered', 'authorizationAccepted'])
+
+
+def bootstrap_diagnostic(value):
+    require(type(value) is dict and set(value) == {'bootstrap', 'error'})
+    observed, error = value['bootstrap'], value['error']
+    require(type(observed) is dict and set(observed) == {'currentIndex', 'channels', 'sourceSetupEntered', 'sourceSetupFinished', 'overflow'})
+    require(observed['currentIndex'] is None or (type(observed['currentIndex']) is int and observed['currentIndex'] in (0, 1)))
+    require(type(observed['channels']) is list and len(observed['channels']) == 2 and type(observed['overflow']) is bool)
+    for row in observed['channels']:
+        require(type(row) is dict and set(row) == BOOTSTRAP_CHANNEL_FIELDS)
+        require(all(type(v) is int and 0 <= v <= 32 for v in row.values()))
+    require(all(type(observed[k]) is int and 0 <= observed[k] <= 32 for k in ('sourceSetupEntered', 'sourceSetupFinished')))
+    require(type(error) is dict and set(error) == {'family', 'upgrade', 'wrapper', 'tls', 'stackCount',
+                                                  'stackTruncated', 'eofDuringHandshake', 'eofDuringAdditionalValidation'})
+    require(type(error['family']) is str and error['family'] in ('unclassified', 'nioHTTPUpgrade', 'nioTLS'))
+    require(type(error['stackCount']) is int and 0 <= error['stackCount'] <= 8)
+    require(all(type(error[k]) is bool for k in ('stackTruncated', 'eofDuringHandshake', 'eofDuringAdditionalValidation')))
+    if error['family'] == 'nioHTTPUpgrade':
+        require(type(error['upgrade']) is str and error['upgrade'] in BOOTSTRAP_UPGRADE_ERRORS)
+        require(error['wrapper'] is None and error['tls'] is None)
+    elif error['family'] == 'nioTLS':
+        require(error['upgrade'] is None and type(error['wrapper']) is str and error['wrapper'] in ('direct', 'handshakeFailed', 'shutdownFailed'))
+        require(type(error['tls']) is str and error['tls'] in BOOTSTRAP_TLS_ERRORS)
+    else:
+        require(error['upgrade'] is None and error['wrapper'] is None and error['tls'] is None)
+    if error['tls'] not in ('sslError', 'unknownError', 'invalidSNIName', 'failedToSetALPN'):
+        require(error['stackCount'] == 0 and not error['stackTruncated'] and not error['eofDuringHandshake'] and not error['eofDuringAdditionalValidation'])
+    require(not error['stackTruncated'] or error['stackCount'] == 8)
+    require(not (error['eofDuringHandshake'] or error['eofDuringAdditionalValidation']) or error['stackCount'] > 0)
+    # Reconstruct only exact allowlisted fields. These are observations, never
+    # replacement passing facts or proof of an unobserved protocol stage.
+    return {'bootstrap': {'currentIndex': observed['currentIndex'],
+        'channels': [{k: row[k] for k in sorted(BOOTSTRAP_CHANNEL_FIELDS)} for row in observed['channels']],
+        'sourceSetupEntered': observed['sourceSetupEntered'], 'sourceSetupFinished': observed['sourceSetupFinished'],
+        'overflow': observed['overflow']}, 'error': {k: error[k] for k in sorted(error)}}
+
+
 def case_receipt(root, name):
     require(name in CASE_NAMES)
     value = json.loads(read_file(root / ('receipts/' + name + '.json'), 4096), object_pairs_hook=unique_object)
-    require(type(value) is dict and set(value) == {'version', 'name', 'passed', 'phase', 'scalarFacts', 'failure'}
-            and type(value['version']) is int and value['version'] == 2
+    require(type(value) is dict and set(value) == {'version', 'name', 'passed', 'phase', 'scalarFacts', 'failure', 'diagnostic'}
+            and type(value['version']) is int and value['version'] == 3
             and value['name'] == name and type(value['passed']) is bool
             and type(value['phase']) is str and value['phase'] in PHASES)
     facts = value['scalarFacts']
     require(type(facts) is dict and set(facts) <= set(EXPECTED_FACTS[name]))
     require(all(type(v) is int and 0 <= v <= 1024 for v in facts.values()))
     if value['passed']:
-        require(value['phase'] == 'cleanup' and facts == EXPECTED_FACTS[name] and value['failure'] is None)
+        require(value['phase'] == 'cleanup' and facts == EXPECTED_FACTS[name] and value['failure'] is None and value['diagnostic'] is None)
     else:
         error = value['failure']
         require(type(error) is dict and set(error) == {'kind', 'domain', 'code', 'category'})
@@ -114,9 +160,11 @@ def case_receipt(root, name):
         require(category is None or (type(category) is str and category in COMMON.FAILURE_ERROR_CATEGORIES))
         if category is not None:
             require(error['kind'] == 'tls' and error['domain'] == 'nioSSL' and code is None)
+        diagnostic = bootstrap_diagnostic(value['diagnostic'])
     # Only reviewed scalar fields are exported, never raw errors or source data.
-    return {'version': 2, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
-            'scalarFacts': {k: facts[k] for k in sorted(facts)}, 'failure': value['failure']}
+    return {'version': 3, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
+            'scalarFacts': {k: facts[k] for k in sorted(facts)}, 'failure': value['failure'],
+            'diagnostic': None if value['passed'] else diagnostic}
 
 
 def publish_case_observation(root):

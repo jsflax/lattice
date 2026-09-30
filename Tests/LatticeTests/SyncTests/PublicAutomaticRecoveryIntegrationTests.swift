@@ -2190,16 +2190,18 @@ private func configuredRenewalSettled(_ trace: lattice.configured_recovery_quali
 @MainActor
 private func configuredRenewalReceipt(_ environment: ConnectedTLSEnvironment, wrongHost: Bool, passed: Bool,
                                       phase: ConfiguredRenewalFailure, facts: [String: Int],
-                                      failure: ConnectedFailureObservation.ErrorFact? = nil) throws {
+                                      failure: ConnectedFailureObservation.ErrorFact? = nil,
+                                      diagnostic: [String: Any]? = nil) throws {
     let name = wrongHost ? "publicConfiguredWrongHostFailureRetiresStockAttempt" : "publicConfiguredStockRenewalDeliversCommittedEdit"
     let path = environment.root.appendingPathComponent("receipts/" + name + ".json")
-    guard passed == (failure == nil), !FileManager.default.fileExists(atPath: path.path), facts.count <= 16,
+    guard passed == (failure == nil), passed == (diagnostic == nil), !FileManager.default.fileExists(atPath: path.path), facts.count <= 16,
           facts.keys.allSatisfy({ $0.utf8.count <= 64 }), facts.values.allSatisfy({ $0 >= 0 && $0 <= 1024 })
     else { throw ConfiguredRenewalFailure.receipt }
     // Reuse the finite copied-error schema; never serialize error descriptions,
     // dynamic type names, paths, bearer strings, or associated payloads.
-    let data = try JSONSerialization.data(withJSONObject: ["version": 2, "name": name, "passed": passed,
-        "phase": phase.rawValue, "scalarFacts": facts, "failure": failure.map { $0.json as Any } ?? NSNull()], options: [.sortedKeys])
+    let data = try JSONSerialization.data(withJSONObject: ["version": 3, "name": name, "passed": passed,
+        "phase": phase.rawValue, "scalarFacts": facts, "failure": failure.map { $0.json as Any } ?? NSNull(),
+        "diagnostic": diagnostic.map { $0 as Any } ?? NSNull()], options: [.sortedKeys])
     guard data.count <= 4096 else { throw ConfiguredRenewalFailure.receipt }
     try data.write(to: path, options: .atomic)
 }
@@ -2232,8 +2234,10 @@ struct PublicConfiguredStockRenewalTests {
         }
         let registrations = ConnectedRegistrations(), probe = ConfiguredRenewalProbe(registrations)
         let app = try await connectedApplication(environment.certificate, environment.key)
+        let bootstrapObservation = ConfiguredBootstrapObservation()
         var wrongApp: Application?
-        let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in }, didFinishAsyncSetup: {},
+        let hooks = RelayIngressTestHooks(beforeAsyncSetup: { bootstrapObservation.setup(entered: true) }, didBufferFrame: { _ in },
+            didFinishAsyncSetup: { bootstrapObservation.setup(entered: false) },
             didRecoveryReadyControl: { probe.ready($0) }, shouldDropRecoveryACK: { probe.acknowledge($0) },
             didObserveRecoveryConnection: { probe.observe($0) })
         RelayIngressTesting.install(hooks, for: storage)
@@ -2268,10 +2272,16 @@ struct PublicConfiguredStockRenewalTests {
                 mounts.append(try Lattice.configureSyncRelay(on: app.routes, path: [.constant(index == 0 ? "a" : "b")],
                     for: [ConnectedRecoverySharedRow.self, ConnectedRecoveryLocalRow.self], storageURL: storage,
                     writePolicy: .init(allowedOperations: ["ConnectedRecoverySharedRow": [.insert, .update, .delete]], unlistedTables: .deny),
-                    recovery: registrations.policy(index), channelExtractor: { try registrations.channel($0, index: index) },
+                    recovery: registrations.policy(index), channelExtractor: { request in
+                        bootstrapObservation.record(.channelEntered, index: index)
+                        let channel = try registrations.channel(request, index: index)
+                        bootstrapObservation.record(.channelAccepted, index: index); return channel
+                    },
                     recoveryAuthorization: { request, context in
+                        bootstrapObservation.record(.authorizationEntered, index: index)
                         let result = try registrations.authorize(request, context, index: index)
-                        probe.authorized(result.peer); return result
+                        probe.authorized(result.peer)
+                        bootstrapObservation.record(.authorizationAccepted, index: index); return result
                     }))
             }
             phase = .sourceStartup
@@ -2286,7 +2296,10 @@ struct PublicConfiguredStockRenewalTests {
                 let query = "?recovery-v=1&recovery-replica=\(identity.replicaID)&recovery-receiver=\(identity.receiverIncarnation)&recovery-channel=\(identity.channelIncarnation)"
                 var headers = HTTPHeaders(); headers.add(name: "Authorization", value: "Bearer " + registrations.bootstrap.token)
                 phase = .bootstrapConnect
-                do { try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get() }
+                bootstrapObservation.begin(index)
+                do { try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { socket in
+                    peer.attach(socket); bootstrapObservation.record(.clientUpgrade, index: index)
+                }.get() }
                 catch { peer.connectFailed(); throw error }
                 phase = .bootstrapMetadata
                 try await connectedWait("configured real source metadata", until: deadline) {
@@ -2400,7 +2413,8 @@ struct PublicConfiguredStockRenewalTests {
             try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: true, phase: phase, facts: facts)
         } catch {
             let original = error
-            do { try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: false, phase: phase, facts: facts, failure: connectedFailureFact(original)) }
+            do { try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: false, phase: phase, facts: facts, failure: connectedFailureFact(original),
+                diagnostic: ["bootstrap": bootstrapObservation.json, "error": ConfiguredBootstrapErrorDetail(original).json]) }
             catch { Issue.record("Configured renewal bounded failure receipt unavailable") }
             do { try await cleanup() } catch { Issue.record("Configured renewal actual cleanup failed") }
             throw original
