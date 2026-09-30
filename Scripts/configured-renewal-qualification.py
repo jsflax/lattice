@@ -197,6 +197,129 @@ def case_outcomes(root):
     return result
 
 
+def build_diagnostic_code(message):
+    """Return only a fixed compiler category; never export diagnostic text."""
+    patterns = (
+        ('missing-scope-name', r"cannot find .+ in scope$"),
+        ('missing-type', r"(?:cannot find type .+ in scope|unknown type name .+)$"),
+        ('missing-member', r"(?:value of type .+ has no member .+|type .+ has no member .+|no member named .+)$"),
+        ('undeclared-identifier', r"use of undeclared identifier .+$"),
+        ('generic-inference', r"generic parameter .+ could not be inferred$"),
+        ('type-conversion', r"(?:cannot convert .+|no viable conversion .+|incompatible .+)$"),
+        ('call-overload', r"(?:no matching .+|ambiguous use .+|call to .+ is ambiguous|candidate .+)$"),
+        ('access-control', r".+ is (?:inaccessible|a private member|a protected member).*$"),
+        ('missing-import', r"(?:no such module .+|could not build .+|.+ file not found)$"),
+        ('concurrency', r".*(?:actor-isolated|Sendable|sendable|data races|async context|concurrent).*$"),
+        ('argument-shape', r"(?:missing argument .+|extra argument .+|extraneous argument .+|incorrect argument label .+)$"),
+        ('declaration-shape', r"(?:expected .+|invalid redeclaration .+|redefinition .+|conflicting .+)$"),
+        ('link-failure', r"(?:link command failed .+|undefined reference .+|Undefined symbols .+)$"),
+        ('compiler-process-failed', r"(?:compile command failed .+|emit-module command failed .+|fatalError)$"),
+    )
+    for code, pattern in patterns:
+        if re.fullmatch(pattern, message):
+            return code
+    return 'unclassified'
+
+
+def build_diagnostics(root):
+    """Bounded locations/categories from a proved closed first build log.
+
+    This is observation only, including on a failed build. It exports no raw
+    message, source line, command, path, identifier or environment value. Exact
+    source-relative paths come only from authenticated source-inputs, with their
+    source hashes. Unknown diagnostics retain location numbers and line hashes.
+    No diagnostic receipt can imply successful compilation or passing tests.
+    """
+    result = {'version': 1, 'evidenceOnly': True, 'observation': 'not-started',
+              'processExitCode': None, 'processRetired': False, 'diagnostics': [],
+              'diagnosticCount': 0, 'omittedDiagnosticCount': 0,
+              'oversizedLineCount': 0, 'retainedUnmappedLocationCount': 0,
+              'retainedErrorCount': 0, 'retainedNoteCount': 0,
+              'categoryCounts': {}, 'compileSuccessInferred': False}
+    records = list((root / 'private/commands').glob('*-build-tests.json'))
+    logs = list((root / 'private/commands').glob('*-build-tests.log'))
+    if len(records) != 1 or len(logs) != 1 or records[0].stem != logs[0].stem:
+        result['observation'] = 'unobserved-process-proof' if records or logs else 'not-started'
+        return result
+    record = read_json(records[0], 1024 * 1024)
+    require(type(record['started']) is bool and (record['exitCode'] is None or type(record['exitCode']) is int))
+    result['processExitCode'] = record['exitCode']
+    result['processRetired'] = (record['cleanup']['groupGone'] is True and record['cleanup']['leaderReaped'] is True)
+    if not result['processRetired']:
+        result['observation'] = 'unobserved-process-proof'
+        return result
+    if not record['started']:
+        result['observation'] = 'command-not-started'
+        return result
+    log = logs[0]
+    if log.is_symlink() or not log.is_file() or log.stat().st_size > 128 * 1024 * 1024:
+        result['observation'] = 'unobserved-log-bound'
+        return result
+    inputs = read_json(root / 'public-evidence/source-inputs.json', 4 * 1024 * 1024)
+    sources = {}
+    for key, component, directory in (('trackedSDKFiles', 'sdk', 'lattice'), ('trackedCoreFiles', 'core', 'LatticeCore')):
+        files = inputs[key]
+        require(type(files) is dict and len(files) <= 8192)
+        for name, identity in files.items():
+            require(type(name) is str and len(name) <= 1024 and not name.startswith('/')
+                    and '..' not in PurePosixPath(name).parts and str(PurePosixPath(name)) == name
+                    and re.fullmatch(r'[A-Za-z0-9_./+@ -]+', name))
+            require(type(identity) is dict and type(identity['bytes']) is int and identity['bytes'] >= 0
+                    and HEX256.fullmatch(identity['sha256']))
+            sources[str(root / directory / name)] = {'component': component, 'path': name,
+                                                     'sourceSHA256': identity['sha256']}
+    total, number, digest = 0, 0, hashlib.sha256()
+    with log.open('rb') as stream:
+        while True:
+            raw = stream.readline(16385)
+            if not raw:
+                break
+            number += 1
+            offset = total
+            total += len(raw)
+            digest.update(raw)
+            require(total <= 128 * 1024 * 1024)
+            if len(raw) > 16384:
+                result['oversizedLineCount'] += 1
+                while raw and not raw.endswith(b'\n'):
+                    raw = stream.readline(16385)
+                    total += len(raw)
+                    digest.update(raw)
+                    require(total <= 128 * 1024 * 1024)
+                continue
+            text = re.sub(r'\x1b\[[0-9;]*m', '', raw.decode('utf-8', errors='replace')).rstrip('\r\n')
+            location = re.fullmatch(r'(.+):([1-9][0-9]{0,6}):([1-9][0-9]{0,5}): (fatal error|error|note): (.*)', text)
+            driver = re.fullmatch(r'(?:clang(?:\+\+)?|swift(?:-frontend)?|ld)?(?:: )?(fatal error|error): (.*)', text)
+            if not location and not driver:
+                continue
+            severity = location.group(4) if location else driver.group(1)
+            message = location.group(5) if location else driver.group(2)
+            code = build_diagnostic_code(message)
+            result['diagnosticCount'] += 1
+            result['categoryCounts'][code] = result['categoryCounts'].get(code, 0) + 1
+            count_key = 'retainedNoteCount' if severity == 'note' else 'retainedErrorCount'
+            if result[count_key] >= (64 if severity == 'note' else 192):
+                result['omittedDiagnosticCount'] += 1
+                continue
+            result[count_key] += 1
+            entry = {'logLine': number, 'byteOffset': offset, 'rawLineBytes': len(raw),
+                     'rawLineSHA256': hashlib.sha256(raw).hexdigest(), 'severity': severity, 'category': code}
+            if location:
+                entry.update(line=int(location.group(2)), column=int(location.group(3)))
+                source = sources.get(location.group(1))
+                if source is None:
+                    result['retainedUnmappedLocationCount'] += 1
+                    entry['source'] = 'unmapped'
+                else:
+                    entry['source'] = source
+            else:
+                entry['source'] = 'driver'
+            result['diagnostics'].append(entry)
+    require(total == record['logBytes'] and digest.hexdigest() == record['logSHA256'])
+    result.update(observation='closed-first-log', buildLogBytes=total, buildLogSHA256=digest.hexdigest())
+    return result
+
+
 def cleanup_fixtures(root):
     """Delete only this test's private UUID directories after process retirement.
 
@@ -472,6 +595,12 @@ def main():
             except BaseException as error:
                 result['caseEvidenceErrorClass'] = type(error).__name__
                 result['success'] = False
+        if not (root / 'public-evidence/build-diagnostics.json').exists():
+            try:
+                write_json(root / 'public-evidence/build-diagnostics.json', build_diagnostics(root))
+            except BaseException as error:
+                result['buildEvidenceErrorClass'] = type(error).__name__
+                result['success'] = False
         try:
             publish_case_observation(root)
         except BaseException as error:
@@ -531,6 +660,11 @@ def main():
                     write_json(root / 'public-evidence/case-outcomes.json', case_outcomes(root))
                 except BaseException as error:
                     result['caseEvidenceErrorClass'] = type(error).__name__
+                    result['success'] = False
+                try:
+                    write_json(root / 'public-evidence/build-diagnostics.json', build_diagnostics(root))
+                except BaseException as error:
+                    result['buildEvidenceErrorClass'] = type(error).__name__
                     result['success'] = False
                 try:
                     write_json(root / 'public-evidence/commands.json', public_commands(logs))
