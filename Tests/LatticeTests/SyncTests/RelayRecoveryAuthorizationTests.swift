@@ -366,8 +366,126 @@ private struct RecoveryReadyReplyWaiterTests {
         #expect(peer.facts.withLockedValue { $0.readyObservations["cancelled"]?.waitReturnedAt } == nil)
     }
 }
+// One ordinary wait owns at most the initial sample and one socket publication
+// sample. Socket onBinary/onClose publication is serial on its own event loop;
+// explicit exhaustion fails the fixture instead of dropping an admitted sample.
+// Predicates and continuation delivery always run outside both leaf locks.
+private final class RecoveryOrdinaryFactWait: @unchecked Sendable {
+    enum Outcome: Sendable, Equatable { case matched, timedOut, cancelled, overlap, sampleCapacity }
+    fileprivate struct Delivery {
+        let continuation: CheckedContinuation<Outcome, Never>
+        let outcome: Outcome
+        func perform() { continuation.resume(returning: outcome) }
+    }
+    struct Sample {
+        fileprivate let owner: RecoveryOrdinaryFactWait
+        fileprivate let facts: RecoveryAuthorizationPeer.OrdinaryFacts
+        func evaluate() { owner.evaluated(owner.predicate(facts)) }
+    }
+    struct Effect {
+        fileprivate let sample: Sample?
+        fileprivate let delivery: Delivery?
+        func perform() { sample?.evaluate(); delivery?.perform() }
+    }
+    private struct State {
+        var continuation: CheckedContinuation<Outcome, Never>?
+        var continuationInstalled = false
+        var pendingSamples = 0
+        var timelyMatch = false
+        var deadlineObserved = false
+        var cancelled = false
+        var overlap = false
+        var sampleCapacity = false
+        var outcome: Outcome?
+        var delivered = false
+        mutating func select() -> Delivery? {
+            if outcome == nil, pendingSamples == 0 {
+                if cancelled { outcome = .cancelled }
+                else if overlap { outcome = .overlap }
+                else if sampleCapacity { outcome = .sampleCapacity }
+                else if timelyMatch { outcome = .matched }
+                else if deadlineObserved { outcome = .timedOut }
+            }
+            guard !delivered, let outcome, let continuation else { return nil }
+            // Local delivery custody outlives removing the leaf's reference.
+            self.continuation = nil; delivered = true
+            return Delivery(continuation: continuation, outcome: outcome)
+        }
+    }
+    let deadline: ContinuousClock.Instant
+    private let predicate: @Sendable (RecoveryAuthorizationPeer.OrdinaryFacts) -> Bool
+    private let state = NIOLockedValueBox(State())
+    init(deadline: ContinuousClock.Instant,
+         predicate: @escaping @Sendable (RecoveryAuthorizationPeer.OrdinaryFacts) -> Bool) {
+        self.deadline = deadline; self.predicate = predicate
+    }
+    func install(_ continuation: CheckedContinuation<Outcome, Never>) {
+        let delivery = state.withLockedValue { state in
+            precondition(!state.continuationInstalled)
+            state.continuationInstalled = true; state.continuation = continuation
+            return state.select()
+        }
+        delivery?.perform()
+    }
+    // Called under the peer facts lock, immediately after initial sampling or
+    // actual ordinary fact publication. No predicate is called here.
+    func sample(_ facts: RecoveryAuthorizationPeer.OrdinaryFacts,
+                at publishedAt: ContinuousClock.Instant) -> Effect {
+        state.withLockedValue { state in
+            guard state.outcome == nil, !state.cancelled, !state.overlap, !state.sampleCapacity else {
+                return Effect(sample: nil, delivery: state.select())
+            }
+            guard publishedAt < deadline else {
+                state.deadlineObserved = true
+                return Effect(sample: nil, delivery: state.select())
+            }
+            guard state.pendingSamples < 2 else {
+                state.sampleCapacity = true
+                return Effect(sample: nil, delivery: state.select())
+            }
+            state.pendingSamples += 1
+            return Effect(sample: Sample(owner: self, facts: facts), delivery: nil)
+        }
+    }
+    private func evaluated(_ matched: Bool) {
+        let delivery = state.withLockedValue { state in
+            precondition(state.pendingSamples > 0)
+            state.pendingSamples -= 1
+            state.timelyMatch = state.timelyMatch || matched
+            return state.select()
+        }
+        delivery?.perform()
+    }
+    func deadlineReached(at now: ContinuousClock.Instant) {
+        guard now >= deadline else { return }
+        let delivery = state.withLockedValue { state in
+            state.deadlineObserved = true
+            return state.select()
+        }
+        delivery?.perform()
+    }
+    func cancel() {
+        let delivery = state.withLockedValue { state in state.cancelled = true; return state.select() }
+        delivery?.perform()
+    }
+    func refuseOverlap() {
+        let delivery = state.withLockedValue { state in state.overlap = true; return state.select() }
+        delivery?.perform()
+    }
+}
+
 private final class RecoveryAuthorizationPeer: @unchecked Sendable {
+    // Canonical frames and READY reply entries are deliberately unavailable to
+    // ordinary predicates: those values are consumed by different selectors.
+    struct OrdinaryFacts: Sendable {
+        let kinds: [String], acks: [String], audits: [String]
+        let closed: Bool
+        let firstRejection: String?
+    }
+
     struct Facts { var kinds: [String] = []; var acks: [String] = []; var audits: [String] = []; var closed = false; var ready = RecoveryReadyReplyStore(); var canonical: [Data] = []; var firstRejection: String?
+        var ordinaryWait: RecoveryOrdinaryFactWait?
+        var ordinary: OrdinaryFacts { .init(kinds: kinds, acks: acks, audits: audits, closed: closed, firstRejection: firstRejection) }
         var readyObservations: [String: ReadyPeerObservation] = [:]
         var observationsOmitted = false
         mutating func observe(_ id: String, _ update: (inout ReadyPeerObservation) -> Void) {
@@ -404,7 +522,7 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
             // Timestamp the parsed callback before taking the facts lock; this
             // is not a transport/kernel arrival timestamp.
             let readyReceivedAt = root["kind"] as? String == "recoveryReady" ? DispatchTime.now().uptimeNanoseconds : nil
-            facts.withLockedValue { value in
+            publishOrdinaryFacts { value in
                 value.kinds.append(root["kind"] as? String ?? "?")
                 if root["kind"] as? String == "rejected", value.firstRejection == nil,
                    let reason = root["rejected"] as? String {
@@ -434,9 +552,68 @@ private final class RecoveryAuthorizationPeer: @unchecked Sendable {
                 }
             }
         }
-        socket.onClose.whenComplete { [weak self] _ in self?.facts.withLockedValue { $0.closed = true } }
+        socket.onClose.whenComplete { [weak self] _ in self?.publishOrdinaryFacts { $0.closed = true } }
     }
-    func wait(_ phase: String = "peer state", diagnosticRequestID: String? = nil, _ predicate: @escaping @Sendable (Facts) -> Bool) async throws {
+    fileprivate func publishOrdinaryFacts(_ update: (inout Facts) -> Void) {
+        let effect = facts.withLockedValue { value -> RecoveryOrdinaryFactWait.Effect? in
+            update(&value)
+            // The stamp belongs to these actual stored facts. A callback that
+            // acquires this lock after the deadline cannot backdate its sample.
+            return value.ordinaryWait?.sample(value.ordinary, at: ContinuousClock.now)
+        }
+        effect?.perform()
+    }
+    func wait(_ phase: String = "peer state",
+              afterRegistration: (@Sendable () -> Void)? = nil,
+              _ predicate: @escaping @Sendable (OrdinaryFacts) -> Bool) async throws {
+        let startedAt = ContinuousClock.now
+        let deadline = startedAt.advanced(by: .seconds(10))
+        let waiter = RecoveryOrdinaryFactWait(deadline: deadline, predicate: predicate)
+        let timer = Task {
+            do { try await ContinuousClock().sleep(until: deadline) }
+            catch { return } // Timer cancellation never evaluates the predicate.
+            waiter.deadlineReached(at: ContinuousClock.now)
+        }
+        let outcome = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                waiter.install(continuation)
+                let registration = facts.withLockedValue { value -> (Bool, RecoveryOrdinaryFactWait.Effect?) in
+                    guard value.ordinaryWait == nil else { return (false, nil) }
+                    value.ordinaryWait = waiter
+                    return (true, waiter.sample(value.ordinary, at: ContinuousClock.now))
+                }
+                guard registration.0 else { waiter.refuseOverlap(); return }
+                afterRegistration?() // Test rendezvous is outside both locks.
+                registration.1?.perform()
+            }
+        } onCancel: { waiter.cancel() }
+        // Retain the displaced owner before clearing the facts leaf; arbitrary
+        // predicate captures cannot be destroyed while that leaf is locked.
+        let detached = facts.withLockedValue { value -> RecoveryOrdinaryFactWait? in
+            guard value.ordinaryWait === waiter else { return nil }
+            let detached = value.ordinaryWait
+            value.ordinaryWait = nil
+            return detached
+        }
+        timer.cancel()
+        await timer.value
+        withExtendedLifetime(detached) {}
+        // Cancellation at the consumer's selection also defeats an earlier
+        // matched resume whose task did not get scheduled until cancellation.
+        try Task.checkCancellation()
+        switch outcome {
+        case .matched: return
+        case .cancelled: throw CancellationError()
+        case .overlap, .sampleCapacity:
+            print("ORDINARY_PEER_WAIT_REFUSED phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) reason=\(outcome)")
+            throw RecoveryAuthorizationFixtureError.rejected
+        case .timedOut:
+            let elapsed = startedAt.duration(to: ContinuousClock.now)
+            print("ORDINARY_PEER_WAIT_TIMEOUT phase=\(String(reflecting: readyDiagnosticText(phase, limit: 128))) monotonicBudgetSeconds=10 elapsed=\(elapsed) state=\(diagnosticState)")
+            throw RecoveryAuthorizationFixtureError.timeout("\(phase.prefix(128)); \(diagnosticState); cancelled=\(Task.isCancelled)")
+        }
+    }
+    func waitForCurrentFrame(_ phase: String = "peer state", diagnosticRequestID: String? = nil, _ predicate: @escaping @Sendable (Facts) -> Bool) async throws {
         let startedAt = DispatchTime.now().uptimeNanoseconds
         let deadline = Date().addingTimeInterval(10)
         // Bracket the unchanged Date deadline with monotonic samples. These
@@ -882,7 +1059,7 @@ private extension RecoveryAuthorizationPeer {
         observeReadySend(command)
         try await actual.send(Array(try command.data()))
         observeReadySend(command, completed: true)
-        try await wait("READY \(command.operation) frame index=\(command.index ?? "missing")", diagnosticRequestID: command.requestID) { !$0.canonical.isEmpty }
+        try await waitForCurrentFrame("READY \(command.operation) frame index=\(command.index ?? "missing")", diagnosticRequestID: command.requestID) { !$0.canonical.isEmpty }
         return facts.withLockedValue { $0.canonical.removeFirst() }
     }
 }
@@ -2282,5 +2459,141 @@ private struct AutomaticSourceSetupTests {
         catch { if first == nil { first = error } else { Issue.record("final setup callback cleanup: \(error)") } }
         #expect(!completionHold.timedOut.withLockedValue { $0 })
         if let first { throw first }
+    }
+}
+
+
+private final class OrdinaryWaitCaptureSentinel: @unchecked Sendable {
+    private let released: @Sendable () -> Void
+    init(_ released: @escaping @Sendable () -> Void) { self.released = released }
+    deinit { released() }
+}
+@Suite("Ordinary peer fact publication waiter")
+private struct RecoveryOrdinaryFactWaiterTests {
+    private func facts(acks: [String] = []) -> RecoveryAuthorizationPeer.OrdinaryFacts {
+        .init(kinds: [], acks: acks, audits: [], closed: false, firstRejection: nil)
+    }
+    @Test func timelyPublicationAlreadyBeingEvaluatedSurvivesDelayedDeadlineDelivery() async {
+        let start = ContinuousClock.now, deadline = start.advanced(by: .seconds(10))
+        let calls = NIOLockedValueBox(0)
+        let waiter = RecoveryOrdinaryFactWait(deadline: deadline) { value in
+            calls.withLockedValue { $0 += 1 }
+            return value.acks == ["timely"]
+        }
+        let result = await withCheckedContinuation { continuation in
+            waiter.install(continuation)
+            let actualPublication = waiter.sample(facts(acks: ["timely"]), at: start.advanced(by: .seconds(9)))
+            waiter.deadlineReached(at: deadline.advanced(by: .seconds(3)))
+            actualPublication.perform()
+        }
+        #expect(result == .matched); #expect(calls.withLockedValue { $0 } == 1)
+    }
+    @Test(arguments: [0, 1])
+    func equalOrLatePublicationCannotMakeDelayedTimerSuccessful(offset: Int) async {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        let calls = NIOLockedValueBox(0)
+        let waiter = RecoveryOrdinaryFactWait(deadline: deadline) { _ in calls.withLockedValue { $0 += 1 }; return true }
+        let result = await withCheckedContinuation { continuation in
+            waiter.install(continuation)
+            waiter.sample(facts(acks: ["late"]), at: deadline.advanced(by: .seconds(offset))).perform()
+            waiter.deadlineReached(at: deadline.advanced(by: .seconds(5)))
+        }
+        #expect(result == .timedOut); #expect(calls.withLockedValue { $0 } == 0)
+    }
+    @Test func falseTimelySampleDoesNotGetReevaluatedWhenDeadlineWakes() async {
+        let start = ContinuousClock.now, deadline = start.advanced(by: .seconds(10))
+        let calls = NIOLockedValueBox(0)
+        let waiter = RecoveryOrdinaryFactWait(deadline: deadline) { value in
+            calls.withLockedValue { $0 += 1 }; return !value.acks.isEmpty
+        }
+        let result = await withCheckedContinuation { continuation in
+            waiter.install(continuation)
+            let before = waiter.sample(facts(), at: start)
+            waiter.deadlineReached(at: deadline)
+            before.perform()
+            waiter.sample(facts(acks: ["too-late"]), at: deadline.advanced(by: .seconds(1))).perform()
+        }
+        #expect(result == .timedOut); #expect(calls.withLockedValue { $0 } == 1)
+    }
+    @Test func cancellationWinsWhileTimelyPredicateWorkRemainsAdmitted() async {
+        let start = ContinuousClock.now
+        let waiter = RecoveryOrdinaryFactWait(deadline: start.advanced(by: .seconds(10))) { _ in true }
+        let result = await withCheckedContinuation { continuation in
+            waiter.install(continuation)
+            let held = waiter.sample(facts(acks: ["timely"]), at: start)
+            waiter.cancel()
+            held.perform()
+        }
+        #expect(result == .cancelled)
+    }
+    @Test func cancellationBeforeContinuationInstallationCannotEvaluateOrHang() async {
+        let start = ContinuousClock.now, calls = NIOLockedValueBox(0)
+        let waiter = RecoveryOrdinaryFactWait(deadline: start.advanced(by: .seconds(10))) { _ in calls.withLockedValue { $0 += 1 }; return true }
+        waiter.cancel()
+        let result = await withCheckedContinuation { continuation in
+            waiter.install(continuation)
+            waiter.sample(facts(), at: start).perform()
+        }
+        #expect(result == .cancelled); #expect(calls.withLockedValue { $0 } == 0)
+    }
+    @Test func sampleCapacityFailsExplicitlyWithoutDroppingAlreadyAdmittedWork() async {
+        let start = ContinuousClock.now, calls = NIOLockedValueBox(0)
+        let waiter = RecoveryOrdinaryFactWait(deadline: start.advanced(by: .seconds(10))) { _ in calls.withLockedValue { $0 += 1 }; return true }
+        let result = await withCheckedContinuation { continuation in
+            waiter.install(continuation)
+            let initial = waiter.sample(facts(), at: start)
+            let publication = waiter.sample(facts(acks: ["first"]), at: start)
+            waiter.sample(facts(acks: ["overflow"]), at: start).perform()
+            initial.perform(); publication.perform()
+        }
+        #expect(result == .sampleCapacity); #expect(calls.withLockedValue { $0 } == 2)
+    }
+    @Test func initialSamplePredicateAndCapturedOwnerCanReenterFactsOutsideLocks() async throws {
+        let peer = RecoveryAuthorizationPeer()
+        func perform() async throws {
+            let sentinel = OrdinaryWaitCaptureSentinel {
+                peer.facts.withLockedValue { $0.kinds.append("capture-released") }
+            }
+            try await peer.wait { [sentinel] value in
+                withExtendedLifetime(sentinel) {}
+                _ = peer.facts.withLockedValue { $0.closed }
+                return value.acks.isEmpty
+            }
+        }
+        try await perform()
+        #expect(peer.facts.withLockedValue { $0.ordinaryWait == nil })
+        #expect(peer.facts.withLockedValue { $0.kinds == ["capture-released"] })
+    }
+    @Test(.timeLimit(.minutes(1)))
+    func actualPeerPublicationWakesItsOneRegistrationAndLeavesNoWaiter() async throws {
+        let peer = RecoveryAuthorizationPeer(), registered = RecoveryAuthorizationGate()
+        let task = Task {
+            try await peer.wait(afterRegistration: { registered.release() }) { $0.acks == ["actual-publication"] }
+        }
+        await registered.wait()
+        peer.publishOrdinaryFacts { $0.acks.append("actual-publication") }
+        do { try await task.value }
+        catch { task.cancel(); _ = await task.result; throw error }
+        #expect(peer.facts.withLockedValue { $0.ordinaryWait == nil })
+        #expect(peer.facts.withLockedValue { $0.acks == ["actual-publication"] })
+    }
+    @Test(.timeLimit(.minutes(1)))
+    func secondOrdinaryRegistrationRefusesWithoutDisplacingTheFirst() async throws {
+        let peer = RecoveryAuthorizationPeer(), registered = RecoveryAuthorizationGate()
+        let first = Task { try await peer.wait(afterRegistration: { registered.release() }) { $0.closed } }
+        await registered.wait()
+        do {
+            try await peer.wait { $0.closed }
+            Issue.record("An overlapping ordinary wait was accepted")
+        } catch RecoveryAuthorizationFixtureError.rejected {
+            // The second registration cannot replace or finish the first.
+        } catch {
+            first.cancel(); _ = await first.result; throw error
+        }
+        #expect(peer.facts.withLockedValue { $0.ordinaryWait != nil })
+        peer.publishOrdinaryFacts { $0.closed = true }
+        do { try await first.value }
+        catch { first.cancel(); _ = await first.result; throw error }
+        #expect(peer.facts.withLockedValue { $0.ordinaryWait == nil })
     }
 }
