@@ -93,7 +93,7 @@ private func connectedApplication(_ certificate: URL, _ key: URL, observation: C
     // channels are closed and its threads joined by fixture cleanup.
     let app = try await Application.make(environment, .createNew)
     observation?.phase(.applicationTLS)
-    var tls = TLSConfiguration.makeServerConfiguration(certificateChain: [.file(certificate.path)], privateKey: .file(key.path))
+    var tls = TLSConfiguration.makeServerConfiguration(certificateChain: [.file(certificate.path)], privateKey: .privateKey(try NIOSSLPrivateKey(file: key.path, format: .pem)))
     tls.minimumTLSVersion = .tlsv12
     app.http.server.configuration.hostname = "127.0.0.1"
     app.http.server.configuration.port = 0
