@@ -656,6 +656,8 @@ public struct Lattice {
     }
 
     public struct Configuration: Sendable, Equatable, Hashable {
+        @_spi(Installation) public var ordinaryInstallationContext: OrdinaryInstallationContext?
+
         /// Where the database lives (1.0 item E2, replaces `isStoredInMemoryOnly`).
         public enum Storage: Sendable, Equatable, Hashable {
             /// On-disk database at the given file URL.
@@ -843,6 +845,7 @@ public struct Lattice {
 
         // MARK: Equatable / Hashable (migration excluded — closures aren't comparable)
         public static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.ordinaryInstallationContext === rhs.ordinaryInstallationContext &&
             lhs.storage == rhs.storage &&
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
@@ -857,6 +860,7 @@ public struct Lattice {
         }
 
         public func hash(into hasher: inout Hasher) {
+            hasher.combine(ordinaryInstallationContext.map { ObjectIdentifier($0) })
             hasher.combine(storage)
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
@@ -918,6 +922,7 @@ public struct Lattice {
                 self.wssEndpoint.map { std.string($0.absoluteString) } ?? std.string(),
                 authorizationToken.map { std.string($0) } ?? std.string(),
                 currentScheduler.scheduler)
+            if let context = ordinaryInstallationContext { config.set_ordinary_open_context(context.native) }
             config.set_recovery_source_expectation(recoverySourceExpectation.map { std.string($0.nativePolicy) } ?? std.string())
             config.read_only = isReadOnly
             config.busy_timeout_ms = Int32(busyTimeoutMs)

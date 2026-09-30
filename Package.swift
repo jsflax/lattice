@@ -7,6 +7,7 @@ let package = Package(
     name: "Lattice",
     platforms: [.macOS(.v14), .iOS(.v15)],
     products: [
+        .library(name: "LatticeInstallation", targets: ["LatticeInstallation"]),
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
             name: "Lattice",
@@ -66,6 +67,12 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
     ],
     targets: [
+        // Source-only installation graph requires its separately reviewed Core
+        // successor binding before qualification; published pins stay unchanged.
+        .target(
+            name: "LatticeInstallation",
+            dependencies: ["Lattice", .product(name: "LatticeInstallationChannel", package: "LatticeCore")],
+            swiftSettings: [.interoperabilityMode(.Cxx)]),
         // Test-only real SQLite fault injection; the suite must compile on Linux.
         .systemLibrary(
             name: "CLatticeTestSQLite",
