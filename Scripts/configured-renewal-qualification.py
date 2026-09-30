@@ -90,7 +90,7 @@ def unique_object(pairs):
     return result
 
 
-# Configured-only version-four diagnostic schema. Shared A/B/C ErrorFact and
+# Configured-only version-six diagnostic schema. Shared A/B/C ErrorFact and
 # every success scalar/oracle remain unchanged. No arbitrary strings are copied.
 BOOTSTRAP_UPGRADE_ERRORS = frozenset(['responseProtocolNotFound', 'invalidHTTPOrdering', 'upgraderDeniedUpgrade',
     'writingToHandlerDuringUpgrade', 'writingToHandlerAfterUpgradeCompleted', 'writingToHandlerAfterUpgradeFailed',
@@ -176,8 +176,23 @@ def bootstrap_error(error):
     return result
 
 
+def context_probe(value):
+    if value is None:
+        return None
+    require(type(value) is dict and set(value) == {'observation', 'result', 'failure', 'error'})
+    require(value['observation'] == 'separatePostFailureConstruction')
+    require(type(value['result']) is str and value['result'] in ('constructed', 'threw', 'notConfigured'))
+    if value['result'] == 'threw':
+        failure, error = bootstrap_error_fact(value['failure']), bootstrap_error(value['error'])
+    else:
+        require(value['failure'] is None and value['error'] is None)
+        failure, error = None, None
+    return {'observation': 'separatePostFailureConstruction', 'result': value['result'],
+            'failure': failure, 'error': error}
+
+
 def bootstrap_diagnostic(value):
-    require(type(value) is dict and set(value) == {'bootstrap', 'error', 'serverTLS'})
+    require(type(value) is dict and set(value) == {'bootstrap', 'error', 'serverTLS', 'serverContextProbe'})
     server_tls = value['serverTLS']
     require(type(server_tls) is dict and set(server_tls) == {'bootstrapContextCatch', 'wrongHostContextCatch', 'overflow'})
     require(all(type(server_tls[k]) is int and 0 <= server_tls[k] <= 32 for k in ('bootstrapContextCatch', 'wrongHostContextCatch')))
@@ -191,20 +206,23 @@ def bootstrap_diagnostic(value):
         require(all(type(v) is int and 0 <= v <= 32 for v in row.values()))
     require(all(type(observed[k]) is int and 0 <= observed[k] <= 32 for k in ('sourceSetupEntered', 'sourceSetupFinished')))
     selected_error = bootstrap_error(error)
+    probe = context_probe(value['serverContextProbe'])
+    require(probe is None or server_tls['bootstrapContextCatch'] > 0)
     # Reconstruct only exact allowlisted fields. These are observations, never
     # replacement passing facts or proof of an unobserved protocol stage.
     return {'bootstrap': {'currentIndex': observed['currentIndex'],
         'channels': [{k: row[k] for k in sorted(BOOTSTRAP_CHANNEL_FIELDS)} for row in observed['channels']],
         'sourceSetupEntered': observed['sourceSetupEntered'], 'sourceSetupFinished': observed['sourceSetupFinished'],
         'overflow': observed['overflow']}, 'error': selected_error,
-        'serverTLS': {k: server_tls[k] for k in ('bootstrapContextCatch', 'wrongHostContextCatch', 'overflow')}}
+        'serverTLS': {k: server_tls[k] for k in ('bootstrapContextCatch', 'wrongHostContextCatch', 'overflow')},
+        'serverContextProbe': probe}
 
 
 def case_receipt(root, name):
     require(name in CASE_NAMES)
     value = json.loads(read_file(root / ('receipts/' + name + '.json'), 4096), object_pairs_hook=unique_object)
     require(type(value) is dict and set(value) == {'version', 'name', 'passed', 'phase', 'scalarFacts', 'failure', 'diagnostic'}
-            and type(value['version']) is int and value['version'] == 5
+            and type(value['version']) is int and value['version'] == 6
             and value['name'] == name and type(value['passed']) is bool
             and type(value['phase']) is str and value['phase'] in PHASES)
     facts = value['scalarFacts']
@@ -225,8 +243,9 @@ def case_receipt(root, name):
         if category is not None:
             require(error['kind'] == 'tls' and error['domain'] == 'nioSSL' and code is None)
         diagnostic = bootstrap_diagnostic(value['diagnostic'])
+        require(diagnostic['serverContextProbe'] is None or value['phase'] == 'bootstrapConnect')
     # Only reviewed scalar fields are exported, never raw errors or source data.
-    return {'version': 5, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
+    return {'version': 6, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
             'scalarFacts': {k: facts[k] for k in sorted(facts)}, 'failure': value['failure'],
             'diagnostic': None if value['passed'] else diagnostic}
 
