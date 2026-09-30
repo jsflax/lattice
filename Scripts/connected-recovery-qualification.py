@@ -341,6 +341,53 @@ def mac_trust_snapshot():
     print(json.dumps({'version': 1, 'adminSHA256': admin, 'keychainSHA256': keychain_values}))
 
 
+def mac_target_trust_snapshot(root):
+    """Inspect this exact DER in the admin domain, even without a keychain item.
+
+    Certificate enumeration can miss a retained trust setting after certificate
+    deletion. Only this public API's exact errSecItemNotFound proves absence.
+    A successful empty settings array still means present (root trust), not
+    removal. All Create/Copy results are released; no setting contents leave
+    this bounded owned child and no trust mutation occurs here.
+    """
+    require(platform.system() == 'Darwin')
+    found = CERT_RE.findall(read_file(root / 'private/tls/ca.pem', 65536))
+    require(len(found) == 1)
+    der = base64.b64decode(re.sub(rb'\s+', b'', found[0]), validate=True)
+    require(0 < len(der) <= 65536)
+    fingerprint = hashlib.sha256(der).hexdigest()
+    security = ctypes.CDLL('/System/Library/Frameworks/Security.framework/Security')
+    cf = ctypes.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+    pointer = ctypes.c_void_p
+    cf.CFDataCreate.argtypes = [pointer, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_long]
+    cf.CFDataCreate.restype = pointer
+    security.SecCertificateCreateWithData.argtypes = [pointer, pointer]
+    security.SecCertificateCreateWithData.restype = pointer
+    security.SecTrustSettingsCopyTrustSettings.argtypes = [pointer, ctypes.c_uint32, ctypes.POINTER(pointer)]
+    security.SecTrustSettingsCopyTrustSettings.restype = ctypes.c_int32
+    cf.CFRelease.argtypes = [pointer]
+    cf.CFRelease.restype = None
+    data = cert = None
+    settings = pointer()
+    try:
+        data = cf.CFDataCreate(None, (ctypes.c_ubyte * len(der)).from_buffer_copy(der), len(der))
+        require(data)
+        cert = security.SecCertificateCreateWithData(None, data)
+        require(cert)
+        status = security.SecTrustSettingsCopyTrustSettings(cert, 1, ctypes.byref(settings))
+        if status == -25300:  # errSecItemNotFound for this exact certificate.
+            require(not settings.value)
+            present = False
+        else:
+            require(status == 0 and settings.value)
+            present = True
+    finally:
+        for value in (settings.value, cert, data):
+            if value:
+                cf.CFRelease(value)
+    print(json.dumps({'version': 1, 'caSHA256': fingerprint, 'adminSettingPresent': present}))
+
+
 class Commands:
     def __init__(self, helper, root, logs, env, interrupts, seconds):
         self.helper, self.root, self.logs = helper, root, logs
@@ -474,6 +521,17 @@ def trust_snapshot(commands, root):
     return {'keychain': state['keychainSHA256'], 'admin': state['adminSHA256']}
 
 
+def target_trust_present(commands, root, fingerprint):
+    observed = commands.run('admin-target-trust', [sys.executable, Path(__file__).resolve(),
+                            '--root', root, '--trust-target-snapshot'])
+    state = read_json(observed, 4096)
+    require(set(state) == {'version', 'caSHA256', 'adminSettingPresent'}
+            and type(state['version']) is int and state['version'] == 1
+            and type(state['caSHA256']) is str and HEX256.fullmatch(state['caSHA256'])
+            and state['caSHA256'] == fingerprint and type(state['adminSettingPresent']) is bool)
+    return state['adminSettingPresent']
+
+
 def snapshot_hashes(snapshot):
     return {name: hashlib.sha256(json.dumps(sorted(values)).encode()).hexdigest()
             for name, values in snapshot.items()}
@@ -483,6 +541,8 @@ def trust_install(commands, root, tag, receipt):
     fingerprint = receipt['caSHA256']
     before = trust_snapshot(commands, root)
     require(all(fingerprint not in values for values in before.values()))
+    if platform.system() == 'Darwin':
+        require(not target_trust_present(commands, root, fingerprint))
     target = '/usr/local/share/ca-certificates/lattice-connected-' + tag + '.crt'
     if platform.system() == 'Linux':
         require(not Path(target).exists() and not Path(target).is_symlink())
@@ -508,6 +568,8 @@ def trust_install(commands, root, tag, receipt):
                                      '-p', 'ssl', '-k', SYSTEM_KEYCHAIN, ca], timeout=60)
     after = trust_snapshot(commands, root)
     require(all(fingerprint in values for values in after.values()))
+    if platform.system() == 'Darwin':
+        require(target_trust_present(commands, root, fingerprint))
     return {'originallyAbsent': True, 'installedFingerprintObserved': True, 'caSHA256': fingerprint}
 
 
@@ -536,7 +598,14 @@ def cleanup_trust(commands, root):
             else:
                 before = trust_snapshot(commands, root)
                 errors = []
-                if fingerprint in before['admin']:
+                target_present = False
+                try:
+                    target_present = target_trust_present(commands, root, fingerprint)
+                except BaseException as error:
+                    errors.append(error)
+                # Preserve enumeration-selected cleanup, and also remove an
+                # exact setting whose keychain certificate is already absent.
+                if fingerprint in before['admin'] or target_present:
                     try:
                         commands.run('trust-settings-remove', ['sudo', '-n', 'security', 'remove-trusted-cert', '-d', ca], timeout=60)
                     except BaseException as error:
@@ -554,6 +623,8 @@ def cleanup_trust(commands, root):
             after = trust_snapshot(commands, root)
             require(all(fingerprint not in values for values in after.values()))
             require(snapshot_hashes(after) == state['beforeInventory'])
+            if platform.system() == 'Darwin':
+                require(not target_trust_present(commands, root, fingerprint))
             result['caSHA256'] = fingerprint
         # With no intent file, this wrapper has not made a trust mutation.
         result['trustAbsent'] = True
@@ -1022,10 +1093,14 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--cleanup-only', action='store_true')
     modes.add_argument('--trust-snapshot', action='store_true')
+    modes.add_argument('--trust-target-snapshot', action='store_true')
     args = parser.parse_args()
     root = host_root(args.root)
     if args.trust_snapshot:
         mac_trust_snapshot()
+        return 0
+    if args.trust_target_snapshot:
+        mac_target_trust_snapshot(root)
         return 0
     helper = load_helpers(root / 'lattice')
     if args.cleanup_only:
