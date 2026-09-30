@@ -1998,6 +1998,9 @@ struct PublicReceiverKillRecoveryTests {
 // Existing A/B/C cases, permission defaults, and receipt allowlists stay exact.
 private enum ConfiguredRenewalFailure: String, Error {
     case environment, opening, initial, replacement, delivery, cleanup, facts, receipt
+    case sourceMount, sourceStartup, sourceAddress, bootstrapConnect, bootstrapMetadata
+    case bootstrapContext, bootstrapRetirement, wrongApplication, wrongStartup, wrongAddress
+    case receiverCreate, receiverOpen
 }
 
 private final class ConfiguredRenewalProbe: Sendable {
@@ -2186,14 +2189,17 @@ private func configuredRenewalSettled(_ trace: lattice.configured_recovery_quali
 
 @MainActor
 private func configuredRenewalReceipt(_ environment: ConnectedTLSEnvironment, wrongHost: Bool, passed: Bool,
-                                      phase: ConfiguredRenewalFailure, facts: [String: Int]) throws {
+                                      phase: ConfiguredRenewalFailure, facts: [String: Int],
+                                      failure: ConnectedFailureObservation.ErrorFact? = nil) throws {
     let name = wrongHost ? "publicConfiguredWrongHostFailureRetiresStockAttempt" : "publicConfiguredStockRenewalDeliversCommittedEdit"
     let path = environment.root.appendingPathComponent("receipts/" + name + ".json")
-    guard !FileManager.default.fileExists(atPath: path.path), facts.count <= 16,
+    guard passed == (failure == nil), !FileManager.default.fileExists(atPath: path.path), facts.count <= 16,
           facts.keys.allSatisfy({ $0.utf8.count <= 64 }), facts.values.allSatisfy({ $0 >= 0 && $0 <= 1024 })
     else { throw ConfiguredRenewalFailure.receipt }
-    let data = try JSONSerialization.data(withJSONObject: ["version": 1, "name": name, "passed": passed,
-        "phase": phase.rawValue, "scalarFacts": facts], options: [.sortedKeys])
+    // Reuse the finite copied-error schema; never serialize error descriptions,
+    // dynamic type names, paths, bearer strings, or associated payloads.
+    let data = try JSONSerialization.data(withJSONObject: ["version": 2, "name": name, "passed": passed,
+        "phase": phase.rawValue, "scalarFacts": facts, "failure": failure.map { $0.json as Any } ?? NSNull()], options: [.sortedKeys])
     guard data.count <= 4096 else { throw ConfiguredRenewalFailure.receipt }
     try data.write(to: path, options: .atomic)
 }
@@ -2257,6 +2263,7 @@ struct PublicConfiguredStockRenewalTests {
             cleanupResult = .success(())
         }
         do {
+            phase = .sourceMount
             for index in 0..<2 {
                 mounts.append(try Lattice.configureSyncRelay(on: app.routes, path: [.constant(index == 0 ? "a" : "b")],
                     for: [ConnectedRecoverySharedRow.self, ConnectedRecoveryLocalRow.self], storageURL: storage,
@@ -2267,7 +2274,9 @@ struct PublicConfiguredStockRenewalTests {
                         probe.authorized(result.peer); return result
                     }))
             }
+            phase = .sourceStartup
             try await app.startup()
+            phase = .sourceAddress
             let port = try #require(app.http.server.shared.localAddress?.port)
             let endpoints = ["wss://127.0.0.1:\(port)/a", "wss://127.0.0.1:\(port)/b"], channels = endpoints.map { "wss:" + $0 }
             try #require(channels.allSatisfy { $0.utf8.count <= 64 })
@@ -2276,30 +2285,39 @@ struct PublicConfiguredStockRenewalTests {
                 let peer = ConnectedBootstrapPeer(), identity = registrations.bootstrap.peer(index); bootstrap.append(peer)
                 let query = "?recovery-v=1&recovery-replica=\(identity.replicaID)&recovery-receiver=\(identity.receiverIncarnation)&recovery-channel=\(identity.channelIncarnation)"
                 var headers = HTTPHeaders(); headers.add(name: "Authorization", value: "Bearer " + registrations.bootstrap.token)
+                phase = .bootstrapConnect
                 do { try await WebSocket.connect(to: endpoints[index] + query, headers: headers, on: app.eventLoopGroup) { peer.attach($0) }.get() }
                 catch { peer.connectFailed(); throw error }
+                phase = .bootstrapMetadata
                 try await connectedWait("configured real source metadata", until: deadline) {
                     !peer.invalid && peer.ids == originals && registrations.contexts.withLockedValue { $0[index] != nil }
                 }
             }
+            phase = .bootstrapContext
             let captured = registrations.contexts.withLockedValue { $0 }
             let contexts = [try #require(captured[0]), try #require(captured[1])]
+            phase = .bootstrapRetirement
             for peer in bootstrap { peer.close() }
             try await connectedWait("configured bootstrap closed", until: deadline) {
                 bootstrap.allSatisfy(\.closed) && mounts.allSatisfy { $0.recoverySessionCount == 0 }
             }
             if wrongHost {
+                phase = .wrongApplication
                 let rejected = try await connectedApplication(environment.wrongCertificate, environment.wrongKey)
                 wrongApp = rejected
                 let upgrades = NIOLockedValueBox(0)
                 for path in ["a", "b"] { rejected.webSocket(.constant(path)) { _, socket in
                     upgrades.withLockedValue { $0 = min(32, $0 + 1) }; socket.close(promise: nil)
                 } }
+                phase = .wrongStartup
                 try await rejected.startup()
+                phase = .wrongAddress
                 let wrongPort = try #require(rejected.http.server.shared.localAddress?.port)
                 let wrongEndpoints = ["wss://127.0.0.1:\(wrongPort)/a", "wss://127.0.0.1:\(wrongPort)/b"]
+                phase = .receiverCreate
                 let receiver = try ConnectedReceiver(root: directory, registration: registrations.a, contexts: contexts, endpoints: wrongEndpoints)
                 receivers = [receiver]
+                phase = .receiverOpen
                 try configuredRenewalOpen(trace) { try receiver.renewalOpenWithLongRetry() }
                 phase = .initial
                 // Actual native callbacks, not timeout inference or a late
@@ -2313,9 +2331,11 @@ struct PublicConfiguredStockRenewalTests {
                 try #require(!receiver.renewalConnected && upgrades.withLockedValue { $0 } == 0 && probe.connections == 0 && probe.authorizations == 0)
                 facts["actualFailedAttempts"] = 2; facts["unauthorizedUpgrades"] = 0
             } else {
+                phase = .receiverCreate
                 let a = try ConnectedReceiver(root: directory, registration: registrations.a, contexts: contexts, endpoints: endpoints)
                 let b = try ConnectedReceiver(root: directory, registration: registrations.b, contexts: contexts, endpoints: endpoints)
                 receivers = [a, b]
+                phase = .receiverOpen
                 try configuredRenewalOpen(trace) { try a.open(connected: true); try b.open(connected: true) }
                 phase = .initial
                 try await connectedWait("configured first public cohorts", until: deadline) {
@@ -2380,7 +2400,7 @@ struct PublicConfiguredStockRenewalTests {
             try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: true, phase: phase, facts: facts)
         } catch {
             let original = error
-            do { try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: false, phase: phase, facts: facts) }
+            do { try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: false, phase: phase, facts: facts, failure: connectedFailureFact(original)) }
             catch { Issue.record("Configured renewal bounded failure receipt unavailable") }
             do { try await cleanup() } catch { Issue.record("Configured renewal actual cleanup failed") }
             throw original

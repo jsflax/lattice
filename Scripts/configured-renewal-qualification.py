@@ -28,7 +28,10 @@ TEST_SUPPORT_INPUTS = (
     'Sources/LatticeServerExportTestSupport/src/platform_retirement_fixture.cpp',
     'Sources/LatticeServerExportTestSupport/src/server_export_fixture.cpp',
 )
-PHASES = frozenset(['environment', 'opening', 'initial', 'replacement', 'delivery', 'cleanup', 'facts', 'receipt'])
+PHASES = frozenset(['environment', 'opening', 'initial', 'replacement', 'delivery', 'cleanup', 'facts', 'receipt',
+    'sourceMount', 'sourceStartup', 'sourceAddress', 'bootstrapConnect', 'bootstrapMetadata',
+    'bootstrapContext', 'bootstrapRetirement', 'wrongApplication', 'wrongStartup', 'wrongAddress',
+    'receiverCreate', 'receiverOpen'])
 EXPECTED_FACTS = {
     CASE_NAMES[0]: {'freshAuthorizedConnections': 4, 'retiredConnectionsDrained': 4,
         'lateConnectedReplays': 4, 'committedOriginals': 1, 'peerVisibleRows': 6,
@@ -90,18 +93,30 @@ def unique_object(pairs):
 def case_receipt(root, name):
     require(name in CASE_NAMES)
     value = json.loads(read_file(root / ('receipts/' + name + '.json'), 4096), object_pairs_hook=unique_object)
-    require(type(value) is dict and set(value) == {'version', 'name', 'passed', 'phase', 'scalarFacts'}
-            and type(value['version']) is int and value['version'] == 1
+    require(type(value) is dict and set(value) == {'version', 'name', 'passed', 'phase', 'scalarFacts', 'failure'}
+            and type(value['version']) is int and value['version'] == 2
             and value['name'] == name and type(value['passed']) is bool
             and type(value['phase']) is str and value['phase'] in PHASES)
     facts = value['scalarFacts']
     require(type(facts) is dict and set(facts) <= set(EXPECTED_FACTS[name]))
     require(all(type(v) is int and 0 <= v <= 1024 for v in facts.values()))
     if value['passed']:
-        require(value['phase'] == 'cleanup' and facts == EXPECTED_FACTS[name])
+        require(value['phase'] == 'cleanup' and facts == EXPECTED_FACTS[name] and value['failure'] is None)
+    else:
+        error = value['failure']
+        require(type(error) is dict and set(error) == {'kind', 'domain', 'code', 'category'})
+        require(type(error['kind']) is str and error['kind'] in COMMON.FAILURE_ERROR_KINDS)
+        require(type(error['domain']) is str and error['domain'] in COMMON.FAILURE_ERROR_DOMAINS)
+        code, category = error['code'], error['category']
+        require(code is None or (type(code) is int and -(2**31) <= code < 2**31))
+        if code is not None:
+            require(error['domain'] in ('url', 'osStatus', 'posix', 'cocoa', 'nioWebSocket'))
+        require(category is None or (type(category) is str and category in COMMON.FAILURE_ERROR_CATEGORIES))
+        if category is not None:
+            require(error['kind'] == 'tls' and error['domain'] == 'nioSSL' and code is None)
     # Only reviewed scalar fields are exported, never raw errors or source data.
-    return {'version': 1, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
-            'scalarFacts': {k: facts[k] for k in sorted(facts)}}
+    return {'version': 2, 'name': name, 'passed': value['passed'], 'phase': value['phase'],
+            'scalarFacts': {k: facts[k] for k in sorted(facts)}, 'failure': value['failure']}
 
 
 def publish_case_observation(root):
