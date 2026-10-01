@@ -1,5 +1,5 @@
 {
   "scope": "Private full hosted qualification of bounded recovery, closed existing-file receipt administration, scheduler/callback correctness and causal projection fixtures with bounded failure diagnostics. Source reviews and first failures are retained. Quiet comparison tooling is synthetic-tested only. Runtime, automatic existing-store lifecycle adoption, performance gates, affected-platform release and downstream adoption remain unqualified.",
-  "coreCommit": "24b471069d05ad754d1398bed43f4e35db4c89ec",
-  "coreTree": "cb9551abae7ea6d97a8ba5386d802f8713b4882b"
+  "coreCommit": "93d82c12e1fe427e85f305ab4d9a0ea6141f339f",
+  "coreTree": "30164719732a7270efccdac7e5498f2b4ed70a0a"
 }

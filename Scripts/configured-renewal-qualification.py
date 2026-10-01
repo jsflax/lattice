@@ -323,6 +323,50 @@ def case_receipt(root, name):
             'diagnostic': None if value['passed'] else diagnostic}
 
 
+def cleanup_observation(root, name):
+    # Optional failure-only evidence cannot establish case, process, trust,
+    # key or owner completion. Original case_receipt remains the sole oracle.
+    original = case_receipt(root, name)
+    require(original['passed'] is False and original['phase'] == 'cleanup')
+    value = json.loads(read_file(root / ('receipts/' + name + '.cleanup-observation.json'), 4096), object_pairs_hook=unique_object)
+    require(type(value) is dict and set(value) == {'version', 'name', 'evidenceOnly', 'step', 'failureKind', 'closeRows', 'invalidScalar', 'trace'})
+    require(type(value['version']) is int and value['version'] == 1 and value['name'] == name and value['evidenceOnly'] is True)
+    require(type(value['step']) is int and 1 <= value['step'] <= 5)
+    require(type(value['failureKind']) is int and 0 <= value['failureKind'] <= 4 and type(value['invalidScalar']) is bool)
+    closes = value['closeRows']
+    require(type(closes) is list and len(closes) == 4)
+    for row in closes:
+        require(row is None or (type(row) is list and len(row) == 2 and all(type(v) is int for v in row)
+            and -1 <= row[0] <= 6 and 0 <= row[1] <= 31))
+    trace = value['trace']
+    require(type(trace) is dict and set(trace) == {'count', 'countAfter', 'overflow', 'invalid', 'events'})
+    require(all(type(trace[k]) is int and 0 <= trace[k] <= 64 for k in ('count', 'countAfter')))
+    require(trace['countAfter'] >= trace['count'] and all(type(trace[k]) is bool for k in ('overflow', 'invalid')))
+    events = trace['events']
+    require(type(events) is list and len(events) == trace['count'])
+    for row in events:
+        require(type(row) is list and len(row) == 8 and all(type(v) is int for v in row))
+        require(all(-1 <= row[i] <= bound for i, bound in enumerate((5, 8, 64, 128, 4096, 4096))))
+        require(0 <= row[6] <= 8191 and -(2**31) <= row[7] < 2**31)
+        require(-1 not in row[:6] or value['invalidScalar'])
+    return {'version': 1, 'name': name, 'evidenceOnly': True, 'step': value['step'], 'failureKind': value['failureKind'],
+        'closeRows': closes, 'invalidScalar': value['invalidScalar'],
+        'trace': {k: trace[k] for k in ('count', 'countAfter', 'overflow', 'invalid', 'events')}}
+
+
+def publish_cleanup_observation(root):
+    for name in CASE_NAMES:
+        source = root / ('receipts/' + name + '.cleanup-observation.json')
+        output = root / ('public-evidence/' + name + '.cleanup-observation.json')
+        if output.exists() or not source.exists():
+            continue
+        value = cleanup_observation(root, name)
+        data = (json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n').encode()
+        require(len(data) <= 4096)
+        with output.open('xb') as handle:
+            handle.write(data)
+
+
 def publish_case_observation(root):
     # Preserve each first receipt independently, including partial failure.
     # Missing cases remain missing; cleanup cannot create a positive receipt.
@@ -331,6 +375,7 @@ def publish_case_observation(root):
         if output.exists() or not (root / ('receipts/' + name + '.json')).exists():
             continue
         write_json(output, case_receipt(root, name))
+    publish_cleanup_observation(root)
 
 
 def validate_cases(root, log):

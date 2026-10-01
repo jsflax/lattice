@@ -2546,10 +2546,11 @@ private func configuredRenewalOpen(_ trace: lattice.configured_recovery_qualific
 
 @MainActor
 private extension ConnectedReceiver {
-    func renewalCloseChecked() throws {
+    func renewalCloseChecked(observation: ConfiguredCleanupObservation? = nil, receiver: Int = 0) throws {
         var failed = false
-        for owner in owners.reversed() {
+        for (index, owner) in owners.enumerated().reversed() {
             let result = owner.closeChecked()
+            observation?.closed(result, slot: receiver * 2 + index)
             if result.failed || result.cleanupFailed || !result.cleanupComplete { failed = true }
         }
         // A failed close remains retained for the bounded cleanup retry.
@@ -2643,6 +2644,95 @@ private func configuredRenewalReceipt(_ environment: ConnectedTLSEnvironment, wr
     try data.write(to: path, options: .atomic)
 }
 
+// Passive cleanup-only diagnostic. The original case receipt and all close,
+// wait, settlement and cleanup oracles retain their original behavior.
+@MainActor
+private final class ConfiguredCleanupObservation {
+    enum Step: Int { case notEntered, ownerClose, ownerReceipts, settlement, probe, fixtures }
+    private(set) var step = Step.notEntered
+    private(set) var closeRows: [[Int]?] = Array(repeating: nil, count: 4)
+    private(set) var invalidScalar = false
+    func select(_ value: Step) { step = value }
+    func closed(_ value: LatticeCloseResult, slot: Int) {
+        guard closeRows.indices.contains(slot), closeRows[slot] == nil else { invalidScalar = true; return }
+        // Bit 0 complete; 1 first error; 2 cleanup error; 3 unavailable text;
+        // 4 present text. Text bytes, dynamic types and payloads never escape.
+        let flags = (value.cleanupComplete ? 1 : 0) | (value.failed ? 2 : 0) |
+            (value.cleanupFailed ? 4 : 0) | (value.errorMessageUnavailable ? 8 : 0) |
+            (value.errorMessage == nil ? 0 : 16)
+        closeRows[slot] = [Int(value.sync.rawValue), flags]
+    }
+    func snapshot(_ trace: lattice.configured_recovery_qualification, error: any Error,
+                  wrongHost: Bool) -> [String: Any] {
+        // Append-only recorder reads are a bounded prefix, not an atomic claim
+        // about future cleanup. A later append remains visible in countAfter.
+        let count = Int(trace.count())
+        var bad = invalidScalar || count > 64
+        func bounded<T: BinaryInteger>(_ value: T, _ maximum: Int) -> Int {
+            guard let copied = Int(exactly: value), copied >= 0, copied <= maximum else { bad = true; return -1 }
+            return copied
+        }
+        let events = (0..<min(count, 64)).map { index -> [Int] in
+            let event = trace.record(index)
+            // Bits 0..12: adapter, native, quarantine, lane, disconnect,
+            // pacer present, pacer joined, callbacks, wrapper, route, receipt
+            // invalidated, child closed, scheduler joined; all actual copies.
+            let bits = [event.adapter_complete, event.native_complete, event.quarantined,
+                event.lane_complete, event.disconnect_returned, event.pacer_present,
+                event.pacer_joined, event.callbacks_settled, event.wrapper_destroyed,
+                event.route_unregistered, event.receipt_invalid, event.child_closed, event.scheduler_joined]
+            let flags = bits.enumerated().reduce(0) { $0 | ($1.element ? 1 << $1.offset : 0) }
+            return [bounded(event.stage, 5), bounded(event.owner, 8), bounded(event.attempt, 64),
+                bounded(event.commands, 128), bounded(event.payloads, 4096), bounded(event.workers, 4096),
+                flags, Int(event.first_error)]
+        }
+        var kind = 0 // Other; no arbitrary descriptions or associated values.
+        if let failure = error as? ConfiguredRenewalFailure {
+            switch failure { case .cleanup: kind = 1; case .facts: kind = 2; case .receipt: kind = 3; default: break }
+        } else if let failure = error as? ConnectedRecoveryFailure, case .deadline = failure { kind = 4 }
+        let name = wrongHost ? "publicConfiguredWrongHostFailureRetiresStockAttempt" : "publicConfiguredStockRenewalDeliversCommittedEdit"
+        let closes: [Any] = closeRows.map { row in if let row { return row as Any }; return NSNull() }
+        let countAfter = Int(trace.count())
+        return ["version": 1, "name": name, "evidenceOnly": true, "step": step.rawValue, "failureKind": kind,
+            "closeRows": closes, "invalidScalar": bad || countAfter > 64,
+            "trace": ["count": min(count, 64), "countAfter": min(countAfter, 64),
+                "overflow": trace.overflowed(), "invalid": trace.invalid(), "events": events] as [String: Any]]
+    }
+    static func write(_ value: [String: Any], root: URL, wrongHost: Bool) throws {
+        let name = wrongHost ? "publicConfiguredWrongHostFailureRetiresStockAttempt" : "publicConfiguredStockRenewalDeliversCommittedEdit"
+        let path = root.appendingPathComponent("receipts/" + name + ".cleanup-observation.json")
+        guard !FileManager.default.fileExists(atPath: path.path) else { throw ConfiguredRenewalFailure.receipt }
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        guard data.count <= 4096 else { throw ConfiguredRenewalFailure.receipt }
+        try data.write(to: path, options: .atomic)
+    }
+}
+
+@Suite("Configured cleanup failure observation")
+@MainActor
+struct ConfiguredCleanupObservationTests {
+    @Test func copiesFirstCloseScalarsWithoutReplacingTheRetainedReport() {
+        let observed = ConfiguredCleanupObservation()
+        let pending = LatticeCloseResult(sync: .deadlinePending, cleanupComplete: false)
+        observed.select(.ownerClose); observed.closed(pending, slot: 1)
+        #expect(observed.step == .ownerClose && observed.closeRows[1] == [4, 0])
+        observed.closed(.init(sync: .drained, cleanupComplete: true), slot: 1)
+        #expect(observed.invalidScalar && observed.closeRows[1] == [4, 0])
+        #expect(observed.closeRows[0] == nil && observed.closeRows[2] == nil && observed.closeRows[3] == nil)
+    }
+    @Test func maximumCopiedScalarPrefixFitsTheSeparateOriginalSizeBound() throws {
+        // Deliberately incompatible maximum scalars bound the representation;
+        // this synthetic fixture never manufactures a native cleanup record.
+        let row = [5, 8, 64, 128, 4096, 4096, 8191, -2_147_483_648]
+        let value: [String: Any] = ["version": 1, "name": "publicConfiguredWrongHostFailureRetiresStockAttempt",
+            "evidenceOnly": true, "step": 5, "failureKind": 4, "closeRows": Array(repeating: [6, 31], count: 4),
+            "invalidScalar": false, "trace": ["count": 64, "countAfter": 64, "overflow": false,
+                "invalid": false, "events": Array(repeating: row, count: 64)] as [String: Any]]
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        #expect(data.count <= 4096)
+    }
+}
+
 @Suite("Public configured stock transport renewal", .serialized,
        .enabled(if: ProcessInfo.processInfo.environment["LATTICE_CONFIGURED_RENEWAL_GATE"] == "1"))
 @MainActor
@@ -2684,6 +2774,7 @@ struct PublicConfiguredStockRenewalTests {
         var mounts: [SyncRelayHandle] = [], bootstrap: [ConnectedBootstrapPeer] = [], receivers: [ConnectedReceiver] = []
         let initialObservation = ConfiguredInitialObservation()
         let replacementObservation = ConfiguredReplacementObservation()
+        let cleanupObservation = ConfiguredCleanupObservation()
         let nativeObservation = ConfiguredReceiverFailureObservation()
         var replacementOldIDs = Set<UUID>()
         var initialChannels: (String, String)?
@@ -2873,18 +2964,24 @@ struct PublicConfiguredStockRenewalTests {
                 facts["lateConnectedReplays"] = 4; facts["committedOriginals"] = 1; facts["peerVisibleRows"] = expected.count
             }
             phase = .cleanup
-            for receiver in receivers { try receiver.renewalCloseChecked() }
+            cleanupObservation.select(.ownerClose)
+            for (index, receiver) in receivers.enumerated() { try receiver.renewalCloseChecked(observation: cleanupObservation, receiver: index) }
+            cleanupObservation.select(.ownerReceipts)
             try await connectedWait("configured actual owner cleanup receipts", until: deadline) {
                 try configuredRenewalTrace(trace).filter { $0.stage == 4 }.count == (wrongHost ? 2 : 4)
             }
+            cleanupObservation.select(.settlement)
             try configuredRenewalSettled(trace, owners: wrongHost ? 2 : 4, attempts: wrongHost ? 2 : 8)
             facts["actualCollectedAttempts"] = wrongHost ? 2 : 8
             facts["actualChildClosesAndSchedulerJoins"] = wrongHost ? 2 : 4
+            cleanupObservation.select(.probe)
             try #require(probe.healthy)
+            cleanupObservation.select(.fixtures)
             try await cleanup()
             try configuredRenewalReceipt(environment, wrongHost: wrongHost, passed: true, phase: phase, facts: facts)
         } catch {
             let original = error
+            let cleanupDiagnostic = phase == .cleanup ? cleanupObservation.snapshot(trace, error: original, wrongHost: wrongHost) : nil
             var initialDiagnostic: [String: Any]?
             if !wrongHost, phase == .initial, let initialChannels {
                 let traceCount = Int(trace.count())
@@ -2916,6 +3013,10 @@ struct PublicConfiguredStockRenewalTests {
                              "initial": initialDiagnostic.map { $0 as Any } ?? NSNull(),
                              "replacement": replacementDiagnostic.map { $0 as Any } ?? NSNull()]) }
             catch { Issue.record("Configured renewal bounded failure receipt unavailable") }
+            if let cleanupDiagnostic {
+                do { try ConfiguredCleanupObservation.write(cleanupDiagnostic, root: environment.root, wrongHost: wrongHost) }
+                catch { Issue.record("Configured renewal bounded cleanup observation unavailable") }
+            }
             do { try await cleanup() } catch { Issue.record("Configured renewal actual cleanup failed") }
             throw original
         }
