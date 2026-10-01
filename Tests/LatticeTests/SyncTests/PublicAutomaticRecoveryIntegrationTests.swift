@@ -2708,6 +2708,52 @@ private final class ConfiguredCleanupObservation {
     }
 }
 
+// Separate bounded evidence for the exact first native close boundaries.
+// These independently sampled leaves are diagnostic, never cleanup authority.
+private enum ConfiguredOwnerCloseBoundaryObservation {
+    static func write(_ trace: lattice.configured_recovery_qualification, root: URL,
+                      wrongHost: Bool) throws {
+        let name = wrongHost ? "publicConfiguredWrongHostFailureRetiresStockAttempt" : "publicConfiguredStockRenewalDeliversCommittedEdit"
+        let original = root.appendingPathComponent("receipts/" + name + ".json")
+        let originalHandle = try FileHandle(forReadingFrom: original)
+        defer { try? originalHandle.close() }
+        let originalData = try originalHandle.read(upToCount: 4097) ?? Data()
+        guard originalData.count <= 4096,
+              let receipt = try JSONSerialization.jsonObject(with: originalData) as? [String: Any],
+              receipt["name"] as? String == name, receipt["passed"] as? Bool == false,
+              receipt["phase"] as? String == "cleanup" else { throw ConfiguredRenewalFailure.receipt }
+        let count = Int(trace.close_count())
+        var invalidScalar = count > 24
+        var timeClamped = false
+        func bounded<T: BinaryInteger>(_ value: T, _ maximum: Int) -> Int {
+            guard let copied = Int(exactly: value), copied >= 0, copied <= maximum else { invalidScalar = true; return -1 }
+            return copied
+        }
+        let events = (0..<min(count, 24)).map { index -> [Int] in
+            let event = trace.close_record(index)
+            timeClamped = timeClamped || event.time_clamped
+            return [bounded(event.point, 3), bounded(event.owner, 8), bounded(event.attempt, 64), bounded(event.sync, 6),
+                bounded(event.commands, 128), bounded(event.payloads, 4096), bounded(event.workers, 4096),
+                bounded(event.finished_workers, 4096), bounded(event.active_callbacks, 65535),
+                bounded(event.state_flags, 65535), bounded(event.attempt_flags, 4095), bounded(event.registry_flags, 127),
+                bounded(event.service_flags, 63), bounded(event.collector_busy, 64), bounded(event.dispatcher_busy, 64),
+                Int(event.custody_error), Int(event.registry_error), bounded(event.elapsed_ms, 65535),
+                bounded(event.remaining_ms, 65535), bounded(event.report_flags, 63), bounded(event.sampled_leaves, 127)]
+        }
+        let countAfter = Int(trace.close_count())
+        let value: [String: Any] = ["version": 2, "name": name, "evidenceOnly": true, "step": 1,
+            "invalidScalar": invalidScalar || countAfter > 24, "timeClamped": timeClamped,
+            "trace": ["count": min(count, 24), "countAfter": min(countAfter, 24),
+                "overflow": trace.close_overflowed(), "invalid": trace.close_invalid(),
+                "unavailable": trace.close_unavailable(), "events": events] as [String: Any]]
+        let path = root.appendingPathComponent("receipts/" + name + ".owner-close-observation.json")
+        guard !FileManager.default.fileExists(atPath: path.path) else { throw ConfiguredRenewalFailure.receipt }
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        guard data.count <= 4096 else { throw ConfiguredRenewalFailure.receipt }
+        try data.write(to: path, options: .atomic)
+    }
+}
+
 @Suite("Configured cleanup failure observation")
 @MainActor
 struct ConfiguredCleanupObservationTests {
@@ -3016,6 +3062,10 @@ struct PublicConfiguredStockRenewalTests {
             if let cleanupDiagnostic {
                 do { try ConfiguredCleanupObservation.write(cleanupDiagnostic, root: environment.root, wrongHost: wrongHost) }
                 catch { Issue.record("Configured renewal bounded cleanup observation unavailable") }
+            }
+            if phase == .cleanup, cleanupObservation.step == .ownerClose {
+                do { try ConfiguredOwnerCloseBoundaryObservation.write(trace, root: environment.root, wrongHost: wrongHost) }
+                catch { Issue.record("Configured renewal bounded owner close observation unavailable") }
             }
             do { try await cleanup() } catch { Issue.record("Configured renewal actual cleanup failed") }
             throw original

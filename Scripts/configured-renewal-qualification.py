@@ -367,6 +367,45 @@ def publish_cleanup_observation(root):
             handle.write(data)
 
 
+def owner_close_observation_value(value, name, original):
+    # Evidence only; the original failed cleanup receipt remains mandatory.
+    require(type(original) is dict and original['name'] == name and original['passed'] is False and original['phase'] == 'cleanup')
+    require(type(value) is dict and set(value) == {'version', 'name', 'evidenceOnly', 'step', 'invalidScalar', 'timeClamped', 'trace'})
+    require(type(value['version']) is int and value['version'] == 2 and value['name'] == name and value['evidenceOnly'] is True)
+    require(type(value['step']) is int and value['step'] == 1 and type(value['invalidScalar']) is bool and type(value['timeClamped']) is bool)
+    trace = value['trace']
+    require(type(trace) is dict and set(trace) == {'count', 'countAfter', 'overflow', 'invalid', 'unavailable', 'events'})
+    require(all(type(trace[k]) is int and 0 <= trace[k] <= 24 for k in ('count', 'countAfter')) and trace['countAfter'] >= trace['count'])
+    require(all(type(trace[k]) is bool for k in ('overflow', 'invalid', 'unavailable')))
+    events = trace['events']
+    require(type(events) is list and len(events) == trace['count'])
+    bounds = (3, 8, 64, 6, 128, 4096, 4096, 4096, 65535, 65535, 4095, 127, 63, 64, 64)
+    for row in events:
+        require(type(row) is list and len(row) == 21 and all(type(v) is int for v in row))
+        require(all(-1 <= row[i] <= bound for i, bound in enumerate(bounds)))
+        require(all(-(2**31) <= row[i] < 2**31 for i in (15, 16)))
+        require(all(-1 <= row[i] <= bound for i, bound in ((17, 65535), (18, 65535), (19, 63), (20, 127))))
+        require(-1 not in row[:15] + row[17:] or value['invalidScalar'])
+    return {'version': 2, 'name': name, 'evidenceOnly': True, 'step': 1,
+        'invalidScalar': value['invalidScalar'], 'timeClamped': value['timeClamped'],
+        'trace': {k: trace[k] for k in ('count', 'countAfter', 'overflow', 'invalid', 'unavailable', 'events')}}
+
+
+def publish_owner_close_observation(root):
+    for name in CASE_NAMES:
+        source = root / ('receipts/' + name + '.owner-close-observation.json')
+        output = root / ('public-evidence/' + name + '.owner-close-observation.json')
+        if output.exists() or not source.exists():
+            continue
+        original = case_receipt(root, name)
+        value = json.loads(read_file(source, 4096), object_pairs_hook=unique_object)
+        value = owner_close_observation_value(value, name, original)
+        data = (json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n').encode()
+        require(len(data) <= 4096)
+        with output.open('xb') as handle:
+            handle.write(data)
+
+
 def publish_case_observation(root):
     # Preserve each first receipt independently, including partial failure.
     # Missing cases remain missing; cleanup cannot create a positive receipt.
@@ -376,6 +415,7 @@ def publish_case_observation(root):
             continue
         write_json(output, case_receipt(root, name))
     publish_cleanup_observation(root)
+    publish_owner_close_observation(root)
 
 
 def validate_cases(root, log):
