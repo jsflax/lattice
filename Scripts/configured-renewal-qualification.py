@@ -28,6 +28,9 @@ TEST_SUPPORT_INPUTS = (
     'Sources/LatticeServerExportTestSupport/src/platform_retirement_fixture.cpp',
     'Sources/LatticeServerExportTestSupport/src/server_export_fixture.cpp',
 )
+DEFAULT_TEST_SUPPORT_INPUTS = TEST_SUPPORT_INPUTS + (
+    'Sources/LatticeServerExportTestSupport/src/configured_platform_fixture.cpp',
+)
 PHASES = frozenset(['environment', 'opening', 'initial', 'replacement', 'delivery', 'cleanup', 'facts', 'receipt',
     'sourceMount', 'sourceStartup', 'sourceAddress', 'bootstrapConnect', 'bootstrapMetadata',
     'bootstrapContext', 'bootstrapRetirement', 'wrongApplication', 'wrongStartup', 'wrongAddress',
@@ -781,6 +784,91 @@ def test_support_compiler_inputs(log, core, tracked_files):
             'compileSuccessInferredFromCommands': False, 'sources': observations}
 
 
+def default_test_support_compiler_inputs(log, core, tracked_files):
+    """Actual direct compiler inputs, never a filename/linker mention as proof.
+
+    Uses the reviewed020/021 saved-log parser's direct-clang, single-canonical
+    -c input and no-response-file/shell-composition rules. This live gate already
+    owns a closed successful build log and an authenticated initial Core tree.
+    Only fixed metadata and line hashes leave the private log. At most16 actual
+    commands per input are retained; any uncertain command refuses acceptance.
+    """
+    require(core.is_absolute() and core.resolve(strict=True) == core and not core.is_symlink())
+    expected = {str(core / name): name for name in DEFAULT_TEST_SUPPORT_INPUTS}
+    observations = {}
+    for name in DEFAULT_TEST_SUPPORT_INPUTS:
+        path = core / name
+        require(path.resolve(strict=True) == path and name in tracked_files)
+        source = read_file(path, 1024 * 1024)
+        frozen = tracked_files[name]
+        require(set(frozen) == {'bytes', 'sha256'} and frozen['bytes'] == len(source)
+                and frozen['sha256'] == hashlib.sha256(source).hexdigest())
+        observations[name] = {'status': 'unobserved', 'source': dict(frozen), 'commands': [],
+                              'uncertainCommandCount': 0, 'otherMentionCount': 0, 'refusalCodes': []}
+    require(log.is_file() and not log.is_symlink() and log.stat().st_size <= 128 * 1024 * 1024)
+    total, log_hash = 0, hashlib.sha256()
+    with log.open('rb') as lines:
+        for number, raw in enumerate(lines, 1):
+            offset = total
+            total += len(raw)
+            require(total <= 128 * 1024 * 1024)
+            log_hash.update(raw)
+            mentioned = [name for name in DEFAULT_TEST_SUPPORT_INPUTS if PurePosixPath(name).name.encode() in raw]
+            if not mentioned:
+                continue
+            reason, category, selected = None, 'uncertainCommandCount', None
+            try:
+                text = raw.decode('utf-8')
+                argv = shlex.split(text)
+                lexer = shlex.shlex(text, posix=True, punctuation_chars=';&|<>()')
+                lexer.whitespace_split = True
+                lexer.commenters = ''
+                tokens = list(lexer)
+            except (UnicodeDecodeError, ValueError):
+                reason = 'unparseable-command'
+            else:
+                if not argv or PurePosixPath(argv[0]).name not in ('clang', 'clang++') or '-c' not in argv:
+                    reason = 'not-direct-clang-compile'
+                    if '-c' not in argv:
+                        category = 'otherMentionCount'
+                elif argv.count('-c') != 1 or argv.index('-c') + 1 >= len(argv):
+                    reason = 'ambiguous-or-missing-input'
+                elif any(value.startswith('@') for value in argv) or any(
+                        value and all(c in ';&|<>()' for c in value) for value in tokens):
+                    reason = 'response-file-or-shell-composition'
+                else:
+                    source = argv[argv.index('-c') + 1]
+                    if not (source.startswith('/') and '\x00' not in source
+                            and '..' not in PurePosixPath(source).parts and str(PurePosixPath(source)) == source):
+                        reason = 'noncanonical-input'
+                    elif source not in expected:
+                        reason = 'input-outside-exact-targets'
+                    else:
+                        selected = observations[expected[source]]
+                        if len(selected['commands']) >= 16:
+                            selected['uncertainCommandCount'] += 1
+                            if 'command-count-bound' not in selected['refusalCodes']:
+                                selected['refusalCodes'].append('command-count-bound')
+                        else:
+                            selected['commands'].append({'line': number, 'byteOffset': offset,
+                                'rawLineBytes': len(raw), 'rawLineSHA256': hashlib.sha256(raw).hexdigest(),
+                                'compiler': PurePosixPath(argv[0]).name})
+            if reason is not None:
+                for name in mentioned:
+                    value = observations[name]
+                    value[category] += 1
+                    if category == 'uncertainCommandCount' and reason not in value['refusalCodes']:
+                        value['refusalCodes'].append(reason)
+    for value in observations.values():
+        if value['commands'] and not value['uncertainCommandCount']:
+            value['status'] = 'compiler_input_observed'
+    value = {'version': 1, 'kind': 'exact direct default TestSupport clang -c inputs',
+            'buildLogSHA256': log_hash.hexdigest(), 'buildLogBytes': total,
+            'compileSuccessInferredFromCommands': False, 'sources': observations}
+    require(len(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()) <= 32768)
+    return value
+
+
 def source_and_tests(commands, helper, root, sdk_sha, core_sha, core_tree, openssl, result):
     sdk, core = root / 'lattice', root / 'LatticeCore'
     result['stage'] = 'exact-source-graph'
@@ -817,12 +905,19 @@ def source_and_tests(commands, helper, root, sdk_sha, core_sha, core_tree, opens
                          cwd=sdk, timeout=BUILD_SECONDS)
     compiler = helper.compiler_input_proof(build, core)
     support = test_support_compiler_inputs(build, core, initial_core['files'])
+    default_support = default_test_support_compiler_inputs(build, core, initial_core['files'])
+    require(default_support['buildLogSHA256'] == support['buildLogSHA256']
+            and default_support['buildLogBytes'] == support['buildLogBytes'])
+    require({name: default_support['sources'][name] for name in TEST_SUPPORT_INPUTS} == support['sources'])
     write_json(root / 'public-evidence/compiler-inputs.json', {
         'version': 1, 'stage': 'verified-actual-compiler-inputs', 'coreCommit': core_sha, 'coreTree': core_tree,
         'sourceFiles': {str(Path(k).relative_to(core)): v for k, v in compiler['sourceFiles'].items()},
         'proofSHA256': hashlib.sha256(json.dumps(compiler, sort_keys=True).encode()).hexdigest(),
-        'buildLogSHA256': helper.digest(build), 'testSupportInputs': support})
+        'buildLogSHA256': helper.digest(build), 'testSupportInputs': support,
+        'defaultTestSupportInputs': default_support})
     require(all(value['status'] == 'compiler_input_observed' for value in support['sources'].values()))
+    require(set(default_support['sources']) == set(DEFAULT_TEST_SUPPORT_INPUTS)
+            and all(value['status'] == 'compiler_input_observed' for value in default_support['sources'].values()))
     result['stage'] = 'tls-material'
     tag, tls, version = material(commands, root, openssl)
     result['opensslVersion'] = version
@@ -861,6 +956,7 @@ def source_and_tests(commands, helper, root, sdk_sha, core_sha, core_tree, opens
         'compilerInputs': {str(Path(k).relative_to(core)): v for k, v in compiler['sourceFiles'].items()},
         'compilerInputProofSHA256': hashlib.sha256(json.dumps(compiler, sort_keys=True).encode()).hexdigest(),
         'testSupportCompilerInputs': support,
+        'defaultTestSupportCompilerInputs': default_support,
         'testLogSHA256': helper.digest(test), 'testLogBytes': test.stat().st_size,
         'allOtherSourceAndPinsPreserved': True})
     result['twoCasesPassed'] = True
