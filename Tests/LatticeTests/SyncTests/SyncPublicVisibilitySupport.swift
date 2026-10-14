@@ -115,6 +115,7 @@ final class SyncVisibilityRecorder: @unchecked Sendable {
     private var frozenPhases: Set<String> = []
     private let expectedByPhase: [String: Int]
     private var visibleByPhase: [String: Int] = ["warmup": 0, "measured": 0]
+    private var capturedByPhase: [String: Int] = ["warmup": 0, "measured": 0]
 
     init(expected: [SyncVisibilityExpected]) {
         self.expected = expected
@@ -162,6 +163,7 @@ final class SyncVisibilityRecorder: @unchecked Sendable {
                 counters.duplicateCallbacks += 1; receipts[index].duplicateCallbacks += 1; return
             }
             receipts[index].valueMatch = receipts[index].valueMismatchCount == 0
+            if receipts[index].valueMatch == true { capturedByPhase[value.phase, default: 0] += 1 }
             if frozenPhases.contains(value.phase) || receipts[index].observationDeadlineNS.map({ time > $0 }) == true {
                 receipts[index].lateExactReadNS = time
             } else {
@@ -185,6 +187,14 @@ final class SyncVisibilityRecorder: @unchecked Sendable {
         lock.withLock {
             counters.unknownOperation == 0 && counters.valueMismatch == 0 && counters.malformedObservation == 0
                 && visibleByPhase[phase, default: 0] == expectedByPhase[phase, default: 0]
+        }
+    }
+    // Measurement-only capture completeness never repairs timely visibility.
+    // Duplicate callbacks cannot increase this count or replace either timestamp.
+    func allCaptured(phase: String) -> Bool {
+        lock.withLock {
+            counters.unknownOperation == 0 && counters.valueMismatch == 0 && counters.malformedObservation == 0
+                && capturedByPhase[phase, default: 0] == expectedByPhase[phase, default: 0]
         }
     }
     func freeze(phase: String) {

@@ -176,7 +176,7 @@ def analyze_profile(data, profile, metadata):
             'scope': SCOPE, 'performanceAccepted': False, 'experimentAccepted': False}
 
 
-def inspect_full_log(path):
+def inspect_full_log(path, *, case=CASE):
     """One exact terminal result, including a retained ordinary assertion failure.
 
     A start/issue/summary line alone is not test completion evidence. Keep the
@@ -192,7 +192,7 @@ def inspect_full_log(path):
                 executed.append({'case': (passed or failed).group(1), 'outcome': 'passed' if passed else 'failed'})
                 if len(executed) > 1:
                     raise ValueError('full process ran multiple terminal test cases')
-    if len(executed) != 1 or executed[0]['case'] != CASE:
+    if len(executed) != 1 or executed[0]['case'] != case:
         raise ValueError('full process lacks its one exact terminal test completion')
     return executed[0]
 

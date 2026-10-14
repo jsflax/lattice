@@ -12,6 +12,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import time
 
 
@@ -416,19 +417,27 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--core-sha', required=True)
+    parser.add_argument('--sdk-sha', help='Exact SDK source only for matched preparation; workflow identity remains GITHUB_SHA')
     parser.add_argument('--test-timeout', type=int, choices=(1800, 5400), required=True)
     qualification = parser.add_mutually_exclusive_group()
     qualification.add_argument('--sync-probe-qualification', action='store_true',
                         help='Instrumented Core probe and SDK visibility fixtures only; not full suite or performance')
+    qualification.add_argument('--sync-matched-prepare', action='store_true',
+                               help='Authenticate/build/smoke one graph for later matched measurement; no full or performance run')
     qualification.add_argument('--sync-full-calibration', action='store_true',
                                help='Qualify the existing full loaded and quiet-only workloads in separate processes; not a performance experiment')
     args = parser.parse_args()
+    if args.sync_matched_prepare:
+        sys.dont_write_bytecode = True
     root = args.root.resolve(strict=True)
     allowed = (Path.home() / 'localdev').resolve(strict=True)
     if not root.is_relative_to(allowed) or root == allowed:
         raise ValueError('development root must be a child of ~/localdev')
-    sdk_sha = os.environ.get('GITHUB_SHA', '')
-    if not SHA.fullmatch(args.core_sha) or not SHA.fullmatch(sdk_sha):
+    workflow_sha = os.environ.get('GITHUB_SHA', '')
+    sdk_sha = args.sdk_sha or workflow_sha
+    if args.sdk_sha and not args.sync_matched_prepare:
+        raise ValueError('--sdk-sha is only supported for matched preparation')
+    if not SHA.fullmatch(workflow_sha) or not SHA.fullmatch(args.core_sha) or not SHA.fullmatch(sdk_sha):
         raise ValueError('Core and GITHUB_SHA inputs must be exact lower-case commit SHAs')
     sdk, core, receipts = root / 'lattice', root / 'LatticeCore', root / 'receipts'
     receipts.mkdir(exist_ok=False)
@@ -442,23 +451,28 @@ def main():
                LATTICE_QUALIFICATION_LOG_DIRECTORY=str(root / 'test-logs'),
                LATTICE_ACK_PATH_DIAGNOSTICS='1', LATTICE_OBSERVER_WORKER_DIAGNOSTICS='1',
                PYTHONDONTWRITEBYTECODE='1')
-    if args.sync_probe_qualification or args.sync_full_calibration:
+    if args.sync_probe_qualification or args.sync_full_calibration or args.sync_matched_prepare:
         import sync_measurement_logging
         env = sync_measurement_logging.apply_environment(env)
-    if args.sync_probe_qualification:
-        env.update(LATTICE_SYNC_VISIBILITY_PERF='0',
+    if args.sync_probe_qualification or args.sync_matched_prepare:
+        env.update(LATTICE_SYNC_VISIBILITY_MATCHED='0', LATTICE_SYNC_VISIBILITY_PERF='0',
                    LATTICE_SYNC_VISIBILITY_RUN_DIR=str(root / 'visibility-smoke'))
     result = {'scope': 'development source override only; not release qualification',
               'coreCommit': args.core_sha, 'sdkCommit': sdk_sha,
               'runnerOS': platform.platform(), 'machine': platform.machine(), 'cpuCount': os.cpu_count(),
               'runID': env.get('GITHUB_RUN_ID'), 'attempt': env.get('GITHUB_RUN_ATTEMPT'),
-              'job': env.get('GITHUB_JOB'), 'workflowCommit': sdk_sha,
+              'job': env.get('GITHUB_JOB'), 'workflowCommit': workflow_sha,
               'scriptSHA256': digest(Path(__file__)), 'success': False,
               'primaryError': None, 'evidenceErrors': [], 'releaseGraphAccepted': False,
               'overallSeconds': OVERALL_SECONDS, 'finalizationReserveSeconds': FINALIZATION_RESERVE}
     result['syncProbeQualification'] = args.sync_probe_qualification
     result['syncFullCalibration'] = args.sync_full_calibration
-    if args.sync_probe_qualification:
+    result['syncMatchedPreparation'] = args.sync_matched_prepare
+    if args.sync_matched_prepare:
+        result.update(repository=env.get('GITHUB_REPOSITORY'), developmentLeg=env.get('DEVELOPMENT_LEG'))
+    if args.sync_matched_prepare:
+        result['scope'] = 'matched measurement graph preparation only; no full-profile, performance or release acceptance'
+    elif args.sync_probe_qualification:
         result['scope'] = 'opt-in native origin / Swift importer / public visibility qualification only; no full-suite or performance acceptance'
     elif args.sync_full_calibration:
         result['scope'] = 'opt-in full workload calibration only; no A/A2/B, full-suite, performance or release acceptance'
@@ -501,7 +515,7 @@ def main():
             graph = runner.run('effective-graph-before', ['swift', 'package', *common, 'show-dependencies', '--format', 'json'], cwd=sdk)
             verify_graph(runner, 'graph-before', read_graph(graph), original, core, args.core_sha, root / 'scratch')
             probe_flags = []
-            if args.sync_probe_qualification or args.sync_full_calibration:
+            if args.sync_probe_qualification or args.sync_full_calibration or args.sync_matched_prepare:
                 import sync_probe_qualification
                 probe_flags = sync_probe_qualification.FLAGS
                 test_started_at = time.time()
@@ -510,7 +524,7 @@ def main():
             save_json(receipts / 'compiler-input-proof.json', compiler_input_proof(build, core))
             # Do not shorten or silently consume the original platform test allowance.
             test_started_at = time.time()
-            if args.sync_probe_qualification:
+            if args.sync_probe_qualification or args.sync_matched_prepare:
                 sdk_probe_log = runner.run('sdk-probe-fixtures', ['swift', 'test', *common, *probe_flags,
                            '--force-resolved-versions', '--skip-build', '--filter',
                            'SyncPublicVisibilityTests|SyncVisibilityRecorderTests'], cwd=sdk,
@@ -530,6 +544,9 @@ def main():
             initial_sdk_files = {k: v for k, v in sdk_inputs['files'].items() if k != 'Package.resolved'}
             if final_sdk['files'] != initial_sdk_files or final_core != core_inputs:
                 raise ValueError('tracked source changed during qualification')
+            if args.sync_matched_prepare:
+                import sync_matched_experiment
+                sync_matched_experiment.prepare(runner, root, sdk_inputs, core_inputs)
             result['success'] = True
         except BaseException as error:
             primary = error
