@@ -29,11 +29,18 @@ on:
         required: false
         default: false
 
+      sync_matched_experiment:
+        description: 'Prepare exact A and current B, then run all five A-A2-B groups on this same runner; mutually exclusive with preparation and other qualification modes'
+        type: boolean
+        required: false
+        default: false
+
 permissions:
   contents: read
 
 jobs:
   development:
+    if: ${{ !inputs.sync_matched_experiment }}
     name: Development SDK (${{ matrix.leg }})
     strategy:
       fail-fast: false
@@ -110,6 +117,153 @@ jobs:
             ${{ env.TASK_ROOT }}/visibility-smoke/receipts.json
             ${{ env.TASK_ROOT }}/visibility-full-loaded/receipts.json
             ${{ env.TASK_ROOT }}/visibility-full-quiet-only/receipts.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+  matched:
+    if: ${{ inputs.sync_matched_experiment }}
+    name: Matched A-A2-B (${{ matrix.leg }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: linux
+            runner: ubuntu-latest
+            container: swift:6.3-noble
+          - leg: macos
+            runner: macos-26
+            container: null
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    # Finite hosted envelope. Three worst-case210min owners do not fit;
+    # admission refuses the next whole phase rather than shortening it.
+    timeout-minutes: 360
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      DEVELOPMENT_LEG: ${{ matrix.leg }}
+    steps:
+      - name: Refuse simultaneous qualification modes
+        env:
+          OTHER_MODES: '${{ inputs.sync_probe_qualification }} ${{ inputs.sync_full_calibration }} ${{ inputs.sync_matched_prepare }} ${{ inputs.recovery_refresh_qualification }}'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mode in $OTHER_MODES; do test "$mode" != true; done
+
+      - name: Install Linux prerequisites
+        if: matrix.leg == 'linux'
+        timeout-minutes: 10
+        run: apt-get update && apt-get install -y git python3 libsqlite3-dev sqlite3
+
+      - name: Bootstrap both exact original sources under one localdev root
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          TASK_ROOT="$HOME/localdev/lattice-sync-matched-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${DEVELOPMENT_LEG}"
+          test ! -e "$TASK_ROOT"
+          mkdir -p "$TASK_ROOT/tmp" "$TASK_ROOT/hosted-receipts" "$TASK_ROOT/baseline" "$TASK_ROOT/candidate"
+          echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
+          export TASK_ROOT TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          python3 - <<'PY'
+          import json, os, platform, time
+          from pathlib import Path
+          root = Path(os.environ['TASK_ROOT'])
+          keys = ('GITHUB_REPOSITORY', 'GITHUB_SHA', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_JOB', 'DEVELOPMENT_LEG')
+          with (root / 'hosted-receipts/BOOTSTRAP.json').open('x') as output:
+              json.dump({'root': str(root), 'identity': {key: os.environ[key] for key in keys},
+                         'host': dict(platform.uname()._asdict()), 'monotonicNS': time.monotonic_ns(),
+                         'plannedPhases': ['prepare-A', 'prepare-B', 'measure'], 'profileDenominator': 30,
+                         'attemptedProfiles': [], 'unattemptedProfiles': [f'matched-{g}-{leg}-{p}'
+                           for g in range(1, 6) for leg in ('A', 'A2', 'B') for p in ('loaded', 'quiet-only')]}, output)
+          PY
+          finish_bootstrap() {
+            BOOTSTRAP_STATUS=$?
+            trap - EXIT
+            export BOOTSTRAP_STATUS
+            python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          with (Path(os.environ['TASK_ROOT']) / 'hosted-receipts/BOOTSTRAP-RESULT.json').open('x') as output:
+              json.dump({'exitCode': int(os.environ['BOOTSTRAP_STATUS']), 'stage': os.environ.get('BOOTSTRAP_STAGE'),
+                         'scope': 'bootstrap exit only; no native/process cleanup or preparation claim'}, output)
+          PY
+            exit "$BOOTSTRAP_STATUS"
+          }
+          trap finish_bootstrap EXIT
+          export BOOTSTRAP_STAGE=candidate-fetch
+          git init "$TASK_ROOT/candidate/lattice"
+          git -C "$TASK_ROOT/candidate/lattice" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C "$TASK_ROOT/candidate/lattice" checkout --detach "$GITHUB_SHA"
+          test "$(git -C "$TASK_ROOT/candidate/lattice" rev-parse HEAD)" = "$GITHUB_SHA"
+          export BOOTSTRAP_STAGE=baseline-fetch
+          BASELINE_SHA=c30f2f30e229dc917f4aa2583ce3c872b5abbecb
+          git init "$TASK_ROOT/baseline/lattice"
+          git -C "$TASK_ROOT/baseline/lattice" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$BASELINE_SHA"
+          git -C "$TASK_ROOT/baseline/lattice" checkout --detach "$BASELINE_SHA"
+          test "$(git -C "$TASK_ROOT/baseline/lattice" rev-parse HEAD)" = "$BASELINE_SHA"
+          export BOOTSTRAP_STAGE=complete
+
+      - name: Bind the actual same-host experiment
+        shell: bash
+        run: python3 "$TASK_ROOT/candidate/lattice/Scripts/sync_matched_hosted.py" --root "$TASK_ROOT" initialize
+
+      - name: Prepare A using its own runner and original Core pin
+        timeout-minutes: 220
+        shell: bash
+        run: |
+          set +e
+          python3 "$TASK_ROOT/candidate/lattice/Scripts/sync_matched_hosted.py" --root "$TASK_ROOT" execute --phase prepare-A
+          PHASE_STATUS=$?
+          set -e
+          python3 "$TASK_ROOT/candidate/lattice/Scripts/sync_matched_hosted.py" --root "$TASK_ROOT" complete --phase prepare-A --exit-code "$PHASE_STATUS"
+          exit "$PHASE_STATUS"
+
+      - name: Prepare B using its own runner and committed Core pin
+        timeout-minutes: 220
+        shell: bash
+        run: |
+          set +e
+          python3 "$TASK_ROOT/candidate/lattice/Scripts/sync_matched_hosted.py" --root "$TASK_ROOT" execute --phase prepare-B
+          PHASE_STATUS=$?
+          set -e
+          python3 "$TASK_ROOT/candidate/lattice/Scripts/sync_matched_hosted.py" --root "$TASK_ROOT" complete --phase prepare-B --exit-code "$PHASE_STATUS"
+          exit "$PHASE_STATUS"
+
+      - name: Issue all five A-A2-B groups with B coordinator
+        timeout-minutes: 220
+        shell: bash
+        run: |
+          set +e
+          python3 "$TASK_ROOT/candidate/lattice/Scripts/sync_matched_hosted.py" --root "$TASK_ROOT" execute --phase measure
+          PHASE_STATUS=$?
+          set -e
+          python3 "$TASK_ROOT/candidate/lattice/Scripts/sync_matched_hosted.py" --root "$TASK_ROOT" complete --phase measure --exit-code "$PHASE_STATUS"
+          exit "$PHASE_STATUS"
+
+      - name: Retain phase failures and exact attempted or unattempted denominator
+        if: always() && env.TASK_ROOT != ''
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f "$TASK_ROOT/candidate/lattice/Scripts/sync_matched_hosted.py"; then
+            python3 "$TASK_ROOT/candidate/lattice/Scripts/sync_matched_hosted.py" --root "$TASK_ROOT" finalize
+          else
+            echo 'Bootstrap did not supply the original controller; bootstrap refusal remains retained.'
+            exit 1
+          fi
+
+      - name: Upload bounded existing evidence including failures
+        if: always() && env.TASK_ROOT != ''
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-matched-${{ matrix.leg }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ env.TASK_ROOT }}/hosted-receipts
+            ${{ env.TASK_ROOT }}/upload
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14

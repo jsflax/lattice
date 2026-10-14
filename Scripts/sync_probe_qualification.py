@@ -26,6 +26,10 @@ NATIVE_CASES = {
     'ActualProtectedClaimAndDetachedCallbackCannotReplaceConsumedOrigin',
     'PrivateInstallCannotArmAndRollbackDoesNotContaminatePublicSuccessor',
 }
+CAPACITY_BRIDGE_CASES = {
+    'InvalidInputAndActualRegistryRefusalConsumeContextExactlyOnce',
+    'RealLastCutReleaseRetainsContextThroughCopyCancellationAndReentry',
+}
 SDK_CASES = {'smallPublicVisibilityQualification',
              'lateReadCannotRepairDeadlineOrCompleteAnotherIdentity',
              'duplicateCallbacksCannotInflateCoverageAndDiagnosticsStayBounded',
@@ -65,6 +69,28 @@ def check_native_summary(summary):
         raise ValueError('all seventeen exact native probe results are required before full calibration')
 
 
+def expected_capacity_bridge_tests(source):
+    names = re.findall(r'TEST\(OrdinaryExportCapacityBridge,\s*(\w+)\)', source)
+    if len(names) != 2 or set(names) != CAPACITY_BRIDGE_CASES:
+        raise ValueError('reviewed capacity bridge source must contain exactly the two named tests')
+    return set(names)
+
+
+def check_capacity_bridge_xml(xml, expected):
+    report = ET.fromstring(xml)
+    cases = report.findall('.//testcase')
+    names = [case.get('name') for case in cases]
+    if expected != CAPACITY_BRIDGE_CASES or len(cases) != 2 or set(names) != expected:
+        raise ValueError('actual capacity bridge identities do not equal the two reviewed cases')
+    for case in cases:
+        if (case.get('classname') != 'OrdinaryExportCapacityBridge'
+                or case.get('status') != 'run' or case.get('result') != 'completed'):
+            raise ValueError('capacity bridge case did not execute to completion')
+    if any(report.findall('.//' + name) for name in ('failure', 'skipped', 'error')):
+        raise ValueError('capacity bridge failure/skip/error retained in XML')
+    return {'count': len(cases), 'names': sorted(names), 'allExecutedWithoutFailure': True}
+
+
 def qualify_native(runner, core, root, compiler_input_proof):
     # Core vendors GoogleTest and declares no package dependencies. Its source
     # and tracked postimages are already authenticated by the enclosing runner.
@@ -89,6 +115,18 @@ def qualify_native(runner, core, root, compiler_input_proof):
     with (runner.receipts / 'native-probe-qualification.json').open('x') as output:
         json.dump({'scope': 'native probe only; not full Core suite', 'tests': result,
                    'compilerInputs': proof, 'flags': FLAGS}, output, indent=2)
+    # Required B-only successor qualification, separate from the original17
+    # probe XML/denominator. Missing source or zero discovered cases must fail.
+    capacity_inventory = expected_capacity_bridge_tests(
+        (core / 'Tests/LatticeCoreTests/OrdinaryExportCapacityBridgeTests.cpp').read_text())
+    capacity_xml = runner.receipts / 'native-capacity-bridge.xml'
+    runner.run('native-capacity-bridge', ['swift', 'run', *common, *FLAGS, '-j', '2', '-v',
+               'LatticeCoreTests', '--gtest_filter=OrdinaryExportCapacityBridge.*',
+               '--gtest_output=xml:' + str(capacity_xml)], cwd=core, timeout=5400)
+    capacity_result = check_capacity_bridge_xml(capacity_xml.read_text(), capacity_inventory)
+    with (runner.receipts / 'native-capacity-bridge-qualification.json').open('x') as output:
+        json.dump({'scope': 'two capacity bridge tests only; not full Core, recovery or performance acceptance',
+                   'tests': capacity_result, 'flags': FLAGS}, output, indent=2)
 
 
 def qualify_public_receipts(root, receipts):
