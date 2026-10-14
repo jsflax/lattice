@@ -1407,7 +1407,7 @@ public struct Lattice {
         Self.cacheLock.withLockUnchecked { Self.cache[key] = entry }
         return opened
     }
-    @_spi(LatticeServer) public enum MountedServerExistingOpenError: Error {
+    @_spi(LatticeServer) public enum MountedServerExistingOpenError: Swift.Error {
         case incompatibleConfiguration
         case openRefused(String)
     }
