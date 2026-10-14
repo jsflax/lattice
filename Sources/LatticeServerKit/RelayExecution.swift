@@ -16,6 +16,7 @@ final class RelayExecutionPool: Sendable {
     static let stackSize = 8 << 20
     private let state: RelayExecutionState
     private let workerIdentity: String
+    private let creatorPID = getpid()
     private static let workerIdentityKey = "lattice.relay.worker-identity"
 
     init(workerCount: Int, name: String) {
@@ -54,6 +55,13 @@ final class RelayExecutionPool: Sendable {
     /// Synchronous diagnostic; verifies actual execution on this pool's worker.
     var isCurrentWorker: Bool {
         Thread.current.threadDictionary[Self.workerIdentityKey] as? String == workerIdentity
+    }
+
+    /// Borrowing witness from the actual dequeued synchronous turn, retained
+    /// through final capture/autorelease destruction while this key is running.
+    /// This is executor custody only; it issues no native source or store grant.
+    func isExecuting(for store: String) -> Bool {
+        getpid() == creatorPID && isCurrentWorker && state.isExecuting(store: store)
     }
 
     /// Native work is synchronous. Callers arrange their completion callback;
@@ -126,7 +134,18 @@ private struct RelayFIFO<Element> {
     }
 }
 
+private final class RelayExecutionTurn {
+    let state: ObjectIdentifier
+    var store: String?
+    init(state: ObjectIdentifier) { self.state = state }
+}
+
 private final class RelayExecutionState: @unchecked Sendable {
+    private static let executingTurnKey = "lattice.relay.executing-turn"
+    func isExecuting(store: String) -> Bool {
+        guard let turn = Thread.current.threadDictionary[Self.executingTurnKey] as? RelayExecutionTurn else { return false }
+        return turn.state == ObjectIdentifier(self) && turn.store == store
+    }
     private final class Store {
         var queue = RelayFIFO<@Sendable () -> Void>()
         var running = false
@@ -192,6 +211,12 @@ private final class RelayExecutionState: @unchecked Sendable {
         condition.lock()
         startedWorkers += 1
         condition.unlock()
+        // One scalar turn cell per actual fixed worker, rather than allocating
+        // a new class for every hot-path job. Only this native worker mutates it.
+        precondition(Thread.current.threadDictionary[Self.executingTurnKey] == nil)
+        let turn = RelayExecutionTurn(state: ObjectIdentifier(self))
+        Thread.current.threadDictionary[Self.executingTurnKey] = turn
+        defer { Thread.current.threadDictionary.removeObject(forKey: Self.executingTurnKey) }
         while true {
             condition.lock()
             while ready.isEmpty {
@@ -213,6 +238,10 @@ private final class RelayExecutionState: @unchecked Sendable {
             queued -= 1
             running += 1
             condition.unlock()
+            // Publish only the actual dequeued key, after taking its running
+            // slot and leaving the condition leaf. No caller can issue a turn.
+            precondition(turn.store == nil)
+            turn.store = key
             // Final captured owners and Darwin autoreleased objects drain
             // outside the queue lock; their deinitializers may enqueue work.
             #if canImport(Darwin)
@@ -224,6 +253,9 @@ private final class RelayExecutionState: @unchecked Sendable {
             body()
             body = {}
             #endif
+            // Keep the key through every destructor above; clear it before
+            // publishing this key as no longer running or taking the queue leaf.
+            turn.store = nil
             condition.lock()
             store.running = false
             running -= 1

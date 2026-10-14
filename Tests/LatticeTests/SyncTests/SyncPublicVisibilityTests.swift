@@ -26,6 +26,8 @@ private struct SyncVisibilityReport: Codable {
     let schema = "lattice.sync-public-visibility/1"
     let runID: String, mode: String, profile: String, clock: String
     let complete: Bool
+    let capturePolicy: String?, captureDeadlineNS: UInt64?, captureComplete: Bool?
+    let deadlineFailureRecorded: Bool?
     let metadata: [String: String]
     let effectiveParameters: SyncVisibilityParameters
     let startedNS: UInt64, measurementEpochNS: UInt64?, deadlineNS: UInt64?, finishedNS: UInt64
@@ -129,6 +131,22 @@ struct SyncPublicVisibilityTests {
         try await run(mode: "full", profile: profile, parameters: .full(quietOnly: profile == "quiet-only"))
     }
 
+    // Only the matched coordinator selects this measurement population.
+    // Offered workload, original 60s deadline, assertions and process budget
+    // remain unchanged. No caller-selected duration or production timer changes.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["LATTICE_SYNC_VISIBILITY_MATCHED"] == "1"),
+          .timeLimit(.minutes(5)))
+    func matchedPublicVisibilityCaptureProfile() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["LATTICE_SYNC_VISIBILITY_PERF"] == "1",
+              env["LATTICE_SYNC_VISIBILITY_CAPTURE_POLICY"] == "deadline60s-tail120s-all-origins.v1",
+              let profile = env["LATTICE_SYNC_VISIBILITY_PROFILE"], ["loaded", "quiet-only"].contains(profile) else {
+            throw SyncVisibilityFailure.invalid("matched capture requires exact coordinator policy/profile")
+        }
+        try await run(mode: "full", profile: profile, parameters: .full(quietOnly: profile == "quiet-only"),
+                      captureTailNS: 120_000_000_000)
+    }
+
     private func directory(mode: String) throws -> URL {
         // Match the runner's shell/Python HOME. In hosted Linux containers,
         // Foundation's account home can differ from the configured HOME.
@@ -174,7 +192,8 @@ struct SyncPublicVisibilityTests {
         if !recorder.allVisible(phase: phase) { throw SyncVisibilityFailure.invalid("\(phase) public visibility deadline") }
     }
 
-    private func run(mode: String, profile: String, parameters p: SyncVisibilityParameters) async throws {
+    private func run(mode: String, profile: String, parameters p: SyncVisibilityParameters,
+                     captureTailNS: UInt64? = nil) async throws {
         let logging = try SyncMeasurementLogging.installIfRequested()
         let directory = try directory(mode: mode), runID = UUID().uuidString
         let started = SyncVisibilityClock.now()
@@ -196,7 +215,8 @@ struct SyncPublicVisibilityTests {
         let pool = RelayExecutionPool(workerCount: p.driverWorkers, name: "visibility.driver")
         var relay: SyncVisibilityRelay?, clients: [SyncVisibilityClient] = []
         var writers: [String: SyncVisibilityClient] = [:]
-        var measurementEpoch: UInt64?, observationDeadline: UInt64?
+        var measurementEpoch: UInt64?, observationDeadline: UInt64?, captureDeadline: UInt64?
+        var deadlineFailureRecorded = false
         var metadata = ["platform": ProcessInfo.processInfo.operatingSystemVersionString,
             "placement": "one process; loopback relay; independent file-backed SDK clients",
             "processorCount": String(ProcessInfo.processInfo.processorCount),
@@ -206,7 +226,7 @@ struct SyncPublicVisibilityTests {
             "processIsolation": "fresh external process per full profile required; runner must authenticate exit separately",
             "sourceGraphAuthentication": "declared metadata; requires external build/clock qualification"]
         let env = ProcessInfo.processInfo.environment
-        for key in ["SDK_REVISION", "CORE_REVISION", "BUILD_ID", "HOST_ID", "RUN_GROUP", "RUN_ORDER", "LOGGING"] {
+        for key in ["SDK_REVISION", "CORE_REVISION", "BUILD_ID", "HOST_ID", "RUN_GROUP", "RUN_ORDER", "LOGGING", "EXPERIMENT_ID", "LEG_ID", "LEG", "PROFILE_ORDER", "CAPTURE_POLICY"] {
             metadata[key] = env["LATTICE_SYNC_VISIBILITY_" + key] ?? "unspecified"
         }
         if let logging { metadata.merge(logging) { _, installed in installed } }
@@ -214,7 +234,13 @@ struct SyncPublicVisibilityTests {
         do {
             if mode == "full" {
                 guard SyncVisibilityClock.hasProbe else { throw SyncVisibilityFailure.invalid("full profile requires reviewed native probe and Swift/C/C++ LATTICE_SYNC_COMMIT_PROBE flags") }
-                guard !metadata.values.contains("unspecified") else { throw SyncVisibilityFailure.invalid("full profile requires all declared graph/build/host/run/logging metadata") }
+                let required = ["SDK_REVISION", "CORE_REVISION", "BUILD_ID", "HOST_ID", "RUN_GROUP", "RUN_ORDER", "LOGGING"]
+                guard required.allSatisfy({ metadata[$0] != "unspecified" }) else { throw SyncVisibilityFailure.invalid("full profile requires all declared graph/build/host/run/logging metadata") }
+                if captureTailNS != nil {
+                    guard ["EXPERIMENT_ID", "LEG_ID", "LEG", "PROFILE_ORDER", "CAPTURE_POLICY"].allSatisfy({ metadata[$0] != "unspecified" }) else {
+                        throw SyncVisibilityFailure.invalid("matched capture requires preissued experiment/leg/order metadata")
+                    }
+                }
             }
             // Small separate primitive-cost sample; no claim to measure complete
             // observer/read cost or the WAL instrumentation's overhead.
@@ -272,7 +298,22 @@ struct SyncPublicVisibilityTests {
             }
             await offer(phase: "measured", epoch: epoch, deadline: deadline, parameters: p,
                         recorder: recorder, writers: writers, pool: pool)
-            try await waitForVisibility(recorder, phase: "measured", deadline: deadline)
+            if let tail = captureTailNS {
+                let captureEnd = deadline + tail
+                captureDeadline = captureEnd
+                do { try await waitForVisibility(recorder, phase: "measured", deadline: deadline) }
+                catch {
+                    deadlineFailureRecorded = true
+                    recorder.error("matched measured public visibility deadline")
+                    // Keep the SAME actual observer/read owners alive. No new
+                    // offer, query sweep, reconnect or rewritten receipt.
+                    while !recorder.allCaptured(phase: "measured") && SyncVisibilityClock.now() < captureEnd {
+                        try await Task.sleep(nanoseconds: 2_000_000)
+                    }
+                }
+            } else {
+                try await waitForVisibility(recorder, phase: "measured", deadline: deadline)
+            }
         } catch { recorder.error(String(describing: error)) }
         recorder.freeze(phase: "warmup"); recorder.freeze(phase: "measured")
         // Await each driver completion before callback admission closes. Native
@@ -297,7 +338,12 @@ struct SyncPublicVisibilityTests {
                 && $0.observedID == $0.id && $0.readerStoreID == "clients/\($0.stream)-watcher.sqlite"
             }
         let report = SyncVisibilityReport(runID: runID, mode: mode, profile: profile, clock: SyncVisibilityClock.name,
-            complete: complete, metadata: metadata, effectiveParameters: p, startedNS: started,
+            complete: complete,
+            capturePolicy: captureTailNS == nil ? nil : "deadline60s-tail120s-all-origins.v1",
+            captureDeadlineNS: captureDeadline,
+            captureComplete: captureTailNS == nil ? nil : recorder.allCaptured(phase: "warmup") && recorder.allCaptured(phase: "measured"),
+            deadlineFailureRecorded: captureTailNS == nil ? nil : deadlineFailureRecorded,
+            metadata: metadata, effectiveParameters: p, startedNS: started,
             measurementEpochNS: measurementEpoch, deadlineNS: observationDeadline, finishedNS: SyncVisibilityClock.now(),
             errors: errors, counters: counters, overhead: overhead, receipts: receipts)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

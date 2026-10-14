@@ -20,6 +20,23 @@ struct SyncVisibilityRecorderTests {
         #expect(!recorder.allVisible(phase: "measured"))
     }
 
+    @Test func capturedLatePopulationNeverRepairsTimelyCompleteness() {
+        let expected = (0..<2).map { SyncVisibilityExpected(runID: "run", stream: "hot", phase: "measured", writer: 0, sequence: $0, bytes: 32) }
+        let recorder = SyncVisibilityRecorder(expected: expected)
+        for index in 0..<2 { recorder.schedule(index, at: 10, deadline: 50) }
+        recorder.observed(expected[0], at: 20, readerStoreID: "original")
+        recorder.freeze(phase: "measured")
+        #expect(!recorder.allCaptured(phase: "measured"))
+        recorder.observed(expected[1], at: 51, readerStoreID: "original")
+        recorder.observed(expected[1], at: 52, readerStoreID: "replacement")
+        #expect(recorder.allCaptured(phase: "measured"))
+        #expect(!recorder.allVisible(phase: "measured"))
+        let (rows, counts, _) = recorder.snapshot()
+        #expect(rows[0].firstExactReadNS == 20 && !rows[0].timedOut)
+        #expect(rows[1].firstExactReadNS == nil && rows[1].lateExactReadNS == 51 && rows[1].timedOut)
+        #expect(rows[1].readerStoreID == "original" && counts.duplicateCallbacks == 1)
+    }
+
     @Test func duplicateCallbacksCannotInflateCoverageAndDiagnosticsStayBounded() {
         let expected = (0..<2).map { SyncVisibilityExpected(runID: "run", stream: "hot", phase: "measured", writer: 0, sequence: $0, bytes: 32) }
         let recorder = SyncVisibilityRecorder(expected: expected)

@@ -11,6 +11,7 @@ let package = Package(
         .library(
             name: "Lattice",
             targets: ["Lattice"]),
+        .library(name: "LatticeInstallation", targets: ["LatticeInstallation"]),
         .library(name: "LatticeServerKit", targets: ["LatticeServerKit"]),
         .library(name: "LatticeMCP", targets: ["LatticeMCP"]),
         .library(name: "LatticeMCPTransport", targets: ["LatticeMCPTransport"]),
@@ -81,9 +82,10 @@ let package = Package(
                 .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
             ]
         ),
+        .target(name: "_LatticeManagedDirectoryInternal", path: "Sources/_LatticeManagedDirectoryInternal", publicHeadersPath: "include"),
         .target(
             name: "Lattice",
-            dependencies: ["LatticeMacros",
+            dependencies: ["LatticeMacros", "_LatticeManagedDirectoryInternal",
                 .product(name: "LatticeSwiftCppBridge", package: "LatticeCore"),
                 .product(name: "LatticeSwiftModule", package: "LatticeCore"),
                 .product(name: "Collections", package: "swift-collections"),
@@ -93,6 +95,9 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("FoundationInternationalization", .when(platforms: [.linux])),
             ]),
+        .target(name: "LatticeInstallation", dependencies: ["Lattice",
+            .product(name: "LatticeInstallationChannel", package: "LatticeCore")],
+            path: "Sources/LatticeInstallation", swiftSettings: [.interoperabilityMode(.Cxx)]),
         .testTarget(
             name: "LatticeTests",
             dependencies: [
@@ -196,5 +201,6 @@ let package = Package(
                             .product(name: "MCP", package: "swift-sdk"),
                           ],
                           swiftSettings: [.interoperabilityMode(.Cxx)])
-    ]
+    ],
+    cxxLanguageStandard: .cxx20
 )

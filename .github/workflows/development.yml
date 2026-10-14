@@ -18,6 +18,11 @@ on:
         type: boolean
         required: false
         default: false
+      sync_matched_prepare:
+        description: 'Prepare one exact instrumented graph and smoke evidence for a separately owned matched coordinator; no measurement or acceptance'
+        type: boolean
+        required: false
+        default: false
       recovery_refresh_qualification:
         description: 'Qualify recovery refresh and changed-field SDK tests only; not full-suite, release or performance acceptance'
         type: boolean
@@ -51,6 +56,7 @@ jobs:
       TEST_TIMEOUT: ${{ matrix.testTimeout }}
       SYNC_PROBE_QUALIFICATION: ${{ inputs.sync_probe_qualification || false }}
       SYNC_FULL_CALIBRATION: ${{ inputs.sync_full_calibration || false }}
+      SYNC_MATCHED_PREPARE: ${{ inputs.sync_matched_prepare || false }}
       RECOVERY_REFRESH_QUALIFICATION: ${{ inputs.recovery_refresh_qualification || false }}
     steps:
       - name: Install Linux prerequisites
@@ -86,6 +92,9 @@ jobs:
           fi
           if [[ "$SYNC_FULL_CALIBRATION" == 'true' ]]; then
             DEVELOPMENT_ARGUMENTS+=(--sync-full-calibration)
+          fi
+          if [[ "$SYNC_MATCHED_PREPARE" == 'true' ]]; then
+            DEVELOPMENT_ARGUMENTS+=(--sync-matched-prepare)
           fi
           python3 "$TASK_ROOT/lattice/Scripts/run-development.py" "${DEVELOPMENT_ARGUMENTS[@]}"
 

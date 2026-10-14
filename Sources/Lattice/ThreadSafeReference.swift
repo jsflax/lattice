@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public protocol SendableReference<NonSendable>: Sendable {
     associatedtype NonSendable
@@ -209,16 +214,59 @@ extension _VirtualNearestResultsCompat {
     }
 }
 
+// Explicit same-process custody of the real native ownership control block.
+// The raw box is solely a fork-safe ARC holder: its value is never decoded or
+// used as authority. Native validation is still required at every resolution.
+// An inherited child intentionally quarantines its copied box rather than
+// invoking a native destructor that could enter inherited locked state.
+internal final class ManagedLatticeReferenceOwner: @unchecked Sendable {
+    private final class Box {
+        let store: Lattice
+        init(_ store: Lattice) { self.store = store }
+    }
+    private let creator: Int32
+    private let box: UnsafeMutableRawPointer
+    private static func process() -> Int32 {
+        #if canImport(Darwin) || canImport(Glibc)
+        return getpid()
+        #else
+        return 0 // No supported managed issuer on this platform.
+        #endif
+    }
+    init(_ store: Lattice) {
+        creator = Self.process()
+        box = Unmanaged.passRetained(Box(store)).toOpaque()
+    }
+    deinit {
+        if creator == 0 || creator == Self.process() {
+            Unmanaged<Box>.fromOpaque(box).release()
+        }
+    }
+    func resolve(isolation: isolated (any Actor)?) -> Lattice? {
+        guard creator != 0, creator == Self.process() else { return nil }
+        return Unmanaged<Box>.fromOpaque(box).takeUnretainedValue().store
+            .resolveRetainedManagedOwner(isolation: isolation)
+    }
+}
+
 public struct LatticeThreadSafeReference: Sendable {
     private let modelTypes: [any Model.Type]
     private let configuration: Lattice.Configuration
+    private let managedOwner: ManagedLatticeReferenceOwner?
 
-    init(modelTypes: [any Model.Type], configuration: Lattice.Configuration) {
+    init(modelTypes: [any Model.Type], configuration: Lattice.Configuration,
+         managedOwner: ManagedLatticeReferenceOwner? = nil) {
         self.modelTypes = modelTypes
         self.configuration = configuration
+        self.managedOwner = managedOwner
     }
     
     public func resolve(isolation: isolated (any Actor)? = #isolation) -> Lattice? {
+        if configuration.ordinaryInstallationContext != nil {
+            // No ordinary-open/profile capability can be recovered from the
+            // configuration when a retained actual owner is absent or closed.
+            return managedOwner?.resolve(isolation: isolation)
+        }
         // Don't resurrect a deleted database. If the backing file was removed
         // (e.g. by `Lattice.delete` during a logout wipe), an in-flight observe
         // trampoline that re-resolves must bail rather than reopen — reopening
@@ -240,6 +288,7 @@ public struct LatticeThreadSafeReference: Sendable {
 
 extension Lattice {
     public var sendableReference: LatticeThreadSafeReference {
-        .init(modelTypes: self.modelTypes, configuration: self.configuration)
+        .init(modelTypes: self.modelTypes, configuration: self.configuration,
+              managedOwner: configuration.ordinaryInstallationContext == nil ? nil : ManagedLatticeReferenceOwner(self))
     }
 }

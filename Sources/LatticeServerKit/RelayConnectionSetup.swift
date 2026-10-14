@@ -12,6 +12,7 @@ struct RelayConnectionSetupInput: @unchecked Sendable {
     let applyKey: String
     let channel: SyncChannel
     let recoverySource: RecoveryRelayResolvedSource?
+    let ordinaryModelAuthorization: RelayOrdinaryModelAuthorization?
     let socket: WebSocket
     let state: ConnectionRelayState
     let sockets: SocketManager
@@ -25,6 +26,27 @@ struct RelayConnectionSetupInput: @unchecked Sendable {
     let didFinish: @Sendable () -> Void
     let didObserveRecoverySetup: (@Sendable (RelaySetupAdmissionObservation) -> Void)?
     let didOpenRecoverySetupOwnerForTesting: (@Sendable (Lattice) -> Void)?
+
+    // Explicit default for every existing memberwise-initializer caller.
+    init(schema: [any Lattice.Model.Type], storageURL: URL, fileURL: URL?, applyKey: String,
+         channel: SyncChannel, recoverySource: RecoveryRelayResolvedSource?,
+         ordinaryModelAuthorization: RelayOrdinaryModelAuthorization? = nil,
+         socket: WebSocket, state: ConnectionRelayState, sockets: SocketManager,
+         watchManager: FileWatchManager?, pushContext: MountPushContext?,
+         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)?, lastEventId: UUID?,
+         processFrame: @escaping @Sendable (WebSocket, RelayIngressFrame, Lattice) async -> Void,
+         diagnostic: ACKPathConnection?, sendCatchUp: (@Sendable (WebSocket, Data, EventLoopPromise<Void>) -> Void)?,
+         didFinish: @escaping @Sendable () -> Void,
+         didObserveRecoverySetup: (@Sendable (RelaySetupAdmissionObservation) -> Void)?,
+         didOpenRecoverySetupOwnerForTesting: (@Sendable (Lattice) -> Void)?) {
+        self.schema = schema; self.storageURL = storageURL; self.fileURL = fileURL; self.applyKey = applyKey
+        self.channel = channel; self.recoverySource = recoverySource; self.ordinaryModelAuthorization = ordinaryModelAuthorization
+        self.socket = socket; self.state = state; self.sockets = sockets; self.watchManager = watchManager
+        self.pushContext = pushContext; self.storeConfiguration = storeConfiguration; self.lastEventId = lastEventId
+        self.processFrame = processFrame; self.diagnostic = diagnostic; self.sendCatchUp = sendCatchUp
+        self.didFinish = didFinish; self.didObserveRecoverySetup = didObserveRecoverySetup
+        self.didOpenRecoverySetupOwnerForTesting = didOpenRecoverySetupOwnerForTesting
+    }
 }
 
 private enum RelayAutomaticSetupStep: Sendable {
@@ -51,6 +73,7 @@ private final class RelayCatchUpReadState {
     // 100 also aligns with the existing legacy ACK mutation chunk.
     private static let entriesPerTurn = 100
     let lattice: Lattice
+    let ordinaryModelGate: RelayOrdinaryModelGate?
     private let input: RelayConnectionSetupInput
     private var checkedFloor = false
     private var events: TableResults<AuditLog>?
@@ -60,7 +83,8 @@ private final class RelayCatchUpReadState {
     var hasSubscription = false
     let probe: ObserverSendBoundaryProbe?
 
-    init(lattice: Lattice, input: RelayConnectionSetupInput, probe: ObserverSendBoundaryProbe?) {
+    init(lattice: Lattice, input: RelayConnectionSetupInput, probe: ObserverSendBoundaryProbe?, ordinaryModelGate: RelayOrdinaryModelGate? = nil) {
+        self.ordinaryModelGate = ordinaryModelGate
         self.lattice = lattice
         self.input = input
         self.probe = probe
@@ -198,19 +222,42 @@ private final class RelayCatchUpReadState {
             return
         }
         RelayExecutionPool.io.submitRequired(for: input.applyKey) {
-            try? FileManager.default.createDirectory(at: input.storageURL, withIntermediateDirectories: true)
+            if input.ordinaryModelAuthorization == nil {
+                try? FileManager.default.createDirectory(at: input.storageURL, withIntermediateDirectories: true)
+            }
             let configuration = SyncRelayApplyPolicy.configuration(
                 fileURL: input.fileURL, storeConfiguration: input.storeConfiguration)
             input.diagnostic?.record(.storeOpenBegin)
             let opened: UnsafeSendableBox<RelayCatchUpReadState>?
             let turn: RecoveryRelayAuthorizationTurn?
             do {
-                let lattice = try Lattice(isolation: nil, for: input.schema, configuration: configuration)
+                let lattice: Lattice
+                if let authorization = input.ordinaryModelAuthorization {
+                    try authorization.validateUse(socket: input.socket, key: input.applyKey, revocation: input.state.revocation)
+                    lattice = try authorization.openExistingOwner(configuration: configuration)
+                } else {
+                    lattice = try Lattice(isolation: nil, for: input.schema, configuration: configuration)
+                }
+                let modelGate: RelayOrdinaryModelGate?
+                if let authorization = input.ordinaryModelAuthorization, !input.state.ordinaryRequired {
+                    modelGate = try RelayOrdinaryModelGate(authorization: authorization, owner: lattice,
+                        socket: input.socket, key: input.applyKey, revocation: input.state.revocation)
+                } else { modelGate = nil }
+                if input.state.ordinaryRequired {
+                    let ordinary = try RelayOrdinaryConnection(lattice: lattice, socket: input.socket,
+                                                               key: input.applyKey, revocation: input.state.revocation,
+                                                                modelAuthorization: input.ordinaryModelAuthorization,
+                                                               observeChanges: input.pushContext.map { !$0.options._suppressCommitObserverForTesting } ?? false,
+                                                               onRefusal: { [weak state = input.state, socket = input.socket] in
+                        state?.sealIngress(.applyRefused, socket: socket, stopQueued: true)
+                    })
+                    try input.state.installOrdinary(ordinary)
+                }
                 if let recovery = input.state.recovery {
                     guard let source = input.recoverySource else { throw SyncRecoveryConfigurationError.staleAuthorization }
                     turn = try recovery.open(owner: lattice, channel: input.channel, source: source)
                 } else { turn = nil }
-                opened = UnsafeSendableBox(RelayCatchUpReadState(lattice: lattice, input: input, probe: probe))
+                opened = UnsafeSendableBox(RelayCatchUpReadState(lattice: lattice, input: input, probe: probe, ordinaryModelGate: modelGate))
                 input.diagnostic?.record(.storeOpenEnd)
             } catch {
                 opened = nil; turn = nil
@@ -418,6 +465,9 @@ private final class RelayCatchUpReadState {
             }
             return
         }
+        if let ordinary = input.state.ordinary {
+            input.sockets.setOrdinary(ordinary, socket: input.socket, channelId: input.channel.id)
+        }
         subscribe(probe: probe)
     }
 
@@ -449,6 +499,10 @@ private final class RelayCatchUpReadState {
 
     private func subscribe(probe: ObserverSendBoundaryProbe?) {
         phase = .subscribing
+        if input.ordinaryModelAuthorization != nil {
+            subscribed(nil) // S3 must supply genuine selected observation; no legacy watcher/catalog fallback.
+            return
+        }
         if let manager = input.watchManager, let context = input.pushContext, let url = input.fileURL {
             input.diagnostic?.record(.watchSubscribeRequested)
             manager.subscribe(fileURL: url, context: context, socket: input.socket,
@@ -462,6 +516,7 @@ private final class RelayCatchUpReadState {
     private func subscribed(_ sub: PushSubscription?) {
         precondition(phase == .subscribing)
         subscription = sub
+        sub?.ordinary = input.state.ordinary
         input.state.pushSubscription = sub
         if input.watchManager != nil {
             input.diagnostic?.record(.watchSubscribeReturned, result: sub != nil)
@@ -480,6 +535,18 @@ private final class RelayCatchUpReadState {
                 state.abandoned = true
                 Task { @RelayControlActor in self.goLiveReturned(false) }
                 return
+            }
+            // Publish the gate only on this original go-live event loop, after
+            // the live guard. A close-before-publication cannot leave a late
+            // gate/owner in state after onClose already detached its owners.
+            if let gate = native.value.ordinaryModelGate {
+                do { try state.installOrdinaryModelGate(gate) }
+                catch {
+                    state.sealIngress(.setupRefused, socket: ws, stopQueued: true)
+                    ws.close(code: .policyViolation, promise: nil)
+                    Task { @RelayControlActor in self.goLiveReturned(false) }
+                    return
+                }
             }
             // Transfer the same owned envelopes in order, with no new charge.
             let processFrame = input.processFrame
@@ -531,7 +598,21 @@ private final class RelayCatchUpReadState {
         guard installed, isLive else { finish(); return }
         // This marker now describes the first explicit control catch-up turn,
         // not admission of a nested generic Task or a native query body.
+        if input.ordinaryModelAuthorization != nil {
+            // S1 has only the real typed model gate. No TableResults/JSON copy
+            // can issue a selected cut. S2/S3 must replace this explicit stop.
+            finish(keepSubscription: true)
+            return
+        }
         input.diagnostic?.record(.catchUpTaskStarted)
+        if input.state.ordinaryRequired {
+            // Registration was parked before go-live. No legacy floor, query or
+            // payload is produced while waiting for the explicit request.
+            if let subscription { input.watchManager?.activate(subscription, cursor: 0) }
+            input.state.ordinary?.nudge()
+            finish(keepSubscription: true)
+            return
+        }
         readNext()
     }
 

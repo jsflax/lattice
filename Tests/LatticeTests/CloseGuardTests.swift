@@ -1,5 +1,7 @@
 import Foundation
 import Testing
+import CxxStdlib
+import LatticeSwiftCppBridge
 @testable import Lattice
 
 /// Verifies the LatticeCore read/write-after-close guard: once a handle is
@@ -175,6 +177,32 @@ final class CloseGuardTests: BaseTest {
         #expect(lattice.lastCloseResult == result)
         lattice.close()
         #expect(lattice.lastCloseResult == result)
+    }
+
+    @Test func emptyManagedLaunchCannotCreateAFile() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "managed-empty-\(UUID().uuidString).sqlite")
+        #expect(!FileManager.default.fileExists(atPath: path.path))
+        let config = Lattice.Configuration(fileURL: path)
+        let native = lattice.swift_lattice_ref.createManaged(swiftConfig: config.cxxConfiguration(),
+            schemas: lattice.SchemaVector(), startup: lattice.swift_ordinary_open_context())
+        #expect(_optLatticeRef(native) == nil)
+        #expect(!String(lattice.last_bridge_error().pointee).isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: path.path))
+    }
+
+    @Test func emptyManagedLaunchCannotAliasAnExistingCachedOwner() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "managed-cache-\(UUID().uuidString).sqlite")
+        let config = Lattice.Configuration(fileURL: path)
+        let owner = try Lattice(Person.self, configuration: config)
+        defer { owner.close(); try? Lattice.delete(for: config) }
+        try seed(owner, ["retained legacy owner"])
+        let invalid = lattice.swift_lattice_ref.createManaged(swiftConfig: config.cxxConfiguration(),
+            schemas: lattice.SchemaVector(), startup: lattice.swift_ordinary_open_context())
+        #expect(_optLatticeRef(invalid) == nil)
+        #expect(owner.objects(Person.self).count == 1)
+        let result = owner.closeChecked()
+        #expect(result.cleanupComplete)
+        #expect(owner.lastCloseResult == result)
     }
 
 }

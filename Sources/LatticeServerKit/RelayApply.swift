@@ -197,10 +197,16 @@ struct RelayFrame {
 
     var root: [String: Any]? { json as? [String: Any] }
     /// The raw `auditLog` array when the frame is an upload.
-    var rawEntries: [Any]? { root?["auditLog"] as? [Any] }
+    var ordinaryUpload: [String: Any]? {
+        guard let root, root.count == 1, let value = root["latticeOrdinarySync"] as? [String: Any],
+              value["kind"] as? String == "upload" else { return nil }
+        return value
+    }
+    var rawUpload: Any? { ordinaryUpload?["auditLog"] ?? root?["auditLog"] }
+    var rawEntries: [Any]? { rawUpload as? [Any] }
     /// True when the frame carries an `auditLog` key at all (even a malformed
     /// one) — i.e. it claims to be an upload.
-    var claimsUpload: Bool { root?["auditLog"] != nil }
+    var claimsUpload: Bool { rawUpload != nil }
 
     /// Match Core's `server_sent_event::from_json` precedence: an auditLog
     /// array wins, then an ack array, then replayRequest. The `kind` label
@@ -211,7 +217,10 @@ struct RelayFrame {
     init(_ data: Data) {
         byteCount = data.count
         json = try? JSONSerialization.jsonObject(with: data)
-        guard let entries = (json as? [String: Any])?["auditLog"] as? [Any] else {
+        let parsedRoot = json as? [String: Any]
+        let ordinary = parsedRoot?.count == 1 ? parsedRoot?["latticeOrdinarySync"] as? [String: Any] : nil
+        let entriesValue = ordinary?["kind"] as? String == "upload" ? ordinary?["auditLog"] : parsedRoot?["auditLog"]
+        guard let entries = entriesValue as? [Any] else {
             requestedIds = []
             return
         }
@@ -239,7 +248,8 @@ struct RelayFrame {
             return applied.contains(id)
         }
         guard !kept.isEmpty else { return nil }
-        root["auditLog"] = kept
+        if var ordinary = ordinaryUpload { ordinary["auditLog"] = kept; root["latticeOrdinarySync"] = ordinary }
+        else { root["auditLog"] = kept }
         return try? JSONSerialization.data(withJSONObject: root)
     }
 }
@@ -341,6 +351,9 @@ struct RelayApplyOutcome: Sendable {
     var errorClass: RelayApplyErrorClass = .containedChunkFailure
     var elapsedMs: Double = 0
     var recoveryAcceptanceUnverified = false
+    /// Native-issued version pairs only; prior partial acceptance survives a
+    /// later failed attempt/merge. This owns staging until actual send completion.
+    var ordinaryAcknowledgment: RelayOrdinaryUploadAcknowledgment?
 
     /// True when the frame was applied in full (or was a non-upload frame
     /// that completed without error) — the only state that fans out verbatim.
@@ -385,12 +398,23 @@ func applyWithRetry(
     data: Data,
     frame: RelayFrame,
     channelId: String,
-    userId: UUID
+    userId: UUID,
+    ordinaryUpload: Bool = false,
+    ordinaryVersioned: Bool = false,
+    ordinaryModelSelection: RelayOrdinaryModelSelection? = nil,
+    ordinaryStaging: RelayOrdinaryBudget.Charge? = nil
 ) -> RelayApplyOutcome {
     var outcome = RelayApplyOutcome()
     var appliedSet: Set<UUID> = []
     let started = DispatchTime.now()
     let requested = frame.requestedIds
+    let ordinaryCharge: RelayOrdinaryBudget.Charge?
+    do { ordinaryCharge = ordinaryVersioned ? try (ordinaryStaging ?? RelayOrdinaryBudget.shared.reserve(.staging)) : nil }
+    catch {
+        outcome.unapplied = requested; outcome.lastError = "ordinary acknowledgment staging capacity unavailable"
+        outcome.errorClass = .other
+        return outcome
+    }
 
     func elapsedMs() -> Double {
         Double(DispatchTime.now().uptimeNanoseconds &- started.uptimeNanoseconds) / 1e6
@@ -404,7 +428,34 @@ func applyWithRetry(
             if let fault = _applyFaultForTesting.withLockedValue({ $0 }) {
                 try fault(channelId, outcome.attempts)
             }
-            for id in try lattice.receive(data) where appliedSet.insert(id).inserted {
+            let received: [UUID]
+            if ordinaryVersioned {
+                guard ordinaryUpload, let ordinaryCharge else { throw RelayOrdinaryError.control }
+                let actual: OrdinarySyncUploadAcceptance
+                if let ordinaryModelSelection {
+                    actual = try ordinaryModelSelection.withCurrentOwner { actualOwner, models in
+                        try actualOwner.receiveOrdinarySyncUploadWithAcknowledgment(data, models: models)
+                    }
+                } else { actual = try lattice.receiveOrdinarySyncUploadWithAcknowledgment(data) }
+                let aggregate: OrdinarySyncUploadAcceptance
+                if let previous = outcome.ordinaryAcknowledgment {
+                    aggregate = try previous.merging(actual)
+                } else { aggregate = actual }
+                // Assignment occurs only after a checked issued-value merge.
+                // Any throw retains the previous exact positive bytes and IDs.
+                if !aggregate.ids.isEmpty {
+                    outcome.ordinaryAcknowledgment = .init(aggregate, charge: ordinaryCharge)
+                }
+                received = aggregate.ids
+            } else if ordinaryUpload {
+                if let ordinaryModelSelection {
+                    received = try ordinaryModelSelection.withCurrentOwner { actualOwner, models in
+                        try actualOwner.receiveOrdinarySyncUpload(data, models: models)
+                    }
+                } else { received = try lattice.receiveOrdinarySyncUpload(data) }
+            }
+            else { received = try lattice.receive(data) }
+            for id in received where appliedSet.insert(id).inserted {
                 outcome.applied.append(id)
             }
         } catch {
@@ -482,6 +533,9 @@ struct RelayAppliedFrame: Sendable {
 }
 
 enum RelayProcessedFrame: Sendable {
+    case ordinary(RelayOrdinaryControl)
+    case ordinaryRefused
+    case ordinaryAdmissionRequired
     case revoked
     case refused(String)
     case ready(RecoveryRelayNativeReadyResult)
@@ -549,7 +603,10 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
                               readyObservation: (@Sendable (RelayReadyControlObservation) -> Void)? = nil,
                               readyTrace: RelayReadyControlTrace? = nil,
                               observeRecoveryACK: Bool = false,
-                              connectionObservation: (@Sendable (RelayRecoveryConnectionObservation) -> Void)? = nil) -> RelayProcessedFrame {
+                              connectionObservation: (@Sendable (RelayRecoveryConnectionObservation) -> Void)? = nil,
+                              ordinaryRequired: Bool = false, ordinaryConnection: RelayOrdinaryConnection? = nil, ordinaryNegotiated: Bool = false,
+                              ordinaryStaging: RelayOrdinaryBudget.Charge? = nil,
+                              deferOrdinaryStaging: Bool = false) -> RelayProcessedFrame {
     guard !revocation.isRevoked else { return .revoked }
     if let recovery {
         guard data.count <= 8_388_608, let recoveryCharge else { return .refused("recovery source input admission required") }
@@ -581,7 +638,24 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
         if data.count > 1_048_576 { return .recoveryRefused("recovery ordinary frame byte bound", recoveryCharge) }
     }
     diagnostic?.record(.frameParseBegin, span: admissionSpan, bytes: data.count)
+    if ordinaryRequired && data.count > 4_194_304 { return .ordinaryRefused }
     let frame = RelayFrame(data)
+    if frame.root?["latticeOrdinarySync"] != nil && frame.ordinaryUpload == nil {
+        guard ordinaryRequired, recovery == nil,
+              let control = try? RelayOrdinaryControl.decode(data) else { return .ordinaryRefused }
+        return .ordinary(control)
+    }
+    // Uploads cannot implicitly select ordered mode or mutate this store before
+    // its exact request was accepted. Actual-applied ACKs remain a separate
+    // delivery fact after negotiation; legacy mounts keep their original path.
+    if ordinaryRequired && !ordinaryNegotiated { return .ordinaryRefused }
+    let ordinaryModelSelection: RelayOrdinaryModelSelection?
+    do { ordinaryModelSelection = ordinaryRequired ? try ordinaryConnection?.modelSelectionForUpload() : nil }
+    catch { return .ordinaryRefused }
+    if frame.ordinaryUpload != nil && (!ordinaryRequired || recovery != nil) { return .ordinaryRefused }
+    // Required mode has exactly reserved controls and versioned uploads.
+    // In particular, a legacy GID-only ACK cannot settle source bookkeeping.
+    if ordinaryRequired && frame.ordinaryUpload == nil { return .ordinaryRefused }
     let span = diagnostic?.record(frame.root == nil ? .frameMalformed : .frameParsed, span: admissionSpan,
                                   bytes: frame.byteCount, count: frame.requestedIds.count,
                                   matching: frame.requestedIds) ?? 0
@@ -589,6 +663,10 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
         diagnostic?.record(.policyRefused, span: span, matching: frame.requestedIds)
         return .refused(reason)
     }
+    // First pass validates the exact control/upload/policy boundary without
+    // native effects. Its admitted copy is retired before the caller waits for
+    // outbound capacity, leaving this IO lane free to settle sends/receipts.
+    if ordinaryRequired && deferOrdinaryStaging && ordinaryStaging == nil { return .ordinaryAdmissionRequired }
     diagnostic?.record(.applyRequested, span: span, count: frame.requestedIds.count,
                        matching: frame.requestedIds)
     diagnostic?.record(.applyBodyEntered, span: span, matching: frame.requestedIds)
@@ -616,7 +694,10 @@ func processRelayApplyOnWorker(data: Data, lattice: Lattice, channel: SyncChanne
         outcome.elapsedMs = Double(DispatchTime.now().uptimeNanoseconds &- started) / 1e6
     } else {
         outcome = applyWithRetry(lattice: lattice, data: data, frame: frame,
-                                 channelId: channel.id, userId: channel.userId)
+                                 channelId: channel.id, userId: channel.userId, ordinaryUpload: frame.ordinaryUpload != nil,
+                                 ordinaryVersioned: ordinaryRequired && frame.ordinaryUpload != nil,
+                                 ordinaryModelSelection: ordinaryModelSelection,
+                                 ordinaryStaging: ordinaryStaging)
     }
     diagnostic?.record(.applyBodyReturned, span: span, count: frame.requestedIds.count,
                        applied: outcome.applied.count, missing: outcome.unapplied.count,

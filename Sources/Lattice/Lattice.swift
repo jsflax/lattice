@@ -97,6 +97,18 @@ extension lattice.swift_lattice_ref: Hashable, Equatable, @unchecked @retroactiv
     }
 }
 
+/// A bounded request selector. Authenticated mounts register its typed model
+/// set; this value grants no channel, membership, source or cut authority.
+public struct OrdinarySyncModelProfile: Sendable, Hashable {
+    public let identifier: String
+    public init(_ identifier: String) throws {
+        guard (1...64).contains(identifier.utf8.count), identifier.utf8.allSatisfy({
+            (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 46
+        }) else { throw OrdinarySyncExportError.invalidScope }
+        self.identifier = identifier
+    }
+}
+
 public struct Lattice {
     // UnfairLock back-deploys (os_unfair_lock, iOS 10+); OSAllocatedUnfairLock
     // would force an iOS-16 floor. Same primitive underneath.
@@ -656,6 +668,8 @@ public struct Lattice {
     }
 
     public struct Configuration: Sendable, Equatable, Hashable {
+        @_spi(Installation) public var ordinaryInstallationContext: OrdinaryInstallationContext?
+
         /// Where the database lives (1.0 item E2, replaces `isStoredInMemoryOnly`).
         public enum Storage: Sendable, Equatable, Hashable {
             /// On-disk database at the given file URL.
@@ -702,6 +716,8 @@ public struct Lattice {
             }
             set { storage = .file(newValue) }
         }
+        // Opaque trusted SDK session, never decoded from configuration data.
+        internal var managedEngramDirectorySession: ManagedEngramDirectorySession?
         public var authorizationToken: String?
         public var wssEndpoint: URL?
 
@@ -710,6 +726,12 @@ public struct Lattice {
         /// requires an explicit continuous-producer recovery policy. Exact
         /// endpoint must also match wssEndpoint.
         public var recoverySourceExpectation: RecoverySourceExpectation?
+        /// Opt in only against an ordered-required relay mount. A mismatch
+        /// refuses materialization and never falls back to provisional data.
+        public var ordinarySyncPolicy: OrdinarySyncPolicy = .legacyProvisional
+        /// Distinct preceding model negotiation. nil preserves exact default
+        /// scalar/history requests. Selected mode never falls back to nil.
+        public var ordinaryModelProfile: OrdinarySyncModelProfile?
         private var scheduler: Scheduler
 
         /// Schema migration definitions keyed by version number.
@@ -843,10 +865,14 @@ public struct Lattice {
 
         // MARK: Equatable / Hashable (migration excluded — closures aren't comparable)
         public static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.managedEngramDirectorySession === rhs.managedEngramDirectorySession &&
+            lhs.ordinaryInstallationContext === rhs.ordinaryInstallationContext &&
             lhs.storage == rhs.storage &&
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
             lhs.recoverySourceExpectation == rhs.recoverySourceExpectation &&
+            lhs.ordinarySyncPolicy == rhs.ordinarySyncPolicy &&
+            lhs.ordinaryModelProfile == rhs.ordinaryModelProfile &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
             lhs.syncFilter == rhs.syncFilter &&
@@ -857,10 +883,14 @@ public struct Lattice {
         }
 
         public func hash(into hasher: inout Hasher) {
+            hasher.combine(managedEngramDirectorySession.map { ObjectIdentifier($0) })
+            hasher.combine(ordinaryInstallationContext.map { ObjectIdentifier($0) })
             hasher.combine(storage)
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
             hasher.combine(recoverySourceExpectation)
+            hasher.combine(ordinarySyncPolicy)
+            hasher.combine(ordinaryModelProfile)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
             hasher.combine(syncFilter)
@@ -918,7 +948,12 @@ public struct Lattice {
                 self.wssEndpoint.map { std.string($0.absoluteString) } ?? std.string(),
                 authorizationToken.map { std.string($0) } ?? std.string(),
                 currentScheduler.scheduler)
+            if let context = ordinaryInstallationContext { config.set_ordinary_open_context(context.native) }
+            if let session = managedEngramDirectorySession { config.set_managed_product_credentials(session.credentials) }
             config.set_recovery_source_expectation(recoverySourceExpectation.map { std.string($0.nativePolicy) } ?? std.string())
+            config.set_ordinary_sync_required(ordinarySyncPolicy == .orderedRequired)
+            if ordinarySyncPolicy == .orderedHistoryRequired { config.set_ordinary_history_required() }
+            config.set_ordinary_model_profile(ordinaryModelProfile.map { std.string($0.identifier) } ?? std.string())
             config.read_only = isReadOnly
             config.busy_timeout_ms = Int32(busyTimeoutMs)
             if let auditRetention, auditRetention > 0 {
@@ -1021,6 +1056,8 @@ public struct Lattice {
     /// Lattice. Both are replaced by nil.)
     internal init?(isolation: isolated (any Actor)? = #isolation,
                    ref: lattice.swift_lattice_ref) {
+        // A managed inherited/stale reference cannot enter the Swift cache leaf.
+        guard ref.validateManagedOpenIfPresent() else { return nil }
         let resurrected: Lattice? = Self.cacheLock.withLockUnchecked {
             let key = CacheKey(ref)
             if let entry = Self.cache[key] {
@@ -1030,6 +1067,9 @@ public struct Lattice {
             return nil
         }
         guard let resurrected else { return nil }
+        // Native currentness may read journal/physical owners; never under the
+        // Swift cache leaf. Existing unmanaged resurrection remains unchanged.
+        guard ref.validateManagedOpenIfPresent() else { return nil }
         self = resurrected
     }
 
@@ -1049,6 +1089,32 @@ public struct Lattice {
         self.schema = schema
         self.isolation = isolation
         self.observerActorDelivery = observerActorDelivery
+    }
+
+    /// Resolves the SAME retained managed backend after actual native profile,
+    /// process, physical, cohort and schema validation. It is not a constructor
+    /// from configuration and never consults a path-keyed native owner cache.
+    internal func resolveRetainedManagedOwner(isolation: isolated (any Actor)?) -> Lattice? {
+        guard configuration.ordinaryInstallationContext != nil,
+              let native = backend.asCxxLatticeRef,
+              native.validateManagedReference() else { return nil }
+        let delivery: ObserverActorDelivery?
+        if isolation != nil { delivery = ObserverActorDelivery(isolation: isolation) }
+        else { delivery = nil }
+        var result = Lattice(backend: backend, configuration: configuration,
+            modelTypes: modelTypes, schema: schema, isolation: isolation, observerActorDelivery: delivery)
+        result.baseSchema = baseSchema
+        result.attachedSchemas = attachedSchemas
+        result.isSyncDisabled = isSyncDisabled
+        result.vectorIndexTrainingTask = vectorIndexTrainingTask
+        let entry = WeakCacheEntry(result)
+        // Cache publication is for existing native-pointer trampolines only.
+        // Destroy displaced Swift metadata after leaving the cache leaf.
+        let displaced = Self.cacheLock.withLockUnchecked {
+            Self.cache.updateValue(entry, forKey: CacheKey(result.backend))
+        }
+        withExtendedLifetime(displaced) {}
+        return result
     }
     
     private static let cacheLock = UnfairLock(initialState: ())
@@ -1117,7 +1183,36 @@ public struct Lattice {
                   for schema: [any Model.Type],
                   configuration: Configuration = defaultConfiguration,
                   isSynchronizing: Bool,
-                  continuousProducer: ContinuousProducerPolicy? = nil) throws {
+                  continuousProducer: ContinuousProducerPolicy? = nil,
+                  managedStartup: ManagedOrdinaryStartup? = nil,
+                  managedExpectedSchemaVersion: Int32 = 1) throws {
+        // Required client negotiation must precede materialization. A model
+        // selector is data and cannot turn a legacy/local opening into it.
+        if configuration.ordinaryModelProfile != nil && configuration.ordinarySyncPolicy == .legacyProvisional {
+            throw OrdinarySyncExportError.invalidPolicy
+        }
+        if configuration.ordinarySyncPolicy != .legacyProvisional {
+            guard configuration.wssEndpoint?.scheme?.lowercased() == "wss",
+                  configuration.recoverySourceExpectation == nil,
+                  continuousProducer == nil, managedStartup == nil else {
+                throw OrdinarySyncExportError.invalidPolicy
+            }
+        }
+        // Receive/retain the native-issued capability before this initializer.
+        // It validates creator/current generation and registered physical path
+        // before callback allocation, model discovery, cache or schema work.
+        if let managedStartup {
+            guard managedExpectedSchemaVersion > 0,
+                  configuration.ordinarySyncPolicy == .legacyProvisional,
+                  configuration.ordinaryModelProfile == nil,
+                  continuousProducer == nil, configuration.migration == nil,
+                  !configuration.isReadOnly, configuration.wssEndpoint == nil,
+                  configuration.ipcTargets?.isEmpty != false,
+                  configuration.auditRetention == nil || configuration.auditRetention == 0 else {
+                throw ManagedOrdinaryStartupError.incompatibleConfiguration
+            }
+            try managedStartup.validate(path: configuration.canonicalPath)
+        }
         // Refuse migration before allocating callback contexts or opening a file.
         if continuousProducer != nil && configuration.migration != nil {
             throw ContinuousProducerError.migrationUnsupported
@@ -1183,7 +1278,19 @@ public struct Lattice {
         var error = lattice.cxx_error()
         let createdRef: lattice.swift_lattice_ref
 
-        if let continuousProducer {
+        if let managedStartup {
+            // The scalar selects an expected current version. Only the native
+            // retained checked owner may prove it; this never requests migration.
+            var managedConfig = configuration.cxxConfiguration(isolation: isolation)
+            managedConfig.target_schema_version = managedExpectedSchemaVersion
+            let native = lattice.swift_lattice_ref.createManaged(
+                swiftConfig: managedConfig,
+                schemas: cxxSchemas, startup: managedStartup.native)
+            guard let retained = _optLatticeRef(native) else {
+                throw ManagedOrdinaryStartupError.openRefused(String(lattice.last_bridge_error().pointee))
+            }
+            createdRef = retained
+        } else if let continuousProducer {
             var result = lattice.continuous_result()
             createdRef = lattice.swift_lattice_ref.createContinuous(
                 swiftConfig: configuration.cxxConfiguration(isolation: isolation), schemas: cxxSchemas,
@@ -1259,6 +1366,50 @@ public struct Lattice {
         let key = CacheKey(self.backend)
         let entry = WeakCacheEntry(self)
         Self.cacheLock.withLockUnchecked { Self.cache[key] = entry }
+    }
+
+    /// Trusted server SPI. This creates an uncached native existing owner;
+    /// it proves no principal/source/cut and never performs schema migration.
+    @_spi(LatticeServer) public static func openMountedServerExisting(
+        for schema: [any Model.Type], configuration: Configuration) throws -> Lattice {
+        guard !configuration.isReadOnly, case .file(let fileURL) = configuration.storage, fileURL.isFileURL,
+              configuration.wssEndpoint == nil, configuration.ipcTargets?.isEmpty != false,
+              configuration.auditRetention == nil || configuration.auditRetention == 0,
+              configuration.recoverySourceExpectation == nil,
+              configuration.ordinarySyncPolicy == .legacyProvisional,
+              configuration.ordinaryModelProfile == nil,
+              configuration.busyTimeoutMs >= 0, configuration.busyTimeoutMs <= 30_000 else {
+            throw MountedServerExistingOpenError.incompatibleConfiguration
+        }
+        // Expected positive version only. No row/schema migration callbacks are
+        // allocated or invoked, and a different stored version is refused.
+        let expectedVersion = configuration.migration?.keys.max() ?? 1
+        guard expectedVersion > 0, expectedVersion <= Int(Int32.max),
+              !schema.isEmpty, schema.count <= 256,
+              Set(schema.map { ObjectIdentifier($0) }).count == schema.count else {
+            throw MountedServerExistingOpenError.incompatibleConfiguration
+        }
+        var nativeConfig = configuration.cxxConfiguration(isolation: nil)
+        nativeConfig.target_schema_version = Int32(expectedVersion)
+        let native = lattice.swift_lattice_ref.createMountedServerExisting(
+            swiftConfig: nativeConfig, schemas: schema.cxxSchema)
+        guard let retained = _optLatticeRef(native) else {
+            throw MountedServerExistingOpenError.openRefused(String(lattice.last_bridge_error().pointee))
+        }
+        let backend = CxxBackend(retained)
+        let opened = Lattice(backend: backend, configuration: configuration, modelTypes: schema,
+                             schema: SchemaCompat(modelTypes: schema), isolation: nil, observerActorDelivery: nil)
+        for type in schema { ModelTypeRegistry.shared.register(type) }
+        let tuning = configuration.resultsTuning
+        backend.setReadGenerationTTLMs(Int64((tuning.generationTTLSeconds * 1000).rounded()))
+        backend.setWALKeeperEvictionThresholdBytes(Int64(tuning.walKeeperEvictionThresholdBytes))
+        let entry = WeakCacheEntry(opened), key = CacheKey(backend)
+        Self.cacheLock.withLockUnchecked { Self.cache[key] = entry }
+        return opened
+    }
+    @_spi(LatticeServer) public enum MountedServerExistingOpenError: Error {
+        case incompatibleConfiguration
+        case openRefused(String)
     }
 
     // MARK: Public Inits
@@ -1422,6 +1573,13 @@ public struct Lattice {
     /// the entityName guard that pulls the current schema into a lattice
     /// that explicitly registered the snapshot, leaving two competing
     /// schemas for one table (wrong unique indexes, upsert prepare errors).
+    // Named dormant receiver preparation uses the same complete linked catalog
+    // as the ordinary initializer, without model registry/cache/network effects.
+    internal static func _managedGroupReceiverSchemas(
+        from schema: [any Model.Type]) -> lattice.SchemaVector {
+        discoverAllTypes(from: schema).cxxSchema
+    }
+
     private static func discoverAllTypes(from initialSchema: [any Model.Type]) -> [any Model.Type] {
         var discoveredTypes = Set<ObjectIdentifier>()
         var coveredEntityNames = Set<String>()
@@ -2394,6 +2552,8 @@ public struct Lattice {
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
                 queryConfig.recoverySourceExpectation = nil
+                queryConfig.ordinarySyncPolicy = .legacyProvisional
+                queryConfig.ordinaryModelProfile = nil
                 queryConfig.authorizationToken = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
@@ -2485,6 +2645,8 @@ public struct Lattice {
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
                 queryConfig.recoverySourceExpectation = nil
+                queryConfig.ordinarySyncPolicy = .legacyProvisional
+                queryConfig.ordinaryModelProfile = nil
                 queryConfig.authorizationToken = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
@@ -2934,6 +3096,8 @@ public struct Lattice {
         queryConfig.ipcTargets = nil
         queryConfig.wssEndpoint = nil
         queryConfig.recoverySourceExpectation = nil
+        queryConfig.ordinarySyncPolicy = .legacyProvisional
+        queryConfig.ordinaryModelProfile = nil
         queryConfig.authorizationToken = nil
         queryConfig.syncFilter = nil
         let cxxConfig = queryConfig.cxxConfiguration()
@@ -2942,8 +3106,19 @@ public struct Lattice {
         // parent's — the keyed cache would return the PARENT instance and the
         // ATTACH below would mutate the parent's own connection.
         // `_requireLatticeRef` unwraps the FRT-optional / value-non-optional gap.
-        let newCxxLattice = _requireLatticeRef(LatticeCxx.swift_lattice_ref.createUncached(swiftConfig: cxxConfig,
+        let newCxxLattice: LatticeCxx.swift_lattice_ref
+        if queryConfig.ordinaryInstallationContext != nil {
+            // Only the actual retained parent's native profile can authorize
+            // this uncached clone; configuration alone is only open custody.
+            var error = lattice.cxx_error()
+            let created = LatticeCxx.swift_lattice_ref.createManagedAttachmentClone(
+                parent: cxxLatticeRef, swiftConfig: cxxConfig, error: &error)
+            guard error.msg.empty() else { throw error }
+            newCxxLattice = _requireLatticeRef(created)
+        } else {
+            newCxxLattice = _requireLatticeRef(LatticeCxx.swift_lattice_ref.createUncached(swiftConfig: cxxConfig,
                                                                 schemas: modelTypes.cxxSchema))
+        }
         guard newCxxLattice.attach(lattice.cxxLatticeRef) else {
             let reason = newCxxLattice.last_attach_error()
             throw LatticeError.attachFailed(

@@ -1,7 +1,12 @@
 import Foundation
 import Vapor
-import Lattice
+@_spi(LatticeServer) import Lattice
 import NIOConcurrencyHelpers
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 // MARK: - Internal, opt-in warm ACK path diagnostics
 
@@ -521,7 +526,9 @@ public struct SyncWritePolicy: Sendable {
             return "frame is not a JSON object"
         }
         // Not an upload (ack/replayRequest/etc.): nothing to enforce.
-        guard let rawEntries = root["auditLog"] else { return nil }
+        // Inspect the same actual entry objects that strict native intake
+        // will consume. A reserved upload must not bypass write policy.
+        guard let rawEntries = frame.rawUpload else { return nil }
         guard let entries = rawEntries as? [Any] else {
             return "auditLog is not an array"
         }
@@ -731,6 +738,7 @@ final class RevocationFlag: @unchecked Sendable {
         let socket: WebSocket
         let userId: UUID
         let revocation: RevocationFlag
+        var ordinary: RelayOrdinaryConnection? = nil
     }
 
     private var channels: [String: [Entry]] = [:]
@@ -770,6 +778,18 @@ final class RevocationFlag: @unchecked Sendable {
             Entry(socket: socket, userId: userId, revocation: revocation))
     }
 
+    func setOrdinary(_ ordinary: RelayOrdinaryConnection, socket: WebSocket, channelId: String) {
+        guard let index = channels[channelId]?.firstIndex(where: { $0.socket === socket }) else { return }
+        channels[channelId]?[index].ordinary = ordinary
+    }
+
+    func nudgeOrdinary(channelId: String, excluding: WebSocket) {
+        reap(channelId: channelId)
+        for entry in channels[channelId, default: []] where entry.socket !== excluding && !entry.revocation.isRevoked {
+            entry.ordinary?.nudge()
+        }
+    }
+
     func remove(socket: WebSocket, channelId: String) {
         channels[channelId]?.removeAll { $0.socket === socket }
         if channels[channelId]?.isEmpty == true { channels[channelId] = nil }
@@ -788,6 +808,7 @@ final class RevocationFlag: @unchecked Sendable {
     func disconnect(channelId: String, userId: UUID) {
         for entry in channels[channelId, default: []] where entry.userId == userId {
             entry.revocation.revoke()
+            entry.ordinary?.retire()
             forceClose(entry.socket)
         }
     }
@@ -797,12 +818,13 @@ final class RevocationFlag: @unchecked Sendable {
     func disconnectAll(channelId: String) {
         for entry in channels[channelId, default: []] {
             entry.revocation.revoke()
+            entry.ordinary?.retire()
             forceClose(entry.socket)
         }
     }
 
     func disconnectEveryConnection() {
-        for entries in channels.values { for entry in entries { entry.revocation.revoke(); forceClose(entry.socket) } }
+        for entries in channels.values { for entry in entries { entry.revocation.revoke(); entry.ordinary?.retire(); forceClose(entry.socket) } }
     }
 
     /// Politely close, then drop the transport if the peer never answers:
@@ -959,6 +981,11 @@ extension Lattice {
     ///     same-channel peers (delivery is the pump's job; on a watch mount
     ///     the only client frames are acks, and echoing every observer's ack
     ///     to every other observer is N² frames per commit).
+    ///   - ordinarySyncPolicy: Legacy delivery by default. Required mode waits
+    ///     for explicit ordinary-v2 negotiation and sends native-issued cuts;
+    ///     upstream uploads receive distinct native-issued original/version
+    ///     acceptance ACKs, followed by authoritative current-cut repair.
+    ///     Observer push coalesces later changes behind the current cut receipt.
     ///   - channelExtractor: Maps the request to its `SyncChannel`
     @discardableResult
     public static func configureSyncRelay(
@@ -970,11 +997,14 @@ extension Lattice {
         handshake: SyncSchemaHandshake? = nil,
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
         observerPush: SyncObserverPush? = nil,
+        ordinarySyncPolicy: OrdinarySyncPolicy = .legacyProvisional,
+        ordinaryModelProfiles: [SyncOrdinaryModelProfile]? = nil,
+        ordinaryReceiverAdmissionPath: [PathComponent]? = nil,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) -> SyncRelayHandle {
         configureSyncRelayImpl(on: routes, path: path, for: schema, storageURL: storageURL,
             writePolicy: writePolicy, handshake: handshake, storeConfiguration: storeConfiguration,
-            observerPush: observerPush, recoveryMount: nil, channelExtractor: channelExtractor)
+            observerPush: observerPush, ordinarySyncPolicy: ordinarySyncPolicy, ordinaryModelProfiles: ordinaryModelProfiles, ordinaryReceiverAdmissionPath: ordinaryReceiverAdmissionPath, recoveryMount: nil, channelExtractor: channelExtractor)
     }
 
     static func configureSyncRelayImpl(
@@ -986,15 +1016,49 @@ extension Lattice {
         handshake: SyncSchemaHandshake? = nil,
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
         observerPush: SyncObserverPush? = nil,
+        ordinarySyncPolicy: OrdinarySyncPolicy = .legacyProvisional,
+        ordinaryModelProfiles: [SyncOrdinaryModelProfile]? = nil,
+        ordinaryReceiverAdmissionPath: [PathComponent]? = nil,
         recoveryMount: RecoveryRelayMount?,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) -> SyncRelayHandle {
         let sockets = SocketManager()
+        let ordinaryRequired = ordinarySyncPolicy == .orderedRequired || ordinarySyncPolicy == .orderedHistoryRequired
+        // nil preserves the complete legacy route. A nonnil declaration is an
+        // explicit model-only route and never falls back after registration failure.
+        let ordinaryModelMount: Result<RelayOrdinaryModelMount, RelayOrdinaryModelError>?
+        if let profiles = ordinaryModelProfiles {
+            do { ordinaryModelMount = .success(try RelayOrdinaryModelMount(schema: schema, profiles: profiles, requiredEffect: ordinaryRequired)) }
+            catch { ordinaryModelMount = .failure(.configuration) }
+        } else if ordinaryRequired {
+            do { ordinaryModelMount = .success(try RelayOrdinaryModelMount(schema: schema, profiles: [], requiredEffect: true)) }
+            catch { ordinaryModelMount = .failure(.configuration) }
+        } else { ordinaryModelMount = nil }
         let ackPathRecorder = ACKPathDiagnostics.recorder(for: storageURL)
         let ingressHooks = RelayIngressTesting.hooks(for: storageURL)
         let applyAdmission = RelayApplyAdmissionTesting.service(for: storageURL) ?? .shared
         let ingressAdmission = RelayIngressAdmissionTesting.service(for: storageURL) ?? .shared
         nonisolated(unsafe) let schema = schema
+        if let admissionPath = ordinaryReceiverAdmissionPath {
+            routes.on(.GET, admissionPath, body: .collect(maxSize: 0)) { req async throws -> Response in
+                guard ordinaryRequired, !admissionPath.isEmpty, admissionPath.count <= 16,
+                      let originalMount = ordinaryModelMount else { throw Abort(.serviceUnavailable) }
+                guard (req.body.data?.readableBytes ?? 0) == 0 else { throw Abort(.badRequest) }
+                let values = req.headers["X-Lattice-Receiver-Request"]
+                guard values.count == 1, let nonce = values.first, nonce.utf8.count == 36,
+                      let parsed = UUID(uuidString: nonce), nonce == parsed.uuidString.lowercased() else { throw Abort(.badRequest) }
+                // Guard order is supplied by THIS real mount's RoutesBuilder.
+                // Do not recreate subscription status/time/membership policy.
+                let channel = try await channelExtractor(req)
+                let bytes: Data
+                do { bytes = try originalMount.get().receiverAdmission(channel: channel, nonce: nonce) }
+                catch { throw Abort(.serviceUnavailable) }
+                var headers = HTTPHeaders()
+                headers.replaceOrAdd(name: .contentType, value: "application/json")
+                headers.replaceOrAdd(name: .cacheControl, value: "no-store")
+                return Response(status: .ok, headers: headers, body: .init(data: bytes))
+            }
+        }
         // ONE watch manager per PROCESS: push-enabled mounts share
         // `FileWatchManager.shared`, so two push mounts over the same
         // channel file share one watcher Lattice and one commit observer.
@@ -1041,7 +1105,28 @@ extension Lattice {
             // serializes them per file instead. The instance cache does NOT
             // key on `busyTimeoutMs`, so the first open of a file installs the
             // budget every later aliased handle runs with.
-            let state = ConnectionRelayState(ingress: ingressAdmission.makeAccount())
+            let state = ConnectionRelayState(ingress: ingressAdmission.makeAccount(),
+                                             ordinaryRequired: ordinarySyncPolicy == .orderedRequired || ordinarySyncPolicy == .orderedHistoryRequired)
+            // These are distinct native protocols; an authenticated recovery mount
+            // cannot silently substitute for ordinary-v2 issuance.
+            if state.ordinaryRequired && recoveryMount != nil {
+                state.sealIngress(.setupRefused, socket: ws)
+                ws.close(code: .policyViolation, promise: nil); return
+            }
+            let modelDeadline: UInt64?
+            if ordinaryModelMount != nil {
+                // One absolute five-second model/effect negotiation episode,
+                // including auth, keyed open and send; no progress refresh. S2/S3
+                // must later cancel only upon the genuine original effect offer.
+                modelDeadline = RelaySetupAdmissionBudget(now: DispatchTime.now().uptimeNanoseconds).deadline
+                state.modelSetupTimer = ws.eventLoop.scheduleTask(in: .seconds(5)) {
+                    // A canceled task may already be executing. Only the SAME
+                    // bound issuer's actual original effect ending settles setup.
+                    guard state.initialModelSetupStillPending else { return }
+                    state.sealIngress(.setupRefused, socket: ws, stopQueued: true)
+                    ws.close(code: .policyViolation, promise: nil)
+                }
+            } else { modelDeadline = nil }
             if let recoveryMount {
                 do { state.recovery = try RecoveryRelayConnection(mount: recoveryMount, request: req, socket: ws, revocation: state.revocation) }
                 catch { state.sealIngress(.setupRefused, socket: ws); ws.close(code: .policyViolation, promise: nil); return }
@@ -1063,6 +1148,10 @@ extension Lattice {
             }
             ws.onBinary { [ackPath] ws, bb in
                 ackPath?.record(.binaryEntered, bytes: bb.readableBytes)
+                if ordinaryModelMount != nil && !state.ordinaryRequired && bb.readableBytes > 4_096 {
+                    state.sealIngress(.applyRefused, socket: ws, stopQueued: true)
+                    ws.close(code: .policyViolation, promise: nil); return
+                }
                 if state.recovery != nil && bb.readableBytes > 8_388_608 {
                     state.sealIngress(.applyRefused, socket: ws, stopQueued: true)
                     ws.close(code: .policyViolation, promise: nil); return
@@ -1127,6 +1216,10 @@ extension Lattice {
                         state.applyContinuation?.finish()
                         state.applyContinuation = nil
                         state.applyConsumer = nil
+                        let modelGate = state.takeOrdinaryModelGate()
+                        if let modelGate {
+                            RelayExecutionPool.io.submitRequired(for: state.nativeReleaseKey) { modelGate.releaseOwnerOnIO() }
+                        }
                         let box = state.lattice.map(UnsafeSendableBox.init)
                         state.lattice = nil
                         state.process = nil
@@ -1206,6 +1299,26 @@ extension Lattice {
                     if let recovery = state.recovery, let begin = ingressHooks?.beginRecoveryReadyTrace {
                         readyTrace = begin(recovery.id, ingressFrame.byteCount)
                     } else { readyTrace = nil }
+                    if ordinaryModelMount != nil && !state.ordinaryRequired {
+                        guard let gate = state.ordinaryModelGate else {
+                            state.sealIngress(.setupRefused, socket: ws, stopQueued: true)
+                            ws.close(code: .policyViolation, promise: nil); return
+                        }
+                        do {
+                            try await applyAdmission.withAdmission(for: applyKey, frame: ingressFrame,
+                                operation: { gate.receive($0) }, completion: { result in
+                                    do { try await gate.sendOffer(result.get()) }
+                                    catch {
+                                        state.sealIngress(.applyRefused, socket: ws, stopQueued: true)
+                                        ws.close(code: .policyViolation, promise: nil)
+                                    }
+                                })
+                        } catch {
+                            state.sealIngress(.applyRefused, socket: ws, stopQueued: true)
+                            ws.close(code: .policyViolation, promise: nil)
+                        }
+                        return // No legacy apply, ACK, catch-up or fan-out for selected mode.
+                    }
                     // Authoritative revocation: a kicked connection stops
                     // affecting the channel immediately, even if its transport
                     // lingers because the peer never answered the close frame.
@@ -1229,9 +1342,18 @@ extension Lattice {
                         let recoveryCharge = try state.recovery?.reserveInput(bytes: ingressFrame.byteCount)
                         readyTrace?.record(.inputReserved)
                         readyTrace?.record(.admissionRequested)
+                        var ordinaryStaging: RelayOrdinaryBudget.Charge?
+                        var ordinaryNativeTurn: RelayOrdinaryAdmission.Lease?
+                        while true {
+                        let admittedOrdinaryStaging = ordinaryStaging
+                        let admittedOrdinaryNativeTurn = ordinaryNativeTurn
+                        let needsOrdinaryStaging = NIOLockedValueBox(false)
                         try await applyAdmission.withAdmission(for: applyKey, frame: ingressFrame,
                                                                diagnostic: admissionDiagnostic, operation: { data in
-                            processRelayApplyOnWorker(data: data, lattice: applyOwner.value, channel: channel,
+                            // Actual worker closure also owns the turn if its
+                            // awaiting task is canceled before native settlement.
+                            defer { withExtendedLifetime(admittedOrdinaryNativeTurn) {} }
+                            return processRelayApplyOnWorker(data: data, lattice: applyOwner.value, channel: channel,
                                                       policy: writePolicy, revocation: state.revocation,
                                                       diagnostic: ackPath, needsFanOut: watchManager == nil,
                                                       admissionSpan: admissionSpan, recovery: state.recovery,
@@ -1239,12 +1361,30 @@ extension Lattice {
                                                       readyObservation: ingressHooks?.didRecoveryReadyControl,
                                                       readyTrace: readyTrace,
                                                       observeRecoveryACK: ingressHooks?.shouldDropRecoveryACK != nil,
-                                                      connectionObservation: ingressHooks?.didObserveRecoveryConnection)
+                                                      connectionObservation: ingressHooks?.didObserveRecoveryConnection,
+                                                      ordinaryRequired: state.ordinaryRequired, ordinaryConnection: state.ordinary,
+                                                      ordinaryNegotiated: state.ordinary?.acceptsUploads ?? false,
+                                                      ordinaryStaging: admittedOrdinaryStaging,
+                                                      deferOrdinaryStaging: state.ordinaryRequired)
                         }, completion: { processed in
                             readyTrace?.record(.completionEntered)
                             if let recovery = state.recovery, !recovery.lifetime.publishable { readyTrace?.refuse(.completionLifetime); return }
                             let frame: RelayAppliedFrame
                             switch processed {
+                            case .ordinaryAdmissionRequired:
+                                needsOrdinaryStaging.withLockedValue { $0 = true }
+                                return
+                            case .ordinary(let control):
+                                guard let ordinary = state.ordinary else {
+                                    state.sealIngress(.applyRefused, socket: ws, stopQueued: true)
+                                    ws.close(code: .policyViolation, promise: nil); return
+                                }
+                                await ordinary.receive(control)
+                                return
+                            case .ordinaryRefused:
+                                state.sealIngress(.applyRefused, socket: ws, stopQueued: true)
+                                ws.close(code: .policyViolation, promise: nil)
+                                return
                             case .ready(let result):
                                 state.recovery?.sendReady(result, park: ingressHooks?.parkRecoveryReadySend,
                                                           didDecision: ingressHooks?.didRecoveryReadyDecision, trace: readyTrace)
@@ -1292,7 +1432,18 @@ extension Lattice {
                                             missing: outcome.unapplied.count, matching: outcome.applied)
                             if !outcome.applied.isEmpty {
                                 ackPath?.record(.ackEncodeBegin, span: frameSpan)
-                                if let encoded = try? JSONEncoder().encode(ServerSentEvent.ack(outcome.applied)) {
+                                if state.ordinaryRequired {
+                                    guard let ordinary = state.ordinary, let delivery = outcome.ordinaryAcknowledgment,
+                                          delivery.acceptance.ids == outcome.applied else {
+                                        state.sealIngress(.applyRefused, socket: ws, stopQueued: true)
+                                        ws.close(code: .policyViolation, promise: nil); return
+                                    }
+                                    let count = delivery.acceptance.acknowledgmentByteCount
+                                    ackPath?.record(.ackEncodeEnd, span: frameSpan, bytes: count)
+                                    ackPath?.record(.ackSendBegin, span: frameSpan, bytes: count)
+                                    ordinary.sendUploadAcknowledgment(delivery)
+                                    ackPath?.record(.ackSendReturn, span: frameSpan)
+                                } else if let encoded = try? JSONEncoder().encode(ServerSentEvent.ack(outcome.applied)) {
                                     ackPath?.record(.ackEncodeEnd, span: frameSpan, bytes: encoded.count)
                                     ackPath?.record(.ackSendBegin, span: frameSpan, bytes: encoded.count)
                                     if let recovery = state.recovery {
@@ -1384,6 +1535,17 @@ extension Lattice {
                             // room's acknowledgment traffic grow quadratically.
                             // Preserve upload/unknown/replay forwarding, including
                             // Core's auditLog-before-ack decoder precedence.
+                            if state.ordinaryRequired {
+                                // Original acceptance is not projected-value
+                                // application. Even a duplicate with no observer
+                                // event requests the uploader's and all same-key
+                                // endpoints' own current authorized cut. This is
+                                // independent of push policy and mount registry.
+                                if !outcome.applied.isEmpty {
+                                    RelayOrdinaryConnection.repairAfterAcceptedUpload(key: applyKey)
+                                }
+                                return
+                            }
                             guard watchManager == nil, !frame.isAcknowledgment else { return }
                             if let recovery = state.recovery {
                                 let recipients = await sockets.recoveryRecipients(channelId: channel.id, excluding: ws)
@@ -1411,6 +1573,16 @@ extension Lattice {
                                 socket.send(fanOut)
                             }
                         })
+                        ordinaryNativeTurn = nil
+                        guard needsOrdinaryStaging.withLockedValue({ $0 }) else { break }
+                        guard ordinaryStaging == nil, let ordinary = state.ordinary,
+                              ordinary.acceptsUploads, !state.applyAdmissionStopped.isRevoked else { throw RelayOrdinaryError.stopped }
+                        // Existing ingress storage stays charged across this
+                        // suspension. No copied parse tree or native result is
+                        // retained; first-pass service publication has settled.
+                        ordinaryStaging = try await ordinary.reserveInputStaging()
+                        ordinaryNativeTurn = try await ordinary.reserveInputNativeTurn()
+                        }
                     } catch {
                         // This frame never entered native apply. Leave it unACKed
                         // and close so upload/bookkeeping can replay on reconnect.
@@ -1435,9 +1607,27 @@ extension Lattice {
                     state.sealIngress(.setupRefused, socket: ws)
                     ws.close(code: .policyViolation, promise: nil); return
                 }
+                let ordinaryModelAuthorization: RelayOrdinaryModelAuthorization?
+                do {
+                    if let mount = ordinaryModelMount, let expires = modelDeadline {
+                        // Do not mix this model-only owner with another native
+                        // recovery issuer. Auth derives only from the actual extractor.
+                        guard recoveryMount == nil else { throw RelayOrdinaryModelError.configuration }
+                        ordinaryModelAuthorization = try mount.get().authorize(channel: channel, key: applyKey,
+                            socket: ws, revocation: state.revocation, expires: expires,
+                            onActualEffectAdmission: { [weak state, weak ws] in
+                                guard let state, let ws else { return }
+                                ws.eventLoop.execute { state.cancelSettledInitialModelTimer() }
+                            })
+                        try state.bindInitialModelIssuer(ordinaryModelAuthorization!)
+                    } else { ordinaryModelAuthorization = nil }
+                } catch {
+                    state.sealIngress(.setupRefused, socket: ws, stopQueued: true)
+                    ws.close(code: .policyViolation, promise: nil); return
+                }
                 let input = RelayConnectionSetupInput(
                     schema: schema, storageURL: storageURL, fileURL: latticeURL,
-                    applyKey: applyKey, channel: channel, recoverySource: recoverySource, socket: ws, state: state,
+                    applyKey: applyKey, channel: channel, recoverySource: recoverySource, ordinaryModelAuthorization: ordinaryModelAuthorization, socket: ws, state: state,
                     sockets: sockets, watchManager: watchManager, pushContext: pushContext,
                     storeConfiguration: storeConfiguration, lastEventId: lastEventId,
                     processFrame: processFrame, diagnostic: ackPath,
@@ -1556,11 +1746,68 @@ final class UnsafeSendableBox<T>: @unchecked Sendable {
 /// and are replayed the moment the per-channel lattice goes live.
 final class ConnectionRelayState: @unchecked Sendable {
     let ingress: RelayIngressAccount
-    init(ingress: RelayIngressAccount = RelayIngressAdmission.shared.makeAccount()) {
-        self.ingress = ingress
+    let ordinaryRequired: Bool
+    init(ingress: RelayIngressAccount = RelayIngressAdmission.shared.makeAccount(), ordinaryRequired: Bool = false) {
+        self.ingress = ingress; self.ordinaryRequired = ordinaryRequired
+    }
+    var modelSetupTimer: Scheduled<Void>? // Original upgrade event loop only.
+    private struct InitialModelSlot { var ended = false, bound = false; var issuer: RelayOrdinaryModelAuthorization? }
+    private let initialModelIssuer = NIOLockedValueBox(InitialModelSlot())
+    func bindInitialModelIssuer(_ issuer: RelayOrdinaryModelAuthorization) throws {
+        guard !revocation.isRevoked else { throw RelayOrdinaryModelError.stopped }
+        let bound = initialModelIssuer.withLockedValue { slot in
+            guard !slot.ended, !slot.bound else { return false }
+            slot.bound = true; slot.issuer = issuer; return true
+        }
+        guard bound else { throw RelayOrdinaryModelError.control }
+    }
+    var initialModelSetupStillPending: Bool {
+        let original = initialModelIssuer.withLockedValue { $0.issuer }
+        return original?.actualInitialEffectAdmissionSettled != true
+    }
+    private func retireInitialModelIssuer() {
+        let original = initialModelIssuer.withLockedValue { slot in
+            slot.ended = true; let original = slot.issuer; slot.issuer = nil; return original
+        }
+        withExtendedLifetime(original) {} // Drop the actual issuer outside the lock.
+    }
+    func cancelSettledInitialModelTimer() {
+        // Timer cancellation is an effect of verified admission, never proof.
+        guard !initialModelSetupStillPending else { return }
+        modelSetupTimer?.cancel(); modelSetupTimer = nil
+    }
+    private struct OrdinarySlot { var ended = false; var owner: RelayOrdinaryConnection? }
+    private let ordinaryBox = NIOLockedValueBox(OrdinarySlot())
+    var ordinary: RelayOrdinaryConnection? { ordinaryBox.withLockedValue { $0.owner } }
+    func installOrdinary(_ owner: RelayOrdinaryConnection) throws {
+        let accepted = ordinaryBox.withLockedValue { slot in
+            guard !slot.ended, slot.owner == nil else { return false }
+            slot.owner = owner; return true
+        }
+        guard accepted else { owner.retire(); throw RelayOrdinaryError.stopped }
+    }
+    private func retireOrdinary() {
+        let owner = ordinaryBox.withLockedValue { slot in
+            slot.ended = true; let owner = slot.owner; slot.owner = nil; return owner
+        }
+        owner?.retire()
     }
     var lattice: Lattice?
     var recovery: RecoveryRelayConnection? // assigned once on the upgrade event loop
+    private let ordinaryModelGateBox = NIOLockedValueBox<RelayOrdinaryModelGate?>(nil)
+    var ordinaryModelGate: RelayOrdinaryModelGate? { ordinaryModelGateBox.withLockedValue { $0 } }
+    func installOrdinaryModelGate(_ gate: RelayOrdinaryModelGate) throws {
+        let installed = ordinaryModelGateBox.withLockedValue { value in
+            guard value == nil else { return false }
+            value = gate; return true
+        }
+        guard installed else { throw RelayOrdinaryModelError.control }
+    }
+    func takeOrdinaryModelGate() -> RelayOrdinaryModelGate? {
+        ordinaryModelGateBox.withLockedValue { value in
+            let retained = value; value = nil; return retained // Last owner cannot die under lock.
+        }
+    }
     /// Installed at go-live: the frame processor bound to this connection's
     /// channel (handlers register before the channel is known).
     var process: ((WebSocket, RelayIngressFrame, Lattice) async -> Void)?
@@ -1581,10 +1828,14 @@ final class ConnectionRelayState: @unchecked Sendable {
     /// only an explicit stronger stop skips its queued remainder.
     func sealIngress(_ reason: RelayIngressStopReason, socket: WebSocket, stopQueued: Bool = false) {
         ingress.seal(reason)
+        ordinaryModelGate?.retire()
         recovery?.retire(for: nativeReleaseKey)
+        retireOrdinary()
+        retireInitialModelIssuer()
         isRefused = true
         if stopQueued { applyAdmissionStopped.revoke() }
         socket.eventLoop.execute {
+            self.modelSetupTimer?.cancel(); self.modelSetupTimer = nil
             if self.lattice == nil { self.buffered.removeAll() }
             self.applyContinuation?.finish()
         }
