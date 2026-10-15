@@ -38,7 +38,7 @@ public final class ManagedEngramDirectorySession: @unchecked Sendable {
               parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
               parts.port.map({ (1...65535).contains($0) }) ?? true,
               !authorizationToken.isEmpty, authorizationToken.utf8.count <= 16_384,
-              !authorizationToken.contains("\r"), !authorizationToken.contains("\n") else {
+              authorizationToken.utf8.allSatisfy({ $0 != 0 && $0 != 13 && $0 != 10 }) else {
             throw Failure.endpoint
         }
         // Use one exact configured base for every fixed path and for native

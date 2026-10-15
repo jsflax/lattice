@@ -94,6 +94,21 @@ struct ManagedEngramDirectoryAdmissionTests {
         }
     }
 
+    @Test(arguments: ["\r", "\n", "\r\n", "first\r\nAuthorization: second",
+                      "prefix\r\nsuffix", "\u{0}", "prefix\u{0}suffix", "日本語\r\n🙂"])
+    func headerControlBytesRefuseAtTheConfigurationBoundary(_ token: String) {
+        do {
+            let auth = try ManagedEngramDirectorySession(endpoint: URL(string: "https://localhost")!,
+                                                      authorizationToken: token)
+            auth.revoke()
+            Issue.record("Invalid header bytes reached an accepted credential session")
+        } catch ManagedEngramDirectorySession.Failure.endpoint {
+            // The actual SDK guard precedes Native credential construction.
+        } catch {
+            Issue.record("Expected configuration-boundary header refusal: \(error)")
+        }
+    }
+
     @Test func defaultImportedValuesAndCopiedCredentialsDoNotManufactureReceipt() {
         let request = lattice.swift_managed_product_request()
         let route = lattice.swift_managed_product_route()
