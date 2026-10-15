@@ -1,5 +1,6 @@
 import Foundation
 import Vapor
+import NIOCore
 @_spi(LatticeServer) import Lattice
 import NIOConcurrencyHelpers
 #if canImport(Darwin)

@@ -516,7 +516,6 @@ private final class RelayCatchUpReadState {
     private func subscribed(_ sub: PushSubscription?) {
         precondition(phase == .subscribing)
         subscription = sub
-        sub?.ordinary = input.state.ordinary
         input.state.pushSubscription = sub
         if input.watchManager != nil {
             input.diagnostic?.record(.watchSubscribeReturned, result: sub != nil)

@@ -1,5 +1,6 @@
 import Foundation
 import Vapor
+import NIOCore
 import Lattice
 import NIOConcurrencyHelpers
 #if canImport(Combine)
