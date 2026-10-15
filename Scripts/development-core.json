@@ -1,5 +1,5 @@
 {
-  "scope": "Private current catalog/recovery and checked manual maintenance candidate. Original SDK22/23 first failure is preserved; changed API uncompiled/unrun. Automatic coalesced maintenance wake remains unimplemented. Full SDK/native compatibility, physical resource bounds, repeated30-profile performance gates, release and adoption remain unqualified.",
-  "coreCommit": "623a52afa835b9ddb39bacc7d13ed059f8d21219",
-  "coreTree": "08021441b5e9f2cb0712cfe826401c9cde7b5acb"
+  "scope": "Private explicit-close destructor correctness candidate. Same actual Core623a plus two reviewed paths; native baseline regression fails and changed native67 pass. Actual both-platform affected Swift qualification pending; no automatic maintenance/current G006, full SDK, performance or release acceptance.",
+  "coreCommit": "5e0b9a73ec05ec2114535c155b5ca6bf85f8fd17",
+  "coreTree": "55b1dd2ab87b7fe072ae2926848b2a823543c764"
 }

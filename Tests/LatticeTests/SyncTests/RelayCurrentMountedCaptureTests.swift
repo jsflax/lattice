@@ -90,25 +90,32 @@ struct RelayCurrentMountedCaptureTests {
     }
     @Test func realNativeFullCatalogRefusesRootOnlyAndCapturesOnlyLinkedSelection() throws {
         let url = try path()
-        let owner = try Lattice(isolation: nil, for: [CurrentMountedParent.self], configuration: .init(fileURL: url))
+        let owner = try Lattice(isolation: nil, for: [CurrentMountedParent.self, CurrentMountedOutside.self], configuration: .init(fileURL: url))
         defer { close(owner) }
         let child = CurrentMountedChild("selected-linked-row")
         try owner.add(child)
-        try owner.add(CurrentMountedParent("excluded-parent-marker", child: child))
+        try owner.add(CurrentMountedParent("selected-parent-row", child: child))
+        try owner.add(CurrentMountedOutside("excluded-outside-marker"))
         #expect(throws: (any Error).self) {
             _ = try owner.registerOrdinaryMountedHistorySource(models: [CurrentMountedParent.self])
         }
-        let full = try RelayOrdinaryModelMount.fullCatalog(for: [CurrentMountedParent.self])
+        let full = try RelayOrdinaryModelMount.fullCatalog(for: [CurrentMountedParent.self, CurrentMountedOutside.self])
         let mounted = try owner.registerOrdinaryMountedHistorySource(models: full)
-        let cut = try mounted.capture(models: [CurrentMountedChild.self])
+        // Declared inbound and outbound relationships stay inside each cut.
+        // This refusal must not consume the mounted source's only live cut.
+        #expect(throws: (any Error).self) {
+            _ = try mounted.capture(models: [CurrentMountedChild.self])
+        }
+        let cut = try mounted.capture(models: [CurrentMountedParent.self, CurrentMountedChild.self])
         let header = try body(cut)
-        #expect(header["models"] as? [String] == [CurrentMountedChild.entityName])
-        #expect(header["rows"] as? String == "1")
+        #expect(header["models"] as? [String] == [CurrentMountedChild.entityName, CurrentMountedParent.entityName])
+        #expect(header["rows"] as? String == "2")
         #expect(cut.priorMountedSource == nil)
         for index in 0..<cut.frameCount {
-            #expect(!String(decoding: try cut.page(at: index).data(), as: UTF8.self).contains("excluded-parent-marker"))
+            #expect(!String(decoding: try cut.page(at: index).data(), as: UTF8.self).contains("excluded-outside-marker"))
         }
         #expect(owner.count(CurrentMountedParent.self) == 1 && owner.count(CurrentMountedChild.self) == 1)
+        #expect(owner.count(CurrentMountedOutside.self) == 1)
     }
     @Test func actualMountedCutMustReleaseBeforeSuccessorAndKeepsLineage() throws {
         let owner = try Lattice(isolation: nil, for: [CurrentMountedParent.self], configuration: .init(fileURL: try path()))
@@ -116,12 +123,12 @@ struct RelayCurrentMountedCaptureTests {
         try owner.add(CurrentMountedChild("first"))
         let full = try RelayOrdinaryModelMount.fullCatalog(for: [CurrentMountedParent.self])
         let mounted = try owner.registerOrdinaryMountedHistorySource(models: full)
-        var first: OwnedOrdinaryHistoryExport? = try mounted.capture(models: [CurrentMountedChild.self])
+        var first: OwnedOrdinaryHistoryExport? = try mounted.capture(models: full)
         let source = try #require(first).sourceID, epoch = try #require(first).epoch, cut = try #require(first).cut
-        #expect(throws: (any Error).self) { _ = try mounted.capture(models: [CurrentMountedChild.self]) }
+        #expect(throws: (any Error).self) { _ = try mounted.capture(models: full) }
         withExtendedLifetime(first) {}; first = nil
         try owner.add(CurrentMountedChild("second"))
-        let next = try mounted.capture(models: [CurrentMountedChild.self])
+        let next = try mounted.capture(models: full)
         #expect(next.sourceID == source && next.epoch == epoch && next.cut == cut + 1)
         #expect(try body(next)["rows"] as? String == "2")
     }
@@ -130,10 +137,14 @@ struct RelayCurrentMountedCaptureTests {
         try owner.add(CurrentMountedChild("retained"))
         let full = try RelayOrdinaryModelMount.fullCatalog(for: [CurrentMountedParent.self])
         var mounted: OwnedOrdinaryMountedHistorySource? = try owner.registerOrdinaryMountedHistorySource(models: full)
-        var cut: OwnedOrdinaryHistoryExport? = try #require(mounted).capture(models: [CurrentMountedChild.self])
+        var cut: OwnedOrdinaryHistoryExport? = try #require(mounted).capture(models: full)
         let page = try #require(cut).page(at: 0), bytes = try page.data()
+        let lastIndex = try #require(cut).frameCount - 1
+        let lastPage = try #require(cut).page(at: lastIndex)
+        let lastBytes = try lastPage.data()
         close(owner); mounted = nil; cut = nil
         #expect(try page.data() == bytes)
+        #expect(try lastPage.data() == lastBytes)
     }
     private func path() throws -> URL {
         let directory = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("localdev/lattice-current-mounted-capture-tests")

@@ -429,7 +429,7 @@ def main():
     qualification.add_argument('--recovery-refresh-qualification', action='store_true',
                                help='Recovery refresh and changed-field SDK cases only; not full suite or performance')
     qualification.add_argument('--checked-mounted-diagnostic', action='store_true',
-                               help='Original checked-mounted positive test and bounded read-only seed observations only; no full suite or performance')
+                               help='Original checked-mounted phase diagnostic plus exact four affected suites; no full SDK or performance acceptance')
     args = parser.parse_args()
     if args.sync_matched_prepare:
         sys.dont_write_bytecode = True
@@ -490,7 +490,7 @@ def main():
         result['scope'] = 'targeted SDK recovery refresh and changed-field qualification only; not full-suite, release, iOS or performance acceptance'
     result['checkedMountedDiagnostic'] = args.checked_mounted_diagnostic
     if args.checked_mounted_diagnostic:
-        result['scope'] = 'one original checked-mounted positive test plus read-only seed observations; no full-suite, performance or release acceptance'
+        result['scope'] = 'original one-case phase diagnostic plus exact four affected suites; no full-SDK, performance or release acceptance'
     original = sdk_inputs = core_inputs = None
     primary = None
     test_started_at = None
@@ -557,6 +557,8 @@ def main():
                            '--force-resolved-versions', '--skip-build', '--filter',
                            'RelayCheckedMountedServerOpenTests.fullLinkedExistingCatalogAndRowsSurviveRepeatedCheckedOpen'],
                            cwd=sdk, timeout=args.test_timeout, require_full_timeout=True)
+                import checked_mounted_fix_qualification
+                checked_mounted_fix_qualification.qualify(runner, sdk, root, common, args.test_timeout)
             else:
                 import development_crashes
                 with development_crashes.full_test_backtrace(runner, platform.system()) as backtrace:

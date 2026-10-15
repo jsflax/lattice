@@ -30,7 +30,7 @@ on:
         default: false
 
       checked_mounted_diagnostic:
-        description: 'Run the original checked-mounted positive test with read-only seed observations only; no full-suite or performance acceptance'
+        description: 'Run the original phase diagnostic plus exact four affected suites; no full SDK or performance acceptance'
         type: boolean
         required: false
         default: false
