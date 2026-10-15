@@ -428,6 +428,8 @@ def main():
                                help='Qualify the existing full loaded and quiet-only workloads in separate processes; not a performance experiment')
     qualification.add_argument('--recovery-refresh-qualification', action='store_true',
                                help='Recovery refresh and changed-field SDK cases only; not full suite or performance')
+    qualification.add_argument('--checked-mounted-diagnostic', action='store_true',
+                               help='Original checked-mounted positive test and bounded read-only seed observations only; no full suite or performance')
     args = parser.parse_args()
     if args.sync_matched_prepare:
         sys.dont_write_bytecode = True
@@ -459,6 +461,10 @@ def main():
     if args.sync_probe_qualification or args.sync_matched_prepare:
         env.update(LATTICE_SYNC_VISIBILITY_MATCHED='0', LATTICE_SYNC_VISIBILITY_PERF='0',
                    LATTICE_SYNC_VISIBILITY_RUN_DIR=str(root / 'visibility-smoke'))
+    # The diagnostic is controlled by this mutually exclusive mode, never an inherited switch.
+    env.pop('LATTICE_CHECKED_MOUNTED_DIAGNOSTIC', None)
+    if args.checked_mounted_diagnostic:
+        env['LATTICE_CHECKED_MOUNTED_DIAGNOSTIC'] = '1'
     if args.recovery_refresh_qualification:
         env.update(LATTICE_RECOVERY_QUALIFICATION_DIRECTORY=str(root / 'tmp' / 'recovery-fixtures'))
     result = {'scope': 'development source override only; not release qualification',
@@ -482,6 +488,9 @@ def main():
     result['recoveryRefreshQualification'] = args.recovery_refresh_qualification
     if args.recovery_refresh_qualification:
         result['scope'] = 'targeted SDK recovery refresh and changed-field qualification only; not full-suite, release, iOS or performance acceptance'
+    result['checkedMountedDiagnostic'] = args.checked_mounted_diagnostic
+    if args.checked_mounted_diagnostic:
+        result['scope'] = 'one original checked-mounted positive test plus read-only seed observations; no full-suite, performance or release acceptance'
     original = sdk_inputs = core_inputs = None
     primary = None
     test_started_at = None
@@ -543,6 +552,11 @@ def main():
             elif args.recovery_refresh_qualification:
                 import recovery_refresh_qualification
                 recovery_refresh_qualification.qualify(runner, sdk, core, root, common, args.test_timeout)
+            elif args.checked_mounted_diagnostic:
+                runner.run('checked-mounted-diagnostic', ['swift', 'test', *common,
+                           '--force-resolved-versions', '--skip-build', '--filter',
+                           'RelayCheckedMountedServerOpenTests.fullLinkedExistingCatalogAndRowsSurviveRepeatedCheckedOpen'],
+                           cwd=sdk, timeout=args.test_timeout, require_full_timeout=True)
             else:
                 import development_crashes
                 with development_crashes.full_test_backtrace(runner, platform.system()) as backtrace:
@@ -599,6 +613,19 @@ def main():
                         captured = development_crashes.collect(root, receipts / 'crash-reports', test_started_at)
                         save_json(receipts / 'crash-reports.json', captured)
                     evidence('macOS test crash reports', crash_evidence)
+                if args.checked_mounted_diagnostic:
+                    def checked_mounted_postmortem():
+                        import checked_mounted_diagnostic
+                        log = receipts / 'checked-mounted-diagnostic.log'
+                        command = json.loads((receipts / 'checked-mounted-diagnostic.json').read_text())
+                        cleanup = command.get('cleanup', {})
+                        if (command.get('started') is not True or cleanup.get('leaderReaped') is not True
+                                or cleanup.get('groupGone') is not True):
+                            raise ValueError('checked-mounted observation requires actual process ending')
+                        save_json(receipts / 'checked-mounted-observations.json',
+                                  checked_mounted_diagnostic.parse(log, platform.system(),
+                                                                  test_passed=command.get('success') is True))
+                    evidence('checked-mounted read-only phase observations', checked_mounted_postmortem)
                 evidence('final lock', final_lock)
                 evidence('final workspace state', lambda: shutil.copyfile(root / 'scratch/workspace-state.json', receipts / 'workspace-state.final.json'))
                 for label, repository, initial in [('sdk', sdk, sdk_inputs), ('core', core, core_inputs)]:

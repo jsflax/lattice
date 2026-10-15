@@ -85,14 +85,17 @@ private final class HistoryRouteFixture: @unchecked Sendable {
         await withCheckedContinuation { continuation in RelayExecutionPool.io.submitRequired(for: key) { continuation.resume() } }
     }
     func open(historical: Bool = false) async throws {
-        if historical {
-            let old = try Lattice(isolation: nil, for: [SimpleSyncObject.self, StreamedMessage.self],
-                                  configuration: .init(fileURL: directory.appendingPathComponent("fixture.sqlite")))
-            try old.add(SimpleSyncObject(value: 11, floatValue: 11.25))
-            let result = old.closeChecked()
-            #expect(!result.failed && !result.cleanupFailed && result.cleanupComplete)
-            // This real closed/reopened legacy file has never issued a source
-            // cut or receiver receipt. The actual mount issuer must say so.
+        // Typed mounts open an existing catalog. Provision it through the
+        // genuine normal creator before starting the authenticated relay.
+        do {
+            let initial = try Lattice(isolation: nil, for: [SimpleSyncObject.self, StreamedMessage.self],
+                                      configuration: .init(fileURL: directory.appendingPathComponent("fixture.sqlite")))
+            defer {
+                let result = initial.closeChecked()
+                #expect(!result.failed && !result.cleanupFailed && result.cleanupComplete)
+            }
+            if historical { try initial.add(SimpleSyncObject(value: 11, floatValue: 11.25)) }
+            // Neither branch has issued a source cut or receiver receipt.
         }
         try RelayOrdinaryBudgetTesting.install(budget, for: key)
         let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in }, didFinishAsyncSetup: { self.setup.withLockedValue { $0 += 1 } })
@@ -111,9 +114,8 @@ private final class HistoryRouteFixture: @unchecked Sendable {
         try await historyRouteWait { self.peer.state.withLockedValue { $0.socket != nil || $0.failed || $0.closed } }
         guard !peer.state.withLockedValue({ $0.failed || $0.closed }) else { throw HistoryRouteFailure.connection }
         try await historyRouteWait { self.setup.withLockedValue { $0 } == 1 }
-        // The actual relay owner creates the fresh schema FIRST. Only now open
-        // a writer/commit data. This does not promote a historical file or forge
-        // a fresh-origin/managed enrollment capability for the source issuer.
+        // Commit fixture data only after the actual existing-file relay setup.
+        // Provisioning above granted no source, receipt or managed enrollment.
         writer = try Lattice(isolation: nil, for: [SimpleSyncObject.self, StreamedMessage.self],
                              configuration: .init(fileURL: directory.appendingPathComponent("fixture.sqlite")))
         try writer?.add(SimpleSyncObject(value: 7, floatValue: 7.25))

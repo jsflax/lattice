@@ -29,6 +29,12 @@ on:
         required: false
         default: false
 
+      checked_mounted_diagnostic:
+        description: 'Run the original checked-mounted positive test with read-only seed observations only; no full-suite or performance acceptance'
+        type: boolean
+        required: false
+        default: false
+
       sync_matched_experiment:
         description: 'Prepare exact A and current B, then run all five A-A2-B groups on this same runner; mutually exclusive with preparation and other qualification modes'
         type: boolean
@@ -65,6 +71,7 @@ jobs:
       SYNC_FULL_CALIBRATION: ${{ inputs.sync_full_calibration || false }}
       SYNC_MATCHED_PREPARE: ${{ inputs.sync_matched_prepare || false }}
       RECOVERY_REFRESH_QUALIFICATION: ${{ inputs.recovery_refresh_qualification || false }}
+      CHECKED_MOUNTED_DIAGNOSTIC: ${{ inputs.checked_mounted_diagnostic || false }}
     steps:
       - name: Install Linux prerequisites
         if: matrix.leg == 'linux'
@@ -102,6 +109,9 @@ jobs:
           fi
           if [[ "$SYNC_MATCHED_PREPARE" == 'true' ]]; then
             DEVELOPMENT_ARGUMENTS+=(--sync-matched-prepare)
+          fi
+          if [[ "$CHECKED_MOUNTED_DIAGNOSTIC" == 'true' ]]; then
+            DEVELOPMENT_ARGUMENTS+=(--checked-mounted-diagnostic)
           fi
           python3 "$TASK_ROOT/lattice/Scripts/run-development.py" "${DEVELOPMENT_ARGUMENTS[@]}"
 
@@ -145,7 +155,7 @@ jobs:
     steps:
       - name: Refuse simultaneous qualification modes
         env:
-          OTHER_MODES: '${{ inputs.sync_probe_qualification }} ${{ inputs.sync_full_calibration }} ${{ inputs.sync_matched_prepare }} ${{ inputs.recovery_refresh_qualification }}'
+          OTHER_MODES: '${{ inputs.sync_probe_qualification }} ${{ inputs.sync_full_calibration }} ${{ inputs.sync_matched_prepare }} ${{ inputs.recovery_refresh_qualification }} ${{ inputs.checked_mounted_diagnostic }}'
         shell: bash
         run: |
           set -euo pipefail

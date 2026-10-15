@@ -95,6 +95,14 @@ private final class LineageFixture: @unchecked Sendable {
     }
     func open(old: Bool = true) async throws {
         if old { try seedActualOldCut() }
+        else {
+            // A fresh source still needs a real existing typed catalog. This
+            // normal creation issues no old cut, receiver receipt or lineage.
+            let initial = try Lattice(isolation: nil, for: full,
+                                      configuration: .init(fileURL: directory.appendingPathComponent("\(channel).sqlite")))
+            let result = initial.closeChecked()
+            #expect(!result.failed && !result.cleanupFailed && result.cleanupComplete)
+        }
         try RelayOrdinaryBudgetTesting.install(budget, for: key)
         let hooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in }, didFinishAsyncSetup: { self.setup.withLockedValue { $0 += 1 } })
         RelayIngressTesting.install(hooks, for: directory)
