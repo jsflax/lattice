@@ -465,7 +465,7 @@ def main():
               'coreCommit': args.core_sha, 'sdkCommit': sdk_sha,
               'runnerOS': platform.platform(), 'machine': platform.machine(), 'cpuCount': os.cpu_count(),
               'runID': env.get('GITHUB_RUN_ID'), 'attempt': env.get('GITHUB_RUN_ATTEMPT'),
-               'job': env.get('GITHUB_JOB'), 'workflowCommit': workflow_sha,
+              'job': env.get('GITHUB_JOB'), 'workflowCommit': workflow_sha,
               'scriptSHA256': digest(Path(__file__)), 'success': False,
               'primaryError': None, 'evidenceErrors': [], 'releaseGraphAccepted': False,
               'overallSeconds': OVERALL_SECONDS, 'finalizationReserveSeconds': FINALIZATION_RESERVE}
@@ -474,7 +474,6 @@ def main():
     result['syncMatchedPreparation'] = args.sync_matched_prepare
     if args.sync_matched_prepare:
         result.update(repository=env.get('GITHUB_REPOSITORY'), developmentLeg=env.get('DEVELOPMENT_LEG'))
-    if args.sync_matched_prepare:
         result['scope'] = 'matched measurement graph preparation only; no full-profile, performance or release acceptance'
     elif args.sync_probe_qualification:
         result['scope'] = 'opt-in native origin / Swift importer / public visibility qualification only; no full-suite or performance acceptance'

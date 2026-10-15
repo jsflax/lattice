@@ -1878,6 +1878,31 @@ public struct Lattice {
         backend.checkpointBounded(busyBudgetMs: busyBudgetMs)
     }
 
+    /// Service read-generation expiry and pending WAL pressure on this owner.
+    /// Call between write batches, outside a transaction or catalog callback.
+    /// Local-only apps that do not use live Results can call this explicitly:
+    /// their lazy Results maintenance timer may never have been started.
+    ///
+    /// The existing Core protocol retires same-path generations, waits for an
+    /// actual reader gap, and attempts its checkpoint with a 250ms busy budget.
+    /// Pressure is acknowledged only by that protocol after real truncation;
+    /// a plain checkpoint alone does not acknowledge a pending obligation.
+    /// An active or foreign reader can leave pressure pending for a later call.
+    /// This does not cancel or join arbitrary callback/VFS code, prove every
+    /// native close, replace a connection, or guarantee a total wall-clock bound.
+    ///
+    /// Inspect both completed and pressurePending; completed alone is not a
+    /// cleared-pressure claim. A closed/inherited owner or callback reentry
+    /// returns a conservative failure instead of a default success.
+    @discardableResult
+    public func runReadPoolMaintenance() -> ReadPoolMaintenanceResult {
+        guard let native = backend as? CxxBackend else {
+            return ReadPoolMaintenanceResult(completed: false, pressurePending: true,
+                error: "Read-pool maintenance requires the native original backend")
+        }
+        return native.runReadPoolMaintenanceChecked()
+    }
+
     /// Incremental query-planner statistics refresh (`PRAGMA optimize`).
     /// Cheap — only re-analyzes tables with missing or stale stats. Long-lived
     /// processes should call this from maintenance paths; the automatic

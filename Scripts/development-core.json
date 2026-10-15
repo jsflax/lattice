@@ -1,5 +1,5 @@
 {
-  "scope": "Private full hosted qualification of bounded recovery, closed existing-file receipt administration, scheduler/callback correctness and causal projection fixtures with bounded failure diagnostics. Source reviews and first failures are retained. Quiet comparison tooling is synthetic-tested only. Runtime, automatic existing-store lifecycle adoption, performance gates, affected-platform release and downstream adoption remain unqualified.",
-  "coreCommit": "f44145c111edf414a4011b4affcffdbbe2f3ea40",
-  "coreTree": "3b9e102c073669c52e611706fb10c863702a0d6a"
+  "scope": "Private current catalog/recovery and checked manual maintenance candidate. Original SDK22/23 first failure is preserved; changed API uncompiled/unrun. Automatic coalesced maintenance wake remains unimplemented. Full SDK/native compatibility, physical resource bounds, repeated30-profile performance gates, release and adoption remain unqualified.",
+  "coreCommit": "623a52afa835b9ddb39bacc7d13ed059f8d21219",
+  "coreTree": "08021441b5e9f2cb0712cfe826401c9cde7b5acb"
 }

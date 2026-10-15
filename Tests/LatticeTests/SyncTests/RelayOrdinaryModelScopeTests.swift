@@ -206,8 +206,7 @@ private func modelScopeUpload(_ donor: Lattice) throws -> (Data, UUID) {
         }
     }
     #expect(originals.count == 1)
-    let globalID = try #require(originals.first?["globalId"] as? String)
-    let id = try #require(UUID(uuidString: globalID))
+    let id = try #require(UUID(uuidString: try #require(originals.first?["globalId"] as? String)))
     return (try JSONSerialization.data(withJSONObject: ["latticeOrdinarySync": ["version": 2, "kind": "upload", "auditLog": originals]]), id)
 }
 

@@ -27,6 +27,7 @@ import evaluate_sync
 import evaluate_sync_matched as capture
 import sync_full_calibration as calibration
 import sync_measurement_logging as logging
+import sync_matched_source_auth as source_auth
 from sync_probe_qualification import FLAGS
 
 GROUPS = 5
@@ -43,6 +44,7 @@ MEASUREMENT_FILES = (
     'Scripts/evaluate_sync.py', 'Scripts/evaluate_sync_matched.py',
     'Scripts/sync_full_calibration.py', 'Scripts/sync_measurement_logging.py',
     'Scripts/sync_matched_experiment.py',
+    'Scripts/sync_matched_source_auth.py',
 )
 PROBE_FILES = ('Sources/LatticeCore/src/sync_commit_probe.cpp', 'Sources/LatticeCore/include/lattice/sync_commit_probe.hpp')
 SCOPE = 'Matched instrumented public-API numerical evidence only; no release, goal, recovery, physical completion or adoption acceptance.'
@@ -200,21 +202,28 @@ def reinspect(runner, data, development):
     if (str(Path(shutil.which('swift')).resolve(strict=True)) != data['swiftDriver']
             or calibration.digest(Path(data['swiftDriver'])) != data['swiftDriverSHA256']):
         raise ValueError('actual prepared Swift compiler driver changed')
-    ordinal = len(runner.records)
-    for entry in (data['source']['sdk'], data['source']['core'], *data['source']['dependencies']):
-        path = Path(entry['path'])
-        if not path.resolve(strict=True).is_relative_to(root):
-            raise ValueError('source path retargeted outside prepared original')
-        if development.tracked_manifest(path, entry['files']) != entry['files']:
-            raise ValueError('prepared original tracked bytes changed: ' + str(path))
-        head = runner.run(f'reinspect-{ordinal}-head', ['git', 'rev-parse', 'HEAD'], cwd=path,
-                          timeout=60).read_text().strip()
-        status = runner.run(f'reinspect-{ordinal}-status', ['git', 'status', '--porcelain=v1', '-z',
-                           '--untracked-files=all'], cwd=path, timeout=60).read_text().split('\0')
-        ordinal += 1
-        allowed = ('Package.resolved',) if path == root / 'lattice' else ()
-        if head != entry['commit'] or any(row[3:] not in allowed for row in status if row):
-            raise ValueError('actual prepared source checkout identity/state changed')
+    # One genuine owner for this complete authentication pass. Its sampled
+    # resource boundaries are batch-level, not 72 fabricated command owners.
+    entries = [data['source']['sdk'], data['source']['core'], *data['source']['dependencies']]
+    label = f'reinspect-{len(runner.records)}-sources'
+    request_path = runner.receipts / (label + '-REQUEST.json')
+    outputs = runner.receipts / (label + '-outputs')
+    issued = time.monotonic()
+    end = min(issued + source_auth.BATCH_SECONDS, runner.work_deadline)
+    # The outer GuardedRunner remains the one reviewed coordinator owner.
+    # Only this delegated tracked-manifest helper belongs to the actual leg;
+    # A and B may validly have different entry plumbing/modes.
+    worker = source_auth.prepare_leg_worker(runner.receipts, label, data, __file__)
+    calibration.save(request_path, {'schema': 'lattice.sync-matched-source-auth-request/1',
+        'root': str(root), 'entries': entries, 'issuedMonotonic': issued,
+        'deadlineMonotonic': end})
+    log = runner.run(label, [sys.executable, '-I', '-S', '-B', str(worker),
+        '--request', str(request_path), '--outputs', str(outputs)],
+        cwd=root / 'lattice', timeout=source_auth.remaining(end))
+    report = json.loads(source_auth.read_regular(log, source_auth.OUTPUT_LIMIT))
+    command = json.loads((runner.receipts / (label + '.json')).read_text())
+    source_auth.authenticated_source(worker, data['measurementFiles']['Scripts/sync_matched_source_auth.py'])
+    source_auth.verify_success(report, calibration.digest(request_path), entries, root, outputs, command, end)
     if binary_manifest(root) != data['binaries']:
         raise ValueError('compiled artifact changed or was added/removed after preparation')
     if calibration.digest(root / 'lattice/Package.resolved') != data['source']['resolvedSHA256']:

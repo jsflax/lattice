@@ -10,7 +10,7 @@ import re
 import sys
 import time
 
-BASELINE = 'c30f2f30e229dc917f4aa2583ce3c872b5abbecb'
+BASELINE = 'b6114e2627dc71a8c3214b11729826145bf9d785'
 BASELINE_CORE = 'a05fd480236430ab0d707ed0201d3edbef299de5'
 PHASES = ('prepare-A', 'prepare-B', 'measure')
 PHASE_SECONDS = 12600  # Existing owner includes its unchanged600s reserve.

@@ -44,9 +44,11 @@ internal final class ProjectionReadExecutor: @unchecked Sendable {
     func submit<Value: Sendable>(
         deadline: UInt64? = nil,
         onCancel: @escaping @Sendable () -> Void = {},
+        preservingFailureOnStop: @escaping @Sendable (any Error) -> Bool = { _ in false },
         operation: @escaping @Sendable () throws -> Value
     ) async throws -> Value {
-        let job = ProjectionExecutorJob(deadline: deadline, onCancel: onCancel, operation: operation)
+        let job = ProjectionExecutorJob(deadline: deadline, onCancel: onCancel,
+            preservingFailureOnStop: preservingFailureOnStop, operation: operation)
         let state = state
         return try await withTaskCancellationHandler {
             if Task.isCancelled { state.cancel(job) }
@@ -115,12 +117,15 @@ private class ProjectionExecutorAnyJob: @unchecked Sendable {
 
 private final class ProjectionExecutorJob<Value: Sendable>: ProjectionExecutorAnyJob, @unchecked Sendable {
     let operation: @Sendable () throws -> Value
+    let preservingFailureOnStop: @Sendable (any Error) -> Bool
     // Set once under the state lock before publishing to a worker.
     var continuation: CheckedContinuation<Value, any Error>?
 
     init(deadline: UInt64?, onCancel: @escaping @Sendable () -> Void,
+         preservingFailureOnStop: @escaping @Sendable (any Error) -> Bool,
          operation: @escaping @Sendable () throws -> Value) {
         self.operation = operation
+        self.preservingFailureOnStop = preservingFailureOnStop
         super.init(deadline: deadline, onCancel: onCancel)
     }
 
@@ -128,8 +133,14 @@ private final class ProjectionExecutorJob<Value: Sendable>: ProjectionExecutorAn
         let result = Result { try operation() }
         let continuation = continuation!
         let deadline = deadline
+        let preservingFailureOnStop = preservingFailureOnStop
         return { stopped in
-            if let stopped { continuation.resume(throwing: stopped.error) }
+            // A caller may preserve an observed cleanup failure after both
+            // operation and interrupt have actually returned. Existing callers
+            // keep the default false predicate and their existing precedence.
+            if case .failure(let error) = result, preservingFailureOnStop(error) {
+                continuation.resume(throwing: error)
+            } else if let stopped { continuation.resume(throwing: stopped.error) }
             else if let deadline, deadline <= DispatchTime.now().uptimeNanoseconds {
                 // Recheck immediately before resume as well: the worker may
                 // have been descheduled after the locked completion decision.

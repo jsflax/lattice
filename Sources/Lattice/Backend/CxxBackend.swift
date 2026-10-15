@@ -891,6 +891,11 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
     func readGenerationsOutstanding() -> Int { Int(ref.read_generations_outstanding()) }
     func localReadGenerationsOutstanding() -> Int { Int(ref.local_read_generations_outstanding()) }
     func runReadPoolMaintenance() { ref.run_read_pool_maintenance() }
+    func runReadPoolMaintenanceChecked() -> ReadPoolMaintenanceResult {
+        let result = ref.runReadPoolMaintenanceChecked()
+        return ReadPoolMaintenanceResult(completed: result.completed,
+            pressurePending: result.pressure_pending, error: String(result.error))
+    }
 
     func setReadGenerationTTLMs(_ ms: Int64) { ref.set_read_generation_ttl_ms(ms) }
     func setReadGenerationMaxAgeMs(_ ms: Int64) { ref.set_read_generation_max_age_ms(ms) }

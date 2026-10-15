@@ -198,7 +198,7 @@ jobs:
           git -C "$TASK_ROOT/candidate/lattice" checkout --detach "$GITHUB_SHA"
           test "$(git -C "$TASK_ROOT/candidate/lattice" rev-parse HEAD)" = "$GITHUB_SHA"
           export BOOTSTRAP_STAGE=baseline-fetch
-          BASELINE_SHA=c30f2f30e229dc917f4aa2583ce3c872b5abbecb
+          BASELINE_SHA=b6114e2627dc71a8c3214b11729826145bf9d785
           git init "$TASK_ROOT/baseline/lattice"
           git -C "$TASK_ROOT/baseline/lattice" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$BASELINE_SHA"
           git -C "$TASK_ROOT/baseline/lattice" checkout --detach "$BASELINE_SHA"

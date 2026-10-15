@@ -23,6 +23,26 @@ public struct CheckpointResult: Sendable, Equatable {
     }
 }
 
+/// What one ``Lattice/runReadPoolMaintenance()`` call observed.
+/// This is a maintenance observation, not permission to publish a snapshot.
+public struct ReadPoolMaintenanceResult: Sendable, Equatable {
+    /// The existing native maintenance tick returned on the same live creator
+    /// owner. This does not mean every reader ended or pressure was cleared.
+    public let completed: Bool
+    /// The same owner's WAL-pressure obligation remained pending at the end
+    /// of the tick. A held reader or a racing write can keep it pending.
+    public let pressurePending: Bool
+    /// Why admission or the tick failed. A refused result is conservative:
+    /// completed is false and pressurePending is true.
+    public let error: String
+
+    public init(completed: Bool, pressurePending: Bool, error: String) {
+        self.completed = completed
+        self.pressurePending = pressurePending
+        self.error = error
+    }
+}
+
 /// What ``Lattice/reclaimSpace(maxPasses:)`` did.
 ///
 /// Page counts are the ground truth for "the file shrank" — in WAL mode
