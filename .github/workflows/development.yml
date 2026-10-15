@@ -350,7 +350,7 @@ jobs:
                   facts.append({'argv':argv,'exitCode':child.returncode,'stdout':child.stdout.decode(errors='replace'),'stderr':child.stderr.decode(errors='replace')})
                   if child.returncode or len(child.stdout)+len(child.stderr)>1048576: raise ValueError('original toolchain/helper observation refused')
               expected='swift-driver version: 1.148.6 Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0'
-              if facts[0]['stdout'].strip()!=expected: raise ValueError('exact original Swift6.3.3 required')
+              if (facts[0]['stderr']+facts[0]['stdout']).strip()!=expected: raise ValueError('exact original Swift6.3.3 required')
               text=facts[1]['stdout'].encode(); first=text.find(b'<?xml'); end=text.find(b'</plist>')
               if first<0 or end<first or text.find(b'<?xml',first+1)>=0: raise ValueError('one original helper entitlement plist required')
               if plistlib.loads(text[first:end+8]).get('com.apple.security.get-task-allow') is not True: raise ValueError('original helper lacks debug entitlement; no image re-signing')
