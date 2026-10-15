@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Owning mechanism tests; no Swift/native benchmark or app is launched."""
 import hashlib
+import contextlib
+import io
 import importlib.util
 import json
 import os
@@ -11,6 +13,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 def load(name, path):
@@ -307,6 +310,42 @@ class SourceAuthenticationBatch(unittest.TestCase):
             AUTH.read_regular(fifo, 10)
         self.assertEqual(original.read_bytes(), b'12345')
 
+
+
+class SharedProcessClockAdmission(unittest.TestCase):
+    def test_old_mac_refuses_before_any_supplier_or_worker_effect(self):
+        with mock.patch.object(AUTH.sys, 'platform', 'darwin'), \
+                mock.patch.object(AUTH.sys, 'version_info', (3, 9, 6)), \
+                mock.patch.object(AUTH, 'authenticated_source') as read:
+            for call in (lambda: AUTH.prepare_worker(None,None,None,None,None),
+                         lambda: AUTH.prepare_leg_worker(None,None,None,None),
+                         lambda: AUTH.remaining(12345)):
+                with self.assertRaisesRegex(RuntimeError, 'shared monotonic clock'):
+                    call()
+            read.assert_not_called()
+
+    def test_old_mac_worker_reports_refusal_before_request_read_or_outputs(self):
+        wire = io.StringIO()
+        with mock.patch.object(AUTH.sys, 'platform', 'darwin'), \
+                mock.patch.object(AUTH.sys, 'version_info', (3, 9, 6)), \
+                mock.patch.object(AUTH, 'read_regular') as read, contextlib.redirect_stdout(wire):
+            self.assertEqual(AUTH.authenticate(None, None), 1)
+            read.assert_not_called()
+        report = json.loads(wire.getvalue())
+        self.assertFalse(report['success'])
+        self.assertIn('shared monotonic clock', report['firstFailure']['message'])
+        self.assertEqual(report['commands'], [])
+        self.assertEqual(report['repositories'], [])
+
+    def test_actual_supported_runtime_child_uses_parent_monotonic_origin(self):
+        AUTH.require_shared_process_clock()
+        before = time.monotonic()
+        child = subprocess.run([sys.executable, '-I', '-S', '-B', '-c',
+                                'import time; print(time.monotonic())'],
+                               check=True, capture_output=True, text=True, timeout=10)
+        after = time.monotonic()
+        self.assertLessEqual(before, float(child.stdout))
+        self.assertLessEqual(float(child.stdout), after)
 
 if __name__ == '__main__':
     unittest.main()

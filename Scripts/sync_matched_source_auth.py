@@ -23,6 +23,13 @@ ENTRY_LIMIT = 64
 BATCH_SECONDS = 60
 
 
+def require_shared_process_clock():
+    # macOS Python before3.10 gives each process a different monotonic origin.
+    # Such timestamps cannot carry this already-issued parent deadline.
+    if sys.platform == 'darwin' and sys.version_info < (3, 10):
+        raise RuntimeError('matched authentication requires macOS Python3.10+ shared monotonic clock')
+
+
 def read_regular(path, limit):
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
@@ -49,6 +56,7 @@ def authenticated_source(path, expected):
 
 
 def prepare_worker(receipts, label, data, development, coordinator_path):
+    require_shared_process_clock()
     root = Path(data['root'])
     helper = data['measurementFiles']['Scripts/sync_matched_source_auth.py']
     authenticated_source(Path(coordinator_path), data['measurementFiles']['Scripts/sync_matched_experiment.py'])
@@ -72,6 +80,7 @@ def prepare_leg_worker(receipts, label, data, coordinator_path):
     existing loader executes the exact hashed bytes, and prepare_worker still
     verifies the helper against the same leg before capturing the worker.
     """
+    require_shared_process_clock()
     authenticated_source(Path(coordinator_path), data['measurementFiles']['Scripts/sync_matched_experiment.py'])
     authenticated_source(Path(__file__), data['measurementFiles']['Scripts/sync_matched_source_auth.py'])
     development = load_development(Path(data['root']), data['source']['sdk'])
@@ -92,6 +101,7 @@ def load_development(root, sdk_entry):
 
 
 def remaining(end):
+    require_shared_process_clock()
     value = end - time.monotonic()
     if value <= 0:
         raise TimeoutError('fixed authentication batch deadline expired')
@@ -164,6 +174,7 @@ def authenticate(request_path, outputs):
     owned_outputs = False
     end = None
     try:
+        require_shared_process_clock()
         if os.getpid() != os.getpgrp() or os.getsid(0) != os.getpid():
             raise RuntimeError('authentication requires a genuine outer-owned session leader')
         raw = read_regular(request_path, REQUEST_LIMIT)
