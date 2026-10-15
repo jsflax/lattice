@@ -1,5 +1,6 @@
 """Pure orchestration/admission DATA tests; never launch Git/Swift/native work."""
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -171,6 +172,56 @@ class HostedTests(unittest.TestCase):
                          {'baseline/receipts/native-probe.xml', 'candidate/receipts/native-probe.xml'})
         for row in manifest['copied']:
             self.assertEqual((self.root / 'upload' / row['path']).read_bytes(), xml)
+
+    def test_original_final_package_receipts_are_retained_byte_exact(self):
+        original = b'{"pins":[],"version":2}\n'
+        names = {'baseline/receipts/Package.resolved.final',
+                 'candidate/receipts/Package.resolved.final'}
+        for name in names:
+            path = self.root / name
+            path.parent.mkdir(parents=True)
+            path.write_bytes(original)
+        manifest = hosted.retain(self.root)
+        self.assertEqual(manifest['omitted'], [])
+        self.assertEqual({row['path'] for row in manifest['copied']}, names)
+        for row in manifest['copied']:
+            self.assertEqual(row['bytes'], len(original))
+            self.assertEqual(row['sha256'], hashlib.sha256(original).hexdigest())
+            self.assertEqual((self.root / 'upload' / row['path']).read_bytes(), original)
+
+    def test_final_receipt_exception_requires_the_exact_basename(self):
+        names = {'candidate/receipts/unrelated.final',
+                 'candidate/receipts/OtherPackage.resolved.final',
+                 'candidate/receipts/package.resolved.final',
+                 'candidate/receipts/Package.resolved.final.backup'}
+        for name in names:
+            self.write(name, {'notAnOriginalFinalLock': True})
+        manifest = hosted.retain(self.root)
+        self.assertEqual(manifest['copied'], [])
+        self.assertEqual({row['path'] for row in manifest['omitted']}, names)
+
+    def test_final_receipt_cannot_bypass_alias_count_or_byte_limits(self):
+        original = b'{"pins":[],"version":2}\n'
+        for kind in ('alias', 'file-bytes', 'total-bytes', 'file-count'):
+            with self.subTest(kind=kind):
+                root = self.root / kind
+                path = root / 'candidate/receipts/Package.resolved.final'
+                path.parent.mkdir(parents=True)
+                if kind == 'alias':
+                    target = root / 'original-lock'
+                    target.write_bytes(original)
+                    path.symlink_to(target)
+                else:
+                    path.write_bytes(original)
+                with patch.multiple(hosted,
+                        UPLOAD_FILE_BYTES=len(original) - 1 if kind == 'file-bytes' else hosted.UPLOAD_FILE_BYTES,
+                        UPLOAD_BYTES=len(original) - 1 if kind == 'total-bytes' else hosted.UPLOAD_BYTES,
+                        UPLOAD_FILES=0 if kind == 'file-count' else hosted.UPLOAD_FILES):
+                    manifest = hosted.retain(root)
+                self.assertEqual(manifest['copied'], [])
+                self.assertEqual([row['path'] for row in manifest['omitted']],
+                                 ['candidate/receipts/Package.resolved.final'])
+                self.assertFalse((root / 'upload/candidate/receipts/Package.resolved.final').exists())
 
     def test_malformed_originals_still_retain_raw_logs_and_unknown_progress(self):
         paths = ('hosted-receipts/prepare-A-RESULT.json', 'hosted-receipts/measure-RESULT.json',

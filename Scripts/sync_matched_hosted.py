@@ -199,7 +199,9 @@ def retain(root):
         relative = str(path.relative_to(root))
         size = path.lstat().st_size
         aliases = any(parent.is_symlink() for parent in (path, *path.parents) if parent != root and parent.is_relative_to(root))
-        if (aliases or not path.is_file() or path.suffix not in ('.json', '.jsonl', '.log', '.txt', '.ips', '.original', '.resolved', '.xml')
+        if (aliases or not path.is_file()
+                or (path.suffix not in ('.json', '.jsonl', '.log', '.txt', '.ips', '.original', '.resolved', '.xml')
+                    and path.name != 'Package.resolved.final')
                 or size > UPLOAD_FILE_BYTES
                 or manifest['stagedFiles'] >= UPLOAD_FILES or manifest['bytes'] + size > UPLOAD_BYTES):
             manifest['omitted'].append({'path': relative, 'bytes': size, 'reason': 'bounded regular evidence refusal'})
