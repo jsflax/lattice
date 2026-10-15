@@ -57,11 +57,17 @@ def modules(root):
     return matched, matched.load_development(scripts / 'run-development.py')
 
 
-def original_helper(data, runner, label):
-    driver = Path(data['swiftDriver'])
-    helper = driver.parent.parent / 'libexec/swift/pm/swiftpm-testing-helper'
-    if not helper.is_relative_to(Path('/Applications/Xcode_26.6.app/Contents/Developer')):
-        raise ValueError('original Xcode26.6 SwiftPM helper unavailable')
+def original_helper(observation, runner, label):
+    facts = observation['facts']
+    expected = ['/usr/bin/codesign', '--display', '--entitlements', ':-',
+                '/Applications/Xcode_26.6.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/libexec/swift/pm/swiftpm-testing-helper']
+    if (len(facts) != 3 or facts[0].get('argv') != ['swift', '--version']
+            or facts[0].get('exitCode') != 0
+            or (facts[0]['stderr'] + facts[0]['stdout']).strip() != TOOLCHAIN
+            or facts[1].get('argv') != expected or facts[1].get('exitCode') != 0
+            or facts[2].get('accepted') is not True):
+        raise ValueError('exact original toolchain/helper observation required')
+    helper = Path(facts[1]['argv'][-1])
     before = pin(helper)
     log = runner.run(label, ['/usr/bin/codesign', '--display', '--entitlements', ':-', str(helper)],
                      cwd=runner.root, timeout=30, require_full_timeout=True)
@@ -91,8 +97,9 @@ def run(root):
                     or data['binding']['buildConfiguration']['toolchain'] != TOOLCHAIN):
                 raise ValueError('exact original c30/a05/Swift6.3.3 preparation required')
             matched.reinspect(runner, data, development)
-            helper = original_helper(data, runner, 'original-helper-entitlements')
-            early = json.loads((root / 'hosted-receipts/ORIGINAL-TOOLCHAIN.json').read_text())['facts'][-1]
+            observation = json.loads((root / 'hosted-receipts/ORIGINAL-TOOLCHAIN.json').read_text())
+            helper = original_helper(observation, runner, 'original-helper-entitlements')
+            early = observation['facts'][-1]
             if (early.get('accepted') is not True or early['helperSHA256'] != helper['image']['sha256']
                     or early['helperBytes'] != helper['image']['bytes']):
                 raise ValueError('original helper changed since pre-build observation')
