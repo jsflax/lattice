@@ -394,7 +394,8 @@ extension RelayOrdinaryRouteTests {
             #expect(!original.isSynchronized)
             let client = try await harness.connect(); try client.request()
             try await ordinaryRouteWait { client.complete(0) }; try client.receipt(0)
-            try client.send(JSONEncoder().encode(ServerSentEvent.ack([original.globalId])))
+            let originalID = try #require(original.globalId)
+            try client.send(JSONEncoder().encode(ServerSentEvent.ack([originalID])))
             try await ordinaryRouteWait { client.state.withLockedValue { $0.closed } }
             let current = try #require(harness.writer.objects(AuditLog.self).snapshot().first { $0.globalId == original.globalId })
             #expect(!current.isSynchronized)
