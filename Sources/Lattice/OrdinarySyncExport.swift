@@ -70,13 +70,13 @@ public final class OrdinarySyncUploadAcceptance: @unchecked Sendable {
     public let acknowledgmentByteCount: Int
     fileprivate init(_ actual: lattice.ordinary_upload_acknowledgment_result) throws {
         guard actual.isValid() else { throw OrdinarySyncExportError.invalidFrame }
-        let nativeIDs = actual.ids()
-        guard nativeIDs.size() <= 64 else { throw OrdinarySyncExportError.invalidFrame }
-        var ids: [UUID] = []; ids.reserveCapacity(nativeIDs.size())
-        var index = 0
-        while index < nativeIDs.size() {
-            guard let id = UUID(uuidString: String(nativeIDs[index])), !ids.contains(id) else { throw OrdinarySyncExportError.invalidFrame }
-            ids.append(id); index += 1
+        guard let idCount = Int(exactly: actual.idCount()), (0...64).contains(idCount) else {
+            throw OrdinarySyncExportError.invalidFrame
+        }
+        var ids: [UUID] = []; ids.reserveCapacity(idCount)
+        for index in 0..<idCount {
+            guard let id = UUID(uuidString: String(actual.idAt(index))), !ids.contains(id) else { throw OrdinarySyncExportError.invalidFrame }
+            ids.append(id)
         }
         guard let count = Int(exactly: actual.acknowledgmentByteCount()),
               (ids.isEmpty ? count == 0 : (1...4_194_304).contains(count)) else { throw OrdinarySyncExportError.invalidFrame }
