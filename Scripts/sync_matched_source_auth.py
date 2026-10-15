@@ -65,6 +65,19 @@ def prepare_worker(receipts, label, data, development, coordinator_path):
     return worker
 
 
+def prepare_leg_worker(receipts, label, data, coordinator_path):
+    """Delegate through this leg's authenticated entry; never replace its owner.
+
+    Authenticate executable suppliers before loading the recorded helper. The
+    existing loader executes the exact hashed bytes, and prepare_worker still
+    verifies the helper against the same leg before capturing the worker.
+    """
+    authenticated_source(Path(coordinator_path), data['measurementFiles']['Scripts/sync_matched_experiment.py'])
+    authenticated_source(Path(__file__), data['measurementFiles']['Scripts/sync_matched_source_auth.py'])
+    development = load_development(Path(data['root']), data['source']['sdk'])
+    return prepare_worker(receipts, label, data, development, coordinator_path)
+
+
 def load_development(root, sdk_entry):
     if Path(sdk_entry['path']) != root / 'lattice':
         raise ValueError('the original first source entry must be the actual SDK')

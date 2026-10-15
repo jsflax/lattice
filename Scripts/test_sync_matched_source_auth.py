@@ -67,10 +67,14 @@ class SourceAuthenticationBatch(unittest.TestCase):
                 'measurementFiles': {name: {'bytes': (HERE.parent / name).stat().st_size,
                     'sha256': hashlib.sha256((HERE.parent / name).read_bytes()).hexdigest()} for name in names}}
 
-    def invoke(self, entries, *, expired=False):
+    def invoke(self, entries, *, expired=False, recorded_helper=False):
         issued = time.monotonic() - (61 if expired else 0)
-        worker = AUTH.prepare_worker(self.receipts, 'batch', self.prepared_data(entries), DEVELOPMENT,
-                                     HERE / 'sync_matched_experiment.py')
+        if recorded_helper:
+            worker = AUTH.prepare_leg_worker(self.receipts, 'batch', self.prepared_data(entries),
+                                             HERE / 'sync_matched_experiment.py')
+        else:
+            worker = AUTH.prepare_worker(self.receipts, 'batch', self.prepared_data(entries), DEVELOPMENT,
+                                         HERE / 'sync_matched_experiment.py')
         request = self.receipts / 'REQUEST.json'
         request.write_text(json.dumps({'schema': 'lattice.sync-matched-source-auth-request/1',
             'root': str(self.graph), 'entries': entries, 'issuedMonotonic': issued,
@@ -127,6 +131,54 @@ class SourceAuthenticationBatch(unittest.TestCase):
             self.assertEqual(row['childPGID'], report['ownedPGID'])
             self.assertNotIn('groupGone', row)  # Only the actual outer owner ends the whole group.
         self.assertEqual(original, [DEVELOPMENT.tracked_manifest(Path(entry['path']), entry['files']) for entry in entries])
+
+    def test_distinct_recorded_leg_entries_use_one_outer_owner_and_swaps_refuse(self):
+        # Two real SDK repositories differ in valid entry definitions. Both
+        # authenticate through real Git children under the SAME outer class.
+        legs = []
+        outer_class = DEVELOPMENT.GuardedRunner
+        for label in ('A', 'B'):
+            parent = self.root / label
+            parent.mkdir()
+            self.graph = parent / 'graph'; self.graph.mkdir()
+            self.receipts = parent / 'receipts'; self.receipts.mkdir()
+            entry = self.repository('lattice')
+            path = self.graph / 'lattice/Scripts/run-development.py'
+            path.write_text(path.read_text() + '\ndef qualification_entry_variant():\n    return ' + repr(label) + '\n')
+            self.git_command(Path(entry['path']), 'add', 'Scripts/run-development.py')
+            self.git_command(Path(entry['path']), '-c', 'user.name=Qualification',
+                             '-c', 'user.email=qualification@example.invalid',
+                             'commit', '-q', '-m', 'actual distinct ' + label + ' entry')
+            entry['commit'] = self.git_command(Path(entry['path']), 'rev-parse', 'HEAD').decode().strip()
+            entry['files'] = DEVELOPMENT.tracked_manifest(Path(entry['path']), entry['files'])
+            selected = AUTH.load_development(self.graph, entry)
+            self.assertEqual(selected.qualification_entry_variant(), label)
+            data = self.prepared_data([entry])
+            error, outer, report, outputs = self.invoke([entry], recorded_helper=True)
+            self.assertIsNone(error)
+            self.assertTrue(outer['success'] and report['success'])
+            self.assertTrue(outer['cleanup']['leaderReaped'] and outer['cleanup']['groupGone'])
+            self.assertEqual(outer['cleanup']['signals'], [])
+            request = json.loads((self.receipts / 'REQUEST.json').read_text())
+            AUTH.verify_success(report, hashlib.sha256((self.receipts / 'REQUEST.json').read_bytes()).hexdigest(),
+                                [entry], self.graph, outputs, outer, request['deadlineMonotonic'])
+            self.assertIs(DEVELOPMENT.GuardedRunner, outer_class)
+            legs.append((entry, selected, data, path.read_bytes()))
+        self.assertNotEqual(legs[0][0]['files']['Scripts/run-development.py'],
+                            legs[1][0]['files']['Scripts/run-development.py'])
+        # Supplying A's already loaded helper as B's delegate is still refused
+        # before a captured executable is created. No common-helper waiver.
+        with self.assertRaisesRegex(ValueError, 'supplier bytes changed before execution'):
+            AUTH.prepare_worker(self.receipts, 'swapped', legs[1][2], legs[0][1],
+                                HERE / 'sync_matched_experiment.py')
+        self.assertFalse((self.receipts / 'swapped-WORKER.py').exists())
+        # Replacing the actual B supplier with A also refuses BEFORE loading it.
+        b_path = Path(legs[1][0]['path']) / 'Scripts/run-development.py'
+        b_path.write_bytes(legs[0][3])
+        with self.assertRaisesRegex(ValueError, 'supplier bytes changed before execution'):
+            AUTH.prepare_leg_worker(self.receipts, 'replaced', legs[1][2],
+                                    HERE / 'sync_matched_experiment.py')
+        self.assertFalse((self.receipts / 'replaced-WORKER.py').exists())
 
     def test_parent_refuses_changed_retained_output_after_real_success(self):
         entries = [self.repository('lattice')]

@@ -210,7 +210,10 @@ def reinspect(runner, data, development):
     outputs = runner.receipts / (label + '-outputs')
     issued = time.monotonic()
     end = min(issued + source_auth.BATCH_SECONDS, runner.work_deadline)
-    worker = source_auth.prepare_worker(runner.receipts, label, data, development, __file__)
+    # The outer GuardedRunner remains the one reviewed coordinator owner.
+    # Only this delegated tracked-manifest helper belongs to the actual leg;
+    # A and B may validly have different entry plumbing/modes.
+    worker = source_auth.prepare_leg_worker(runner.receipts, label, data, __file__)
     calibration.save(request_path, {'schema': 'lattice.sync-matched-source-auth-request/1',
         'root': str(root), 'entries': entries, 'issuedMonotonic': issued,
         'deadlineMonotonic': end})
