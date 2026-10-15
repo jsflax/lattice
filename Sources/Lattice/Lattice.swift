@@ -3110,11 +3110,14 @@ public struct Lattice {
         if queryConfig.ordinaryInstallationContext != nil {
             // Only the actual retained parent's native profile can authorize
             // this uncached clone; configuration alone is only open custody.
-            var error = lattice.cxx_error()
+            var error = LatticeCxx.cxx_error()
             let created = LatticeCxx.swift_lattice_ref.createManagedAttachmentClone(
                 parent: cxxLatticeRef, swiftConfig: cxxConfig, error: &error)
             guard error.msg.empty() else { throw error }
-            newCxxLattice = _requireLatticeRef(created)
+            guard let retained = _optLatticeRef(created) else {
+                throw LatticeError.attachFailed("managed attachment clone was refused")
+            }
+            newCxxLattice = retained
         } else {
             newCxxLattice = _requireLatticeRef(LatticeCxx.swift_lattice_ref.createUncached(swiftConfig: cxxConfig,
                                                                 schemas: modelTypes.cxxSchema))
