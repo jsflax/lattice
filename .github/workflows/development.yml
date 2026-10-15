@@ -35,12 +35,18 @@ on:
         required: false
         default: false
 
+      sync_baseline_crash_diagnostic:
+        description: 'One original c30/a05 A2-loaded crash diagnostic with explicit backtrace; no numerical comparison; mutually exclusive'
+        type: boolean
+        required: false
+        default: false
+
 permissions:
   contents: read
 
 jobs:
   development:
-    if: ${{ !inputs.sync_matched_experiment }}
+    if: ${{ !inputs.sync_matched_experiment && !inputs.sync_baseline_crash_diagnostic }}
     name: Development SDK (${{ matrix.leg }})
     strategy:
       fail-fast: false
@@ -122,7 +128,7 @@ jobs:
           retention-days: 14
 
   matched:
-    if: ${{ inputs.sync_matched_experiment }}
+    if: ${{ inputs.sync_matched_experiment && !inputs.sync_baseline_crash_diagnostic }}
     name: Matched A-A2-B (${{ matrix.leg }})
     strategy:
       fail-fast: false
@@ -261,6 +267,126 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sync-matched-${{ matrix.leg }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ env.TASK_ROOT }}/hosted-receipts
+            ${{ env.TASK_ROOT }}/upload
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+  baseline-crash-diagnostic:
+    if: ${{ inputs.sync_baseline_crash_diagnostic }}
+    name: Original baseline A2 loaded crash diagnostic (macOS)
+    runs-on: macos-26
+    timeout-minutes: 260
+    env:
+      DEVELOPMENT_LEG: macos
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Admit one owned exact original diagnostic namespace
+        timeout-minutes: 10
+        shell: bash
+        env:
+          OTHER_MODES: '${{ inputs.sync_probe_qualification }} ${{ inputs.sync_full_calibration }} ${{ inputs.sync_matched_prepare }} ${{ inputs.recovery_refresh_qualification }} ${{ inputs.sync_matched_experiment }}'
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$RUNNER_OS" = macOS
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = jsflax/lattice
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          for mode in $OTHER_MODES; do test "$mode" != true; done
+          test -d "$DEVELOPER_DIR"
+          test ! -L "$HOME/localdev"
+          mkdir -p "$HOME/localdev"
+          test "$(cd "$HOME/localdev" && pwd -P)" = "$HOME/localdev"
+          TASK_ROOT="$HOME/localdev/lattice-baseline-sig11-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -m 0700 "$TASK_ROOT"
+          echo "TASK_ROOT=$TASK_ROOT" >> "$GITHUB_ENV"
+          mkdir "$TASK_ROOT/tmp" "$TASK_ROOT/hosted-receipts" "$TASK_ROOT/baseline" "$TASK_ROOT/caller"
+          export TASK_ROOT TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          finish_bootstrap() {
+            BOOTSTRAP_STATUS=$?
+            trap - EXIT
+            export BOOTSTRAP_STATUS
+            python3 -I -S -B - <<'PYBOOT'
+          import json, os
+          from pathlib import Path
+          with (Path(os.environ['TASK_ROOT']) / 'hosted-receipts/BOOTSTRAP-RESULT.json').open('x') as output:
+              json.dump({'exitCode': int(os.environ['BOOTSTRAP_STATUS']), 'scope': 'bootstrap only; no profile/native/cleanup proof'}, output)
+          PYBOOT
+            exit "$BOOTSTRAP_STATUS"
+          }
+          trap finish_bootstrap EXIT
+          git init "$TASK_ROOT/caller/lattice"
+          git -C "$TASK_ROOT/caller/lattice" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C "$TASK_ROOT/caller/lattice" checkout --detach "$GITHUB_SHA"
+          test "$(git -C "$TASK_ROOT/caller/lattice" rev-parse HEAD)" = "$GITHUB_SHA"
+          BASELINE_SHA=c30f2f30e229dc917f4aa2583ce3c872b5abbecb
+          git init "$TASK_ROOT/baseline/lattice"
+          git -C "$TASK_ROOT/baseline/lattice" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$BASELINE_SHA"
+          git -C "$TASK_ROOT/baseline/lattice" checkout --detach "$BASELINE_SHA"
+          test "$(git -C "$TASK_ROOT/baseline/lattice" rev-parse HEAD)" = "$BASELINE_SHA"
+
+      - name: Require actual original toolchain and existing helper entitlement
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          python3 -I -S -B - <<'PYFACTS'
+          import hashlib, json, os, plistlib, subprocess
+          from pathlib import Path
+          root=Path(os.environ['TASK_ROOT']); helper=Path(os.environ['DEVELOPER_DIR'])/'Toolchains/XcodeDefault.xctoolchain/usr/libexec/swift/pm/swiftpm-testing-helper'
+          commands=[['swift','--version'], ['/usr/bin/codesign','--display','--entitlements',':-',str(helper)]]
+          facts=[]
+          try:
+              for index, argv in enumerate(commands):
+                  child=subprocess.run(argv,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=30)
+                  facts.append({'argv':argv,'exitCode':child.returncode,'stdout':child.stdout.decode(errors='replace'),'stderr':child.stderr.decode(errors='replace')})
+                  if child.returncode or len(child.stdout)+len(child.stderr)>1048576: raise ValueError('original toolchain/helper observation refused')
+              expected='swift-driver version: 1.148.6 Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0'
+              if facts[0]['stdout'].strip()!=expected: raise ValueError('exact original Swift6.3.3 required')
+              text=facts[1]['stdout'].encode(); first=text.find(b'<?xml'); end=text.find(b'</plist>')
+              if first<0 or end<first or text.find(b'<?xml',first+1)>=0: raise ValueError('one original helper entitlement plist required')
+              if plistlib.loads(text[first:end+8]).get('com.apple.security.get-task-allow') is not True: raise ValueError('original helper lacks debug entitlement; no image re-signing')
+              facts.append({'helperBytes':helper.stat().st_size,'helperSHA256':hashlib.sha256(helper.read_bytes()).hexdigest(),'accepted':True})
+          finally:
+              with (root/'hosted-receipts/ORIGINAL-TOOLCHAIN.json').open('x') as output: json.dump({'facts':facts,'scope':'read-only original toolchain/helper preflight; no crash reproduction'},output,indent=2)
+          PYFACTS
+
+      - name: Prepare exact baseline with its own original runner
+        timeout-minutes: 220
+        shell: bash
+        run: |
+          python3 "$TASK_ROOT/baseline/lattice/Scripts/run-development.py" --root "$TASK_ROOT/baseline" --sdk-sha c30f2f30e229dc917f4aa2583ce3c872b5abbecb --core-sha a05fd480236430ab0d707ed0201d3edbef299de5 --test-timeout 1800 --sync-matched-prepare
+
+      - name: Run one original A2-loaded profile with explicit bounded backtrace
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          python3 -I -S -B "$TASK_ROOT/caller/lattice/Scripts/sync_baseline_crash_diagnostic.py" --root "$TASK_ROOT" run
+
+      - name: Retain bounded existing original and diagnostic evidence
+        if: always() && env.TASK_ROOT != ''
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          export TMPDIR="$TASK_ROOT/tmp" TMP="$TASK_ROOT/tmp" TEMP="$TASK_ROOT/tmp"
+          test -f "$TASK_ROOT/caller/lattice/Scripts/sync_baseline_crash_diagnostic.py"
+          python3 -I -S -B "$TASK_ROOT/caller/lattice/Scripts/sync_baseline_crash_diagnostic.py" --root "$TASK_ROOT" retain
+
+      - name: Upload bounded diagnostic receipts and logs, including first failure
+        if: always() && env.TASK_ROOT != ''
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-sig11-diagnostic-macos-attempt-${{ github.run_attempt }}
           path: |
             ${{ env.TASK_ROOT }}/hosted-receipts
             ${{ env.TASK_ROOT }}/upload
