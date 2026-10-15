@@ -140,14 +140,37 @@ def qualify(runner, sdk, root, common, timeout):
     save(runner.receipts / 'checked-mounted-fix-source-inventory.json', inventory)
     save(runner.receipts / 'checked-mounted-fix-test-image.json', image)
     previous_log = runner.env['LATTICE_TEST_LOG_PATH']
+    diagnostic_key = 'LATTICE_CHECKED_MOUNTED_SETUP_DIAGNOSTIC'
+    previous_diagnostic = runner.env.get(diagnostic_key)
+    runner.env[diagnostic_key] = '1'
     try:
         runner.env['LATTICE_TEST_LOG_PATH'] = str(root / 'test-logs/checked-mounted-fix.log')
         xml = runner.receipts / 'checked-mounted-fix.xml'
         pattern = '^(?:' + '|'.join(re.escape(name) for name in inventory['identifiers']) + r')(?:/|$)'
-        log = runner.run('checked-mounted-fix-tests', ['swift', 'test', *common,
-                         '--force-resolved-versions', '--skip-build', '--disable-xctest',
-                         '--enable-swift-testing', '--filter', pattern, '--xunit-output', str(xml)],
-                         cwd=sdk, timeout=timeout, require_full_timeout=True)
+        command_failed = False
+        try:
+            log = runner.run('checked-mounted-fix-tests', ['swift', 'test', *common,
+                             '--force-resolved-versions', '--skip-build', '--disable-xctest',
+                             '--enable-swift-testing', '--filter', pattern, '--xunit-output', str(xml)],
+                             cwd=sdk, timeout=timeout, require_full_timeout=True)
+        except BaseException:
+            command_failed = True
+            raise
+        finally:
+            # Every diagnostic import/read/parse/write is subordinate to the
+            # original failed command. A successful command cannot conceal
+            # failure to retain this separate diagnostic receipt.
+            try:
+                try:
+                    import checked_mounted_setup_failure_diagnostic as diagnostic
+                    observations = diagnostic.parse(runner.receipts / 'checked-mounted-fix-tests.log')
+                except Exception:
+                    observations = {'status': 'refused', 'reason': 'checked_setup_failure_data_refused',
+                                    'scope': 'no setup outcome inferred'}
+                save(runner.receipts / 'checked-mounted-setup-failures.json', observations)
+            except Exception:
+                if not command_failed:
+                    raise
         actual = framework(read_report(xml, MAX_XML), read_report(log, MAX_LOG), system)
         require(original.test_image(root / 'scratch') == image and source_inventory(sdk, system) == inventory)
         save(runner.receipts / 'checked-mounted-fix-qualification.json',
@@ -157,3 +180,7 @@ def qualify(runner, sdk, root, common, timeout):
               'performanceOrReleaseAccepted': False})
     finally:
         runner.env['LATTICE_TEST_LOG_PATH'] = previous_log
+        if previous_diagnostic is None:
+            runner.env.pop(diagnostic_key, None)
+        else:
+            runner.env[diagnostic_key] = previous_diagnostic

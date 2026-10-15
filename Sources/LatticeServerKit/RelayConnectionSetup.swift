@@ -1,6 +1,6 @@
 import Foundation
 import Vapor
-import Lattice
+@_spi(LatticeServer) import Lattice
 
 /// Immutable hand-off. The schema metatypes and processing closure are the same
 /// mount/connection values already crossing the existing relay's Sendable boxes.
@@ -230,20 +230,25 @@ private final class RelayCatchUpReadState {
             input.diagnostic?.record(.storeOpenBegin)
             let opened: UnsafeSendableBox<RelayCatchUpReadState>?
             let turn: RecoveryRelayAuthorizationTurn?
+            var failureStage = RelayCheckedSetupFailureDiagnostic.Stage.authorizationValidation
             do {
                 let lattice: Lattice
                 if let authorization = input.ordinaryModelAuthorization {
                     try authorization.validateUse(socket: input.socket, key: input.applyKey, revocation: input.state.revocation)
+                    failureStage = .checkedOwnerOpen
                     lattice = try authorization.openExistingOwner(configuration: configuration)
                 } else {
+                    failureStage = .normalOwnerOpen
                     lattice = try Lattice(isolation: nil, for: input.schema, configuration: configuration)
                 }
+                failureStage = .modelGateCreation
                 let modelGate: RelayOrdinaryModelGate?
                 if let authorization = input.ordinaryModelAuthorization, !input.state.ordinaryRequired {
                     modelGate = try RelayOrdinaryModelGate(authorization: authorization, owner: lattice,
                         socket: input.socket, key: input.applyKey, revocation: input.state.revocation)
                 } else { modelGate = nil }
                 if input.state.ordinaryRequired {
+                    failureStage = .ordinaryConnectionCreation
                     let ordinary = try RelayOrdinaryConnection(lattice: lattice, socket: input.socket,
                                                                key: input.applyKey, revocation: input.state.revocation,
                                                                 modelAuthorization: input.ordinaryModelAuthorization,
@@ -251,15 +256,21 @@ private final class RelayCatchUpReadState {
                                                                onRefusal: { [weak state = input.state, socket = input.socket] in
                         state?.sealIngress(.applyRefused, socket: socket, stopQueued: true)
                     })
+                    failureStage = .ordinaryStateInstall
                     try input.state.installOrdinary(ordinary)
                 }
+                failureStage = .recoveryOpen
                 if let recovery = input.state.recovery {
                     guard let source = input.recoverySource else { throw SyncRecoveryConfigurationError.staleAuthorization }
                     turn = try recovery.open(owner: lattice, channel: input.channel, source: source)
                 } else { turn = nil }
+                failureStage = .catchUpStateCreation
                 opened = UnsafeSendableBox(RelayCatchUpReadState(lattice: lattice, input: input, probe: probe, ordinaryModelGate: modelGate))
                 input.diagnostic?.record(.storeOpenEnd)
             } catch {
+                // Read-only opt-in DATA on this SAME owning IO catch. The real
+                // error and original setup refusal/cleanup remain unchanged.
+                recordCheckedSetupFailure(stage: failureStage, error: error)
                 opened = nil; turn = nil
                 input.diagnostic?.record(.storeOpenFailure)
             }
@@ -719,5 +730,41 @@ private final class RelayCatchUpReadState {
                 self.input.didFinish()
             }
         }
+    }
+}
+
+// No reflected error/payload/path is printed. Associated native messages are
+// mapped to a closed literal reason set; unknown reasons remain unknown DATA.
+private func recordCheckedSetupFailure(stage: RelayCheckedSetupFailureDiagnostic.Stage, error: any Error) {
+    guard RelayCheckedSetupFailureDiagnostic.enabled else { return }
+    switch error {
+    case let failure as Lattice.MountedServerExistingOpenError:
+        switch failure {
+        case .incompatibleConfiguration: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .mountedConfiguration)
+        case .openRefused(let message): RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .mountedOpenRefused, nativeMessage: message)
+        }
+    case let failure as OrdinarySyncExportError:
+        switch failure {
+        case .exportCapacity: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .exportCapacity)
+        case .observationCapacity: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .observationCapacity)
+        case .captureRefused(let message): RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .exportRefused, nativeMessage: message)
+        default: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .exportOther)
+        }
+    case let failure as RelayOrdinaryModelError:
+        switch failure {
+        case .configuration: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .modelConfiguration)
+        case .control: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .modelControl)
+        case .stopped: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .modelStopped)
+        case .effectUnavailable: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .modelEffectUnavailable)
+        }
+    case let failure as RelayOrdinaryError:
+        switch failure {
+        case .control: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .ordinaryControl)
+        case .capacity: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .ordinaryCapacity)
+        case .stopped: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .ordinaryStopped)
+        case .receipt: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .ordinaryReceipt)
+        case .header: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .ordinaryHeader)
+        }
+    default: RelayCheckedSetupFailureDiagnostic.record(stage: stage, kind: .other)
     }
 }

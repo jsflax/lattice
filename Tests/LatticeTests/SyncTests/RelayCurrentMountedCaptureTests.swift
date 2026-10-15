@@ -109,11 +109,31 @@ struct RelayCurrentMountedCaptureTests {
         let cut = try mounted.capture(models: [CurrentMountedParent.self, CurrentMountedChild.self])
         let header = try body(cut)
         #expect(header["models"] as? [String] == [CurrentMountedChild.entityName, CurrentMountedParent.entityName])
-        #expect(header["rows"] as? String == "2")
+        // The physical closed projection contains the two model rows plus
+        // their real generated relationship row, not the unrelated Outside.
+        let linkTable = "_\(CurrentMountedParent.entityName)_\(CurrentMountedChild.entityName)_child"
+        let tables = try #require(header["tables"] as? [[String: Any]])
+        let tableNames = try tables.map { try #require($0["name"] as? String) }
+        #expect(tableNames == [CurrentMountedChild.entityName, CurrentMountedParent.entityName, linkTable].sorted())
+        #expect(header["rows"] as? String == "3")
         #expect(cut.priorMountedSource == nil)
+        var rowsByTable: [String: Int] = [:]
         for index in 0..<cut.frameCount {
-            #expect(!String(decoding: try cut.page(at: index).data(), as: UTF8.self).contains("excluded-outside-marker"))
+            let bytes = try cut.page(at: index).data()
+            #expect(!String(decoding: bytes, as: UTF8.self).contains("excluded-outside-marker"))
+            if index > 0 {
+                let root = try #require(try JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+                let page = try #require(root["latticeOrdinarySync"] as? [String: Any])
+                let records = try #require(page["records"] as? [[String: Any]])
+                for record in records {
+                    if let row = record["row"] as? [String: Any] {
+                        let table = try #require(row["table"] as? String)
+                        rowsByTable[table, default: 0] += 1
+                    }
+                }
+            }
         }
+        #expect(rowsByTable == [CurrentMountedChild.entityName: 1, CurrentMountedParent.entityName: 1, linkTable: 1])
         #expect(owner.count(CurrentMountedParent.self) == 1 && owner.count(CurrentMountedChild.self) == 1)
         #expect(owner.count(CurrentMountedOutside.self) == 1)
     }
@@ -133,16 +153,23 @@ struct RelayCurrentMountedCaptureTests {
         #expect(try body(next)["rows"] as? String == "2")
     }
     @Test func genuineIssuedPageRetainsBytesAfterParentCheckedClose() throws {
-        let owner = try Lattice(isolation: nil, for: [CurrentMountedParent.self], configuration: .init(fileURL: try path()))
-        try owner.add(CurrentMountedChild("retained"))
-        let full = try RelayOrdinaryModelMount.fullCatalog(for: [CurrentMountedParent.self])
-        var mounted: OwnedOrdinaryMountedHistorySource? = try owner.registerOrdinaryMountedHistorySource(models: full)
-        var cut: OwnedOrdinaryHistoryExport? = try #require(mounted).capture(models: full)
-        let page = try #require(cut).page(at: 0), bytes = try page.data()
-        let lastIndex = try #require(cut).frameCount - 1
-        let lastPage = try #require(cut).page(at: lastIndex)
-        let lastBytes = try lastPage.data()
-        close(owner); mounted = nil; cut = nil
+        func issuedPage(tail: Bool) throws -> (OwnedOrdinaryHistoryPage, Data) {
+            let owner = try Lattice(isolation: nil, for: [CurrentMountedParent.self], configuration: .init(fileURL: try path()))
+            try owner.add(CurrentMountedChild("retained"))
+            let full = try RelayOrdinaryModelMount.fullCatalog(for: [CurrentMountedParent.self])
+            var mounted: OwnedOrdinaryMountedHistorySource? = try owner.registerOrdinaryMountedHistorySource(models: full)
+            var cut: OwnedOrdinaryHistoryExport? = try #require(mounted).capture(models: full)
+            let count = try #require(cut).frameCount
+            #expect(count > 1)
+            // Each real cut admits one outstanding page lease. Use distinct
+            // cuts to retain both the header and a content page after close.
+            let page = try #require(cut).page(at: tail ? count - 1 : 0)
+            let bytes = try page.data()
+            close(owner); mounted = nil; cut = nil
+            return (page, bytes)
+        }
+        let (page, bytes) = try issuedPage(tail: false)
+        let (lastPage, lastBytes) = try issuedPage(tail: true)
         #expect(try page.data() == bytes)
         #expect(try lastPage.data() == lastBytes)
     }
