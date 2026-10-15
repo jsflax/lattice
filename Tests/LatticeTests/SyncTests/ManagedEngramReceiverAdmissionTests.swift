@@ -86,7 +86,7 @@ struct ManagedEngramReceiverAdmissionTests {
         let auth = try session(); defer { auth.revoke() }
         let archive = lattice.swift_owned_receiver_preservation(), copy = archive
         #expect(!archive.valid() && !copy.valid())
-        let request = archive.begin(auth.credentials), duplicate = copy.begin(auth.credentials)
+        let request = archive.beginReceiverRequest(credentials: auth.credentials), duplicate = copy.beginReceiverRequest(credentials: auth.credentials)
         #expect(!request.valid() && !duplicate.valid())
         #expect(request.transportCookie() == 0 && duplicate.transportCookie() == 0)
         #expect(String(request.requestedGroup()).isEmpty)
@@ -124,7 +124,7 @@ struct ManagedEngramReceiverAdmissionTests {
             guard let actual = store.backend.asCxxLatticeRef else { throw FixtureFailure.backend }
             let archive = actual.preserveManagedReceiver(startup: lattice.swift_managed_history_startup())
             let auth = try session(); defer { auth.revoke() }
-            let request = archive.begin(auth.credentials), selection = request.directorySelection()
+            let request = archive.beginReceiverRequest(credentials: auth.credentials), selection = request.directorySelection()
             #expect(!archive.valid() && !request.valid() && !selection.isAvailable())
             #expect(!selection.isPersonal() && !selection.isGroup())
             #expect(request.transportCookie() == 0)

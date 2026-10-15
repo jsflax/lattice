@@ -89,7 +89,7 @@ public final class ManagedEngramDirectorySession: @unchecked Sendable {
     /// profile; no URL/group/models/current-cut argument is accepted here.
     public func startReceiver(for preserved: OrdinaryReceiverPreservation) async throws -> ManagedEngramWSSOwner {
         guard isOpen(), credentials.valid() else { throw Failure.cancelled }
-        let request = preserved.native.begin(credentials)
+        let request = preserved.native.beginReceiverRequest(credentials: credentials)
         guard request.valid() else { throw Failure.refused }
         let selection = request.directorySelection()
         guard selection.isAvailable(), request.valid() else { request.cancel(); throw Failure.refused }
@@ -286,7 +286,7 @@ private final class DirectoryTransport: NSObject, URLSessionDataDelegate, @unche
     }
 
     func run() async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             guard creator == getpid() else { continuation.resume(throwing: ManagedEngramDirectorySession.Failure.refused); return }
             let queue = OperationQueue(); queue.maxConcurrentOperationCount = 1
             let config = URLSessionConfiguration.ephemeral
