@@ -123,7 +123,8 @@ private final class HistoryRouteFixture: @unchecked Sendable {
         return try #require(peer.bodies().first { $0["kind"] as? String == "historyCut" })
     }
     func stageProtocolInput(_ header: [String: Any]) async throws {
-        let pages = try #require(Int(try #require(header["pages"] as? String)))
+        let pageCountText = try #require(header["pages"] as? String)
+        let pages = try #require(Int(pageCountText))
         #expect((1...8).contains(pages), "fixture remains bounded; no full-history unbounded peer buffer")
         guard (1...8).contains(pages) else { throw HistoryRouteFailure.overflow }
         try peer.progress(header: header, index: 0, page: nil, complete: false)
