@@ -5,6 +5,46 @@ import NIOConcurrencyHelpers
 @testable import Lattice
 @testable import LatticeServerKit
 
+#if os(macOS)
+import Darwin
+import MachO
+#endif
+
+// Opt-in TEST-only observation; never a completion or cleanup authority.
+private enum BaselineCrashLifecyclePhase: String {
+    case profileEntered = "profile_entered"
+    case observationsFrozen = "observations_frozen"
+    case clientsCloseLoopReturned = "clients_close_loop_returned"
+    case relayShutdownReturned = "relay_shutdown_returned"
+    case wrappersReleaseReturned = "wrappers_release_returned"
+    case poolShutdownReturned = "pool_shutdown_returned"
+    case loggingBlockReturned = "logging_block_returned"
+    case reportWritten = "report_written"
+}
+
+private func baselineCrashLifecycle(_ phase: BaselineCrashLifecyclePhase, runID: String) {
+#if os(macOS)
+    let env = ProcessInfo.processInfo.environment
+    guard env["LATTICE_BASELINE_LIFECYCLE_PHASES"] == "1",
+          let diagnosticID = env["LATTICE_BASELINE_DIAGNOSTIC_ID"],
+          UUID(uuidString: diagnosticID) != nil else { return }
+    var capacity: UInt32 = 4096
+    var buffer = [CChar](repeating: 0, count: Int(capacity))
+    let status = buffer.withUnsafeMutableBufferPointer {
+        _NSGetExecutablePath($0.baseAddress!, &capacity)
+    }
+    let image: Any = status == 0 && buffer.contains(0) ? String(cString: buffer) : NSNull()
+    let row: [String: Any] = ["schema": "lattice.baseline-lifecycle/1", "phase": phase.rawValue,
+        "diagnosticID": diagnosticID, "fixtureRunID": runID,
+        "pid": Int(getpid()), "ppid": Int(getppid()), "pgid": Int(getpgrp()), "image": image,
+        "monotonicNS": SyncVisibilityClock.now(), "wallSeconds": Date().timeIntervalSince1970]
+    guard let encoded = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]) else { return }
+    var line = Data("LATTICE_BASELINE_LIFECYCLE ".utf8)
+    line.append(encoded); line.append(10)
+    try? FileHandle.standardError.write(contentsOf: line)
+#endif
+}
+
 struct SyncVisibilityParameters: Codable, Sendable {
     let writerCount: Int, opsPerWriter: Int, payloadBytes: Int
     let cadenceNS: UInt64, staggerNS: UInt64
@@ -196,6 +236,7 @@ struct SyncPublicVisibilityTests {
                      captureTailNS: UInt64? = nil) async throws {
         let logging = try SyncMeasurementLogging.installIfRequested()
         let directory = try directory(mode: mode), runID = UUID().uuidString
+        baselineCrashLifecycle(.profileEntered, runID: runID)
         let started = SyncVisibilityClock.now()
         var expected: [SyncVisibilityExpected] = []
         expected.reserveCapacity(p.writerCount * (p.opsPerWriter + p.warmupPerWriter) + p.quietOps + p.quietWarmupOps)
@@ -316,19 +357,25 @@ struct SyncPublicVisibilityTests {
             }
         } catch { recorder.error(String(describing: error)) }
         recorder.freeze(phase: "warmup"); recorder.freeze(phase: "measured")
+        baselineCrashLifecycle(.observationsFrozen, runID: runID)
         // Await each driver completion before callback admission closes. Native
         // owner close happens on a big-stack worker, never inside its observer.
         for client in clients {
             do { try await syncVisibilityOnWorker(pool: pool, key: client.key) { client.stopAndClose() } }
             catch { recorder.error("client cleanup: \(error)") }
         }
+        baselineCrashLifecycle(.clientsCloseLoopReturned, runID: runID)
         if let relay { await relay.shutdown(recorder: recorder) }
+        baselineCrashLifecycle(.relayShutdownReturned, runID: runID)
         writers.removeAll(); clients.removeAll(); relay = nil
+        baselineCrashLifecycle(.wrappersReleaseReturned, runID: runID)
         await pool.shutdown()
+        baselineCrashLifecycle(.poolShutdownReturned, runID: runID)
         if logging != nil {
             do { try SyncMeasurementLogging.finish(metadata: &metadata) }
             catch { recorder.error("logging verification: \(error)") }
         }
+        baselineCrashLifecycle(.loggingBlockReturned, runID: runID)
         let (receipts, counters, errors) = recorder.snapshot()
         let originsValid = !SyncVisibilityClock.hasProbe || validOrigins(receipts)
         let complete = errors.isEmpty && originsValid && counters.unknownOperation == 0 && counters.valueMismatch == 0
@@ -349,6 +396,7 @@ struct SyncPublicVisibilityTests {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let output = directory.appendingPathComponent("receipts.json")
         try encoder.encode(report).write(to: output, options: .atomic)
+        baselineCrashLifecycle(.reportWritten, runID: runID)
         print("SDK public visibility receipts: \(output.path); complete=\(complete); mode=\(mode); no performance verdict")
         #expect(complete, "Public visibility/origin/cleanup incomplete; inspect retained receipts.json")
     }
