@@ -1,5 +1,5 @@
 {
-  "scope": "Private explicit-close destructor correctness candidate. Same actual Core623a plus two reviewed paths; native baseline regression fails and changed native67 pass. Actual both-platform affected Swift qualification pending; no automatic maintenance/current G006, full SDK, performance or release acceptance.",
-  "coreCommit": "5e0b9a73ec05ec2114535c155b5ca6bf85f8fd17",
-  "coreTree": "55b1dd2ab87b7fe072ae2926848b2a823543c764"
+  "scope": "Private audit-order compatibility successor of actual Core5e. Exact three reviewed paths; native old-counterfactual plus95/probe component passes. Same actual affected Swift four-suite matrix remains pending. No receipt/automatic/class-header/live-optimize/fullSDK/performance/release composition or acceptance.",
+  "coreCommit": "1d4958b60f3b9f382a991c6cf5e8abb3a0705aa1",
+  "coreTree": "83c991993b6f05ceffcb8039c2c5322c2a43241d"
 }
