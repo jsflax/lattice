@@ -308,7 +308,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// File stores: passthrough — reads are keeper-routed or WAL-safe.
     private func _gatedLiveRead<T>(_ body: () -> T) -> T {
         guard _isMemoryStore,
-              !Lattice._threadHoldsExplicitTransaction(identityHash: _lattice.backend.identityHash) else {
+              !Lattice._threadHoldsExplicitTransaction(backend: _lattice.backend) else {
             return body()
         }
         let backend = _lattice.backend
@@ -330,7 +330,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// (nothing to poison on rollback; the rollback hook then bumps the
     /// epoch and every shape re-captures).
     private var _threadHoldsOwnTransaction: Bool {
-        Lattice._threadHoldsExplicitTransaction(identityHash: _lattice.backend.identityHash)
+        Lattice._threadHoldsExplicitTransaction(backend: _lattice.backend)
     }
 
     /// In-txn row read: bbox shapes use the existing live spatial read
@@ -339,7 +339,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// (`Lattice._writerTransactionRows` — see InTransactionReads.swift).
     /// Hydrated instances have live property semantics on the writer
     /// connection, so their reads see the transaction too.
-    private func _inTxnRows(limit: Int64?, offset: Int64?, reuseInstances: Bool) -> [Element] {
+    private func _inTxnRows(limit: Int64?, offset: Int64?, reuseInstances: Bool,
+                            captureQueryRows: (([any ObjectBackend]) -> Void)? = nil) -> [Element] {
         if let bounds = boundsConstraint {
             let rows = _lattice.backend._objectsWithinBBoxShape(
                 table: Element.entityName, geoColumn: bounds.propertyName,
@@ -348,6 +349,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                 where: whereStatement?.predicate,
                 orderBy: _effectiveOrderBySQL(qualifyTiebreaker: true),
                 limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn)
+            captureQueryRows?(rows)
             return reuseInstances ? rows.map { _reuseOrHydrate($0) }
                                   : rows.map { Element(dynamicObject: $0) }
         }
@@ -357,6 +359,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false),
             limit: limit, offset: offset,
             groupBy: groupByColumn, distinctBy: distinctByColumn)
+        captureQueryRows?(rows)
         return reuseInstances ? rows.map { _reuseOrHydrate($0) }
                               : rows.map { Element(dynamicObject: $0) }
     }
@@ -431,7 +434,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         // thread holds an explicit transaction on the same store self-blocks
         // for the full busy timeout. Fall to the live in-txn read path
         // (reading through the writer connection trivially satisfies RYW).
-        if Lattice._threadHoldsExplicitTransaction(identityHash: _lattice.backend.identityHash) {
+        if Lattice._threadHoldsExplicitTransaction(backend: _lattice.backend) {
             return nil
         }
         let captured = _lattice.backend.queryIDs(table: Element.entityName,
@@ -781,6 +784,20 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     // the `id ASC` tiebreaker — so `snapshot()` order ≡ the keyset walk's
     // total order (pinned by the Commit-2 property matrix).
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
+        _snapshot(limit: limit, offset: offset, captureQueryRows: nil)
+    }
+
+    // Closed package consumer: the relay constructs a plain AuditLog pk-cursor
+    // shape. Capture the exact SELECT values before normal model hydration
+    // releases them. Public snapshots retain their original nil path.
+    package func _snapshotCapturingRowImages(limit: Int64,
+                    capture: @escaping ([any ObjectBackend]) -> Void) -> [Element] {
+        precondition(boundsConstraint == nil && groupByColumn == nil && distinctByColumn == nil)
+        return _snapshot(limit: limit, offset: nil, captureQueryRows: capture)
+    }
+
+    private func _snapshot(limit: Int64?, offset: Int64?,
+                           captureQueryRows: (([any ObjectBackend]) -> Void)?) -> [Element] {
         guard !_lattice.backend._isClosed else { return [] }
         LatticePerf.bump(.snapshots)
 
@@ -788,7 +805,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         // explicit transaction — writer-connection read, no generation
         // resolution (no keeper minting), no cache traffic.
         if _threadHoldsOwnTransaction {
-            return _inTxnRows(limit: limit, offset: offset, reuseInstances: false)
+            return _inTxnRows(limit: limit, offset: offset, reuseInstances: false,
+                              captureQueryRows: captureQueryRows)
         }
 
         // Coordinator + descriptor WITHOUT registering a query shape: one-shot
@@ -820,7 +838,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                      orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false),
                                      generation: ctx.generationID,
                                      limit: limit, offset: offset,
-                                     groupBy: groupByColumn, distinctBy: distinctByColumn) {
+                                     groupBy: groupByColumn, distinctBy: distinctByColumn,
+                                     captureQueryRows: captureQueryRows) {
                 return rows
             }
             ctx = coordinator.resolveAfterStaleRead(failedGeneration: ctx.generationID,
@@ -830,14 +849,17 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                      orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false),
                                      generation: ctx.generationID,
                                      limit: limit, offset: offset,
-                                     groupBy: groupByColumn, distinctBy: distinctByColumn) {
+                                     groupBy: groupByColumn, distinctBy: distinctByColumn,
+                                     captureQueryRows: captureQueryRows) {
                 return rows
             }
         }
         return _gatedLiveRead {
             // Serves the memory family (no keepers ⇒ generationID 0) as well
             // as the post-stale fallback: same descriptor, same bindings.
-            _lattice.backend.objects(table: Element.entityName, where: descriptor.whereSQL, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false), limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn, params: descriptor.params).map { Element(dynamicObject: $0) }
+            let rows = _lattice.backend.objects(table: Element.entityName, where: descriptor.whereSQL, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false), limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn, params: descriptor.params)
+            captureQueryRows?(rows)
+            return rows.map { Element(dynamicObject: $0) }
         }
     }
 
