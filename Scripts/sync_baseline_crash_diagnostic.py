@@ -9,9 +9,11 @@ from pathlib import Path
 import plistlib
 import resource
 import sys
+import time
 import uuid
 
-BASELINE = 'c30f2f30e229dc917f4aa2583ce3c872b5abbecb'
+ORIGINAL_BASELINE = 'c30f2f30e229dc917f4aa2583ce3c872b5abbecb'
+BASELINE = '739877770932b7cc334efb558c738288a29e416a'
 CORE = 'a05fd480236430ab0d707ed0201d3edbef299de5'
 TOOLCHAIN = ('swift-driver version: 1.148.6 Apple Swift version 6.3.3 '
              '(swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0')
@@ -77,6 +79,30 @@ def original_helper(observation, runner, label):
     return {'image': before, 'entitlements': entitlements, 'entitlementLog': pin(log)}
 
 
+def lifecycle_module():
+    path = Path(__file__).with_name('baseline_crash_lifecycle.py')
+    spec = importlib.util.spec_from_file_location('scoped_baseline_lifecycle', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def observed_image_uuids(runner, module, images):
+    result = {}
+    for ordinal, image in enumerate(images):
+        before = pin(Path(image['path']))
+        if before != image:
+            raise ValueError('original diagnostic image changed')
+        log = runner.run('original-image-uuid-' + str(ordinal),
+                         ['/usr/bin/dwarfdump', '--uuid', image['path']],
+                         cwd=runner.root, timeout=30, require_full_timeout=True)
+        rows = module.image_uuids(log.read_text())
+        if any(row['path'] != image['path'] for row in rows) or pin(Path(image['path'])) != image:
+            raise ValueError('original image UUID supplier differs')
+        result[image['path']] = {row['uuid'] for row in rows}
+    return result
+
+
 def run(root):
     matched, development = modules(root)
     receipts = root / 'matched-receipts'
@@ -95,7 +121,7 @@ def run(root):
             data = matched.check_prepared(baseline, development)
             if (data['source']['sdk']['commit'] != BASELINE or data['source']['core']['commit'] != CORE
                     or data['binding']['buildConfiguration']['toolchain'] != TOOLCHAIN):
-                raise ValueError('exact original c30/a05/Swift6.3.3 preparation required')
+                raise ValueError('exact test-only diagnostic child of original c30/a05/Swift6.3.3 preparation required')
             matched.reinspect(runner, data, development)
             observation = json.loads((root / 'hosted-receipts/ORIGINAL-TOOLCHAIN.json').read_text())
             helper = original_helper(observation, runner, 'original-helper-entitlements')
@@ -114,6 +140,9 @@ def run(root):
             version = runner.run('original-swift-version', ['swift', '--version'], cwd=baseline / 'lattice', timeout=60).read_text().strip()
             if version != TOOLCHAIN:
                 raise ValueError('actual original toolchain changed')
+            lifecycle = lifecycle_module()
+            observed_uuids = observed_image_uuids(runner, lifecycle, [helper['image'], image])
+            diagnostic_id = str(uuid.uuid4())
             experiment = 'sig11-diagnostic-' + str(uuid.uuid4())
             group = {'ordinal': 1, 'groupID': experiment + '/group-1', 'profileOrder': ['loaded', 'quiet-only']}
             leg = {'label': 'A2', 'legID': group['groupID'] + '/A2', 'order': '1:A2'}
@@ -123,10 +152,15 @@ def run(root):
                 ('CLANG_MODULE_CACHE_PATH', 'module-cache'), ('SWIFT_MODULECACHE_PATH', 'module-cache'),
                 ('SWIFTPM_MODULECACHE_OVERRIDE', 'module-cache'))})
             plan['env']['SWIFT_BACKTRACE'] = BACKTRACE
+            plan['env']['LATTICE_BASELINE_LIFECYCLE_PHASES'] = '1'
+            plan['env']['LATTICE_BASELINE_DIAGNOSTIC_ID'] = diagnostic_id
             original_core_limit = resource.getrlimit(resource.RLIMIT_CORE)
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
             save(receipts / 'DIAGNOSTIC-ISSUED.json', {'scope': SCOPE, 'baselinePreparation': pin(baseline / 'receipts/sync-matched-preparation.json'),
-                'originalHelper': helper, 'originalTestImage': image, 'source': {'sdk': BASELINE, 'core': CORE},
+                'originalHelper': helper, 'originalTestImage': image,
+                'source': {'sdk': BASELINE, 'core': CORE, 'productionSDKParent': ORIGINAL_BASELINE},
+                'diagnosticID': diagnostic_id, 'actualImageUUIDs': {key: sorted(value) for key, value in observed_uuids.items()},
+                'oneTestOnlyLifecycleFollowing': True, 'mainMatchedBaselineAndCandidateUnchanged': True,
                 'originalEnvironmentSWIFT_BACKTRACE': os.environ.get('SWIFT_BACKTRACE'),
                 'diagnosticEnvironmentSWIFT_BACKTRACE': BACKTRACE,
                 'coreDumpRlimitBefore': original_core_limit, 'coreDumpRlimitDuring': resource.getrlimit(resource.RLIMIT_CORE),
@@ -137,6 +171,7 @@ def run(root):
                 'originalThirtyProfileComparisonStillIncomplete': True})
             result['attemptedProfile'] = plan['label']
             runner.env = plan['env']
+            observed_started_wall = time.time()
             try:
                 runner.run(plan['label'], ['swift', 'test', *data['common'], *matched.FLAGS,
                     '--force-resolved-versions', '--skip-build', '--filter', matched.FILTER],
@@ -145,8 +180,39 @@ def run(root):
                 pass  # Actual command/first signal remains in the original GuardedRunner receipt.
             finally:
                 runner.env = env
-            report = matched.inspect(runner, plan)
+            observed_ended_wall = time.time()
             command = json.loads((receipts / (plan['label'] + '.json')).read_text())
+            log_path = receipts / (plan['label'] + '.log')
+            try:
+                observation = lifecycle.phases(log_path, command, diagnostic_id,
+                    {helper['image']['path'], image['path']}, observed_started_wall, observed_ended_wall)
+            except Exception as error:
+                observation = {'qualified': False, 'unknown': True, 'category': type(error).__name__,
+                               'originalOutcomeUnchanged': True}
+            observation_evidence_errors = []
+            try:
+                save(receipts / 'LIFECYCLE-OBSERVATION.json', observation)
+            except Exception as error:
+                observation_evidence_errors.append({'stage': 'phase-data-retention', 'category': type(error).__name__})
+            # Optional DATA cannot replace the actual command, terminal test or
+            # cleanup result. No observer process, debugger or new signal policy.
+            try:
+                os_report = lifecycle.collect_reports(receipts, observation,
+                    observed_started_wall, observed_ended_wall, observed_uuids, image['path'],
+                    min(runner.work_deadline, time.monotonic() + 10),
+                    lifecycle.unexpected_sig11(log_path))
+            except Exception as error:
+                os_report = {'unknown': True, 'category': type(error).__name__,
+                             'originalOutcomeUnchanged': True}
+            try:
+                save(receipts / 'SIG11-OS-REPORT-OBSERVATION.json', os_report)
+            except Exception as error:
+                observation_evidence_errors.append({'stage': 'OS-report-data-retention', 'category': type(error).__name__})
+            result.update(lifecycleObservation=observation, osReportObservation=os_report,
+                          originalProductionBaseline=ORIGINAL_BASELINE,
+                          actualDiagnosticOnlyTestChild=BASELINE, noCauseAssigned=True,
+                          observationEvidenceErrors=observation_evidence_errors)
+            report = matched.inspect(runner, plan)
             result.update(actualChildStarted=command['started'], exitCode=command['exitCode'],
                           commandReceipt=pin(receipts / (plan['label'] + '.json')),
                           log=pin(receipts / (plan['label'] + '.log')), inspection=report)
@@ -155,7 +221,8 @@ def run(root):
             matched.reinspect(runner, data, development)
             # This is only supervisor/retention completion. A crash or incomplete
             # fixture stays unsuccessful and no numerical comparison is emitted.
-            result['success'] = command['success'] is True and report.get('measurementUsable') is True
+            result['originalProfileSucceeded'] = command['success'] is True and report.get('measurementUsable') is True
+            result['success'] = result['originalProfileSucceeded'] and not observation_evidence_errors
         except BaseException as error:
             first = error
             result['firstError'] = {'type': type(error).__name__, 'message': str(error)}

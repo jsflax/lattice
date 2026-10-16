@@ -326,7 +326,7 @@ jobs:
           git -C "$TASK_ROOT/caller/lattice" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
           git -C "$TASK_ROOT/caller/lattice" checkout --detach "$GITHUB_SHA"
           test "$(git -C "$TASK_ROOT/caller/lattice" rev-parse HEAD)" = "$GITHUB_SHA"
-          BASELINE_SHA=c30f2f30e229dc917f4aa2583ce3c872b5abbecb
+          BASELINE_SHA=739877770932b7cc334efb558c738288a29e416a
           git init "$TASK_ROOT/baseline/lattice"
           git -C "$TASK_ROOT/baseline/lattice" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$BASELINE_SHA"
           git -C "$TASK_ROOT/baseline/lattice" checkout --detach "$BASELINE_SHA"
@@ -363,7 +363,7 @@ jobs:
         timeout-minutes: 220
         shell: bash
         run: |
-          python3 "$TASK_ROOT/baseline/lattice/Scripts/run-development.py" --root "$TASK_ROOT/baseline" --sdk-sha c30f2f30e229dc917f4aa2583ce3c872b5abbecb --core-sha a05fd480236430ab0d707ed0201d3edbef299de5 --test-timeout 1800 --sync-matched-prepare
+          python3 "$TASK_ROOT/baseline/lattice/Scripts/run-development.py" --root "$TASK_ROOT/baseline" --sdk-sha 739877770932b7cc334efb558c738288a29e416a --core-sha a05fd480236430ab0d707ed0201d3edbef299de5 --test-timeout 1800 --sync-matched-prepare
 
       - name: Run one original A2-loaded profile with explicit bounded backtrace
         timeout-minutes: 15
