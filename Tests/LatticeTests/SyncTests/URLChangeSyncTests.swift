@@ -60,20 +60,6 @@ actor URLChangeSyncTests {
         self.portB = serverB.port
     }
 
-    /// Wait for `lattice` to fire `onSyncStateChange(connected)` matching the
-    /// requested boolean. Resolves immediately if `lattice.isSyncConnected`
-    /// already matches the target — otherwise observes the next state change.
-    private func waitForSyncState(_ lattice: Lattice, connected target: Bool) async {
-        if lattice.isSyncConnected == target { return }
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            let once = AtomicOnce()
-            lattice.onSyncStateChange { state in
-                guard state == target else { return }
-                if once.tryFire() { cont.resume() }
-            }
-        }
-    }
-
     /// Open Lattice A on path P with URL_A. Open Lattice B on path P with
     /// URL_B. The kick path makes B take over: A's sync transitions to
     /// disconnected, B's transitions to connected. A write through B then
@@ -96,7 +82,7 @@ actor URLChangeSyncTests {
 
         // Open A; wait for connect.
         let latticeA = try Lattice(SimpleSyncObject.self, configuration: configA)
-        await waitForSyncState(latticeA, connected: true)
+        try await waitForURLSyncState(latticeA, connected: true)
         #expect(latticeA.isSyncConnected, "A should be connected after open")
 
         // Pre-kick write: lands on server A.
@@ -122,7 +108,7 @@ actor URLChangeSyncTests {
         // along with the synchronizer), but `isSyncConnected` reads false
         // because `synchronizer_ == nullptr`.
         let latticeB = try Lattice(SimpleSyncObject.self, configuration: configB)
-        await waitForSyncState(latticeB, connected: true)
+        try await waitForURLSyncState(latticeB, connected: true)
 
         #expect(!latticeA.isSyncConnected, "A should be disconnected after kick")
         #expect(latticeB.isSyncConnected, "B should be connected after take-over")
@@ -165,30 +151,132 @@ actor URLChangeSyncTests {
             wssEndpoint: urlA)
 
         let latticeA1 = try Lattice(SimpleSyncObject.self, configuration: configA)
-        await waitForSyncState(latticeA1, connected: true)
+        try await waitForURLSyncState(latticeA1, connected: true)
 
         // Open a second Lattice with the same URL. A1 must keep sync; the
         // second opens as a dormant duplicate. To detect that A1 is NOT
         // kicked, race a "did A1 disconnect within a write round-trip" probe
         // against an actual successful write through A1.
         let latticeA2 = try Lattice(SimpleSyncObject.self, configuration: configA)
-        let writeArrived: Task<Void, any Error> = Task.detached {
-            let serverLattice = try Lattice(for: [SimpleSyncObject.self],
-                                            configuration: self.serverConfigA)
-            for try await changes in serverLattice.changeStream {
-                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
-                let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
-                if touched, serverLattice.objects(SimpleSyncObject.self)
-                    .first(where: { $0.value == 42 }) != nil { break }
+        let serverLattice = try Lattice(for: [SimpleSyncObject.self],
+                                       configuration: serverConfigA)
+        // Stream creation registers synchronously. Establish the observer
+        // before the originating write, even if iteration starts afterward.
+        let changes = serverLattice.changeStream
+        try latticeA1.add(SimpleSyncObject(value: 42, floatValue: 4.2))
+        var writeArrived = false
+        for try await batch in changes {
+            let resolved = batch.compactMap { $0.resolve(on: serverLattice) }
+            let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
+            if touched, serverLattice.objects(SimpleSyncObject.self)
+                .first(where: { $0.value == 42 }) != nil {
+                writeArrived = true
+                break
             }
         }
-        try latticeA1.add(SimpleSyncObject(value: 42, floatValue: 4.2))
-        try await writeArrived.value
+        // Iterating in this test task propagates its time-limit cancellation
+        // to the stream; no detached waiter outlives the parent.
+        try Task.checkCancellation()
+        try #require(writeArrived, "the originating write must reach server A")
 
         #expect(latticeA1.isSyncConnected, "A1 must NOT be kicked by same-URL A2")
         _ = latticeA2  // suppress unused warning — keep alive through the test
 
         latticeA1.close()
         latticeA2.close()
+    }
+}
+
+/// Fixture-owned registration: observe first, then read the current state.
+/// Core replays an already-connected state, but a checked continuation alone
+/// cannot leave a never-connected wait when the test task is cancelled.
+private func waitForURLSyncState(
+    _ lattice: Lattice,
+    connected target: Bool,
+    isolation: isolated (any Actor)? = #isolation,
+    afterRegistrationForTesting: (() -> Void)? = nil
+) async throws {
+    let states = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    lattice.onSyncStateChange { states.continuation.yield($0) }
+    defer {
+        lattice.onSyncStateChange { _ in }
+        states.continuation.finish()
+    }
+    afterRegistrationForTesting?()
+    try Task.checkCancellation()
+    if lattice.isSyncConnected == target { return }
+    for await state in states.stream {
+        try Task.checkCancellation()
+        if state == target { return }
+    }
+    try Task.checkCancellation()
+    throw URLChangeFixtureError.stateStreamEnded
+}
+
+private enum URLChangeFixtureError: Error { case stateStreamEnded }
+
+@Suite("URLChange fixture readiness", .serialized)
+private actor URLChangeFixtureReadinessTests {
+    @Test(.timeLimit(.minutes(1)))
+    func changeStreamCapturesWriteBeforeIteration() async throws {
+        let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory
+            .appending(path: "url-change-buffered-\(UUID().uuidString).sqlite"))
+        let lattice = try Lattice(SimpleSyncObject.self, configuration: config)
+        defer { lattice.close(); try? Lattice.delete(for: config) }
+
+        let changes = lattice.changeStream
+        try lattice.add(SimpleSyncObject(value: 42, floatValue: 4.2))
+        // Deliberately begin iteration only after the commit. Registration
+        // readiness, not task scheduling, must preserve this notification.
+        var iterator = changes.makeAsyncIterator()
+        let batch = try #require(try await iterator.next())
+        #expect(batch.contains { $0.resolve(on: lattice)?.tableName == "SimpleSyncObject" })
+        #expect(lattice.objects(SimpleSyncObject.self).first(where: { $0.value == 42 }) != nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingParentEndsChangeStreamWait() async throws {
+        let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory
+            .appending(path: "url-change-cancel-stream-\(UUID().uuidString).sqlite"))
+        let lattice = try Lattice(SimpleSyncObject.self, configuration: config)
+        defer { lattice.close(); try? Lattice.delete(for: config) }
+        let registered = AsyncStream<Void>.makeStream()
+        let parent = Task { [self] in
+            self.assertIsolated()
+            let changes = lattice.changeStream
+            registered.continuation.yield(())
+            registered.continuation.finish()
+            for try await _ in changes { }
+            try Task.checkCancellation()
+        }
+        for await _ in registered.stream { break }
+        parent.cancel()
+        do {
+            try await parent.value
+            Issue.record("a cancelled parent must not report a completed observation")
+        } catch is CancellationError { }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingParentEndsNeverConnectedWait() async throws {
+        let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory
+            .appending(path: "url-change-cancel-state-\(UUID().uuidString).sqlite"))
+        let lattice = try Lattice(SimpleSyncObject.self, configuration: config)
+        defer { lattice.close(); try? Lattice.delete(for: config) }
+        #expect(!lattice.isSyncConnected)
+        let registered = AsyncStream<Void>.makeStream()
+        let parent = Task { [self] in
+            self.assertIsolated()
+            try await waitForURLSyncState(lattice, connected: true) {
+                registered.continuation.yield(())
+                registered.continuation.finish()
+            }
+        }
+        for await _ in registered.stream { break }
+        parent.cancel()
+        do {
+            try await parent.value
+            Issue.record("a cancelled parent must not wait indefinitely for connection")
+        } catch is CancellationError { }
     }
 }

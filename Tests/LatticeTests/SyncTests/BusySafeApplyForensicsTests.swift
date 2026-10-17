@@ -905,12 +905,19 @@ final class BusySafeApplyForensicsTests: BaseTest {
         }
         let fannedOut = await poll(timeout: 3) { peer.pages > peerPagesBefore }
 
+        // Keep the answer separate from teardown/readback evidence.
+        // Fixed, small stderr records are visible even if stdout is buffered.
+        func phase(_ name: String) {
+            FileHandle.standardError.write(Data("FORENSIC exhaustion phase=\(name)\n".utf8))
+        }
+        phase("summary_begin")
         print("""
         FORENSIC exhaustion: nacked=\(nacked) attempts=\(attempts.withLock { $0 }) \
         nack_ms=\(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER") \
         acked=\(ids.contains { client.ackTime(for: $0) != nil }) fanned_out=\(fannedOut) \
         reason=\(client.nacks.first ?? "-")
         """)
+        phase("summary_end")
 
         #expect(nacked, "every unapplied globalId must be named in the nack")
         #expect(attempts.withLock { $0 } == SyncRelayApplyPolicy.maxAttempts,
@@ -920,8 +927,12 @@ final class BusySafeApplyForensicsTests: BaseTest {
         #expect(!ids.contains { client.ackTime(for: $0) != nil }, "nothing applied, so nothing acked")
         #expect(!fannedOut, "a frame that never applied must not reach a peer")
 
+        phase("shutdown_begin")
         await harness.shutdown_keepingStorage()
+        phase("shutdown_end")
+        phase("readback_begin")
         let counts = try rowCount(inChannelFile: harness.channelFileURL)
+        phase("readback_end")
         #expect(counts.rows == 0, "no row may exist for an exhausted apply")
         try? FileManager.default.removeItem(at: harness.storageURL)
     }
