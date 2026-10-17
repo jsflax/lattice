@@ -93,9 +93,9 @@ extension Lattice {
             }
             guard !targets.isEmpty, !operations.isEmpty else { return 0 }
             let rows = targets.map { $0._dynamicObject._ref }
-            let ownsTransaction = Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash)
+            let ownsTransaction = Self._threadHoldsExplicitTransaction(backend: backend)
             if TransactionFailureScope.isActive {
-                guard ownsTransaction, TransactionFailureScope.isOwned(by: backend.identityHash) else {
+                guard ownsTransaction, TransactionFailureScope.isOwned(by: backend._transactionOwnerIdentity) else {
                     throw BulkUpdateError.requiresCheckedTransaction
                 }
                 return try backend.applySelectedMutations(rows, operations: operations)
@@ -107,7 +107,7 @@ extension Lattice {
         } catch {
             // Preserve failures occurring before or after a bridge call. A
             // later successful getter must not make a partial batch commit.
-            TransactionFailureScope.record(String(describing: error))
+            TransactionFailureScope.record(String(describing: error), ownerIdentity: backend._transactionOwnerIdentity)
             throw error
         }
     }
