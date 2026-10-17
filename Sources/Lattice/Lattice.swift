@@ -944,7 +944,8 @@ public struct Lattice {
     internal init(isolation: isolated (any Actor)? = #isolation,
                   for schema: [any Model.Type],
                   configuration: Configuration = defaultConfiguration,
-                  isSynchronizing: Bool) throws {
+                  isSynchronizing: Bool,
+                  independentConnection: Bool = false) throws {
         // Register Swift network factory on first use
         Self.registerNetworkFactoryIfNeeded()
 
@@ -995,13 +996,15 @@ public struct Lattice {
 
         var error = lattice.cxx_error()
         let createdRef: lattice.swift_lattice_ref
+        // Both construction routes share every Swift configuration and schema
+        // step. Only the native connection-cache policy differs.
+        var swiftConfig = configuration.cxxConfiguration(isolation: isolation)
 
         if let migration = configuration.migration {
             // Find the target version from migration dict (highest key)
             let targetVersion = migration.keys.max() ?? 1
 
             // Create swift_configuration with row migration callback
-            var swiftConfig = configuration.cxxConfiguration(isolation: isolation)
             swiftConfig.target_schema_version = Int32(targetVersion)
 
             // Pre-populate migration schema pairs (no callback needed)
@@ -1040,11 +1043,15 @@ public struct Lattice {
                 Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).release()
             })
 
+        }
+        if independentConnection {
+            createdRef = lattice.swift_lattice_ref.createUncached(swiftConfig: swiftConfig,
+                                                                  schemas: cxxSchemas,
+                                                                  error: &error)
+        } else {
             createdRef = lattice.swift_lattice_ref.create(swiftConfig: swiftConfig,
                                                           schemas: cxxSchemas,
                                                           error: &error)
-        } else {
-            createdRef = lattice.swift_lattice_ref.create(swiftConfig: configuration.cxxConfiguration(isolation: isolation), schemas: cxxSchemas, error: &error)
         }
         guard error.msg.empty() else {
             throw error

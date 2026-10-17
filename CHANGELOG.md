@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.1.0] - 2026-10-17
+
+### Added
+- Add `LatticeThreadSafeReference.resolveIndependent()` for an independently
+  owned connection to the referenced store. It preserves the original
+  configuration, schemas and row migrations, returns `nil` if the backing
+  file is missing, and throws other open failures.
+- Independent connections bypass the path/scheduler cache and do not retain
+  the calling actor. Keep the returned non-Sendable handle inside one actor
+  or otherwise serialize its use. Named memory storage retains its configured
+  identity; opening an independent connection does not create a separate store.
+
+### Changed
+- Require LatticeCore 2.1.0 for the checked uncached bridge constructor and
+  native statement-lifetime and committed-observer-delivery fixes. Rebuild
+  native and Swift bridge consumers together. Existing cached `resolve()`
+  behavior and the owned MCP SDK requirement remain unchanged.
+
 ## [2.0.1] - 2026-10-17
 
 ### Fixed

@@ -365,6 +365,15 @@ Task.detached {
 }
 ```
 
+For an actor that owns a connection independently of the shared
+path/scheduler cache, use `try latticeRef.resolveIndependent()`. The returned
+non-Sendable handle has no actor scheduler and does not retain the calling
+actor; keep it inside that actor and serialize access. This preserves the
+reference's complete configuration, schemas and row migrations. A missing
+backing file returns `nil`, while other open failures throw. Named memory
+storage keeps its configured identity, so separate connections still access
+the same named store. Existing `resolve()` calls retain their cached behavior.
+
 ### Polymorphic Queries (VirtualModel)
 
 Query across multiple model types that share a common protocol:
