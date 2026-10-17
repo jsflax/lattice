@@ -217,6 +217,20 @@ public struct LatticeThreadSafeReference: Sendable {
         return try? Lattice(isolation: isolation, for: self.modelTypes, configuration: configuration)
     }
 
+    /// Open a distinct connection without joining the path/scheduler cache.
+    /// Uses the complete original configuration, schemas and row migrations.
+    /// A removed file returns nil; other open failures are thrown.
+    ///
+    /// The connection has no actor scheduler and does not retain the caller's
+    /// actor. The caller must serialize its use (for example, keep the returned
+    /// non-Sendable Lattice inside one actor). Memory storage keeps its configured
+    /// storage identity; independent connection does not mean a separate store.
+    public func resolveIndependent() throws -> Lattice? {
+        guard !_backingFileIsMissing else { return nil }
+        return try Lattice(isolation: nil, for: modelTypes, configuration: configuration,
+                           isSynchronizing: false, independentConnection: true)
+    }
+
     /// The same best-effort deletion guard used by resolve(), without opening
     /// a database. Memory stores have no backing file to check.
     internal var _backingFileIsMissing: Bool {
