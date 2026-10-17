@@ -50,7 +50,9 @@ let package = Package(
         // 2.0.2 releases observer captures outside registry locks.
         // 2.0.3 allocates observer tokens atomically across observer kinds.
         // 2.0.4 preserves reader lifetime and owns audit maintenance transactions.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.0.4"),
+        // 2.0.8 avoids writer admission for startup sync repair when no work is
+        // eligible, and rechecks live replication slots before an atomic repair.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.0.8"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
