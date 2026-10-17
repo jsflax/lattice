@@ -46,6 +46,9 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         // asCxxLatticeRef (the handle works on every OS — value-converted
         // below the FRT floor).
         var latticeBackend: (any LatticeBackend)?
+        // Reuse may run while a setter exclusively borrows ModelStorage.
+        // Inspect its registration-time backend without reentering that storage.
+        weak var objectBackend: (any ObjectBackend)?
         // Captured at registration: notifyChange can fire from inside the C++
         // commit hook while the triggering setter's exclusive access to the
         // model's storage is still live — reading `model.lattice` there (it
@@ -71,14 +74,16 @@ final class ModelInstanceRegistry: @unchecked Sendable {
     /// Register a model instance for cross-instance and cross-process observation
     func register(_ model: any Model, tableName: String) {
         LatticePerf.bump(.registrations)
-        guard let primaryKey = model._dynamicObject._ref._managedPrimaryKey ?? model.primaryKey else { return }
-        guard let latticeBackend = model._dynamicObject._ref.lattice else { return }
+        let objectBackend = model._dynamicObject._ref
+        guard let primaryKey = objectBackend._managedPrimaryKey ?? model.primaryKey else { return }
+        guard let latticeBackend = objectBackend.lattice else { return }
         // Cross-process object observation uses the C++ object-observer API.
         guard let latticeRef = latticeBackend.asCxxLatticeRef else { return }
         (latticeBackend as? CxxBackend)?.ensureRecoveryRefresh()
         let dbPath = String(latticeRef.path())
         let key = InstanceKey(databasePath: dbPath, tableName: tableName, primaryKey: primaryKey)
-        var ref = WeakModelRef(model, physicalRoute: model._dynamicObject._ref.tableName)
+        var ref = WeakModelRef(model, physicalRoute: objectBackend.tableName)
+        ref.objectBackend = objectBackend
         ref.isolation = model.lattice?.isolation
         let objectId = ObjectIdentifier(model)
 
@@ -243,7 +248,22 @@ final class ModelInstanceRegistry: @unchecked Sendable {
         lock.unlock()
         for ref in refs where ref.latticeBackend?.identityHash == backendIdentity {
             if let physicalRoute, ref.physicalRoute != physicalRoute { continue }
-            if let model = ref.instance { return model }
+            // SQL rollback restores a deleted row, not the detached object.
+            // Resolve both weak references outside the registry lock: releasing
+            // either temporary may run a deinitializer that deregisters.
+            guard let model = ref.instance, let object = ref.objectBackend,
+                  object.hasLattice else { continue }
+            if let currentPrimaryKey = object._managedPrimaryKey,
+               currentPrimaryKey != primaryKey { continue }
+            if let current = object as? CxxObjectBackend,
+               let registered = ref.latticeBackend as? CxxBackend {
+                // Compare existing weak Native identities. Asking object.lattice
+                // here would allocate fresh boxed handles for every reused row.
+                guard current.ref.ownerIdentity().matches(registered.ref.ownerIdentity()) else { continue }
+            } else {
+                guard object.lattice?.identityHash == backendIdentity else { continue }
+            }
+            return model
         }
         return nil
     }
