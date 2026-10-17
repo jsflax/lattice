@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.1] - 2026-10-17
+
+### Fixed
+- Require LatticeCore 2.0.8 so reopening a store does not request a writer
+  transaction for sync-state repair when no rows need repair. Eligible repairs
+  still acquire a writer transaction and recheck acknowledgments against the
+  current live replication slots before atomically updating the audit log and
+  removing the corresponding sync state.
+- Carry this minimum through Lattice's package dependency so downstream
+  consumers also receive the startup fix. The Swift API and owned MCP SDK
+  requirement remain unchanged.
+
 ## [2.0.0] - Unreleased
 
 LatticeCore dependency floor raised to `2.0.4` (audit-history hygiene,
