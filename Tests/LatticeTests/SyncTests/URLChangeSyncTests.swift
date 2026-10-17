@@ -241,7 +241,8 @@ private actor URLChangeFixtureReadinessTests {
         let lattice = try Lattice(SimpleSyncObject.self, configuration: config)
         defer { lattice.close(); try? Lattice.delete(for: config) }
         let registered = AsyncStream<Void>.makeStream()
-        let parent = Task {
+        let parent = Task { [self] in
+            self.assertIsolated()
             let changes = lattice.changeStream
             registered.continuation.yield(())
             registered.continuation.finish()
@@ -264,7 +265,8 @@ private actor URLChangeFixtureReadinessTests {
         defer { lattice.close(); try? Lattice.delete(for: config) }
         #expect(!lattice.isSyncConnected)
         let registered = AsyncStream<Void>.makeStream()
-        let parent = Task {
+        let parent = Task { [self] in
+            self.assertIsolated()
             try await waitForURLSyncState(lattice, connected: true) {
                 registered.continuation.yield(())
                 registered.continuation.finish()
