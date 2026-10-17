@@ -186,6 +186,120 @@ class LiveResultsIdentityTests: BaseTest {
         #expect(isolated.objects(Gen7Item.self).element(at: 0)?.primaryKey == soloPK)
     }
 
+    // MARK: T7 — rollback restores rows without reviving deleted handles
+
+    private enum RollbackStop: Error { case expected }
+
+    private func rollbackRowSnapshot(_ lattice: Lattice) async throws -> (Int64?, UUID?, String, Int)? {
+        let projection = try lattice.objects(Gen7Item.self)
+            .project(\.primaryKey, \.globalId, \.name, \.rank)
+        let limits = try ProjectionReadLimits(maxRows: 1, maxBytes: 4096, timeout: 5)
+        return try await projection.snapshot(limits: limits).first
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func t7_reuse_doesNotReturnDeletedInstanceAfterRollback(inMemory: Bool,
+                                                           reinsertBeforeRollback: Bool) async throws {
+        let lattice = try inMemory
+            ? Lattice(Gen7Item.self, configuration: .init(storage: .memory()))
+            : testLattice(Gen7Item.self)
+        defer { lattice.close() }
+        try seed(lattice, count: 1)
+        let held = try #require(lattice.objects(Gen7Item.self).first)
+        // The caller retaining the deleted model is essential to this bug.
+        defer { withExtendedLifetime(held) {} }
+        let primaryKey = try #require(held.primaryKey)
+        let globalID = try #require(held.globalId)
+        let before = try #require(try await rollbackRowSnapshot(lattice))
+
+        #expect(throws: RollbackStop.self) {
+            try lattice.withTransaction {
+                try #require(lattice.delete(held))
+                if reinsertBeforeRollback {
+                    let replacement = Gen7Item()
+                    replacement.name = "replacement"
+                    replacement.rank = 9
+                    try lattice.add(replacement, preservingGlobalId: globalID)
+                }
+                throw RollbackStop.expected
+            }
+        }
+
+        // Verify persistent rollback independently of managed-model hydration.
+        let after = try #require(try await rollbackRowSnapshot(lattice))
+        #expect(after == before)
+        #expect(!held.isManaged)
+        let registered = ModelInstanceRegistry.shared.lookup(databasePath: lattice.backend.path,
+            tableName: Gen7Item.entityName, primaryKey: primaryKey,
+            backendIdentity: lattice.backend.identityHash)
+        #expect(registered.map(ObjectIdentifier.init) != ObjectIdentifier(held))
+
+        let results = lattice.objects(Gen7Item.self)
+        let enumerated = Array(results)
+        try #require(enumerated.count == 1)
+        let restored = enumerated[0]
+        #expect(restored.isManaged && restored.primaryKey == primaryKey && restored.globalId == globalID)
+        #expect(restored.name == "row_0" && restored.rank == 0)
+        #expect(ObjectIdentifier(restored) != ObjectIdentifier(held))
+        // A Swift filter must not silently drop the restored row because it
+        // received default values from the deleted object.
+        #expect(results.filter { $0.name.hasPrefix("row_") }.count == 1)
+        results.refresh()
+        #expect(results.element(at: 0).map(ObjectIdentifier.init) == ObjectIdentifier(restored))
+    }
+
+    @Test func t7_reuse_doesNotReenterBorrowedModelStorage() throws {
+        let lattice = try testLattice(Gen7Item.self)
+        try seed(lattice, count: 1)
+        let held = try #require(lattice.objects(Gen7Item.self).first)
+        let primaryKey = try #require(held.primaryKey)
+
+        // A synchronous setter callback may look up this same registered
+        // model while its ModelStorage is still exclusively borrowed. Reading
+        // model.isManaged inside lookup would conflict with that access.
+        func lookupDuringStorageAccess(_ storage: inout ModelStorage) -> (any Model)? {
+            let found = ModelInstanceRegistry.shared.lookup(databasePath: lattice.backend.path,
+                tableName: Gen7Item.entityName, primaryKey: primaryKey,
+                backendIdentity: lattice.backend.identityHash)
+            #expect(storage._ref.hasLattice)
+            return found
+        }
+        let found = lookupDuringStorageAccess(&held._dynamicObject)
+        #expect(found.map(ObjectIdentifier.init) == ObjectIdentifier(held))
+    }
+
+    @Test(arguments: [false, true])
+    func t7_reuse_deletedHandleCannotBeReinsertedAfterRollback(inMemory: Bool) async throws {
+        let lattice = try inMemory
+            ? Lattice(Gen7Item.self, configuration: .init(storage: .memory()))
+            : testLattice(Gen7Item.self)
+        defer { lattice.close() }
+        try seed(lattice, count: 1)
+        let held = try #require(lattice.objects(Gen7Item.self).first)
+        defer { withExtendedLifetime(held) {} }
+        let primaryKey = try #require(held.primaryKey)
+        let before = try #require(try await rollbackRowSnapshot(lattice))
+        #expect(throws: RollbackStop.self) {
+            try lattice.withTransaction {
+                try #require(lattice.delete(held))
+                throw RollbackStop.expected
+            }
+        }
+        #expect(!held.isManaged)
+        held.name = "must not become a new row"
+        held.rank = 9
+        // Core deliberately rejects this deleted Native handle. Rollback
+        // restores the row but must not resurrect or redirect that handle.
+        #expect(throws: LatticeError.self) { try lattice.add(held) }
+        #expect(!held.isManaged)
+        let after = try #require(try await rollbackRowSnapshot(lattice))
+        #expect(after == before)
+        let restored = try #require(lattice.objects(Gen7Item.self).first)
+        #expect(restored.isManaged && restored.primaryKey == primaryKey)
+        #expect(restored.name == "row_0" && restored.rank == 0)
+        #expect(ObjectIdentifier(restored) != ObjectIdentifier(held))
+    }
+
     // MARK: T7 — reuse is scoped to the facade's own core handle
 
     /// A managed instance's property writes route through ITS OWN handle's

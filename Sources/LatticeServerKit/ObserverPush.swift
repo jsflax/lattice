@@ -732,7 +732,9 @@ private enum PreparedPushPage: Sendable {
         let pipeline = sub.sendBoundaryProbe?.pipeline
         sub.setupDiagnostic?.record(.pushPageBegin, span: sub.diagnosticGroupID ?? 0)
         let pageRead = pipeline?.capture(.pageReadBegin, parent: pass, cursor: cursor)
-        let sampled = watcher.lattice.eventsAfter(id: cursor).snapshot(limit: Int64(pageSize))
+        let sampled: [AuditLog]
+        do { sampled = try watcher.lattice._relayAuditImagePage(after: cursor, limit: Int64(pageSize)) }
+        catch { return .encodingFailed }
         let page = watcher.lattice.lateBindNoHistory(sub.revocation.filterRecoveryPage(sampled))
         let pageReadEnd = pipeline?.capture(.pageReadEnd, parent: pageRead, cursor: cursor, count: page.count)
         sub.setupDiagnostic?.record(.pushPageEnd, span: sub.diagnosticGroupID ?? 0, count: page.count)

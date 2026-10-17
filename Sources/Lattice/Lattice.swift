@@ -1726,7 +1726,7 @@ public struct Lattice {
         // read connection on file stores, which cannot see this thread's
         // open transaction — serve through the writer connection instead
         // (see InTransactionReads.swift).
-        if Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) {
+        if Self._threadHoldsExplicitTransaction(backend: backend) {
             return _writerTransactionRows(table: type.entityName,
                                           where: "id = \(primaryKey)",
                                           orderBy: nil, limit: 1, offset: nil,
@@ -1934,7 +1934,14 @@ public struct Lattice {
     /// outcomes do not assert that every original was uploaded or ACKed.
     @discardableResult public func closeChecked() -> LatticeCloseResult {
         GenerationCoordinatorRegistry.evict(identityHash: backend.identityHash)
-        return backend.closeChecked()
+        let result = backend.closeChecked()
+        // Actual Native close is shared by every wrapper. A cached per-wrapper
+        // outcome or weak facade expiry is not this observation. Fetch AFTER
+        // close so a newly published exact frame is not missed.
+        if backend._isClosed, let frame = Self._explicitTxnFrame(backend: backend) {
+            Self._recordExplicitTxnEnd(identityHash: backend.identityHash, expectedFrame: frame)
+        }
+        return result
     }
 
     /// Remains available after close and is preserved on repeated close calls.
@@ -2250,7 +2257,7 @@ public struct Lattice {
         // open transaction — count on the writer connection instead
         // (see InTransactionReads.swift). That writer path is STRING-ONLY, so
         // it takes the literal channel; the live path binds.
-        if Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) {
+        if Self._threadHoldsExplicitTransaction(backend: backend) {
             return _writerTransactionCount(table: T.entityName,
                                            where: `where`.map { $0(Query<T>()).predicate },
                                            groupBy: nil, distinctBy: nil)
@@ -2916,70 +2923,117 @@ public struct Lattice {
     // A DIFFERENT thread's gated read waiting out this thread's transaction
     // is exactly the §4.1 capture-vs-writer exclusion — only the owning
     // thread skips.
+    private struct ExplicitTransactionOwner {
+        let owner: ObjectIdentifier
+        let frame: TransactionReceiptFrame
+    }
     private static let _explicitTxnOwners =
-        UnfairLock<[Int64: (owner: ObjectIdentifier, depth: Int)]>(initialState: [:])
+        UnfairLock<[Int64: ExplicitTransactionOwner]>(initialState: [:])
 
-    /// True iff the CURRENT THREAD holds an open explicit transaction on the
-    /// backend identified by `identityHash`.
     internal static func _threadHoldsExplicitTransaction(identityHash: Int64) -> Bool {
         let current = ObjectIdentifier(Thread.current)
-        return _explicitTxnOwners.withLockUnchecked { owners in
-            guard let entry = owners[identityHash] else { return false }
-            return entry.depth > 0 && entry.owner == current
-        }
+        return _explicitTxnOwners.withLockUnchecked { $0[identityHash]?.owner == current }
     }
 
-    private static func _recordExplicitTxnBegin(identityHash: Int64) {
-        let current = ObjectIdentifier(Thread.current)
-        _explicitTxnOwners.withLockUnchecked { owners in
-            if let entry = owners[identityHash], entry.owner == current {
-                owners[identityHash] = (current, entry.depth + 1)
-            } else {
-                // The core serializes explicit transactions per store, so a
-                // successful begin from another thread means the previous
-                // owner's transaction ended — adopt ownership.
-                owners[identityHash] = (current, 1)
-            }
+    internal static func _threadHoldsExplicitTransaction(backend: any LatticeBackend) -> Bool {
+        let identityHash = backend.identityHash
+        let entry = _explicitTxnOwners.withLockUnchecked { $0[identityHash] }
+        guard let entry, entry.owner == ObjectIdentifier(Thread.current) else { return false }
+        return entry.frame.ownerIdentity.matches(backend._transactionOwnerIdentity)
+    }
+
+    internal static func _explicitTxnFrame(backend: any LatticeBackend) -> TransactionReceiptFrame? {
+        let identityHash = backend.identityHash
+        let frame = _explicitTxnOwners.withLockUnchecked { $0[identityHash]?.frame }
+        guard let frame, frame.ownerIdentity.matches(backend._transactionOwnerIdentity) else { return nil }
+        return frame
+    }
+
+    internal static func _pruneExpiredExplicitTxnOwners() {
+        // Snapshot retains frames until off-leaf inspection/removal completes.
+        // Native weak-identity queries and final releases never run under leaf.
+        let snapshot = _explicitTxnOwners.withLockUnchecked { $0 }
+        for (identityHash, entry) in snapshot where entry.frame.ownerIdentity.isExpired {
+            _recordExplicitTxnEnd(identityHash: identityHash, expectedFrame: entry.frame)
+        }
+        withExtendedLifetime(snapshot) {}
+    }
+
+    internal static func _recordExplicitTxnBegin(backend: any LatticeBackend,
+                                                 frame: TransactionReceiptFrame) {
+        _pruneExpiredExplicitTxnOwners()
+        guard frame.ownerIdentity.matches(backend._transactionOwnerIdentity), !backend._isClosed else { return }
+        _publishExplicitTxnFrame(backend: backend, frame: frame)
+    }
+
+    // The actual publication tail always performs its own post-close check.
+    // Internal visibility lets @testable controls exercise a close that wins
+    // after the first check, using a genuinely accepted Native receipt.
+    internal static func _publishExplicitTxnFrame(backend: any LatticeBackend,
+                                                 frame: TransactionReceiptFrame) {
+        guard frame.ownerIdentity.matches(backend._transactionOwnerIdentity) else { return }
+        let identityHash = backend.identityHash
+        let entry = ExplicitTransactionOwner(owner: ObjectIdentifier(Thread.current), frame: frame)
+        let retired = _explicitTxnOwners.withLockUnchecked { $0.updateValue(entry, forKey: identityHash) }
+        withExtendedLifetime(retired) {} // off-leaf, including displaced frame release
+        // Close may win after the first check but before publication. Either
+        // close observes this frame, or this check removes only this frame.
+        if backend._isClosed {
+            _recordExplicitTxnEnd(identityHash: identityHash, expectedFrame: frame)
         }
     }
 
     private static func _recordExplicitTxnEnd(identityHash: Int64,
-                                              expectedOwner: ObjectIdentifier? = nil) {
-        _explicitTxnOwners.withLockUnchecked { owners in
-            guard let entry = owners[identityHash] else { return }
-            // Checked transactions are synchronous: their cleanup must not
-            // erase ownership acquired by a waiting thread after COMMIT.
-            // Legacy begin/commit may cross threads and omit this condition.
-            if let expectedOwner, entry.owner != expectedOwner { return }
-            if entry.depth <= 1 {
-                owners.removeValue(forKey: identityHash)
-            } else {
-                owners[identityHash] = (entry.owner, entry.depth - 1)
-            }
+                                               expectedFrame: TransactionReceiptFrame) {
+        let retired = _explicitTxnOwners.withLockUnchecked { owners -> ExplicitTransactionOwner? in
+            guard let entry = owners[identityHash], entry.frame === expectedFrame else { return nil }
+            return owners.removeValue(forKey: identityHash)
         }
+        withExtendedLifetime(retired) {}
     }
 
     public func beginTransaction(isolation: isolated (any Actor)? = #isolation) {
-        // Start the transaction; record ownership only once it is really
-        // open (the backend call may block behind another writer).
-        backend.beginTransaction()
-        Self._recordExplicitTxnBegin(identityHash: backend.identityHash)
+        if let native = backend as? CxxBackend {
+            let step = native.beginLegacyTransactionReceipt()
+            if step.failure == nil, step.receipt.isValid() {
+                Self._recordExplicitTxnBegin(backend: backend,
+                    frame: TransactionReceiptFrame(native: step.receipt, ownerIdentity: backend._transactionOwnerIdentity))
+            }
+            native.reportTransactionFailure(step.failure ?? (step.receipt.isValid() ? nil : "Native BEGIN returned no transaction receipt"))
+        } else {
+            backend.beginTransaction()
+            Self._recordExplicitTxnBegin(backend: backend, frame: TransactionReceiptFrame(ownerIdentity: backend._transactionOwnerIdentity))
+        }
     }
 
     public func commitTransaction(isolation: isolated (any Actor)? = #isolation) {
-        backend.commit()
-        Self._recordExplicitTxnEnd(identityHash: backend.identityHash)
-        // §1.3 Layer 1: an explicit transaction can touch any table (managed
-        // property setters included) — the touched set is unknown here, so
-        // the settled commit invalidates every shape (tables: nil). (The
-        // §2.3 core hook additionally delivers the exact changed-table
-        // batch inline during `commit` — a harmless double bump.)
-        _noteWrite(tables: nil)
+        let frame = Self._explicitTxnFrame(backend: backend)
+        if let native = backend as? CxxBackend, let receipt = frame?.native {
+            let step = native.commitLegacyTransactionReceipt(receipt)
+            if step.ended, let frame {
+                Self._recordExplicitTxnEnd(identityHash: backend.identityHash, expectedFrame: frame)
+            }
+            native.reportTransactionFailure(step.failure)
+            if step.ended { _noteWrite(tables: nil) }
+        } else {
+            backend.commit()
+            if let frame { Self._recordExplicitTxnEnd(identityHash: backend.identityHash, expectedFrame: frame) }
+            _noteWrite(tables: nil)
+        }
     }
 
     public func rollbackTransaction(isolation: isolated (any Actor)? = #isolation) {
-        backend.rollback()
-        Self._recordExplicitTxnEnd(identityHash: backend.identityHash)
+        let frame = Self._explicitTxnFrame(backend: backend)
+        if let native = backend as? CxxBackend, let receipt = frame?.native {
+            let step = native.rollbackLegacyTransactionReceipt(receipt)
+            if step.ended, let frame {
+                Self._recordExplicitTxnEnd(identityHash: backend.identityHash, expectedFrame: frame)
+            }
+            native.reportTransactionFailure(step.failure)
+        } else {
+            backend.rollback()
+            if let frame { Self._recordExplicitTxnEnd(identityHash: backend.identityHash, expectedFrame: frame) }
+        }
     }
 
     /// Runs `block` inside an explicit transaction. On throw the transaction
@@ -3008,27 +3062,56 @@ public struct Lattice {
     /// roll back. The original failure is preserved if rollback reports an
     /// additional error. Nested checked transactions, including transactions on
     /// different handles, are rejected before the inner body executes. The
-    /// synchronous failure scope cannot attribute writes to a different owner.
+    /// synchronous failure scope latches only failures from this Native owner.
     public func withTransaction<T>(isolation: isolated (any Actor)? = #isolation,
                                    _ block: () throws -> T) throws -> T {
         guard !TransactionFailureScope.isActive,
-              !Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) else {
+              !Self._threadHoldsExplicitTransaction(backend: backend) else {
             throw LatticeError.transactionError("Nested checked transactions are not supported")
         }
-        let failures = TransactionFailureScope(ownerIdentity: backend.identityHash)
+        let failures = TransactionFailureScope(ownerIdentity: backend._transactionOwnerIdentity)
         defer { failures.restore() }
-        try backend.beginTransactionChecked()
-        let transactionOwner = ObjectIdentifier(Thread.current)
-        Self._recordExplicitTxnBegin(identityHash: backend.identityHash)
-        defer {
-            Self._recordExplicitTxnEnd(identityHash: backend.identityHash,
-                                      expectedOwner: transactionOwner)
-        }
-        do {
-            let value = try block()
-            if let message = failures.firstError {
+        if let native = backend as? CxxBackend {
+            let begin = native.beginTransactionReceipt()
+            guard begin.failure == nil, begin.receipt.isValid() else {
+                let message = begin.failure ?? "Native BEGIN returned no transaction receipt"
+                native.reportTransactionFailure(message)
                 throw LatticeError.transactionError(message)
             }
+            let frame = TransactionReceiptFrame(native: begin.receipt, ownerIdentity: backend._transactionOwnerIdentity)
+            Self._recordExplicitTxnBegin(backend: backend, frame: frame)
+            do {
+                let value = try block()
+                if let message = failures.firstError { throw LatticeError.transactionError(message) }
+                let commit = native.commitTransactionReceipt(begin.receipt)
+                if commit.ended {
+                    Self._recordExplicitTxnEnd(identityHash: backend.identityHash, expectedFrame: frame)
+                }
+                native.reportTransactionFailure(commit.failure)
+                if let message = commit.failure { throw LatticeError.transactionError(message) }
+                guard commit.ended else {
+                    throw LatticeError.transactionError("Native COMMIT did not establish transaction ending")
+                }
+                _noteWrite(tables: nil)
+                return value
+            } catch {
+                // The handler may already have ended this transaction and
+                // begun another. The original receipt cannot settle that one.
+                let rollback = native.rollbackTransactionReceipt(begin.receipt)
+                if rollback.ended {
+                    Self._recordExplicitTxnEnd(identityHash: backend.identityHash, expectedFrame: frame)
+                }
+                native.reportTransactionFailure(rollback.failure)
+                throw error
+            }
+        }
+        try backend.beginTransactionChecked()
+        let frame = TransactionReceiptFrame(ownerIdentity: backend._transactionOwnerIdentity)
+        Self._recordExplicitTxnBegin(backend: backend, frame: frame)
+        defer { Self._recordExplicitTxnEnd(identityHash: backend.identityHash, expectedFrame: frame) }
+        do {
+            let value = try block()
+            if let message = failures.firstError { throw LatticeError.transactionError(message) }
             try backend.commitChecked()
             _noteWrite(tables: nil)
             return value
@@ -3037,7 +3120,7 @@ public struct Lattice {
             throw error
         }
     }
-    
+
     public mutating func attach(lattice: Lattice) throws {
         try backend.attach(lattice.backend)
         // Item A §4.2: attaching changes what this handle's tables mean
