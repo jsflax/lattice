@@ -712,74 +712,82 @@ class LatticeTests: BaseTest {
         // E2 restore: named in-memory storage — memory semantics are the point.
         let lattice = try Lattice(Person.self, Dog.self, configuration: .init(storage: .memory()))
 
-        var insertHitCount = 0
-        var deleteHitCount = 0
+        let hitCounts = LockedBox((insert: 0, delete: 0))
 
         let person = Person()
         person.name = "Test"
-        var checkedContinuation: CheckedContinuation<Void, Never>?
+        let checkedContinuation = LockedBox<CheckedContinuation<Void, Never>?>(nil)
         let block = { (changes: [AuditLog]) -> Void in
             for change in changes {
                 switch change.operation {
                 case .insert:
                     let found = lattice.object(Person.self, primaryKey: change.rowId)
                     #expect(found?.name == person.name)
-                    insertHitCount += 1
+                    hitCounts.withLock { $0.insert += 1 }
                 case .delete:
-                    deleteHitCount += 1
+                    hitCounts.withLock { $0.delete += 1 }
                 default: break
                 }
             }
-            checkedContinuation?.resume()
+            let pending = checkedContinuation.withLock { value in
+                let pending = value
+                value = nil
+                return pending
+            }
+            pending?.resume()
         }
         var cancellable: AnyCancellable?
         await withCheckedContinuation { continuation in
-            checkedContinuation = continuation
+            checkedContinuation.withLock { $0 = continuation }
             cancellable = lattice.observe(block)
             autoreleasepool {
                 try! lattice.add(person)
             }
         }
         cancellable?.cancel()
-        #expect(insertHitCount == 1)
-        #expect(deleteHitCount == 0)
+        #expect(hitCounts.withLock { $0.insert } == 1)
+        #expect(hitCounts.withLock { $0.delete } == 0)
     }
     
     @Test
     func test_AuditLogObserve() async throws {
         let lattice = try testLattice(path: path, Person.self, Dog.self)
 
-        var insertHitCount = 0
-        var deleteHitCount = 0
+        let hitCounts = LockedBox((insert: 0, delete: 0))
 
         let person = Person()
         person.name = "Test"
-        var checkedContinuation: CheckedContinuation<Void, Never>?
+        let checkedContinuation = LockedBox<CheckedContinuation<Void, Never>?>(nil)
         let block = { (changes: [AuditLog]) -> Void in
             for change in changes {
                 switch change.operation {
                 case .insert:
                     let found = lattice.object(Person.self, primaryKey: change.rowId)
                     #expect(found?.name == person.name)
-                    insertHitCount += 1
+                    hitCounts.withLock { $0.insert += 1 }
                 case .delete:
-                    deleteHitCount += 1
+                    hitCounts.withLock { $0.delete += 1 }
                 default: break
                 }
             }
-            checkedContinuation?.resume()
+            let pending = checkedContinuation.withLock { value in
+                let pending = value
+                value = nil
+                return pending
+            }
+            pending?.resume()
         }
         var cancellable: AnyCancellable?
         await withCheckedContinuation { continuation in
-            checkedContinuation = continuation
+            checkedContinuation.withLock { $0 = continuation }
             cancellable = lattice.observe(block)
             autoreleasepool {
                 try! lattice.add(person)
             }
         }
         cancellable?.cancel()
-        #expect(insertHitCount == 1)
-        #expect(deleteHitCount == 0)
+        #expect(hitCounts.withLock { $0.insert } == 1)
+        #expect(hitCounts.withLock { $0.delete } == 0)
     }
 
     // Re-enabled Jul 11 2026: named memory (E1/E2) gave in-memory lattices
