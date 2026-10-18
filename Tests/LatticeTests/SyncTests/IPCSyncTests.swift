@@ -74,9 +74,9 @@ private actor Vec0Reader {
 
 @Suite("IPC Sync Tests")
 actor IPCSyncTests {
-    let sourceURL = FileManager.default.temporaryDirectory
+    let sourceURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let targetURL = FileManager.default.temporaryDirectory
+    let targetURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     var sourceConfig: Lattice.Configuration
     var targetConfig: Lattice.Configuration
@@ -279,7 +279,7 @@ actor IPCSyncTests {
         let channelA = "ipc-multi-a-\(String.random(length: 8))"
         let channelB = "ipc-multi-b-\(String.random(length: 8))"
 
-        let targetBURL = FileManager.default.temporaryDirectory
+        let targetBURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
         var targetBConfig = Lattice.Configuration(fileURL: targetBURL)
         defer { try? Lattice.delete(for: targetBConfig) }
@@ -533,9 +533,9 @@ actor IPCSyncTests {
 
         let channel = "ipc-blob-\(String.random(length: 8))"
 
-        let sourceURL = FileManager.default.temporaryDirectory
+        let sourceURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
-        let targetURL = FileManager.default.temporaryDirectory
+        let targetURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
 
         var srcCfg = Lattice.Configuration(fileURL: sourceURL)
@@ -609,9 +609,9 @@ actor IPCSyncTests {
 
         let channel = "ipc-vec0storm-\(String.random(length: 8))"
 
-        let srcURL = FileManager.default.temporaryDirectory
+        let srcURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
-        let tgtURL = FileManager.default.temporaryDirectory
+        let tgtURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
         defer {
             try? Lattice.delete(for: .init(fileURL: srcURL))
@@ -673,7 +673,7 @@ actor IPCSyncTests {
         Lattice.setLogLevel(.error)
         defer { Lattice.setLogLevel(.warn) }
 
-        let dbURL = FileManager.default.temporaryDirectory
+        let dbURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
         let config = Lattice.Configuration(fileURL: dbURL)
         defer { try? Lattice.delete(for: config) }
@@ -711,9 +711,9 @@ actor IPCSyncTests {
     func test_IPCSync_SubqueryFilteredLinks() async throws {
         let channel = "ipc-sq-\(String.random(length: 8))"
 
-        let srcURL = FileManager.default.temporaryDirectory
+        let srcURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
-        let tgtURL = FileManager.default.temporaryDirectory
+        let tgtURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
 
         // Build filter: only public alpha items AND links between them

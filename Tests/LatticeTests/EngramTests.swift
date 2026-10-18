@@ -59,11 +59,11 @@ import Vapor
 @Suite("Engram Integration Tests", .serialized)
 actor EngramIntegrationTests {
     let server: TestSyncServer
-    let localURL = FileManager.default.temporaryDirectory
+    let localURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let syncedURL = FileManager.default.temporaryDirectory
+    let syncedURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let serverURL = FileManager.default.temporaryDirectory
+    let serverURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     var localConfig: Lattice.Configuration
     var syncedConfig: Lattice.Configuration
@@ -294,11 +294,11 @@ actor EngramIntegrationTests {
 @Suite("Engram Sync Realism Tests")
 actor EngramSyncRealismTests {
     let server: TestSyncServer
-    let localURL = FileManager.default.temporaryDirectory
+    let localURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let syncedURL = FileManager.default.temporaryDirectory
+    let syncedURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let serverURL = FileManager.default.temporaryDirectory
+    let serverURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     var localConfig: Lattice.Configuration
     var syncedConfig: Lattice.Configuration

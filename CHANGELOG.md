@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.2.0] - 2026-10-18
+
+### Added
+- Add throwing `TableResults.groupedCounts(by:)` for stored String columns.
+  It returns scalar keys and counts through one bound query without hydrating
+  model payloads. Filtered unions and distinct counts retain their visibility
+  rules; a distinct identity present under multiple keys can contribute to
+  multiple counts. The representative key for conflicting copies is unspecified.
+- Reject unsupported query shapes, computed properties and unavailable backend
+  capabilities rather than reporting an empty successful result.
+
+### Changed
+- Require released LatticeCore 2.2.1 for the scalar grouped-count bridge
+  with explicit closed-store errors.
+  Rebuild native and Swift bridge consumers together. Store schemas, existing
+  group queries and the owned MCP SDK requirement remain unchanged.
+- Keep hosted source, build, temporary, log and evidence outputs under localdev,
+  preserving the complete strict dependency-lock checks and existing test paths.
+
 ## [2.1.0] - 2026-10-17
 
 ### Added

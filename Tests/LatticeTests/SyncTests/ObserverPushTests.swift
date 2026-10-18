@@ -158,7 +158,7 @@ final class PushHarness: @unchecked Sendable {
         let diagnostics = ProcessInfo.processInfo.environment["LATTICE_ACK_PATH_DIAGNOSTICS"] == "1"
             ? PushHarnessDiagnostics() : nil
         self.diagnostics = diagnostics
-        storageURL = FileManager.default.temporaryDirectory
+        storageURL = testTemporaryDirectory
             .appending(path: "push-harness-\(String.random(length: 12))")
         var env = try Environment.detect()
         env.arguments = ["vapor"]

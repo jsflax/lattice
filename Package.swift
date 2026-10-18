@@ -54,7 +54,8 @@ let package = Package(
         // eligible, and rechecks live replication slots before an atomic repair.
         // 2.1.0 supplies the checked uncached constructor used by independent
         // reference resolution, plus statement-lifetime and commit-delivery fixes.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.1.0"),
+        // 2.2.1 supplies the scalar grouped-count bridge with closed-store errors.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.2.1"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -75,6 +76,7 @@ let package = Package(
             name: "CLatticeTestSQLite",
             path: "Tests/CLatticeTestSQLite",
             providers: [.apt(["libsqlite3-dev"]), .brew(["sqlite3"])]),
+        .target(name: "LatticeTestSupport", path: "Tests/LatticeTestSupport"),
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .macro(
@@ -101,6 +103,7 @@ let package = Package(
             name: "LatticeTests",
             dependencies: [
                 "CLatticeTestSQLite",
+                "LatticeTestSupport",
                 "Lattice",
                 "LatticeMCP",
                 "LatticeServerKit",
@@ -123,7 +126,7 @@ let package = Package(
         // absent (LATTICE_CONFORMANCE_DIR overrides the default sibling path).
         .testTarget(
             name: "LatticeConformanceTests",
-            dependencies: ["Lattice"],
+            dependencies: ["Lattice", "LatticeTestSupport"],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         .target(

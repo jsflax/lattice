@@ -421,7 +421,7 @@ class LiveResultsKeysetTests: BaseTest {
     }
 
     @Test func anchors_survivePageLRUEviction() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "keyset_lru_\(String.random(length: 12)).sqlite")
         var config = Lattice.Configuration(fileURL: url)
         config.resultsTuning.maxCachedPages = 2   // aggressive eviction
@@ -487,7 +487,7 @@ class LiveResultsKeysetTests: BaseTest {
     // MARK: Grouped/distinct OFFSET carve-out (§2.4/§4.5)
 
     @Test func groupedAndDistinctShapes_pageByOffset_neverKeyset() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "keyset_group_\(String.random(length: 12)).sqlite")
         var config = Lattice.Configuration(fileURL: url)
         config.resultsTuning.pageSize = 10
@@ -555,7 +555,7 @@ class LiveResultsKeysetTests: BaseTest {
     /// duplicate sort keys page deterministically — two adjacent page fills
     /// can never overlap or gap on a duplicate run.
     @Test func duplicateKeys_pageFillsNeitherDupNorSkipAcrossBoundaries() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "keyset_dups_\(String.random(length: 12)).sqlite")
         var config = Lattice.Configuration(fileURL: url)
         config.resultsTuning.pageSize = 25

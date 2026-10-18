@@ -214,7 +214,7 @@ private final class BenchRelayHarness: @unchecked Sendable {
 
     init(schema: [any Lattice.Model.Type], ackPathRecorder: ACKPathRecorder? = nil) async throws {
         self.ackPathRecorder = ackPathRecorder
-        storageURL = FileManager.default.temporaryDirectory
+        storageURL = testTemporaryDirectory
             .appending(path: "ack-bench-\(String.random(length: 12))")
         var env = try Environment.detect()
         env.arguments = ["vapor"]

@@ -267,7 +267,7 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
 
 // MARK: - CxxBackend (wraps swift_lattice_ref)
 
-final class CxxBackend: LatticeBackend, @unchecked Sendable {
+final class CxxBackend: LatticeBackend, GroupedCountBackend, @unchecked Sendable {
     // The db ops are const forwarders on swift_lattice_ref, so they import
     // non-mutating on both paths and the handle can be a `let`.
     let ref: lattice.swift_lattice_ref
@@ -376,6 +376,19 @@ final class CxxBackend: LatticeBackend, @unchecked Sendable {
         reportQueryFailureIfAny()
         return n
     }
+    func groupedCounts(table: String, groupBy: String, where whereClause: String?,
+                       distinctBy: String?, params: [QueryParameter]) throws -> [GroupedCount] {
+        let rows = ref.grouped_counts(std.string(table), std.string(groupBy),
+                                      optStr(whereClause), optStr(distinctBy), columnValues(params))
+        if let error = lastQueryError() {
+            reportQueryFailureIfAny()
+            throw Lattice.Error.databaseError(error)
+        }
+        return (0..<rows.size()).map {
+            GroupedCount(key: String(rows[$0].key), count: Int64(rows[$0].count))
+        }
+    }
+
     func deleteWhere(table: String, where whereClause: String?, params: [QueryParameter]) -> Bool {
         let ok = ref.delete_where(std.string(table), optStr(whereClause), columnValues(params))
         reportQueryFailureIfAny()

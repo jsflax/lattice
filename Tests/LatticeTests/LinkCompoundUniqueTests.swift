@@ -110,7 +110,7 @@ class LinkCompoundUniqueTests: BaseTest {
     }
 
     @Test func test_differentPairsCoexistAcrossReopen() throws {
-        let dbPath = FileManager.default.temporaryDirectory
+        let dbPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         try autoreleasepool {
@@ -143,7 +143,7 @@ class LinkCompoundUniqueTests: BaseTest {
     }
 
     @Test func test_shadowColMaintenanceTriggersIdempotentOnReopen() throws {
-        let dbPath = FileManager.default.temporaryDirectory
+        let dbPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         // ALTER TABLE ADD COLUMN and CREATE TRIGGER must be idempotent —
@@ -218,7 +218,7 @@ class LinkCompoundUniqueTests: BaseTest {
     // The real-world failure was `Lattice.swift:918: Failed to prepare insert:
     // table main.LatticeHistoricalSignal has no column named trainedModel__link_gid`.
     @Test func test_compoundUniqueWithLink_allowsUpsert_addedViaMigration_thenInsert() throws {
-        let dbPath = FileManager.default.temporaryDirectory
+        let dbPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         // V1: no constraint on Row. Insert a TrainedModel + one Row.
@@ -281,7 +281,7 @@ class LinkCompoundUniqueTests: BaseTest {
     }
 
     @Test func test_compoundUniqueAddedAfterDuplicatesMigrates() throws {
-        let dbPath = FileManager.default.temporaryDirectory
+        let dbPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         // V1: no constraint on Adoption — insert duplicates.

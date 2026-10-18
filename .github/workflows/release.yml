@@ -15,13 +15,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # Full history + all tags: the monotonicity check walks every tag.
-          fetch-depth: 0
+      - &release_checkout
+        name: Fetch full-history release source into owned localdev directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          WRAPPER_RELEASE_ROOT="$HOME/localdev/lw-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
+          test ! -e "$WRAPPER_RELEASE_ROOT"
+          mkdir -p "$WRAPPER_RELEASE_ROOT/tmp"
+          export TMPDIR="$WRAPPER_RELEASE_ROOT/tmp" TMP="$WRAPPER_RELEASE_ROOT/tmp" TEMP="$WRAPPER_RELEASE_ROOT/tmp"
+          {
+            echo "WRAPPER_RELEASE_ROOT=$WRAPPER_RELEASE_ROOT"
+            echo "TMPDIR=$TMPDIR"
+            echo "TMP=$TMP"
+            echo "TEMP=$TEMP"
+          } >> "$GITHUB_ENV"
+          git init "$WRAPPER_RELEASE_ROOT/source"
+          git -C "$WRAPPER_RELEASE_ROOT/source" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$WRAPPER_RELEASE_ROOT/source" fetch --force --prune origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+          git -C "$WRAPPER_RELEASE_ROOT/source" fetch origin "$GITHUB_SHA"
+          git -C "$WRAPPER_RELEASE_ROOT/source" checkout --detach "$GITHUB_SHA"
+          test "$(git -C "$WRAPPER_RELEASE_ROOT/source" rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C "$WRAPPER_RELEASE_ROOT/source" rev-parse --is-shallow-repository)" = false
       - name: Release preflight
         env:
           GH_TOKEN: ${{ github.token }}
+        working-directory: ${{ env.WRAPPER_RELEASE_ROOT }}/source
         run: ./Scripts/release-preflight.sh "${GITHUB_REF_NAME}"
 
   # The release test gates ARE the CI gates — called, not copy-pasted, so
@@ -33,22 +54,24 @@ jobs:
     needs: [tests, preflight]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - *release_checkout
 
       - name: Extract version from tag
         id: version
+        working-directory: ${{ env.WRAPPER_RELEASE_ROOT }}/source
         run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Extract changelog entry
         id: changelog
+        working-directory: ${{ env.WRAPPER_RELEASE_ROOT }}/source
         run: |
           # Extract the section for this version from CHANGELOG.md
-          awk '/^## \['"${{ steps.version.outputs.version }}"'\]/{found=1; next} /^## \[/{if(found) exit} found{print}' CHANGELOG.md > release_notes.md
-          echo "has_notes=$([ -s release_notes.md ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          awk '/^## \['"${{ steps.version.outputs.version }}"'\]/{found=1; next} /^## \[/{if(found) exit} found{print}' CHANGELOG.md > "$WRAPPER_RELEASE_ROOT/release_notes.md"
+          echo "has_notes=$([ -s "$WRAPPER_RELEASE_ROOT/release_notes.md" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ steps.version.outputs.version }}
-          body_path: ${{ steps.changelog.outputs.has_notes == 'true' && 'release_notes.md' || '' }}
+          body_path: ${{ steps.changelog.outputs.has_notes == 'true' && format('{0}/release_notes.md', env.WRAPPER_RELEASE_ROOT) || '' }}
           generate_release_notes: ${{ steps.changelog.outputs.has_notes != 'true' }}

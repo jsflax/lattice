@@ -380,7 +380,7 @@ enum UnionSchemaV2 {
 class UnionSchemaEvolutionTests: BaseTest {
 
     @Test func test_addCaseToUnion_oldDataReadable() async throws {
-        let dbPath = FileManager.default.temporaryDirectory
+        let dbPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         // V1: write data
@@ -437,7 +437,7 @@ class UnionSchemaEvolutionTests: BaseTest {
     }
 
     @Test func test_removeCaseFromUnion_unknownCaseFallsBackToDefault() async throws {
-        let dbPath = FileManager.default.temporaryDirectory
+        let dbPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         // Write data with V2 (has cat + tagged cases)

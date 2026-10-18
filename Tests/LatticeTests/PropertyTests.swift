@@ -23,7 +23,7 @@ import Testing
     let path = "\(String.random(length: 32)).sqlite"
     let lattice = try testLattice(path: path, ModelWithPrivateSet.self)
     defer {
-        try? Lattice.delete(for: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
+        try? Lattice.delete(for: .init(fileURL: testTemporaryDirectory.appending(path: path)))
     }
 
     let obj = ModelWithPrivateSet(publicVar: "public", restrictedVar: "restricted")

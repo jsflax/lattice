@@ -155,7 +155,7 @@ private func probeChannel(_ url: URL, label: String) -> ChannelProbe {
 /// What a restart-that-lost-the-WAL would serve: rows readable from a copy of
 /// the MAIN file alone (no -wal/-shm beside it).
 private func mainOnlyRows(_ url: URL) -> Int {
-    let copy = FileManager.default.temporaryDirectory
+    let copy = testTemporaryDirectory
         .appending(path: "mainonly-\(String.random(length: 10)).sqlite")
     defer { try? FileManager.default.removeItem(at: copy) }
     // A raw open/read/close of the live main file in THIS process can drop
@@ -198,7 +198,7 @@ private func mainOnlyRows(_ url: URL) -> Int {
 /// The stale-backup reproduction: VACUUM INTO from a fresh connection, then
 /// count the backup's rows.
 private func vacuumIntoRows(_ url: URL) -> Int {
-    let backup = FileManager.default.temporaryDirectory
+    let backup = testTemporaryDirectory
         .appending(path: "vacuum-\(String.random(length: 10)).sqlite")
     defer { try? FileManager.default.removeItem(at: backup) }
     let r = sqlite3Run(url.path, "VACUUM INTO '\(backup.path)';", timeout: 60)
@@ -346,7 +346,7 @@ private func growWal(_ lattice: Lattice, url: URL, targetBytes: Int64,
 }
 
 private func forensicTempDir(_ tag: String) throws -> URL {
-    let dir = FileManager.default.temporaryDirectory
+    let dir = testTemporaryDirectory
         .appending(path: "wal-epoch-\(tag)-\(String.random(length: 10))")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     return dir

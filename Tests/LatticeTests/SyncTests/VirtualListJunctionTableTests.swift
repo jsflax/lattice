@@ -40,7 +40,7 @@ class VirtualListJunctionTableTests: BaseTest {
     /// Verify that polymorphic VirtualList junction tables are created during
     /// Lattice initialization, NOT lazily on first write.
     @Test func test_polymorphicJunctionTableExistsAfterInit() async throws {
-        let path = FileManager.default.temporaryDirectory
+        let path = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: path)) }
 
@@ -73,7 +73,7 @@ class VirtualListJunctionTableTests: BaseTest {
     /// from Lattice A, then import them into Lattice B (which has never locally
     /// written to any VirtualList). This mimics the SyncRelay/macOS app scenario.
     @Test func test_receiveVirtualListEventsWithoutLocalWrite() async throws {
-        Lattice.setLogFile(.temporaryDirectory.appending(path: "vtests-lattice.log"))
+        Lattice.setLogFile(testTemporaryDirectory.appending(path: "vtests-lattice.log"))
         Lattice.setLogLevel(.debug)
         // --- Lattice A: create objects and append to VirtualList ---
         let latticeA = try testLattice(TestDog.self, TestCat.self, TestPersonWithPets.self)

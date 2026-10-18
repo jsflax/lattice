@@ -309,7 +309,7 @@ struct CrossProcessTests {
 
         // ── Parent path ─────────────────────────────────────────────
         let dbName = "xproc_bindable_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         let dbPath = fileURL.path(percentEncoded: false)
 
         let lattice = try Lattice(
@@ -380,7 +380,7 @@ struct CrossProcessTests {
 
         // ── Parent path ─────────────────────────────────────────────
         let dbName = "xproc_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         let dbPath = fileURL.path(percentEncoded: false)
 
         let lattice = try Lattice(
@@ -460,7 +460,7 @@ struct CrossProcessTests {
         guard ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_DB_PATH"] == nil else { return }
 
         let dbName = "xproc_self_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         let lattice = try Lattice(
             for: [Person.self, Dog.self],
             configuration: .init(fileURL: fileURL)
@@ -516,7 +516,7 @@ struct CrossProcessTests {
 
         // ── Parent path ─────────────────────────────────────────────
         let dbName = "xproc_obj_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         let dbPath = fileURL.path(percentEncoded: false)
 
         let lattice = try Lattice(
@@ -573,7 +573,7 @@ struct CrossProcessTests {
 
         // ── Parent path ─────────────────────────────────────────────
         let dbName = "xproc_update_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         let dbPath = fileURL.path(percentEncoded: false)
 
         let lattice = try Lattice(
@@ -637,7 +637,7 @@ struct CrossProcessTests {
 
         // ── Parent path ─────────────────────────────────────────────
         let dbName = "xproc_audit_update_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         let dbPath = fileURL.path(percentEncoded: false)
 
         let lattice = try Lattice(
@@ -701,7 +701,7 @@ struct CrossProcessTests {
 
         // ── Parent path ─────────────────────────────────────────────
         let dbName = "xproc_list_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         let dbPath = fileURL.path(percentEncoded: false)
 
         let lattice = try Lattice(
@@ -773,7 +773,7 @@ struct CrossProcessTests {
 
         // ── Parent path ─────────────────────────────────────────────
         let dbName = "xproc_vlist_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         let dbPath = fileURL.path(percentEncoded: false)
 
         let lattice = try Lattice(
@@ -894,7 +894,7 @@ struct CrossProcessTests {
 
         // ── Parent path ─────────────────────────────────────────────
         let dbName = "xproc_multirow_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         let dbPath = fileURL.path(percentEncoded: false)
 
         let lattice = try Lattice(

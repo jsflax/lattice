@@ -20,7 +20,7 @@ import Testing
 }
 
 private func tempLattice() throws -> Lattice {
-    let url = FileManager.default.temporaryDirectory
+    let url = testTemporaryDirectory
         .appending(path: "no-relay-\(UUID().uuidString).sqlite")
     return try Lattice(PurgeDoc.self, configuration: .init(fileURL: url))
 }

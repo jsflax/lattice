@@ -45,21 +45,53 @@ jobs:
     env:
       CONSUMER_LEG: ${{ matrix.consumerLeg }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Install dependencies
-        run: apt-get update && apt-get install -y libsqlite3-dev sqlite3
+        run: apt-get update && apt-get install -y git libsqlite3-dev sqlite3
 
       - name: Install consumer evidence tooling
         run: apt-get install -y python3
+
+      - &wrapper_checkout
+        name: Fetch exact source into owned localdev directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          [[ "$CONSUMER_LEG" =~ ^[a-z-]+$ ]]
+          WRAPPER_JOB_ROOT="$HOME/localdev/lw-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${CONSUMER_LEG}"
+          test ! -e "$WRAPPER_JOB_ROOT"
+          mkdir -p "$WRAPPER_JOB_ROOT"/{tmp,swift-cache,swift-config,swift-security,module-cache,test-logs,consumer,runtime}
+          chmod 700 "$WRAPPER_JOB_ROOT/runtime"
+          export TMPDIR="$WRAPPER_JOB_ROOT/tmp" TMP="$WRAPPER_JOB_ROOT/tmp" TEMP="$WRAPPER_JOB_ROOT/tmp"
+          {
+            echo "WRAPPER_JOB_ROOT=$WRAPPER_JOB_ROOT"
+            echo "TMPDIR=$TMPDIR"
+            echo "LATTICE_TEST_TMPDIR=$WRAPPER_JOB_ROOT/tmp"
+            echo "TMP=$TMP"
+            echo "TEMP=$TEMP"
+            echo "CLANG_MODULE_CACHE_PATH=$WRAPPER_JOB_ROOT/module-cache"
+            echo "SWIFT_MODULECACHE_PATH=$WRAPPER_JOB_ROOT/module-cache"
+            echo "SWIFTPM_MODULECACHE_OVERRIDE=$WRAPPER_JOB_ROOT/module-cache"
+            echo "LATTICE_TEST_LOG_PATH=$WRAPPER_JOB_ROOT/test-logs/swift-tests.log"
+            echo "LATTICE_PERF_TEST_LOG_PATH=$WRAPPER_JOB_ROOT/test-logs/swift-perf-tests.log"
+            if [ "$(uname -s)" = Linux ]; then
+              echo "XDG_RUNTIME_DIR=$WRAPPER_JOB_ROOT/runtime"
+            fi
+          } >> "$GITHUB_ENV"
+          git init "$WRAPPER_JOB_ROOT/source"
+          git -C "$WRAPPER_JOB_ROOT/source" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C "$WRAPPER_JOB_ROOT/source" checkout --detach "$GITHUB_SHA"
+          test "$(git -C "$WRAPPER_JOB_ROOT/source" rev-parse HEAD)" = "$GITHUB_SHA"
 
       - &consumer_metadata
         name: Capture strict consumer source and toolchain metadata
         id: consumer_metadata
         shell: bash
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
         run: |
           set -eu
-          CONSUMER_DIR="$RUNNER_TEMP/wrapper-strict-consumer"
+          CONSUMER_DIR="$WRAPPER_JOB_ROOT/consumer"
           mkdir -p "$CONSUMER_DIR"
           cat > "$CONSUMER_DIR/capture-command.sh" <<'CAPTURE'
           #!/usr/bin/env bash
@@ -80,15 +112,15 @@ jobs:
           CAPTURE
           source "$CONSUMER_DIR/capture-command.sh"
           status=0
-          capture_command checkout-sha git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD || status=$?
-          capture_command checkout-tree git -c safe.directory="$GITHUB_WORKSPACE" rev-parse 'HEAD^{tree}' || status=$?
-          capture_command checkout-status git -c safe.directory="$GITHUB_WORKSPACE" status --porcelain || status=$?
+          capture_command checkout-sha git -c safe.directory="$WRAPPER_JOB_ROOT/source" rev-parse HEAD || status=$?
+          capture_command checkout-tree git -c safe.directory="$WRAPPER_JOB_ROOT/source" rev-parse 'HEAD^{tree}' || status=$?
+          capture_command checkout-status git -c safe.directory="$WRAPPER_JOB_ROOT/source" status --porcelain || status=$?
           capture_command host uname -a || status=$?
           capture_command swift-path command -v swift || status=$?
           capture_command swift-version swift --version || status=$?
-          capture_command build-help swift build --help || status=$?
-          capture_command test-help swift test --help || status=$?
-          capture_command resolve-help swift package resolve --help || status=$?
+          capture_command build-help swift build --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --help || status=$?
+          capture_command test-help swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --help || status=$?
+          capture_command resolve-help swift package --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" resolve --help || status=$?
           if [ "$(uname -s)" = "Darwin" ]; then
             capture_command developer-path xcode-select -p || status=$?
             capture_command xcode-version xcodebuild -version || status=$?
@@ -106,26 +138,30 @@ jobs:
         name: Authenticate complete committed lock and source baseline
         id: strict_baseline
         shell: bash
-        run: python3 Scripts/verify-wrapper-lock-integrity.py --phase baseline --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer"
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
+        run: python3 Scripts/verify-wrapper-lock-integrity.py --workspace "$WRAPPER_JOB_ROOT/source" --phase baseline --evidence-dir "$WRAPPER_JOB_ROOT/consumer"
 
       - &binding_check
         name: Verify qualified upstream Core and SDK bindings
         id: binding_check
         shell: bash
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
         run: |
           python3 Scripts/verify-wrapper-bindings.py \
             --expected Scripts/wrapper-expected-bindings.json \
-            --resolved "$RUNNER_TEMP/wrapper-strict-consumer/baseline/files/Package.resolved"
+            --resolved "$WRAPPER_JOB_ROOT/consumer/baseline/files/Package.resolved"
 
       - &before_build
         name: Verify full lock integrity before build
         id: before_build
         shell: bash
-        run: python3 Scripts/verify-wrapper-lock-integrity.py --phase before-build --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer"
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
+        run: python3 Scripts/verify-wrapper-lock-integrity.py --workspace "$WRAPPER_JOB_ROOT/source" --phase before-build --evidence-dir "$WRAPPER_JOB_ROOT/consumer"
 
       - name: Build
         id: build
-        run: swift build --force-resolved-versions
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
+        run: swift build --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions
 
       - &after_build
         name: Capture and verify complete lock integrity after build
@@ -134,20 +170,23 @@ jobs:
         env:
           CONSUMER_STEP_OUTCOMES: ${{ toJSON(steps) }}
         shell: bash
-        run: python3 Scripts/verify-wrapper-lock-integrity.py --phase after-build --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer"
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
+        run: python3 Scripts/verify-wrapper-lock-integrity.py --workspace "$WRAPPER_JOB_ROOT/source" --phase after-build --evidence-dir "$WRAPPER_JOB_ROOT/consumer"
 
       - &before_test
         name: Verify full lock integrity before test
         id: before_test
         shell: bash
-        run: python3 Scripts/verify-wrapper-lock-integrity.py --phase before-test --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer"
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
+        run: python3 Scripts/verify-wrapper-lock-integrity.py --workspace "$WRAPPER_JOB_ROOT/source" --phase before-test --evidence-dir "$WRAPPER_JOB_ROOT/consumer"
 
       - name: Test
         id: test
         env:
           LATTICE_ACK_PATH_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
           LATTICE_OBSERVER_WORKER_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
-        run: swift test --force-resolved-versions
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
+        run: swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions
 
       - &after_test
         name: Capture and verify complete lock integrity after test
@@ -156,7 +195,8 @@ jobs:
         env:
           CONSUMER_STEP_OUTCOMES: ${{ toJSON(steps) }}
         shell: bash
-        run: python3 Scripts/verify-wrapper-lock-integrity.py --phase after-test --evidence-dir "$RUNNER_TEMP/wrapper-strict-consumer"
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
+        run: python3 Scripts/verify-wrapper-lock-integrity.py --workspace "$WRAPPER_JOB_ROOT/source" --phase after-test --evidence-dir "$WRAPPER_JOB_ROOT/consumer"
 
       - &consumer_finalize
         name: Capture final complete lock integrity and step outcomes
@@ -165,12 +205,13 @@ jobs:
         shell: bash
         env:
           CONSUMER_STEP_OUTCOMES: ${{ toJSON(steps) }}
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
         run: |
           set -eu
-          CONSUMER_DIR="$RUNNER_TEMP/wrapper-strict-consumer"
+          CONSUMER_DIR="$WRAPPER_JOB_ROOT/consumer"
           mkdir -p "$CONSUMER_DIR"
           printf '%s\n' "$CONSUMER_STEP_OUTCOMES" > "$CONSUMER_DIR/step-outcomes.json"
-          python3 Scripts/verify-wrapper-lock-integrity.py --phase final --evidence-dir "$CONSUMER_DIR"
+          python3 Scripts/verify-wrapper-lock-integrity.py --workspace "$WRAPPER_JOB_ROOT/source" --phase final --evidence-dir "$CONSUMER_DIR"
 
       - &consumer_upload
         name: Retain strict consumer evidence (including failure)
@@ -178,7 +219,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wrapper-strict-consumer-${{ env.CONSUMER_LEG }}-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/wrapper-strict-consumer
+          path: ${{ env.WRAPPER_JOB_ROOT }}/consumer
           include-hidden-files: true
           if-no-files-found: error
 
@@ -193,7 +234,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - *wrapper_checkout
 
       - *consumer_metadata
       - *strict_baseline
@@ -207,7 +248,8 @@ jobs:
       # fixes the include.
       - name: Build (iOS Simulator)
         id: build
-        run: xcodebuild -scheme Lattice -destination 'generic/platform=iOS Simulator' build -skipMacroValidation -onlyUsePackageVersionsFromResolvedFile ARCHS=arm64
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
+        run: xcodebuild -scheme Lattice -destination 'generic/platform=iOS Simulator' build -skipMacroValidation -onlyUsePackageVersionsFromResolvedFile -derivedDataPath "$WRAPPER_JOB_ROOT/derived-data" -clonedSourcePackagesDirPath "$WRAPPER_JOB_ROOT/source-packages" CLANG_MODULE_CACHE_PATH="$WRAPPER_JOB_ROOT/module-cache" ARCHS=arm64
 
       - *after_build
 
@@ -221,7 +263,7 @@ jobs:
     # Known intermittent relay-test hang (1.0 item D) — fail fast, re-run.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - *wrapper_checkout
 
       - *consumer_metadata
       - *strict_baseline
@@ -230,7 +272,8 @@ jobs:
 
       - name: Build
         id: build
-        run: swift build --force-resolved-versions
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
+        run: swift build --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions
 
       - *after_build
       - *before_test
@@ -241,7 +284,8 @@ jobs:
         env:
           LATTICE_ACK_PATH_DIAGNOSTICS: '1'
           LATTICE_OBSERVER_WORKER_DIAGNOSTICS: '1'
-        run: swift test --force-resolved-versions
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
+        run: swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions
 
       - *after_test
       - *consumer_finalize

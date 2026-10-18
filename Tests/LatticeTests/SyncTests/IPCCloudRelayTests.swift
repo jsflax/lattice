@@ -12,11 +12,11 @@ import Vapor
 @Suite("IPC Cloud Relay Tests")
 actor IPCCloudRelayTests {
     let server: TestSyncServer
-    let localURL = FileManager.default.temporaryDirectory
+    let localURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let syncedURL = FileManager.default.temporaryDirectory
+    let syncedURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let serverURL = FileManager.default.temporaryDirectory
+    let serverURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     var localConfig: Lattice.Configuration
     var syncedConfig: Lattice.Configuration
@@ -134,7 +134,7 @@ actor IPCCloudRelayTests {
         let synced = try Lattice(IPCNote.self, configuration: syncedConfig)
 
         // cloudDevice: another WSS client (simulates a remote device pushing to cloud)
-        let cloudDeviceURL = FileManager.default.temporaryDirectory
+        let cloudDeviceURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
         var cloudConfig = Lattice.Configuration(fileURL: cloudDeviceURL)
         cloudConfig.authorizationToken = "cloud-device-token"

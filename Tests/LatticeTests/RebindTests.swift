@@ -21,7 +21,7 @@ final class RebindTests: BaseTest {
     /// If this regressed (e.g. close stopped evicting), rebind would silently
     /// no-op and the stale-handle bug would return.
     @Test func test_ReopenAfterClose_HasNewIdentity() throws {
-        let path = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
+        let path = testTemporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
         let config = Lattice.Configuration(fileURL: path)
 
         let a = try Lattice(Person.self, configuration: config)

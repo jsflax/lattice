@@ -6,7 +6,7 @@ import Testing
 final class DeleteCacheLockTests {
     @Test(.timeLimit(.minutes(1)))
     func unrelatedCachedLookupProgressesWhileCloseWaits() throws {
-        let directory = FileManager.default.temporaryDirectory
+        let directory = testTemporaryDirectory
             .appending(path: "delete-cache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -54,7 +54,7 @@ final class DeleteCacheLockTests {
 
     @Test(.timeLimit(.minutes(1)))
     func allMatchingBackendsCloseBeforeUnlinkAndOtherPathRemainsCached() throws {
-        let directory = FileManager.default.temporaryDirectory
+        let directory = testTemporaryDirectory
             .appending(path: "delete-order-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }

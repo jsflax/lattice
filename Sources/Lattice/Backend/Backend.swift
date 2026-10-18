@@ -318,6 +318,24 @@ public protocol ObjectListBackend: AnyObject, Sendable {
 
 // MARK: - LatticeBackend (db-level operations)
 
+/// One scalar group key and count, without managed model instances.
+public struct GroupedCount: Sendable, Equatable {
+    public let key: String
+    public let count: Int64
+
+    public init(key: String, count: Int64) {
+        self.key = key
+        self.count = count
+    }
+}
+
+/// Optional scalar-query capability; other backends must explicitly support
+/// it rather than silently falling back to hydrating complete model rows.
+public protocol GroupedCountBackend: LatticeBackend {
+    func groupedCounts(table: String, groupBy: String, where whereClause: String?,
+                       distinctBy: String?, params: [QueryParameter]) throws -> [GroupedCount]
+}
+
 /// Neutral database-level surface. All members are per-query / per-snapshot, so
 /// array-of-existential returns (allocating once per snapshot) match today's
 /// vector-hydration cost. Class-bound for `final class` + `@inlinable`

@@ -11,7 +11,7 @@ import LatticeMCP
 final class LatticeMCPProviderTests {
 
     private func fixture() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "mcp_\(UUID().uuidString).sqlite")
         let lattice = try Lattice(DynPerson.self, DynDog.self, configuration: .init(fileURL: url))
         let dog = DynDog(); dog.name = "Rex"; dog.breed = "Husky"

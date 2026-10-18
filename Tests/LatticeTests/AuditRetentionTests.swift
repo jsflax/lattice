@@ -61,7 +61,7 @@ final class AuditRetentionTests: BaseTest {
 
     @Test(.timeLimit(.minutes(1)))
     func configuredRetentionPrunesFromTheMaintenanceThread() async throws {
-        let url = FileManager.default.temporaryDirectory.appending(path: "retention_thread_\(String.random(length: 8)).sqlite")
+        let url = testTemporaryDirectory.appending(path: "retention_thread_\(String.random(length: 8)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         var config = Lattice.Configuration(fileURL: url)
         config.auditRetention = 2   // thread period = 1 s
@@ -77,7 +77,7 @@ final class AuditRetentionTests: BaseTest {
 
     @Test(.timeLimit(.minutes(1)))
     func aSiblingHandlesChangeStreamKeepsDeliveringAcrossAPrune() async throws {
-        let url = FileManager.default.temporaryDirectory.appending(path: "retention_sibling_\(String.random(length: 8)).sqlite")
+        let url = testTemporaryDirectory.appending(path: "retention_sibling_\(String.random(length: 8)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         let a = try Lattice(RetentionNote.self, configuration: .init(fileURL: url))
         var configB = Lattice.Configuration(fileURL: url)

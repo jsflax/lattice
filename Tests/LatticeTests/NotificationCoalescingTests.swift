@@ -24,7 +24,7 @@ struct NotificationCoalescingTests {
     @MainActor
     func bulkUpdate_boundedDrainTasks_allObserversDeliver() async throws {
         let dbName = "coalesce_bulk_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         defer { try? FileManager.default.removeItem(at: fileURL) }
 
         // MainActor-created lattice: its models carry MainActor isolation, so
@@ -100,7 +100,7 @@ struct NotificationCoalescingTests {
     @Test(.timeLimit(.minutes(2)))
     func nilIsolation_deliversViaDrainerWithoutTaskStorm() async throws {
         let dbName = "coalesce_sync_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         defer { try? FileManager.default.removeItem(at: fileURL) }
 
         // Handle created off-actor: isolation is nil.
@@ -135,7 +135,7 @@ struct NotificationCoalescingTests {
     @MainActor
     func coalescedDelivery_readsLatestState() async throws {
         let dbName = "coalesce_latest_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         defer { try? FileManager.default.removeItem(at: fileURL) }
 
         let lattice = try Lattice(CoalescePerson.self, configuration: .init(fileURL: fileURL))

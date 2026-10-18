@@ -21,11 +21,11 @@ actor NIORelaySyncTests {
 
     init() {
         lattice_set_log_level(lattice.log_level.info)
-        serverLatticeConfig = .init(fileURL: FileManager.default.temporaryDirectory
+        serverLatticeConfig = .init(fileURL: testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite"))
-        config1 = .init(fileURL: FileManager.default.temporaryDirectory
+        config1 = .init(fileURL: testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite"))
-        config2 = .init(fileURL: FileManager.default.temporaryDirectory
+        config2 = .init(fileURL: testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite"))
     }
 

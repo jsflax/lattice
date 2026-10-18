@@ -82,7 +82,7 @@ final class NoHistoryTests: BaseTest {
     @Test(.timeLimit(.minutes(2)))
     func aSyncedPeerEndsWithTheFinalValue() async throws {
         let channel = "nohistory_\(String.random(length: 8))"
-        let dir = FileManager.default.temporaryDirectory
+        let dir = testTemporaryDirectory
         let hubURL = dir.appending(path: "nh_hub_\(channel).sqlite")
         let spokeURL = dir.appending(path: "nh_spoke_\(channel).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: hubURL)); try? Lattice.delete(for: .init(fileURL: spokeURL)) }

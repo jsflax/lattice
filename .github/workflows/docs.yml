@@ -30,22 +30,49 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Fetch exact documentation source into owned localdev directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          WRAPPER_DOC_ROOT="$HOME/localdev/lw-docs-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$WRAPPER_DOC_ROOT"
+          mkdir -p "$WRAPPER_DOC_ROOT"/{tmp,swift-cache,swift-config,swift-security,module-cache}
+          export TMPDIR="$WRAPPER_DOC_ROOT/tmp" TMP="$WRAPPER_DOC_ROOT/tmp" TEMP="$WRAPPER_DOC_ROOT/tmp"
+          {
+            echo "WRAPPER_DOC_ROOT=$WRAPPER_DOC_ROOT"
+            echo "TMPDIR=$TMPDIR"
+            echo "TMP=$TMP"
+            echo "TEMP=$TEMP"
+            echo "CLANG_MODULE_CACHE_PATH=$WRAPPER_DOC_ROOT/module-cache"
+            echo "SWIFT_MODULECACHE_PATH=$WRAPPER_DOC_ROOT/module-cache"
+            echo "SWIFTPM_MODULECACHE_OVERRIDE=$WRAPPER_DOC_ROOT/module-cache"
+          } >> "$GITHUB_ENV"
+          git init "$WRAPPER_DOC_ROOT/source"
+          git -C "$WRAPPER_DOC_ROOT/source" fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C "$WRAPPER_DOC_ROOT/source" checkout --detach "$GITHUB_SHA"
+          test "$(git -C "$WRAPPER_DOC_ROOT/source" rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Build DocC archive (static hosting)
+        working-directory: ${{ env.WRAPPER_DOC_ROOT }}/source
         run: |
-          swift package --allow-writing-to-directory docs-out \
+          swift package --scratch-path "$WRAPPER_DOC_ROOT/source/.build" \
+            --cache-path "$WRAPPER_DOC_ROOT/swift-cache" --config-path "$WRAPPER_DOC_ROOT/swift-config" \
+            --security-path "$WRAPPER_DOC_ROOT/swift-security" \
+            --allow-writing-to-directory "$WRAPPER_DOC_ROOT/docs-out" \
             generate-documentation --target Lattice \
             --disable-indexing \
             --transform-for-static-hosting \
             --hosting-base-path lattice \
-            --output-path docs-out
+            --output-path "$WRAPPER_DOC_ROOT/docs-out"
 
       # The archive's pages live under /documentation/lattice/; give the
       # site root a redirect so the bare Pages URL lands somewhere useful.
       - name: Add root redirect
+        working-directory: ${{ env.WRAPPER_DOC_ROOT }}/source
         run: |
-          cat > docs-out/index.html <<'EOF'
+          cat > "$WRAPPER_DOC_ROOT/docs-out/index.html" <<'EOF'
           <!DOCTYPE html>
           <html>
             <head>
@@ -61,7 +88,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs-out
+          path: ${{ env.WRAPPER_DOC_ROOT }}/docs-out
 
   deploy:
     needs: build

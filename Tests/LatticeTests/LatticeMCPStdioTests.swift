@@ -25,7 +25,7 @@ final class LatticeMCPStdioTests {
             return  // executable not built in this configuration — skip
         }
 
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "mcpio_\(UUID().uuidString).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         do {

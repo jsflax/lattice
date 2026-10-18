@@ -70,7 +70,7 @@ class LiveResultsLifecycleSoakTests: BaseTest {
 
     @Test(.timeLimit(.minutes(5)))
     func t5_walBoundSoak_burstPlusScrolling_stayswithinThreshold() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "t5_soak_\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 
@@ -171,7 +171,7 @@ class LiveResultsLifecycleSoakTests: BaseTest {
 
     @Test(.timeLimit(.minutes(5)))
     func t5b_nonSyncHiddenResults_timerRetiresKeeperAndOpensCheckpointGap() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "t5b_\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 
@@ -225,7 +225,7 @@ class LiveResultsLifecycleSoakTests: BaseTest {
 
     @Test(.timeLimit(.minutes(5)))
     func t5c_suspendResume_retireAllThenCrossHandleWritesThenRepin() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "t5c_\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 
@@ -393,7 +393,7 @@ class LiveResultsLifecycleSoakTests: BaseTest {
 
     @Test func maintenanceTimer_retiresAndDisarms_reArmsOnNextPin() throws {
         var config = Lattice.Configuration(
-            fileURL: FileManager.default.temporaryDirectory
+            fileURL: testTemporaryDirectory
                 .appending(path: "timer_\(String.random(length: 12)).sqlite"))
         defer { try? Lattice.delete(for: .init(fileURL: config.fileURL)) }
         config.resultsTuning.generationTTLSeconds = 0.1
@@ -438,7 +438,7 @@ class LiveResultsLifecycleSoakTests: BaseTest {
     @Test(.timeLimit(.minutes(5)))
     func maintenanceTimer_mintInsideDisarmWindow_isNotOrphaned() throws {
         var config = Lattice.Configuration(
-            fileURL: FileManager.default.temporaryDirectory
+            fileURL: testTemporaryDirectory
                 .appending(path: "toctou_\(String.random(length: 12)).sqlite"))
         defer { try? Lattice.delete(for: .init(fileURL: config.fileURL)) }
         config.resultsTuning.generationTTLSeconds = 0.05   // tick ≈ 25 ms

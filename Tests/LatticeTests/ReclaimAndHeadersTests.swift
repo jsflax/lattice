@@ -14,7 +14,7 @@ final class ReclaimAndHeadersTests: BaseTest {
     }
 
     @Test func reclaimSpaceShrinksTheFileInOnePassAndVacuumReportsSuccess() throws {
-        let url = FileManager.default.temporaryDirectory.appending(path: "reclaim_\(String.random(length: 8)).sqlite")
+        let url = testTemporaryDirectory.appending(path: "reclaim_\(String.random(length: 8)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         let l = try Lattice(BulkRow.self, configuration: .init(fileURL: url))
         let blob = String(repeating: "x", count: 64 * 1024)
@@ -59,7 +59,7 @@ final class ReclaimAndHeadersTests: BaseTest {
         // A store with its OWN read-only dial (observer slot) plus a writer dial:
         // slot-aware compaction must key on the writer's floor only.
         let channel = "observer_\(String.random(length: 8))"
-        let dir = FileManager.default.temporaryDirectory
+        let dir = testTemporaryDirectory
         let hubURL = dir.appending(path: "obs_hub_\(channel).sqlite")
         let writerURL = dir.appending(path: "obs_writer_\(channel).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: hubURL)); try? Lattice.delete(for: .init(fileURL: writerURL)) }

@@ -18,7 +18,7 @@ final class LatticeMCPSearchTests {
     // FTS (lattice_search) + vector ANN (lattice_nearest), reusing `Article`
     // (title / @FullText content / FloatVector embedding) from FullTextSearchTests.
     @Test func testSearchAndNearest() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "mcps_\(UUID().uuidString).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         do {
@@ -48,7 +48,7 @@ final class LatticeMCPSearchTests {
 
     // Geo proximity (lattice_geo).
     @Test func testGeo() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "mcpg_\(UUID().uuidString).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         do {

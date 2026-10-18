@@ -15,11 +15,11 @@ import Vapor
 @Suite("Sync Tests", .serialized)
 actor SyncTests {
     let server: TestSyncServer
-    let syncLatticeURL = FileManager.default.temporaryDirectory
+    let syncLatticeURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let lattice1URL = FileManager.default.temporaryDirectory
+    let lattice1URL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let lattice2URL = FileManager.default.temporaryDirectory
+    let lattice2URL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     var port: Int = 0
     var localLattice1: Lattice!
@@ -769,7 +769,7 @@ actor SyncTests {
         // Create a fresh client — it should receive the historical data on connect.
         // Observer Lattice (no sync) set up FIRST so changeStream is ready before
         // the sync Lattice connects and delivers initial events via eventsAfter.
-        let freshURL = FileManager.default.temporaryDirectory
+        let freshURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
         let freshObserverConfig = Lattice.Configuration(fileURL: freshURL)
         var freshTask: Task<Void, any Error>?
@@ -841,7 +841,7 @@ actor SyncTests {
         // Step 3: A fresh client connects — should receive data from the compacted snapshots.
         // Create an observer Lattice (no sync) FIRST to set up changeStream before
         // the sync Lattice connects and delivers data.
-        let freshURL = FileManager.default.temporaryDirectory
+        let freshURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
         let freshObserverConfig = Lattice.Configuration(fileURL: freshURL)
         var freshTask: Task<Void, any Error>?
@@ -1011,7 +1011,7 @@ actor SyncTests {
         let lattice2 = localLattice2!
 
         // Fresh path so we control which instance gets the synchronizer
-        let handoffURL = FileManager.default.temporaryDirectory
+        let handoffURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
         let handoffConfig = Lattice.Configuration(
             fileURL: handoffURL,

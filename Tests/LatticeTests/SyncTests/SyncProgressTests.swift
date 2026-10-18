@@ -15,11 +15,11 @@ import Vapor
 @Suite("Sync Progress Tests")
 actor SyncProgressTests {
     let server: TestSyncServer
-    let syncLatticeURL = FileManager.default.temporaryDirectory
+    let syncLatticeURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let lattice1URL = FileManager.default.temporaryDirectory
+    let lattice1URL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let lattice2URL = FileManager.default.temporaryDirectory
+    let lattice2URL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     var port: Int = 0
     var localLattice1: Lattice!
@@ -185,7 +185,7 @@ actor SyncProgressTests {
     @Test(.timeLimit(.minutes(5)))
     func test_SyncError_FiresOnConnectionFailure() async throws {
         // Connect to a port that isn't listening — should trigger onSyncError
-        let badURL = FileManager.default.temporaryDirectory
+        let badURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
         defer { try? FileManager.default.removeItem(at: badURL) }
 

@@ -55,7 +55,7 @@ enum ConstraintCompoundUpsert {
 class ConstraintEvolutionTests: BaseTest {
 
     @Test func test_addUniqueConstraint_onSubsequentOpen() async throws {
-        let dbPath = FileManager.default.temporaryDirectory
+        let dbPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         // V1: insert data without unique constraint
@@ -82,7 +82,7 @@ class ConstraintEvolutionTests: BaseTest {
     }
 
     @Test func test_addUniqueConstraint_withExistingDuplicates() async throws {
-        let dbPath = FileManager.default.temporaryDirectory
+        let dbPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         // V1: insert duplicate data
@@ -110,7 +110,7 @@ class ConstraintEvolutionTests: BaseTest {
     }
 
     @Test func test_addUniqueConstraint_deduplicatesManyDuplicates() async throws {
-        let dbPath = FileManager.default.temporaryDirectory
+        let dbPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         // V1: insert lots of duplicates
@@ -136,7 +136,7 @@ class ConstraintEvolutionTests: BaseTest {
     }
 
     @Test func test_addAllowsUpsert_afterUniqueAlreadySet() async throws {
-        let dbPath = FileManager.default.temporaryDirectory
+        let dbPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         // V2: open with @Unique (no upsert), insert data

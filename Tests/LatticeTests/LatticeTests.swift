@@ -1,11 +1,14 @@
 import Testing
 import Foundation
+import LatticeTestSupport
 //import SwiftUI
 import Lattice
 import Observation
 #if canImport(CoreLocation)
 import CoreLocation
 #endif
+
+let testTemporaryDirectory = LatticeTestScratch.directory
 
 fileprivate let base64 = Array<UInt8>(
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".utf8
@@ -163,7 +166,7 @@ struct Embedded: EmbeddedModel {
 func testLattice(isolation: isolated (any Actor)? = #isolation,
                  path: String,
                  _ types: any Model.Type...) throws -> Lattice {
-    try Lattice(for: types, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
+    try Lattice(for: types, configuration: .init(fileURL: testTemporaryDirectory.appending(path: path)))
 }
 
 /// Minimal mutex box for test observers that fire on background threads.
@@ -179,7 +182,9 @@ final class LockedBox<T>: @unchecked Sendable {
 
 class BaseTest {
     private static let logFile: UnsafeMutablePointer<FILE>? = {
-        let f = fopen("/tmp/lattice_swift_tests.log", "w")
+        let path = ProcessInfo.processInfo.environment["LATTICE_TEST_LOG_PATH"]
+            ?? testTemporaryDirectory.appendingPathComponent("lattice_swift_tests.log").path
+        let f = fopen(path, "w")
         if let f {
             Lattice.setLogFile(f)
         }
@@ -201,7 +206,7 @@ class BaseTest {
                                     path: String? = nil,
                                     _ types: repeat (each M).Type,
                                     migration: [Int: Migration]? = nil) throws -> Lattice {
-        let path = FileManager.default.temporaryDirectory.appending(path: path ?? "\(String.random(length: 32)).sqlite")
+        let path = testTemporaryDirectory.appending(path: path ?? "\(String.random(length: 32)).sqlite")
         paths.append(path)
         print("Lattice path: \(path)")
         return try Lattice(repeat each types, configuration: .init(fileURL: path, migration: migration))
@@ -773,7 +778,7 @@ class LatticeTests: BaseTest {
 
     @Test func test_CrossInstanceObservation_NoDoubleNotification() async throws {
         let dbName = "xinstance_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         let lattice = try Lattice(
             for: [Person.self, Dog.self],
             configuration: .init(fileURL: fileURL)
@@ -857,7 +862,7 @@ class LatticeTests: BaseTest {
         // 1.0 item F re-enable: property-name delivery is Task{}-dispatched —
         // await it instead of asserting synchronously after the write.
         let dbName = "observe_xinstance_\(UUID().uuidString).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: dbName)
+        let fileURL = testTemporaryDirectory.appending(path: dbName)
         let lattice = try Lattice(
             for: [Person.self, Dog.self],
             configuration: .init(fileURL: fileURL)
@@ -1315,8 +1320,8 @@ class LatticeTests: BaseTest {
     }
     
 //    @Test func test_AuditLog_ApplyInstructions() async throws {
-//        let lattice1URL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
-//        let lattice2URL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
+//        let lattice1URL = testTemporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
+//        let lattice2URL = testTemporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
 //        defer {
 //            try? Lattice.delete(for: .init(fileURL: lattice1URL))
 //            try? Lattice.delete(for: .init(fileURL: lattice2URL))
@@ -2205,7 +2210,7 @@ class LatticeTests: BaseTest {
 //    @Test func testLatticeCache() async throws {
 //        let uniquePath = "\(String.random(length: 32)).sqlite"
 //        defer {
-//            try? Lattice.delete(for: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: uniquePath)))
+//            try? Lattice.delete(for: .init(fileURL: testTemporaryDirectory.appending(path: uniquePath)))
 //        }
 //        try autoreleasepool {
 //            var lattice1: Lattice? = try testLattice(path: uniquePath, Dog.self)
