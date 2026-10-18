@@ -104,6 +104,47 @@ final class CloseGuardTests: BaseTest {
         #expect(lattice.objects(Person.self).count == 0)
     }
 
+    @Test func test_CoordinatorRecreatedDuringClose_DoesNotRetainRows() throws {
+        let path = "\(String.random(length: 32)).sqlite"
+        let lattice = try testLattice(path: path, Person.self)
+        try seed(lattice, ["John", "Jane", "Tim"])
+        let originalResults = lattice.objects(Person.self)
+        #expect(originalResults.count == 3)
+        let identity = lattice.backend.identityHash
+        let original = try #require(GenerationCoordinatorRegistry.existingCoordinator(identityHash: identity))
+        var racedResults: TableResults<Person>?
+
+        // Exercise the actual close lifecycle with a deterministic reader in
+        // the gap between pre-close eviction and backend close. No sleep or
+        // thread scheduling is needed to reproduce the stale-cache race.
+        GenerationCoordinatorRegistry.close(identityHash: identity) {
+            #expect(GenerationCoordinatorRegistry.existingCoordinator(identityHash: identity) == nil)
+            let results = lattice.objects(Person.self)
+            #expect(results.count == 3)
+            #expect(results.snapshot().count == 3)
+            #expect(GenerationCoordinatorRegistry.existingCoordinator(identityHash: identity) !== original)
+            racedResults = results
+            lattice.backend.close()
+        }
+
+        #expect(GenerationCoordinatorRegistry.existingCoordinator(identityHash: identity) == nil)
+        #expect(originalResults.count == 0)
+        #expect(originalResults.snapshot().isEmpty)
+        let raced = try #require(racedResults)
+        #expect(raced.count == 0)
+        #expect(raced.snapshot().isEmpty)
+        #expect(lattice.objects(Person.self).count == 0)
+
+        // Close invalidates this handle's caches, not the persisted database
+        // or the independent coordinator of a newly opened handle.
+        let reopened = try testLattice(path: path, Person.self)
+        #expect(reopened.backend.identityHash != identity)
+        #expect(reopened.objects(Person.self).count == 3)
+        lattice.close()
+        #expect(reopened.objects(Person.self).count == 3)
+        reopened.close()
+    }
+
     /// Hammer reads on a background thread while the owning thread closes the
     /// handle. The close() refcount drain must let any in-flight read finish on
     /// a live connection before `db_`/`read_db_` are reset — no SIGSEGV.
