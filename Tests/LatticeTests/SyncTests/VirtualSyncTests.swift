@@ -304,9 +304,9 @@ extension SyncTests {
 
 @Suite("IPC Virtual Cascade Delete Sync Tests")
 actor IPCVirtualCascadeDeleteTests {
-    let sourceURL = FileManager.default.temporaryDirectory
+    let sourceURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let targetURL = FileManager.default.temporaryDirectory
+    let targetURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     var sourceConfig: Lattice.Configuration
     var targetConfig: Lattice.Configuration

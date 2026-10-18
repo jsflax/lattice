@@ -20,7 +20,7 @@ import Lattice
 final class DynamicAPITests {
 
     @Test func testDynamicOpenRoundTrip() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "dyn_\(UUID().uuidString).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 
@@ -79,7 +79,7 @@ final class DynamicAPITests {
     }
 
     @Test func testDynamicPredicateTranslation() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "dynq_\(UUID().uuidString).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 
@@ -126,7 +126,7 @@ final class DynamicAPITests {
     }
 
     @Test func testDynamicSerialization() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "dyns_\(UUID().uuidString).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 
@@ -170,7 +170,7 @@ final class DynamicAPITests {
     // == nullptr) via m->table_name(), segfaulting whenever an object with an
     // unset link was serialized at depth > 0.
     @Test func testDynamicNilLinkSerialization() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "dynnil_\(UUID().uuidString).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 

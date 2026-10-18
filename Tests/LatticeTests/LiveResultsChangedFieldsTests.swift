@@ -265,7 +265,7 @@ class LiveResultsChangedFieldsTests: BaseTest {
     // MARK: Flag gate — off restores v1 whole-table behavior
 
     @Test func flagOff_unrelatedColumnUpdateInvalidates() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "cf_flagoff_\(String.random(length: 12)).sqlite")
         var config = Lattice.Configuration(fileURL: url)
         config.resultsTuning.fieldAwareInvalidation = false
@@ -349,7 +349,7 @@ class LiveResultsChangedFieldsTests: BaseTest {
     @Test(.timeLimit(.minutes(5)))
     func longSoakEquivalence_flagOnVsFlagOff() throws {
         func makeLattice(flag: Bool) throws -> (Lattice, URL) {
-            let url = FileManager.default.temporaryDirectory
+            let url = testTemporaryDirectory
                 .appending(path: "cf_soak_\(flag ? "on" : "off")_\(String.random(length: 12)).sqlite")
             var config = Lattice.Configuration(fileURL: url)
             config.resultsTuning.fieldAwareInvalidation = flag

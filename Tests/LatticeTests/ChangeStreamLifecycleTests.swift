@@ -123,7 +123,7 @@ final class ChangeStreamLifecycleTests: BaseTest {
     /// at iteration — not trap the process (the pre-1.0 shape was `try!`).
     @Test(.timeLimit(.minutes(1)))
     func test_changeStream_failedOpenThrowsAtIteration() async throws {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = testTemporaryDirectory
             .appending(path: "changestream-\(String.random(length: 16))", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // wssEndpoint matters: the core's LatticeCache keys on it, and

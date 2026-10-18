@@ -1,4 +1,5 @@
 import Foundation
+import LatticeTestSupport
 import Lattice
 
 // MARK: - Table adapters
@@ -472,7 +473,7 @@ struct ConformanceInterpreter {
             }
         }
 
-        let dbURL = FileManager.default.temporaryDirectory
+        let dbURL = LatticeTestScratch.directory
             .appendingPathComponent("lattice_conformance_\(suite)_\(name)_\(UUID().uuidString).sqlite")
         let env = ScenarioEnv(dbURL: dbURL)
         defer {

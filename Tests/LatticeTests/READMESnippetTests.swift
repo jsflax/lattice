@@ -329,7 +329,7 @@ class READMESnippetTests: BaseTest {
     @Test func test_IPCSync() throws {
         // [test-only] Temp databases + a unique channel name; the README uses
         // "adults" and app-chosen file URLs.
-        let tmp = FileManager.default.temporaryDirectory
+        let tmp = testTemporaryDirectory
         let suffix = String.random(length: 8)
         let sourceURL = tmp.appending(path: "readme_ipc_source_\(suffix).sqlite")
         let targetURL = tmp.appending(path: "readme_ipc_target_\(suffix).sqlite")
@@ -358,7 +358,7 @@ class READMESnippetTests: BaseTest {
     }
 
     @Test func test_IPCCloudRelay_Configuration() throws {
-        let relayURL = FileManager.default.temporaryDirectory
+        let relayURL = testTemporaryDirectory
             .appending(path: "readme_relay_\(String.random(length: 8)).sqlite")  // [test-only]
         let token = "token"  // [test-only]
 
@@ -376,7 +376,7 @@ class READMESnippetTests: BaseTest {
     // MARK: README § Advanced Features / Filtered Sync
 
     @Test func test_FilteredSync() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "readme_filtered_\(String.random(length: 8)).sqlite")  // [test-only]
         let token = "token"  // [test-only]
         let wssURL = URL(string: "wss://your-server.com/sync")  // [test-only]
@@ -399,7 +399,7 @@ class READMESnippetTests: BaseTest {
 
     @Test func test_Migrations() throws {
         let path = "readme_migration_\(String.random(length: 8)).sqlite"  // [test-only]
-        let url = FileManager.default.temporaryDirectory.appending(path: path)
+        let url = testTemporaryDirectory.appending(path: path)
         defer { try? Lattice.delete(for: .init(fileURL: url)) }  // [test-only]
 
         do {  // [test-only] seed a v1 database

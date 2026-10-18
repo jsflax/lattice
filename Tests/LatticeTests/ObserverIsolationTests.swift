@@ -41,7 +41,7 @@ private func checkCollectionObserverRouting(
     isolation: isolated (any Actor)? = #isolation,
     expectActorHop: Bool
 ) async throws {
-    let fileURL = FileManager.default.temporaryDirectory
+    let fileURL = testTemporaryDirectory
         .appending(path: "observer-isolation-\(UUID().uuidString).sqlite")
     let configuration = Lattice.Configuration(fileURL: fileURL)
     let lattice = try Lattice(ObserverIsolationItem.self, configuration: configuration)

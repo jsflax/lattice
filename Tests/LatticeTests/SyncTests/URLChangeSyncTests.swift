@@ -26,11 +26,11 @@ import Vapor
 actor URLChangeSyncTests {
     let serverA: TestSyncServer
     let serverB: TestSyncServer
-    let sharedPath = FileManager.default.temporaryDirectory
+    let sharedPath = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let serverPathA = FileManager.default.temporaryDirectory
+    let serverPathA = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let serverPathB = FileManager.default.temporaryDirectory
+    let serverPathB = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     var portA: Int = 0
     var portB: Int = 0
@@ -219,7 +219,7 @@ private enum URLChangeFixtureError: Error { case stateStreamEnded }
 private actor URLChangeFixtureReadinessTests {
     @Test(.timeLimit(.minutes(1)))
     func changeStreamCapturesWriteBeforeIteration() async throws {
-        let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory
+        let config = Lattice.Configuration(fileURL: testTemporaryDirectory
             .appending(path: "url-change-buffered-\(UUID().uuidString).sqlite"))
         let lattice = try Lattice(SimpleSyncObject.self, configuration: config)
         defer { lattice.close(); try? Lattice.delete(for: config) }
@@ -236,7 +236,7 @@ private actor URLChangeFixtureReadinessTests {
 
     @Test(.timeLimit(.minutes(1)))
     func cancellingParentEndsChangeStreamWait() async throws {
-        let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory
+        let config = Lattice.Configuration(fileURL: testTemporaryDirectory
             .appending(path: "url-change-cancel-stream-\(UUID().uuidString).sqlite"))
         let lattice = try Lattice(SimpleSyncObject.self, configuration: config)
         defer { lattice.close(); try? Lattice.delete(for: config) }
@@ -259,7 +259,7 @@ private actor URLChangeFixtureReadinessTests {
 
     @Test(.timeLimit(.minutes(1)))
     func cancellingParentEndsNeverConnectedWait() async throws {
-        let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory
+        let config = Lattice.Configuration(fileURL: testTemporaryDirectory
             .appending(path: "url-change-cancel-state-\(UUID().uuidString).sqlite"))
         let lattice = try Lattice(SimpleSyncObject.self, configuration: config)
         defer { lattice.close(); try? Lattice.delete(for: config) }

@@ -17,7 +17,7 @@ actor TestSyncServerOrderingTests {
     }
 
     private func check(_ order: Order) async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let serverConfig = Lattice.Configuration(fileURL: directory.appendingPathComponent("server.sqlite"))
         let senderPath = directory.appendingPathComponent("sender.sqlite")

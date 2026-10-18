@@ -40,7 +40,7 @@ final class CloseGuardTests: BaseTest {
     /// then keep using all of it. Must not crash.
     @Test func test_UseObjectsFromDeletedLattice_NoCrash() throws {
         let path = "\(String.random(length: 32)).sqlite"
-        let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory.appending(path: path))
+        let config = Lattice.Configuration(fileURL: testTemporaryDirectory.appending(path: path))
         let lattice = try Lattice(Person.self, configuration: config)
         try seed(lattice, ["Alice", "Bob", "Carol"])
 
@@ -61,7 +61,7 @@ final class CloseGuardTests: BaseTest {
     /// threw an unhandled C++ exception before the guard.
     @Test func test_FirstAndCountAfterDelete_NoThrow() throws {
         let path = "\(String.random(length: 32)).sqlite"
-        let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory.appending(path: path))
+        let config = Lattice.Configuration(fileURL: testTemporaryDirectory.appending(path: path))
         let lattice = try Lattice(Person.self, configuration: config)
         try seed(lattice, ["Alice"])
         let results = lattice.objects(Person.self)
@@ -78,7 +78,7 @@ final class CloseGuardTests: BaseTest {
 
     @Test func test_ReadsAfterDelete_ReturnEmpty_NoCrash() throws {
         let path = "\(String.random(length: 32)).sqlite"
-        let config = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory.appending(path: path))
+        let config = Lattice.Configuration(fileURL: testTemporaryDirectory.appending(path: path))
         let lattice = try Lattice(Person.self, configuration: config)
         try seed(lattice, ["John", "Jane"])
         #expect(lattice.objects(Person.self).count == 2)

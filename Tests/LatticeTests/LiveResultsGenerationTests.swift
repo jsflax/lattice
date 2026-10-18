@@ -102,7 +102,7 @@ class LiveResultsGenerationTests: BaseTest {
     /// wanting the connection mutex) would deadlock. Bounded watchdog.
     @Test(.timeLimit(.minutes(5)))
     func t10_leafLockABBAWatchdog_syncEnabledFileLattice() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "t10_abba_\(String.random(length: 12)).sqlite")
         var config = Lattice.Configuration(fileURL: url)
         config.ipcTargets = [.init(channel: "t10_\(String.random(length: 8))")]
@@ -191,7 +191,7 @@ class LiveResultsGenerationTests: BaseTest {
     // MARK: Registry eviction bounds (§2.2, `maxCachedShapes`)
 
     @Test func shapeRegistry_enforcesLRUBound() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "shapes_lru_\(String.random(length: 12)).sqlite")
         var config = Lattice.Configuration(fileURL: url)
         config.resultsTuning.maxCachedShapes = 8

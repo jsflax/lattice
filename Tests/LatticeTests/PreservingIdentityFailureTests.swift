@@ -9,7 +9,7 @@ import Testing
 @Suite("Checked identity-preserving inserts", .serialized)
 struct PreservingIdentityFailureTests {
     @Test func duplicateIdentityThrowsAndRollsBackEarlierWritesWithoutTrapping() throws {
-        let path = FileManager.default.temporaryDirectory.appending(path: "preserving-identity-\(UUID()).lattice")
+        let path = testTemporaryDirectory.appending(path: "preserving-identity-\(UUID()).lattice")
         let db = try Lattice(PreservingIdentityItem.self, configuration: .init(fileURL: path))
         defer { db.close(); try? Lattice.delete(for: .init(fileURL: path)) }
         let id = UUID(), first = PreservingIdentityItem(); first.value = 7

@@ -10,7 +10,7 @@ import LatticeMCP
 final class LatticeMCPPoolTests {
 
     private func makeDB() throws -> URL {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "mcppool_\(UUID().uuidString).sqlite")
         let l = try Lattice(DynPerson.self, DynDog.self, configuration: .init(fileURL: url))
         let p = DynPerson(); p.name = "Ada"; p.age = 42
@@ -55,7 +55,7 @@ final class LatticeMCPPoolTests {
 
     // An empty / non-SQLite file is rejected cleanly (must not hang the call).
     @Test func testEmptyFileErrors() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "mcpempty_\(UUID().uuidString).lattice")
         try Data().write(to: url)                 // 0-byte file
         defer { try? FileManager.default.removeItem(at: url) }

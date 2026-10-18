@@ -11,7 +11,7 @@ import Foundation
 struct RelayCheckpointGovernorTests {
 
     private func tempStore() throws -> (lattice: Lattice, path: String, cleanup: () -> Void) {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = testTemporaryDirectory
             .appendingPathComponent("governor-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("channel.sqlite")

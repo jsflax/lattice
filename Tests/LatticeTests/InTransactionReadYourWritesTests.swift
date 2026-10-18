@@ -35,7 +35,7 @@ private struct TxnRywAbort: Error {}
 class InTransactionReadYourWritesTests: BaseTest {
 
     private func makeFileLattice() throws -> (lattice: Lattice, url: URL) {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "txn_ryw_\(String.random(length: 12)).sqlite")
         let lattice = try Lattice(TxnRywItem.self, configuration: .init(fileURL: url))
         return (lattice, url)

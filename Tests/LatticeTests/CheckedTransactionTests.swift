@@ -15,7 +15,7 @@ import CLatticeTestSQLite
 @Suite("Checked transactions", .serialized)
 struct CheckedTransactionTests {
     private func database() throws -> (Lattice, URL) {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appendingPathComponent("checked-txn-\(UUID().uuidString).sqlite")
         let db = try Lattice(CheckedTransactionItem.self, CheckedTransactionListOwner.self,
                              configuration: .init(fileURL: url, busyTimeoutMs: 100))

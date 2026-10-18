@@ -67,6 +67,7 @@ jobs:
           {
             echo "WRAPPER_JOB_ROOT=$WRAPPER_JOB_ROOT"
             echo "TMPDIR=$TMPDIR"
+            echo "LATTICE_TEST_TMPDIR=$WRAPPER_JOB_ROOT/tmp"
             echo "TMP=$TMP"
             echo "TEMP=$TEMP"
             echo "CLANG_MODULE_CACHE_PATH=$WRAPPER_JOB_ROOT/module-cache"

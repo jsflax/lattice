@@ -23,7 +23,7 @@ class SyncTuningTests: BaseTest {
         b.chunkSize = 2
         #expect(a != b)
 
-        var c1 = Lattice.Configuration(fileURL: FileManager.default.temporaryDirectory.appending(path: "tuned-eq.sqlite"))
+        var c1 = Lattice.Configuration(fileURL: testTemporaryDirectory.appending(path: "tuned-eq.sqlite"))
         var c2 = c1
         c1.syncTuning = a
         #expect(c1 != c2)
@@ -32,7 +32,7 @@ class SyncTuningTests: BaseTest {
     }
 
     @Test func tunedLattice_opensAndWrites() throws {
-        let path = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
+        let path = testTemporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: path)) }
         let config = Lattice.Configuration(
             fileURL: path,
@@ -51,8 +51,8 @@ class SyncTuningTests: BaseTest {
 @Suite("Sync Tuning Frame Tests", .serialized)
 actor SyncTuningFrameTests {
     let server: TestSyncServer
-    let serverURL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 24)).sqlite")
-    let clientURL = FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 24)).sqlite")
+    let serverURL = testTemporaryDirectory.appending(path: "\(String.random(length: 24)).sqlite")
+    let clientURL = testTemporaryDirectory.appending(path: "\(String.random(length: 24)).sqlite")
 
     init() async throws {
         lattice_set_log_level(lattice.log_level.warn)

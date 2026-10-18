@@ -12,7 +12,7 @@ import Testing
 @Suite("Scalar grouped counts", .serialized)
 struct GroupedCountTests {
     private func withStore(_ body: (Lattice) throws -> Void) throws {
-        let directory = FileManager.default.temporaryDirectory
+        let directory = testTemporaryDirectory
             .appendingPathComponent("group-count-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let config = Lattice.Configuration(fileURL: directory.appendingPathComponent("store.sqlite"))

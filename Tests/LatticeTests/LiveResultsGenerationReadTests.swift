@@ -72,7 +72,7 @@ class LiveResultsGenerationReadTests: BaseTest {
     // MARK: T2b — cross-handle read-your-writes (MainActor-created handles)
 
     @Test @MainActor func t2b_crossHandleReadYourWrites_mainActor() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "t2b_main_\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         let (a, b) = try twoHandles(url)
@@ -109,7 +109,7 @@ class LiveResultsGenerationReadTests: BaseTest {
     // MARK: T2b — cross-handle read-your-writes (nonisolated handles)
 
     @Test func t2b_crossHandleReadYourWrites_nonisolated() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "t2b_noniso_\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         let (a, b) = try twoHandles(url)
@@ -136,7 +136,7 @@ class LiveResultsGenerationReadTests: BaseTest {
     // Darwin-only: asserts render-batch PIN semantics (see T3/T8 note above).
     #if canImport(Darwin)
     @Test @MainActor func t2b_crossThreadWrite_visibleAtNextBatchBoundary() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "t2b_thread_\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         let (a, b) = try twoHandles(url)
@@ -371,7 +371,7 @@ class LiveResultsGenerationReadTests: BaseTest {
     // MARK: Close / delete while generations live (§4.6)
 
     @Test func closeWhileGenerationsLive_readsServeEmptyNeverTrap() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "close_live_\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         let lattice = try Lattice(Gen5Item.self, configuration: .init(fileURL: url))
@@ -395,7 +395,7 @@ class LiveResultsGenerationReadTests: BaseTest {
     }
 
     @Test func deleteWhileGenerationsLive_readsServeEmptyNeverTrap() throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "delete_live_\(String.random(length: 12)).sqlite")
         let config = Lattice.Configuration(fileURL: url)
         let lattice = try Lattice(Gen5Item.self, configuration: config)
@@ -438,7 +438,7 @@ extension LiveResultsGenerationReadTests {
     /// The §3.6 latch: after retireAllGenerations(), accesses must not
     /// re-pin keepers until resumeGenerations().
     @Test func retireAll_isALatch_untilResume() throws {
-        let path = FileManager.default.temporaryDirectory.appending(path: "latch_\(String.random(length: 12)).sqlite")
+        let path = testTemporaryDirectory.appending(path: "latch_\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: path)) }
         let lattice = try Lattice(Gen5Item.self, configuration: .init(fileURL: path))
         try lattice.add({ let it = Gen5Item(); it.name = "a"; return it }())

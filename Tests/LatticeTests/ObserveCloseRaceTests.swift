@@ -240,7 +240,7 @@ private actor LatticeOwner {
     private var token: AnyCancellable?
 
     func open(path: String) throws {
-        let url = FileManager.default.temporaryDirectory.appending(path: path)
+        let url = testTemporaryDirectory.appending(path: path)
         self.lattice = try Lattice(
             for: [Person.self],
             configuration: .init(fileURL: url))

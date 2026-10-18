@@ -39,7 +39,7 @@ struct FloorHonestyTests {
     @Test("the ledger detects a durable-head regression and attributes it; a clean boot stays unsuspected")
     func ledgerRegression() throws {
         DurableHeadLedger.shared._reset()
-        let dir = FileManager.default.temporaryDirectory
+        let dir = testTemporaryDirectory
             .appendingPathComponent("ledger-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -80,7 +80,7 @@ struct FloorHonestyTests {
     func governorFeedsLedger() throws {
         RelayCheckpointGovernor.shared._reset()
         DurableHeadLedger.shared._reset()
-        let dir = FileManager.default.temporaryDirectory
+        let dir = testTemporaryDirectory
             .appendingPathComponent("ledger-gov-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }

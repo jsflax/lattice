@@ -432,12 +432,12 @@ class GeoboundsTests: BaseTest {
     func test_List_GeoBounds_Persistence() async throws {
         let path = "\(String.random(length: 32)).sqlite"
         defer {
-            try? Lattice.delete(for: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
+            try? Lattice.delete(for: .init(fileURL: testTemporaryDirectory.appending(path: path)))
         }
 
         // Create and populate
         try autoreleasepool {
-            let lattice = try Lattice(Route.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
+            let lattice = try Lattice(Route.self, configuration: .init(fileURL: testTemporaryDirectory.appending(path: path)))
             let route = Route()
             route.name = "Test Route"
             try lattice.add(route)
@@ -450,7 +450,7 @@ class GeoboundsTests: BaseTest {
 
         // Reopen and verify
         try autoreleasepool {
-            let lattice = try Lattice(Route.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: path)))
+            let lattice = try Lattice(Route.self, configuration: .init(fileURL: testTemporaryDirectory.appending(path: path)))
             let routes = lattice.objects(Route.self).snapshot()
             #expect(routes.count == 1)
 
@@ -530,7 +530,7 @@ class GeoboundsTests: BaseTest {
     func test_GeoBounds_ReopenWithoutMigration() async throws {
         // Test that reopening a database with geo_bounds doesn't unnecessarily repopulate rtrees
         let uniquePath = "geobounds_reopen_\(String.random(length: 16)).sqlite"
-        let fileURL = FileManager.default.temporaryDirectory.appending(path: uniquePath)
+        let fileURL = testTemporaryDirectory.appending(path: uniquePath)
         defer {
             try? Lattice.delete(for: .init(fileURL: fileURL))
         }

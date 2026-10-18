@@ -182,7 +182,7 @@ private final class RelayHarness: @unchecked Sendable {
     ) async throws {
         let diagnostics = RelayHarnessDiagnostics.make()
         self.diagnostics = diagnostics
-        storageURL = FileManager.default.temporaryDirectory
+        storageURL = testTemporaryDirectory
             .appending(path: "relay-harness-\(String.random(length: 12))")
         var env = try Environment.detect()
         env.arguments = ["vapor"]
@@ -226,7 +226,7 @@ private final class RelayHarness: @unchecked Sendable {
     init(wrapperWithSchema schema: [any Lattice.Model.Type]) async throws {
         let diagnostics = RelayHarnessDiagnostics.make()
         self.diagnostics = diagnostics
-        storageURL = FileManager.default.temporaryDirectory
+        storageURL = testTemporaryDirectory
             .appending(path: "relay-harness-\(String.random(length: 12))")
         var env = try Environment.detect()
         env.arguments = ["vapor"]

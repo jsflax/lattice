@@ -91,7 +91,7 @@ class LiveResultsCrossProcessBeltTests: BaseTest {
     // MARK: T4 — belt ON: foreign commit fresh within the interval
 
     @Test func t4_beltOn_foreignCommitFreshWithinInterval() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "belt_on_\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         var config = Lattice.Configuration(fileURL: url)
@@ -140,7 +140,7 @@ class LiveResultsCrossProcessBeltTests: BaseTest {
     // MARK: T4 — belt OFF: foreign commit stays stale (no notifier, no TTL)
 
     @Test func t4_beltOff_foreignCommitStaysStale() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "belt_off_\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         var config = Lattice.Configuration(fileURL: url)
@@ -175,7 +175,7 @@ class LiveResultsCrossProcessBeltTests: BaseTest {
     // MARK: T4 — amortization: ≤ 1 PRAGMA per interval
 
     @Test func t4_belt_probesAtMostOncePerInterval() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "belt_budget_\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         var config = Lattice.Configuration(fileURL: url)

@@ -321,7 +321,7 @@ struct RelayIngressRegistrationTests {
         diagnostics.mark(.testEntered)
         defer { diagnostics.finish() }
         do {
-        let directory = FileManager.default.temporaryDirectory
+        let directory = testTemporaryDirectory
             .appending(path: "relay-ingress-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var mayRemoveDirectory = true

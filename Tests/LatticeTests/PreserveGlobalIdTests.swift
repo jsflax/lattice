@@ -17,8 +17,8 @@ final class TestMemory {
     @Test func addWithPreservedGlobalId() throws {
         // Distinct temp paths: the A/B pair must be two separate stores (in-memory
         // previously guaranteed this via the bridge's skip-cache; files need distinct paths).
-        let latticeA = try Lattice(TestMemory.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
-        let latticeB = try Lattice(TestMemory.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
+        let latticeA = try Lattice(TestMemory.self, configuration: .init(fileURL: testTemporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
+        let latticeB = try Lattice(TestMemory.self, configuration: .init(fileURL: testTemporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
 
         // Add to lattice A
         let original = TestMemory(content: "test memory", project: "proj")
@@ -39,7 +39,7 @@ final class TestMemory {
     }
 
     @Test func addWithPreservedGlobalId_differentFromGenerated() throws {
-        let lattice = try Lattice(TestMemory.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
+        let lattice = try Lattice(TestMemory.self, configuration: .init(fileURL: testTemporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
 
         let specificId = UUID()
         let obj = TestMemory(content: "specific id", project: "test")
@@ -49,7 +49,7 @@ final class TestMemory {
     }
 
     @Test func addWithoutPreservedGlobalId_generatesNew() throws {
-        let lattice = try Lattice(TestMemory.self, configuration: .init(fileURL: FileManager.default.temporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
+        let lattice = try Lattice(TestMemory.self, configuration: .init(fileURL: testTemporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite")))
 
         let obj = TestMemory(content: "auto id", project: "test")
         try lattice.add(obj)

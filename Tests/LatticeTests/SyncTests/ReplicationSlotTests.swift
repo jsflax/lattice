@@ -15,9 +15,9 @@ import Vapor
 
 @Suite("Replication Slot Tests")
 actor ReplicationSlotTests {
-    let sourceURL = FileManager.default.temporaryDirectory
+    let sourceURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let targetURL = FileManager.default.temporaryDirectory
+    let targetURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     var sourceConfig: Lattice.Configuration
     var targetConfig: Lattice.Configuration
@@ -165,7 +165,7 @@ actor ReplicationSlotTests {
     @Test(.timeLimit(.minutes(5)))
     func test_safeCompact_noSlots_returnsNegativeOne() async throws {
         // Standalone lattice — no IPC, no sync, no replication slots
-        let standaloneURL = FileManager.default.temporaryDirectory
+        let standaloneURL = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
         let standalone = try Lattice(IPCNote.self, configuration: .init(fileURL: standaloneURL))
         defer { try? Lattice.delete(for: .init(fileURL: standaloneURL)) }
@@ -269,7 +269,7 @@ actor ReplicationSlotTests {
     @Test(.timeLimit(.minutes(5)))
     func test_EventsAfter_GlobalId_Roundtrip() async throws {
         // Create a Lattice and add some objects so we have audit log entries
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "\(String.random(length: 30)).sqlite")
         let config = Lattice.Configuration(fileURL: url)
         let lattice = try Lattice(SimpleSyncObject.self, configuration: config)

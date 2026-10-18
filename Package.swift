@@ -76,6 +76,7 @@ let package = Package(
             name: "CLatticeTestSQLite",
             path: "Tests/CLatticeTestSQLite",
             providers: [.apt(["libsqlite3-dev"]), .brew(["sqlite3"])]),
+        .target(name: "LatticeTestSupport", path: "Tests/LatticeTestSupport"),
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .macro(
@@ -102,6 +103,7 @@ let package = Package(
             name: "LatticeTests",
             dependencies: [
                 "CLatticeTestSQLite",
+                "LatticeTestSupport",
                 "Lattice",
                 "LatticeMCP",
                 "LatticeServerKit",
@@ -124,7 +126,7 @@ let package = Package(
         // absent (LATTICE_CONFORMANCE_DIR overrides the default sibling path).
         .testTarget(
             name: "LatticeConformanceTests",
-            dependencies: ["Lattice"],
+            dependencies: ["Lattice", "LatticeTestSupport"],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         .target(

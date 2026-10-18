@@ -159,7 +159,7 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
         self.ackPathRecorder = ackPathRecorder
         self.channelId = channelId
         self.channelFileName = "\(channelId).sqlite"
-        storageURL = FileManager.default.temporaryDirectory
+        storageURL = testTemporaryDirectory
             .appending(path: "busy-forensics-\(String.random(length: 12))")
         try FileManager.default.createDirectory(at: storageURL, withIntermediateDirectories: true)
         var env = try Environment.detect()
@@ -265,8 +265,7 @@ private func seedSummary(_ url: URL, count: Int) throws -> (count: Int, tail: UU
 /// — exactly what a client uploads for a single new row.
 private func makeUploadEntries(donorPath: String, value: Int) throws -> [AuditLog] {
     let donor = try Lattice(for: [SimpleSyncObject.self],
-                            configuration: .init(fileURL: FileManager.default
-                                .temporaryDirectory.appending(path: donorPath)))
+                            configuration: .init(fileURL: testTemporaryDirectory.appending(path: donorPath)))
     let before = Array(donor.eventsAfter(globalId: nil)).last?.globalId
     try donor.add(SimpleSyncObject(value: value, floatValue: Float(value)))
     return Array(donor.eventsAfter(globalId: before))
@@ -276,8 +275,7 @@ private func makeUploadEntries(donorPath: String, value: Int) throws -> [AuditLo
 /// (apply_remote_changes commits in chunks of 50).
 private func makeUploadEntries(donorPath: String, count: Int) throws -> [AuditLog] {
     let donor = try Lattice(for: [SimpleSyncObject.self],
-                            configuration: .init(fileURL: FileManager.default
-                                .temporaryDirectory.appending(path: donorPath)))
+                            configuration: .init(fileURL: testTemporaryDirectory.appending(path: donorPath)))
     try donor.add(contentsOf: (0..<count).map { SimpleSyncObject(value: $0, floatValue: Float($0)) })
     return Array(donor.eventsAfter(globalId: nil))
 }
@@ -403,7 +401,7 @@ final class BusySafeApplyForensicsTests: BaseTest {
     /// budget for every later aliased handle (which is why the observer-push
     /// watcher open uses the same policy).
     @Test func relayOpensChannelStoresWithABoundedBusyBudget() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "alias-\(String.random(length: 12)).sqlite")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 

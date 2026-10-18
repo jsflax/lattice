@@ -65,7 +65,7 @@ private func _runT1ChildWorkload(storage: String) async throws {
     case "namedmemory":
         config = .init(storage: .memory(named: "t1_shared_\(String.random(length: 12))"))
     default:
-        let url = FileManager.default.temporaryDirectory
+        let url = testTemporaryDirectory
             .appending(path: "t1_watchdog_\(String.random(length: 12)).sqlite")
         config = .init(fileURL: url)
     }
@@ -234,7 +234,7 @@ struct LiveResultsTrapWatchdogTests {
                 env.removeValue(forKey: key)
             }
             child.environment = env
-            let logURL = FileManager.default.temporaryDirectory
+            let logURL = testTemporaryDirectory
                 .appending(path: "t1_child_\(storage)_\(String.random(length: 8)).log")
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
             let logHandle = try FileHandle(forWritingTo: logURL)

@@ -83,11 +83,11 @@ struct SyncFilterTests {
 @Suite("Filtered Sync Tests", .serialized)
 actor FilteredSyncTests {
     let server: TestSyncServer
-    let serverLatticeURL = FileManager.default.temporaryDirectory
+    let serverLatticeURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let senderURL = FileManager.default.temporaryDirectory
+    let senderURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
-    let receiverURL = FileManager.default.temporaryDirectory
+    let receiverURL = testTemporaryDirectory
         .appending(path: "\(String.random(length: 30)).sqlite")
     var port: Int = 0
     var sender: Lattice!

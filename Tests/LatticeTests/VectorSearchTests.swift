@@ -495,9 +495,9 @@ class Vec0OrphanTests: BaseTest {
     /// This is the production path for cross-device deletes.
     @Test func test_ipcSyncDelete_leaves_vec0OrphanRowids() async throws {
         // Two DBs: local writes, synced receives from cloud and IPC-syncs back
-        let localPath = FileManager.default.temporaryDirectory
+        let localPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32))-local.sqlite")
-        let syncedPath = FileManager.default.temporaryDirectory
+        let syncedPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32))-synced.sqlite")
 
         // Configure synced DB with IPC (this is the production setup)
@@ -586,7 +586,7 @@ class Vec0OrphanTests: BaseTest {
 
     @Test func test_multiConnection_deleteLeaves_vec0OrphanRowids() async throws {
         // Simulate production: connection A writes, connection B deletes.
-        let path = FileManager.default.temporaryDirectory
+        let path = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         let connA = try Lattice(Document.self, configuration: .init(fileURL: path))
@@ -634,9 +634,9 @@ class Vec0OrphanTests: BaseTest {
     /// This inserts vec0 entries for synced-only memories that don't exist in
     /// the local Memory table, creating permanent orphans.
     @Test func test_attachedLattice_reconcileCreatesOrphans() async throws {
-        let localPath = FileManager.default.temporaryDirectory
+        let localPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
-        let syncedPath = FileManager.default.temporaryDirectory
+        let syncedPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         let local = try Lattice(Document.self, configuration: .init(fileURL: localPath))
@@ -776,7 +776,7 @@ class Vec0LockStormTests: BaseTest {
         Lattice.setLogLevel(.debug)
         let logURL = ProcessInfo.processInfo.environment["LATTICE_PERF_TEST_LOG_PATH"]
             .map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.temporaryDirectory.appendingPathComponent("lattice_swift_perf_tests.log")
+            ?? testTemporaryDirectory.appendingPathComponent("lattice_swift_perf_tests.log")
         try? FileManager.default.removeItem(at: logURL)
         Lattice.setLogFile(logURL)
         let lattice = try testLattice(Document.self)
@@ -1162,7 +1162,7 @@ class Vec0LockStormTests: BaseTest {
     /// Simulate the reconcile path: open a DB where model has more rows than vec0.
     /// This happens when IPC sync inserts model rows on another connection.
     @Test func test_ReconcileAfterIVFTraining() async throws {
-        let path = FileManager.default.temporaryDirectory
+        let path = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         // Phase 1: create DB with 50 docs + IVF training
@@ -1207,7 +1207,7 @@ class Vec0LockStormTests: BaseTest {
 
     /// Same as above but insert extra rows via raw SQL to simulate IPC sync gap
     @Test func test_ReconcileWithGapAfterIVFTraining() async throws {
-        let path = FileManager.default.temporaryDirectory
+        let path = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
         // Phase 1: create DB with 50 docs + IVF training
@@ -1338,12 +1338,12 @@ class Vec0LockStormTests: BaseTest {
     /// This is the root cause of the Engram MCP SIGTRAP during update tool calls
     /// when the server uses attaching() for synced projects.
     @Test func test_attachedObject_embeddingWrite_doesNotCrash() async throws {
-        let localPath = FileManager.default.temporaryDirectory
+        let localPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
-        let syncedPath = FileManager.default.temporaryDirectory
+        let syncedPath = testTemporaryDirectory
             .appending(path: "\(String.random(length: 32)).sqlite")
 
-        let logPath = FileManager.default.temporaryDirectory
+        let logPath = testTemporaryDirectory
             .appending(path: "attached-vec0-crash.log")
         Lattice.setLogLevel(.debug)
         Lattice.setLogFile(logPath)

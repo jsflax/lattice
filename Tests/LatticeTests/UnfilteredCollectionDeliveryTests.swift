@@ -100,7 +100,7 @@ struct UnfilteredCollectionDeliveryTests {
 }
 
 private func makeUnfilteredDeliveryConfiguration() -> Lattice.Configuration {
-    .init(fileURL: FileManager.default.temporaryDirectory
+    .init(fileURL: testTemporaryDirectory
         .appending(path: "unfiltered-delivery-\(UUID().uuidString).sqlite"))
 }
 
