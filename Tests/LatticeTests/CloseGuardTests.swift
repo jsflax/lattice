@@ -104,6 +104,54 @@ final class CloseGuardTests: BaseTest {
         #expect(lattice.objects(Person.self).count == 0)
     }
 
+    @Test func test_CloseEvictsCoordinatorRemintedBeforeNativeClose() throws {
+        let lattice = try testLattice(path: "\(String.random(length: 32)).sqlite", Person.self)
+        try seed(lattice, ["John", "Jane", "Tim"])
+        let results = lattice.objects(Person.self)
+        #expect(results.count == 3)
+        var reminted: GenerationCoordinator?
+
+        lattice._close { backend in
+            // Deterministically run the racing reader after initial eviction.
+            #expect(results.count == 3)
+            reminted = GenerationCoordinatorRegistry.existingCoordinator(identityHash: backend.identityHash)
+            #expect(reminted != nil)
+            backend.close()
+        }
+
+        #expect(GenerationCoordinatorRegistry.existingCoordinator(identityHash: lattice.backend.identityHash) == nil)
+        // Retaining the removed coordinator must not let either facade reuse
+        // its pre-close count. Reads already overlapping close may finish.
+        withExtendedLifetime(reminted) {
+            #expect(results.count == 0)
+            #expect(lattice.objects(Person.self).count == 0)
+            #expect(results.snapshot().isEmpty)
+        }
+    }
+
+    @Test func test_DeleteEvictsCoordinatorRemintedBeforeNativeClose() throws {
+        let config = Lattice.Configuration(fileURL: testTemporaryDirectory.appending(path: "\(String.random(length: 32)).sqlite"))
+        let lattice = try Lattice(Person.self, configuration: config)
+        try seed(lattice, ["John", "Jane", "Tim"])
+        let results = lattice.objects(Person.self)
+        #expect(results.count == 3)
+        var reminted: GenerationCoordinator?
+
+        try Lattice._delete(for: config) { backend in
+            #expect(results.count == 3)
+            reminted = GenerationCoordinatorRegistry.existingCoordinator(identityHash: backend.identityHash)
+            #expect(reminted != nil)
+            backend.close()
+        }
+
+        #expect(GenerationCoordinatorRegistry.existingCoordinator(identityHash: lattice.backend.identityHash) == nil)
+        withExtendedLifetime(reminted) {
+            #expect(results.count == 0)
+            #expect(lattice.objects(Person.self).count == 0)
+            #expect(results.snapshot().isEmpty)
+        }
+    }
+
     /// Hammer reads on a background thread while the owning thread closes the
     /// handle. The close() refcount drain must let any in-flight read finish on
     /// a live connection before `db_`/`read_db_` are reset — no SIGSEGV.
