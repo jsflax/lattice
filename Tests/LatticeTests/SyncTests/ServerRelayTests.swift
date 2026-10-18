@@ -413,6 +413,7 @@ final class ServerRelayTests: BaseTest {
     // MARK: Write policy
 
     @Test func writePolicyRejectsDisallowedOperationWhole() async throws {
+        let setupCompletions = RelaySetupCompletions()
         let policy = SyncWritePolicy(allowedOperations: [
             "SimpleSyncObject": [.insert, .update],
         ])
@@ -420,11 +421,17 @@ final class ServerRelayTests: BaseTest {
             path: ["sync", "group", ":groupID"],
             schema: [SimpleSyncObject.self],
             writePolicy: policy,
+            onSetupFinished: { setupCompletions.noteFinished() },
             channelExtractor: groupExtractor)
         defer { Task { [harness] in await harness.shutdown() } }
 
         let a = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
         let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+
+        // Client upgrade precedes server setup and initial catch-up. Finish
+        // both empty catch-ups before seeding the no-fanout baseline.
+        let setupsReady = await a.wait { _ in setupCompletions.count == 2 }
+        try #require(setupsReady)
 
         // INSERT passes.
         let donor = try testLattice(SimpleSyncObject.self)
