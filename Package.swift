@@ -54,8 +54,8 @@ let package = Package(
         // eligible, and rechecks live replication slots before an atomic repair.
         // 2.1.0 supplies the checked uncached constructor used by independent
         // reference resolution, plus statement-lifetime and commit-delivery fixes.
-        // 2.2.0 supplies the scalar grouped-count bridge used below.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.2.0"),
+        // 2.2.1 supplies the scalar grouped-count bridge with closed-store errors.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.2.1"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",

@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.2.0] - Unreleased
+## [2.2.0] - 2026-10-18
 
 ### Added
 - Add throwing `TableResults.groupedCounts(by:)` for stored String columns.
@@ -12,7 +12,8 @@
   capabilities rather than reporting an empty successful result.
 
 ### Changed
-- Require released LatticeCore 2.2.0 for the scalar grouped-count bridge.
+- Require released LatticeCore 2.2.1 for the scalar grouped-count bridge
+  with explicit closed-store errors.
   Rebuild native and Swift bridge consumers together. Store schemas, existing
   group queries and the owned MCP SDK requirement remain unchanged.
 - Keep hosted source, build, temporary, log and evidence outputs under localdev,
