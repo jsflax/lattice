@@ -179,7 +179,9 @@ final class LockedBox<T>: @unchecked Sendable {
 
 class BaseTest {
     private static let logFile: UnsafeMutablePointer<FILE>? = {
-        let f = fopen("/tmp/lattice_swift_tests.log", "w")
+        let path = ProcessInfo.processInfo.environment["LATTICE_TEST_LOG_PATH"]
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("lattice_swift_tests.log").path
+        let f = fopen(path, "w")
         if let f {
             Lattice.setLogFile(f)
         }

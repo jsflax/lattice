@@ -255,10 +255,11 @@ def match_committed_locks(current, committed):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--workspace", required=True, type=Path)
     parser.add_argument("--phase", required=True, choices=PHASES)
     parser.add_argument("--evidence-dir", required=True, type=Path)
     args = parser.parse_args()
-    workspace = Path(os.environ["GITHUB_WORKSPACE"])
+    workspace = args.workspace
     if not workspace.is_absolute() or not args.evidence_dir.is_absolute():
         parser.error("Workspace and evidence directory must be absolute")
     destination = args.evidence_dir / args.phase

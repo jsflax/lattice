@@ -1067,6 +1067,35 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         return TableResults(_lattice, whereStatement: combined, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: groupByColumn, distinctByColumn: distinctByColumn)
     }
 
+    /// One live, coherent scalar query on this lattice's current read route.
+    /// No model instances or payload columns are fetched. With `distinct`,
+    /// keys are selected from one representative per distinct value, then each
+    /// count independently deduplicates all filtered rows matching its key.
+    /// Like `group(by:)`, the representative is unspecified for conflicting
+    /// copies; a different query plan can select a different key. Counts may
+    /// overlap between groups rather than partitioning the representatives.
+    /// Ordering is unspecified; callers can sort the returned scalar keys.
+    /// This does not reuse a generation cache and sees own transaction writes.
+    public func groupedCounts(by keyPath: KeyPath<Element, String>) throws -> [GroupedCount] {
+        let column = Element._nameForKeyPath(keyPath)
+        let columns = Set(Element.properties.map(\.0)).union(["id", "globalId"])
+        guard boundsConstraint == nil, groupByColumn == nil, _fetchLimit == nil,
+              columns.contains(column), distinctByColumn.map(columns.contains) ?? true,
+              let backend = _lattice.backend as? any GroupedCountBackend else {
+            throw Lattice.Error.databaseError("Unsupported grouped count query")
+        }
+        let descriptor = _descriptor
+        // Retain the existing memory-store gate and explicit-transaction
+        // carve-out. Capture errors before leaving the querying thread.
+        return try _gatedLiveRead {
+            Result {
+                try backend.groupedCounts(table: Element.entityName, groupBy: column,
+                                          where: descriptor.whereSQL, distinctBy: distinctByColumn,
+                                          params: descriptor.params)
+            }
+        }.get()
+    }
+
     public func group<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> TableResults<Element> {
         return TableResults(_lattice, whereStatement: whereStatement, sortStatement: sortStatement, boundsConstraint: boundsConstraint, groupByColumn: _name(for: keyPath), distinctByColumn: distinctByColumn)
     }

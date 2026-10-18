@@ -774,8 +774,11 @@ class Vec0LockStormTests: BaseTest {
     @Test(.timeLimit(.minutes(5)))
     func test_NearestCountPerformance() async throws {
         Lattice.setLogLevel(.debug)
-        try? FileManager.default.removeItem(at: URL(fileURLWithPath: "/tmp/lattice_swift_perf_tests.log"))
-        Lattice.setLogFile(URL(fileURLWithPath: "/tmp/lattice_swift_perf_tests.log"))
+        let logURL = ProcessInfo.processInfo.environment["LATTICE_PERF_TEST_LOG_PATH"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("lattice_swift_perf_tests.log")
+        try? FileManager.default.removeItem(at: logURL)
+        Lattice.setLogFile(logURL)
         let lattice = try testLattice(Document.self)
 
         let dims = 128
