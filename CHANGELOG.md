@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.2.1] - 2026-10-18
+
+### Fixed
+- Synchronize the relay write-policy regression with both initial empty-channel catch-ups before seeding its no-fanout baseline. Preserve strict rejection, unchanged peer-frame count and row-survival assertions.
+- Evict read caches recreated during native close or deletion, so subsequent reads through existing and new results return empty instead of a pre-close cached count.
+
 ## [2.2.0] - 2026-10-18
 
 ### Added

@@ -1204,7 +1204,13 @@ public struct Lattice {
         }
         withExtendedLifetime(retired) {
             for item in retired {
-                if let backend = item.backend { closeBackend(backend) }
+                if let backend = item.backend {
+                    let identityHash = backend.identityHash
+                    closeBackend(backend)
+                    // A read can remint this identity after the path-wide
+                    // eviction but before native close finishes.
+                    GenerationCoordinatorRegistry.evict(identityHash: identityHash)
+                }
             }
         }
 
@@ -1573,13 +1579,24 @@ public struct Lattice {
     /// Explicitly close all database connections and tear down the synchronizer.
     /// If a sibling instance exists for the same database, it will inherit sync responsibility.
     public func close() {
+        _close(closeBackend: { $0.close() })
+    }
+
+    /// Internal seam for the eviction-to-native-close interleaving, matching
+    /// the deletion seam without adding a production callback or lock.
+    internal func _close(closeBackend: (any LatticeBackend) -> Void) {
         // Item A §4.6: tear down this identity's generation coordinator
         // (invalidation hook, keeper holds, shape caches) before the backend
         // closes — the core close additionally retires its whole read pool
         // ahead of connection teardown; a reopened database mints a new
         // identityHash and a fresh coordinator.
-        GenerationCoordinatorRegistry.evict(identityHash: backend.identityHash)
-        backend.close()
+        let identityHash = backend.identityHash
+        GenerationCoordinatorRegistry.evict(identityHash: identityHash)
+        closeBackend(backend)
+        // Readers may have recreated a coordinator while native close was
+        // still pending. Facades reacquire their coordinator on every access;
+        // remove this last pre-close cache before close() returns.
+        GenerationCoordinatorRegistry.evict(identityHash: identityHash)
     }
 
     /// Retire every open read generation now (item A §3.6): force-COMMIT
