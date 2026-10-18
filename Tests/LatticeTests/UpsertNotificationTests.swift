@@ -109,11 +109,11 @@ final class UpsertNotificationTests: BaseTest {
         first.value = 1
         try lattice.add(first)
 
-        nonisolated(unsafe) var continuation: CheckedContinuation<Void, Never>?
+        let didObserveChange = LockedBox(false)
         let token = first.observe { _ in
-            continuation?.resume()
-            continuation = nil
+            didObserveChange.withLock { $0 = true }
         }
+        defer { token.cancel() }
 
         // Bulk batch colliding on key "a" plus a fresh row.
         let collide = UpsertNotify()
@@ -123,11 +123,14 @@ final class UpsertNotificationTests: BaseTest {
         fresh.key = "b"
         fresh.value = 9
 
-        await withCheckedContinuation { c in
-            continuation = c
-            try! lattice.add(contentsOf: [collide, fresh])
+        try lattice.add(contentsOf: [collide, fresh])
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while !didObserveChange.withLock({ $0 }), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
         }
-        token.cancel()
+        #expect(didObserveChange.withLock { $0 },
+                "Live object observer did not fire within 10 seconds after a bulk upsert UPDATE")
 
         #expect(first.value == 2,
                 "Live object did not refresh after a bulk upsert UPDATE (read \(first.value))")
