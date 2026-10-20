@@ -814,6 +814,10 @@ extension Lattice {
     ///     same-channel peers (delivery is the pump's job; on a watch mount
     ///     the only client frames are acks, and echoing every observer's ack
     ///     to every other observer is N² frames per commit).
+    ///   - initialSnapshot: Optional synchronous bootstrap for connections with
+    ///     no last-event-id parameter. Requires a deny-all observer mount.
+    ///     Capture rows and durable head in one transaction and return one
+    ///     bounded, detached frame. Reconnect handling is unchanged.
     ///   - channelExtractor: Maps the request to its `SyncChannel`
     @discardableResult
     public static func configureSyncRelay(
@@ -825,8 +829,15 @@ extension Lattice {
         handshake: SyncSchemaHandshake? = nil,
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
         observerPush: SyncObserverPush? = nil,
+        initialSnapshot: (@Sendable (Lattice) throws -> SyncInitialSnapshot)? = nil,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) -> SyncRelayHandle {
+        if initialSnapshot != nil {
+            guard let policy = writePolicy, case .deny = policy.unlistedTables,
+                  policy.allowedOperations.values.allSatisfy({ $0.isEmpty }), observerPush != nil else {
+                preconditionFailure("initialSnapshot requires a deny-all observer mount")
+            }
+        }
         let sockets = SocketManager()
         let ackPathRecorder = ACKPathDiagnostics.recorder(for: storageURL)
         let ingressHooks = RelayIngressTesting.hooks(for: storageURL)
@@ -1355,6 +1366,29 @@ extension Lattice {
                         // the catch block below releases a parked subscription.
                         if let fault = _catchUpFaultForTesting.withLockedValue({ $0 }) {
                             try fault(channel.id)
+                        }
+
+                        if let initialSnapshot, !SyncInitialSnapshot.hasLastEventID(in: req.url.query) {
+                            ackPath?.record(.catchUpReadBegin)
+                            let snapshot = try initialSnapshot(lattice)
+                            ackPath?.record(.catchUpReadEnd, count: snapshot.entryCount)
+                            guard !ws.isClosed, !state.revocation.isRevoked else {
+                                if let sub = state.pushSubscription { await watchManager?.unsubscribe(sub) }
+                                return
+                            }
+                            // One complete frame: never expose a page boundary as
+                            // completed bootstrap before the real head is sent.
+                            ackPath?.record(.catchUpSendBegin, bytes: snapshot.frame.count, count: snapshot.entryCount)
+                            await ws.send(ByteBuffer(data: snapshot.frame))
+                            ackPath?.record(.catchUpSendReturn)
+                            if let sub = state.pushSubscription {
+                                if state.revocation.isRevoked || ws.isClosed {
+                                    await watchManager?.unsubscribe(sub)
+                                } else {
+                                    await watchManager?.activate(sub, cursor: snapshot.boundary)
+                                }
+                            }
+                            return
                         }
 
                         let lastEventId = try? req.query.get(UUID?.self, at: "last-event-id")
