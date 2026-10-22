@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Copy Apple WebSocket binary transport bytes without invoking imported C++ collection witnesses, avoiding an iOS 26 startup crash when built with a newer toolchain. Text frames and send completion behavior are unchanged.
+
 ## [2.2.2] - 2026-10-22
 
 ### Fixed
