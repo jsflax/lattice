@@ -182,12 +182,12 @@ private func t1ChildProcessConfig(filter: String) -> (URL, [String])? {
     // the xcrun-xctest wrapper here is what re-ran the ENTIRE suite inside
     // the watchdog child on CI: the XCTest wrapper cannot filter
     // swift-testing tests.)
-    // Linux ONLY: SwiftPM's Linux test binary has the argument-parsing entry
+    // Linux ONLY: SwiftPM's .xctest and Swift Build's -test-runner have the argument-parsing entry
     // point, so a direct relaunch honors --filter. The macOS bundle binary
     // IGNORES unknown arguments and runs the ENTIRE suite (proven twice on
     // CI) — macOS must go through swiftpm-testing-helper or skip.
     #if os(Linux)
-    if args[0].hasSuffix(".xctest") {
+    if args[0].hasSuffix(".xctest") || args[0].hasSuffix("-test-runner") {
         return (
             URL(fileURLWithPath: args[0]),
             ["--filter", filter, "--testing-library", "swift-testing"]

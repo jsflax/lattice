@@ -17,8 +17,8 @@ jobs:
   linux:
     name: linux (${{ matrix.image }})
     runs-on: ubuntu-latest
-    # A known intermittent relay-test hang (pre-existing, tracked for 1.0
-    # item D) can wedge a run; fail fast and re-run instead of a 6h zombie.
+    # Keep the job budget for compilation/artifact upload. The unchanged test
+    # command has its own 15-minute diagnostic deadline; a hang remains a failure.
     timeout-minutes: 90
     strategy:
       # Never let an informational nightly failure cancel the release-gating
@@ -49,7 +49,7 @@ jobs:
         run: apt-get update && apt-get install -y git libsqlite3-dev sqlite3
 
       - name: Install consumer evidence tooling
-        run: apt-get install -y python3
+        run: apt-get install -y python3 gdb
 
       - &wrapper_checkout
         name: Fetch exact source into owned localdev directory
@@ -180,13 +180,20 @@ jobs:
         working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
         run: python3 Scripts/verify-wrapper-lock-integrity.py --workspace "$WRAPPER_JOB_ROOT/source" --phase before-test --evidence-dir "$WRAPPER_JOB_ROOT/consumer"
 
+      - name: Check suite watchdog fixtures
+        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
+        run: LATTICE_WATCHDOG_FIXTURE_ROOT="$WRAPPER_JOB_ROOT/tmp/watchdog-fixtures" python3 -B Scripts/test-linux-suite-watchdog.py -v
+
       - name: Test
         id: test
         env:
           LATTICE_ACK_PATH_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
           LATTICE_OBSERVER_WORKER_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
         working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
-        run: swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions
+        run: >-
+          python3 Scripts/linux-suite-watchdog.py --evidence "$WRAPPER_JOB_ROOT/consumer/linux-suite-watchdog"
+          --timeout-seconds 900 --
+          swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions
 
       - &after_test
         name: Capture and verify complete lock integrity after test

@@ -202,17 +202,20 @@ class CrossProcessChildRunner: XCTestCase {
 }
 
 /// Returns (executableURL, arguments) for spawning the child test process.
-/// Handles SPM on macOS (`swiftpm-testing-helper`), SPM on Linux (direct `.xctest` binary),
+/// Handles SPM on macOS (`swiftpm-testing-helper`), SPM on Linux (direct test binary),
 /// and Xcode (`xctest`) runners.
-private func childProcessConfig(filter: String = "crossProcessObservation") -> (URL, [String])? {
-    let args = ProcessInfo.processInfo.arguments
+private func childProcessConfig(
+    filter: String = "crossProcessObservation",
+    arguments args: [String] = ProcessInfo.processInfo.arguments
+) -> (URL, [String])? {
+    guard let executable = args.first else { return nil }
 
     // SPM (macOS): argv[0] is swiftpm-testing-helper, args include --test-bundle-path
-    if args[0].hasSuffix("swiftpm-testing-helper"),
+    if executable.hasSuffix("swiftpm-testing-helper"),
        let idx = args.firstIndex(of: "--test-bundle-path"), idx + 1 < args.count {
         let bundleBinary = args[idx + 1]
         return (
-            URL(fileURLWithPath: args[0]),
+            URL(fileURLWithPath: executable),
             [
                 "--test-bundle-path", bundleBinary,
                 "--filter", filter,
@@ -222,11 +225,12 @@ private func childProcessConfig(filter: String = "crossProcessObservation") -> (
         )
     }
 
-    // SPM (Linux): argv[0] is the .xctest binary itself, directly executable
-    if args[0].hasSuffix(".xctest"),
+    // SPM (Linux): both the native-build .xctest and Swift Build's -test-runner
+    // are direct executables with the same Swift Testing argument contract.
+    if (executable.hasSuffix(".xctest") || executable.hasSuffix("-test-runner")),
        args.contains("--testing-library") {
         return (
-            URL(fileURLWithPath: args[0]),
+            URL(fileURLWithPath: executable),
             ["--filter", filter, "--testing-library", "swift-testing"]
         )
     }
@@ -257,6 +261,25 @@ private func childProcessConfig(filter: String = "crossProcessObservation") -> (
     #endif
 
     return nil
+}
+
+@Suite("Cross-process runner discovery")
+struct CrossProcessRunnerDiscoveryTests {
+    @Test(arguments: ["LatticePackageTests.xctest", "LatticeTests-test-runner"])
+    func directSwiftPMRunnerPreservesTheChildFilter(_ name: String) throws {
+        let executable = "/fixture/\(name)"
+        let config = childProcessConfig(
+            filter: "crossProcessUpdateObservation",
+            arguments: [executable, "--testing-library", "swift-testing"]
+        )
+        let (url, arguments) = try #require(config)
+        #expect(url.path == executable)
+        #expect(arguments == ["--filter", "crossProcessUpdateObservation", "--testing-library", "swift-testing"])
+    }
+
+    @Test func missingExecutableHasNoChildConfiguration() {
+        #expect(childProcessConfig(arguments: []) == nil)
+    }
 }
 
 /// Spawns a child process (fire-and-forget from the caller's perspective).

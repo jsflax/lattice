@@ -244,19 +244,29 @@ public struct Lattice {
         private func performSend(_ message: lattice.transport_message) {
             guard let task = webSocketTask else { return }
 
-            let wsMessage: URLSessionWebSocketTask.Message
-            if message.msg_type == .text {
-                wsMessage = .string(String(message.as_string()))
-            } else {
-                let data = Data(message.data)
-                wsMessage = .data(data)
-            }
+            let wsMessage = Self.webSocketMessage(message)
 
             task.send(wsMessage) { [weak self] error in
                 if let error = error {
                     self?.triggerError(error.localizedDescription)
                 }
             }
+        }
+
+        /// Copy before the C++ transport callback returns. Do not ask an imported std::vector for
+        /// Swift Sequence/Collection witnesses: Data(vector) crashes in the witness accessor on
+        /// iOS 26 with a newer compiler, as it already did on aarch64 Linux (see NIOWebsocketClient).
+        internal static func webSocketMessage(_ message: lattice.transport_message) -> URLSessionWebSocketTask.Message {
+            if message.msg_type == .text {
+                return .string(String(message.as_string()))
+            }
+            let bytes = message.data
+            let count = Int(bytes.size())
+            var data = Data(capacity: count)
+            for index in 0..<count {
+                data.append(bytes[index])
+            }
+            return .data(data)
         }
 
         private func startReceiving() {
