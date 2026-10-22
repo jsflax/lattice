@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.2.2] - 2026-10-22
+
+### Fixed
+- Require LatticeCore 2.2.2 so receipt-table or receive-cursor setup failures
+  return no acknowledgement candidates and release the remote-apply flag.
+  Reentrant or overlapping applies cannot clear an active delivery's flag.
+- Carry the released Core version through the manifest, complete dependency
+  lock and strict upstream binding checks. Existing chunk retry and
+  committed-prefix acknowledgement/cursor handling are preserved.
+
 ## [2.2.1] - 2026-10-18
 
 ### Fixed
