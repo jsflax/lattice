@@ -1,9 +1,23 @@
 # Changelog
 
-## [2.2.3] - 2026-10-22
+## [2.2.4] - 2026-10-22
 
 ### Fixed
 - Copy Apple WebSocket binary transport bytes without invoking imported C++ collection witnesses, avoiding an iOS 26 startup crash when built with a newer toolchain. Text frames and send completion behavior are unchanged.
+
+## [2.2.3] - 2026-10-22
+
+### Fixed
+- Require LatticeCore 2.2.4 so the first vector result and count include
+  existing synced rows without reopening the store. Cold index creation,
+  repair and historical-row fill complete atomically and can retry after
+  a failed setup on the same connection.
+- Include Core 2.2.3's atomic union-schema migration: preserve parent and
+  custom triggers, and refuse unsafe view or foreign-key rewrites without
+  losing stored data.
+- Keep the complete dependency lock and strict upstream binding checks in
+  sync with the released Core version. Add fresh-store Swift IPC coverage
+  for the first vector result and count.
 
 ## [2.2.2] - 2026-10-22
 
