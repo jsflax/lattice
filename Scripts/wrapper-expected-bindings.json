@@ -4,8 +4,8 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "829ee40e0dc04a00ca42182d382bb0074caa05b0",
-      "version": "2.2.2"
+      "revision": "89e758ba4e9710596afe569ebd1817ada0dc3162",
+      "version": "2.2.4"
     },
     {
       "identity": "swift-sdk",
@@ -19,13 +19,13 @@
   "qualificationScope": "upstream-release-source-joins-only",
   "qualified": true,
   "releaseEvidence": {
-    "receiptSHA256": "a32c891c8cd5d103c8001278bd1b1a3cb9d55c9c7608f5b3b14414ef36b9f3a3",
+    "receiptSHA256": "ee009a1169b3e4bdbc276930fa1f611fa838cd8e55820c492d5121b7303d2f65",
     "releases": [
       {
-        "commit": "829ee40e0dc04a00ca42182d382bb0074caa05b0",
-        "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.2.2",
+        "commit": "89e758ba4e9710596afe569ebd1817ada0dc3162",
+        "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.2.4",
         "repository": "https://github.com/jsflax/LatticeCore",
-        "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.2.2"
+        "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.2.4"
       },
       {
         "commit": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
@@ -34,7 +34,8 @@
         "tagURL": "https://github.com/jsflax/swift-sdk/tree/0.13.0"
       }
     ],
-    "scope": "Observed upstream tag/source joins; receipt is not a runtime file dependency."
+    "scope": "Observed upstream tag/source joins. The current receipt authenticates Core 2.2.4; the previous receipt retains the unchanged Swift SDK 0.13.0 join. Receipts are evidence, not runtime dependencies.",
+    "previousReceiptSHA256": "a32c891c8cd5d103c8001278bd1b1a3cb9d55c9c7608f5b3b14414ef36b9f3a3"
   },
   "schema": "lattice.wrapper-dependency-bindings/1",
   "status": "UPSTREAM_RELEASE_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",

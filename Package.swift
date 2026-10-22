@@ -57,7 +57,9 @@ let package = Package(
         // 2.2.1 supplies the scalar grouped-count bridge with closed-store errors.
         // 2.2.2 contains remote-apply setup failures and preserves the active
         // delivery's applying flag across reentrant or overlapping calls.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.2.2"),
+        // 2.2.4 initializes cold vector indexes atomically so first vector reads
+        // include synced rows without reopening the store.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.2.4"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
