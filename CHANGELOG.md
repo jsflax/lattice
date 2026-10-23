@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.2.5] - 2026-10-23
+
+### Fixed
+- Require LatticeCore 2.2.8 so existing dependency locks also receive vector
+  reads during writer contention, cross-connection vector readiness invalidation,
+  and rejection of malformed sync changes before apply, acknowledgement or
+  receive-cursor advancement.
+- Update the complete dependency lock and upstream binding checks to the released
+  Core version. The Swift API and owned MCP SDK requirement are unchanged.
+- Register sync URL-change test observers before writes and capture bounded
+  concurrent-apply diagnostics, preserving the existing assertions and timeouts.
+
 ## [2.2.4] - 2026-10-22
 
 ### Fixed
