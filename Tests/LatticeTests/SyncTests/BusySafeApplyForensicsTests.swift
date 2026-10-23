@@ -1008,42 +1008,83 @@ final class BusySafeApplyForensicsTests: BaseTest {
     /// land. Pre-fix these collided inside `begin_transaction` on the single
     /// shared connection they alias; now they queue.
     @Test func concurrentConnectionsOnOneFileAllApply() async throws {
-        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self])
+        let diagnosticID = UUID()
+        let recorder = ProcessInfo.processInfo.environment["LATTICE_ACK_PATH_DIAGNOSTICS"] == "1"
+            ? ACKPathRecorder(testRunID: diagnosticID, connectionLimit: 6, retainLatestStages: true) : nil
+        // Fixed, small stderr records survive stdout buffering. A begin without
+        // its return identifies an unreturned operation, never a live stack.
+        let phase: @Sendable (String, Int, Bool?, UUID?) -> Void = { name, index, result, connection in
+            let line = "FORENSIC concurrency phase=\(name) test=\(diagnosticID) index=\(index) result=\(result.map { $0 ? "true" : "false" } ?? "NONE") connection=\(connection?.uuidString ?? "NONE")\n"
+            FileHandle.standardError.write(Data(line.utf8))
+        }
+        defer {
+            phase("case_exit", -1, nil, nil)
+            recorder?.emitSnapshot(partial: true) // one-shot fallback for early unwind
+        }
+        phase("recorder_enabled", -1, recorder != nil, nil)
+        phase("harness_begin", -1, nil, nil)
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self], ackPathRecorder: recorder)
+        defer { harness.removeACKPathRecorder() }
+        phase("harness_returned", -1, nil, nil)
         let clientCount = 6
 
         var clients: [ForensicClient] = []
         for i in 0..<clientCount {
             let c = ForensicClient(label: "c\(i)", autoAck: false)
-            try await harness.connect(c)
+            phase("connect_begin", i, nil, nil)
+            let connection = try await harness.connect(c)
+            phase("connect_returned", i, nil, connection?.id)
             clients.append(c)
         }
         var uploads: [(ForensicClient, UUID, [UInt8])] = []
         for (i, c) in clients.enumerated() {
+            phase("donor_begin", i, nil, nil)
             let entries = try makeUploadEntries(
                 donorPath: "donor-conc-\(String.random(length: 8)).sqlite", value: 100 + i)
             let id = try #require(entries.first?.globalId)
             uploads.append((c, id, Array(buffer: try frame(entries))))
+            phase("donor_returned", i, nil, nil)
         }
 
         // Fire them all at once.
+        phase("send_group_begin", -1, nil, nil)
         await withTaskGroup(of: Void.self) { group in
-            for (client, _, payload) in uploads {
-                group.addTask { try? await client.socket!.send(payload) }
+            for (i, upload) in uploads.enumerated() {
+                let (client, _, payload) = upload
+                group.addTask {
+                    phase("send_begin", i, nil, nil)
+                    let sent: Void? = try? await client.socket!.send(payload)
+                    phase("send_returned", i, sent != nil, nil)
+                }
             }
         }
+        phase("send_group_returned", -1, nil, nil)
 
         var acked = 0
-        for (client, id, _) in uploads {
-            if await poll(timeout: 60, { client.ackTime(for: id) != nil }) { acked += 1 }
+        for (i, upload) in uploads.enumerated() {
+            let (client, id, _) = upload
+            phase("ack_wait_begin", i, nil, nil)
+            let arrived = await poll(timeout: 60, { client.ackTime(for: id) != nil })
+            phase("ack_wait_returned", i, arrived, nil)
+            if arrived { acked += 1 }
         }
         let nacks = clients.reduce(0) { $0 + $1.nacks.count }
         print("FORENSIC concurrency: clients=\(clientCount) acked=\(acked) nacks=\(nacks)")
         #expect(acked == clientCount, "every concurrent upload must apply")
         #expect(nacks == 0, "serialized applies must not contend")
+        // The existing recorder closes once; preserve apply facts before cleanup.
+        // Early throws use the deferred fallback, never an extra wait or poll.
+        recorder?.emitSnapshot(partial: true)
 
+        phase("shutdown_begin", -1, nil, nil)
         await harness.shutdown_keepingStorage()
+        phase("shutdown_returned", -1, nil, nil)
+        phase("rows_begin", -1, nil, nil)
         let counts = try rowCount(inChannelFile: harness.channelFileURL)
+        phase("rows_returned", -1, nil, nil)
         #expect(counts.rows == clientCount)
+        phase("storage_remove_begin", -1, nil, nil)
         try? FileManager.default.removeItem(at: harness.storageURL)
+        phase("storage_remove_returned", -1, nil, nil)
     }
 }
