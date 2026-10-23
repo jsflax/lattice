@@ -59,7 +59,9 @@ let package = Package(
         // delivery's applying flag across reentrant or overlapping calls.
         // 2.2.4 initializes cold vector indexes atomically so first vector reads
         // include synced rows without reopening the store.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.2.4"),
+        // 2.2.8 also requires the vector contention/readiness fixes and rejects
+        // malformed sync changes before apply, acknowledgement or cursor advance.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.2.8"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
