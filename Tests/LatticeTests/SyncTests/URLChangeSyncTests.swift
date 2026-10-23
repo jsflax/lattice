@@ -87,18 +87,23 @@ actor URLChangeSyncTests {
 
         // Pre-kick write: lands on server A.
         let preKickValue = 100
-        let preKickArrived: Task<Void, any Error> = Task.detached {
-            let serverLattice = try Lattice(for: [SimpleSyncObject.self],
-                                            configuration: self.serverConfigA)
-            for try await changes in serverLattice.changeStream {
-                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
-                let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
-                if touched, serverLattice.objects(SimpleSyncObject.self)
-                    .first(where: { $0.value == preKickValue }) != nil { break }
+        let serverLatticeA = try Lattice(for: [SimpleSyncObject.self],
+                                         configuration: serverConfigA)
+        // Register before writing; this test task owns the cancellable wait.
+        let preKickChanges = serverLatticeA.changeStream
+        try latticeA.add(SimpleSyncObject(value: preKickValue, floatValue: 1.0))
+        var preKickArrived = false
+        for try await changes in preKickChanges {
+            let resolved = changes.compactMap { $0.resolve(on: serverLatticeA) }
+            let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
+            if touched, serverLatticeA.objects(SimpleSyncObject.self)
+                .first(where: { $0.value == preKickValue }) != nil {
+                preKickArrived = true
+                break
             }
         }
-        try latticeA.add(SimpleSyncObject(value: preKickValue, floatValue: 1.0))
-        try await preKickArrived.value
+        try Task.checkCancellation()
+        try #require(preKickArrived, "the pre-kick write must reach server A")
 
         // Open B with a different URL on the same path. The fix kicks A
         // synchronously inside B's `setup_sync_if_configured` —
@@ -115,18 +120,23 @@ actor URLChangeSyncTests {
 
         // Post-kick write: lands on server B (B's URL).
         let postKickValue = 7
-        let postKickArrived: Task<Void, any Error> = Task.detached {
-            let serverLattice = try Lattice(for: [SimpleSyncObject.self],
-                                            configuration: self.serverConfigB)
-            for try await changes in serverLattice.changeStream {
-                let resolved = changes.compactMap { $0.resolve(isolation: nil, on: serverLattice) }
-                let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
-                if touched, serverLattice.objects(SimpleSyncObject.self)
-                    .first(where: { $0.value == postKickValue }) != nil { break }
+        let serverLatticeB = try Lattice(for: [SimpleSyncObject.self],
+                                         configuration: serverConfigB)
+        // Register before writing; this test task owns the cancellable wait.
+        let postKickChanges = serverLatticeB.changeStream
+        try latticeB.add(SimpleSyncObject(value: postKickValue, floatValue: 7.0))
+        var postKickArrived = false
+        for try await changes in postKickChanges {
+            let resolved = changes.compactMap { $0.resolve(on: serverLatticeB) }
+            let touched = resolved.contains { $0.tableName == "SimpleSyncObject" }
+            if touched, serverLatticeB.objects(SimpleSyncObject.self)
+                .first(where: { $0.value == postKickValue }) != nil {
+                postKickArrived = true
+                break
             }
         }
-        try latticeB.add(SimpleSyncObject(value: postKickValue, floatValue: 7.0))
-        try await postKickArrived.value
+        try Task.checkCancellation()
+        try #require(postKickArrived, "the post-kick write must reach server B")
 
         // Server A should NOT have received the post-kick write.
         let serverA = try Lattice(for: [SimpleSyncObject.self], configuration: serverConfigA)
