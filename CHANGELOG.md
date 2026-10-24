@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.3.0] - 2026-10-23
+
+### Added
+- Add throwing `Lattice.storedSchemaVersion()` to read the actual persisted
+  schema version without migration or writes. Missing, malformed, nonpositive,
+  out-of-range and closed-store metadata fails explicitly. Third-party backends
+  can opt into the additive `StoredSchemaVersionBackend` capability.
+
+### Fixed
+- Release scheduler actor context and cached actor delivery metadata on explicit
+  close. Core scheduler copies share one context owner, so temporary Swift bridge
+  values cannot release a context still used by a native scheduler.
+- Preserve callback lookup for surviving facades when a newer facade sharing the
+  same native store is released. Query-error collectors remain separate for each
+  facade. This does not change the requirement to explicitly close short-lived
+  handles.
+
+### Changed
+- Require LatticeCore 2.3.0 and update the complete dependency lock and upstream
+  release bindings together. Rebuild native and Swift bridge consumers together;
+  store schemas, wire protocols and the owned MCP SDK requirement are unchanged.
+
 ## [2.2.5] - 2026-10-23
 
 ### Fixed

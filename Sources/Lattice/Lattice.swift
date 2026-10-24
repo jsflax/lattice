@@ -422,7 +422,10 @@ public struct Lattice {
             }, { ptr in
                 return true
             }, { ptr in
-                
+                guard let ptr else { return }
+                let isolation = ptr.assumingMemoryBound(to: (any Actor)?.self)
+                isolation.deinitialize(count: 1)
+                isolation.deallocate()
             }).make_shared()
         }
     }
@@ -918,7 +921,18 @@ public struct Lattice {
     /// (sockets, scheduler threads) and the entry expires — the old strong
     /// cache kept every instance alive for the life of the process.
     private final class WeakCacheEntry {
-        weak var backend: (any LatticeBackend)?
+        private final class WeakBackend {
+            weak var value: (any LatticeBackend)?
+            init(_ value: any LatticeBackend) { self.value = value }
+        }
+        private var backends: [WeakBackend]
+        var backend: (any LatticeBackend)? {
+            for candidate in backends.reversed() {
+                if let backend = candidate.value { return backend }
+            }
+            return nil
+        }
+        var liveBackends: [any LatticeBackend] { backends.compactMap { $0.value } }
         let configuration: Configuration
         let modelTypes: [any Model.Type]
         let schema: _Schema?
@@ -926,12 +940,16 @@ public struct Lattice {
         let observerActorDelivery: ObserverActorDelivery?
 
         init(_ lattice: Lattice) {
-            self.backend = lattice.backend
+            self.backends = [WeakBackend(lattice.backend)]
             self.configuration = lattice.configuration
             self.modelTypes = lattice.modelTypes
             self.schema = lattice.schema
             self.isolation = lattice.isolation
             self.observerActorDelivery = lattice.observerActorDelivery
+        }
+
+        func preserveBackends(_ previous: [any LatticeBackend]) {
+            backends = previous.map(WeakBackend.init) + backends
         }
 
         func resurrect() -> Lattice? {
@@ -1079,7 +1097,18 @@ public struct Lattice {
         self.backend.setWALKeeperEvictionThresholdBytes(Int64(resultsTuning.walKeeperEvictionThresholdBytes))
         let key = CacheKey(self.backend)
         let entry = WeakCacheEntry(self)
-        Self.cacheLock.withLockUnchecked { Self.cache[key] = entry }
+        let retired = Self.cacheLock.withLockUnchecked {
+            let previous = Self.cache[key]
+            // Native cache hits have separate Swift backends (and query-error handlers). Keep weak
+            // candidates for every live facade, so releasing the newest cannot hide a surviving one.
+            let live = previous?.liveBackends ?? []
+            entry.preserveBackends(live)
+            Self.cache[key] = entry
+            // Weak loads temporarily retain backends. Neither their final release nor the retired
+            // metadata's actor/configuration releases may run under this process-global lock.
+            return (previous, live)
+        }
+        withExtendedLifetime(retired) {}
     }
 
     // MARK: Public Inits
@@ -1595,6 +1624,12 @@ public struct Lattice {
     /// Internal seam for the eviction-to-native-close interleaving, matching
     /// the deletion seam without adding a production callback or lock.
     internal func _close(closeBackend: (any LatticeBackend) -> Void) {
+        // Retire trampoline lookup before native close. Release the entry outside the cache lock:
+        // configuration closures or actor teardown can reenter Lattice during their final release.
+        let retired = Self.cacheLock.withLockUnchecked {
+            Self.cache.removeValue(forKey: CacheKey(backend))
+        }
+        defer { withExtendedLifetime(retired) {} }
         // Item A §4.6: tear down this identity's generation coordinator
         // (invalidation hook, keeper holds, shape caches) before the backend
         // closes — the core close additionally retires its whole read pool
@@ -1712,6 +1747,17 @@ public struct Lattice {
     /// result, on the same thread that ran the query.
     public func lastQueryError() -> String? {
         backend.lastQueryError()
+    }
+
+    /// Read the store's actual persisted schema version on the current read/transaction
+    /// route, independent of this handle's configured migration target. This scalar
+    /// query does not migrate or write the store. Missing, malformed, nonpositive,
+    /// out-of-range (greater than Int32.max), closed-store, and query failures throw.
+    public func storedSchemaVersion() throws -> Int {
+        guard let reader = backend as? any StoredSchemaVersionBackend else {
+            throw Lattice.Error.databaseError("Stored schema version is unsupported by this backend")
+        }
+        return try reader.storedSchemaVersion()
     }
 
     /// Register a callback for sync connection state changes.
