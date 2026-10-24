@@ -422,7 +422,10 @@ public struct Lattice {
             }, { ptr in
                 return true
             }, { ptr in
-                
+                guard let ptr else { return }
+                let isolation = ptr.assumingMemoryBound(to: (any Actor)?.self)
+                isolation.deinitialize(count: 1)
+                isolation.deallocate()
             }).make_shared()
         }
     }
@@ -922,8 +925,9 @@ public struct Lattice {
         let configuration: Configuration
         let modelTypes: [any Model.Type]
         let schema: _Schema?
-        let isolation: (any Actor)?
-        let observerActorDelivery: ObserverActorDelivery?
+        weak var isolation: (any Actor)?
+        weak var observerActorDelivery: ObserverActorDelivery?
+        let requiresActorContext: Bool
 
         init(_ lattice: Lattice) {
             self.backend = lattice.backend
@@ -932,10 +936,16 @@ public struct Lattice {
             self.schema = lattice.schema
             self.isolation = lattice.isolation
             self.observerActorDelivery = lattice.observerActorDelivery
+            self.requiresActorContext = lattice.isolation != nil
         }
 
         func resurrect() -> Lattice? {
             guard let backend else { return nil }
+            let isolation = isolation
+            let observerActorDelivery = observerActorDelivery
+            // Active facades own this context. The registry must neither pin a retired actor nor
+            // resurrect an actor-bound wrapper without its original isolation and delivery mailbox.
+            guard !requiresActorContext || (isolation != nil && observerActorDelivery != nil) else { return nil }
             return Lattice(backend: backend, configuration: configuration,
                            modelTypes: modelTypes, schema: schema, isolation: isolation,
                            observerActorDelivery: observerActorDelivery)
@@ -1595,6 +1605,12 @@ public struct Lattice {
     /// Internal seam for the eviction-to-native-close interleaving, matching
     /// the deletion seam without adding a production callback or lock.
     internal func _close(closeBackend: (any LatticeBackend) -> Void) {
+        // Retire trampoline lookup before native close. Release the entry outside the cache lock:
+        // configuration closures or actor teardown can reenter Lattice during their final release.
+        let retired = Self.cacheLock.withLockUnchecked {
+            Self.cache.removeValue(forKey: CacheKey(backend))
+        }
+        defer { withExtendedLifetime(retired) {} }
         // Item A §4.6: tear down this identity's generation coordinator
         // (invalidation hook, keeper holds, shape caches) before the backend
         // closes — the core close additionally retires its whole read pool
