@@ -200,8 +200,8 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         }
         // Hydrate with the row cache still ON: the primary-key reads inside
         // `Model.init(dynamicObject:)` + registration serve from the primed
-        // handle (statement-free), halving the pre-Commit-7 per-row
-        // hydration cost (2 pk SELECTs → the one priming re-fetch above).
+        // handle (statement-free); corrected Core hydration preserves the
+        // full row fetched by the batch, so priming needs no row re-fetch.
         let element = Element(dynamicObject: row)
         // Restore live-read semantics (§1.3 object path): the element wraps
         // this very handle, and only `materialize()` may opt into snapshot
@@ -212,18 +212,24 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 
     /// Primary-key read of a freshly fetched row via row-cache priming: a
     /// bare `getInt(named: "id")` on a live handle is a per-row SELECT
-    /// (§5's fill budget would grow by pageSize). Enabling the row cache
-    /// re-fetches the FULL row in ONE statement (the fetched handle carries
-    /// no hydrated values), after which `id` serves from the managed
-    /// handle's own `id_` member — so the pk read itself is free, and so is
-    /// every subsequent pk read while the handle stays primed. Idempotent:
-    /// an already-primed handle pays nothing. The handle is exclusively
-    /// ours at this point (pre-publication).
+    /// (§5's fill budget would grow by pageSize). Enabling the row cache uses
+    /// the batch's fetched values, then `id` serves from the managed handle's
+    /// own `id_` member. A backend without a hydrated image may fall back to
+    /// one full-row fetch. The handle is exclusively ours at this point
+    /// (pre-publication); already-primed handles pay nothing.
     private func _primedPrimaryKey(of row: any ObjectBackend) -> Int64 {
         if !row.isRowCacheEnabled {
             row.enableRowCache()
         }
         return row.getInt(named: "id")
+    }
+
+    /// Fresh snapshot instances never reuse the live-instance registry. Prime
+    /// the fetched row before Model.init reads its primary key for registration;
+    /// only the explicit materialized snapshot keeps scalar reads cached.
+    private func _snapshotElement(_ row: any ObjectBackend, materialized: Bool) -> Element {
+        if materialized { row.enableRowCache() }
+        return Element(dynamicObject: row)
     }
 
     private func _liveContext() -> (coordinator: GenerationCoordinator, shape: QueryShapeState, descriptor: ShapeDescriptor) {
@@ -305,7 +311,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     /// (`Lattice._writerTransactionRows` — see InTransactionReads.swift).
     /// Hydrated instances have live property semantics on the writer
     /// connection, so their reads see the transaction too.
-    private func _inTxnRows(limit: Int64?, offset: Int64?, reuseInstances: Bool) -> [Element] {
+    private func _inTxnRows(limit: Int64?, offset: Int64?, reuseInstances: Bool, materialized: Bool = false) -> [Element] {
         if let bounds = boundsConstraint {
             let rows = _lattice.backend.objectsWithinBBox(
                 table: Element.entityName, geoColumn: bounds.propertyName,
@@ -315,7 +321,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                 orderBy: _effectiveOrderBySQL(qualifyTiebreaker: true),
                 limit: limit, offset: offset, groupBy: groupByColumn)
             return reuseInstances ? rows.map { _reuseOrHydrate($0) }
-                                  : rows.map { Element(dynamicObject: $0) }
+                                  : rows.map { _snapshotElement($0, materialized: materialized) }
         }
         let rows = _lattice._writerTransactionRows(
             table: Element.entityName,
@@ -324,7 +330,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             limit: limit, offset: offset,
             groupBy: groupByColumn, distinctBy: distinctByColumn)
         return reuseInstances ? rows.map { _reuseOrHydrate($0) }
-                              : rows.map { Element(dynamicObject: $0) }
+                              : rows.map { _snapshotElement($0, materialized: materialized) }
     }
 
     /// In-txn count — writer-connection COUNT (bbox via the existing live
@@ -575,7 +581,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                             generation: UInt64,
                             limit: Int64?, offset: Int64?,
                             groupBy: String?, distinctBy: String?,
-                            reuseInstances: Bool = false) -> [Element]? {
+                            reuseInstances: Bool = false, materialized: Bool = false) -> [Element]? {
         if generation != 0 {
             let rows = _lattice.backend.objectsAt(generation: generation,
                                                   table: Element.entityName,
@@ -586,7 +592,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             if _lattice.backend.lastGenerationReadStale() { return nil }
             return reuseInstances
                 ? rows.map { _reuseOrHydrate($0) }
-                : rows.map { Element(dynamicObject: $0) }
+                : rows.map { _snapshotElement($0, materialized: materialized) }
         }
         return _gatedLiveRead {
             let rows = _lattice.backend.objects(table: Element.entityName,
@@ -596,7 +602,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                                 params: params)
             return reuseInstances
                 ? rows.map { _reuseOrHydrate($0) }
-                : rows.map { Element(dynamicObject: $0) }
+                : rows.map { _snapshotElement($0, materialized: materialized) }
         }
     }
 
@@ -733,13 +739,17 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
     // the `id ASC` tiebreaker — so `snapshot()` order ≡ the keyset walk's
     // total order (pinned by the Commit-2 property matrix).
     public func snapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
+        _snapshot(limit: limit, offset: offset, materialized: false)
+    }
+
+    internal func _snapshot(limit: Int64?, offset: Int64?, materialized: Bool) -> [Element] {
         LatticePerf.bump(.snapshots)
 
         // §4.1 in-txn carve-out: read-your-writes inside this thread's own
         // explicit transaction — writer-connection read, no generation
         // resolution (no keeper minting), no cache traffic.
         if _threadHoldsOwnTransaction {
-            return _inTxnRows(limit: limit, offset: offset, reuseInstances: false)
+            return _inTxnRows(limit: limit, offset: offset, reuseInstances: false, materialized: materialized)
         }
 
         // Coordinator + descriptor WITHOUT registering a query shape: one-shot
@@ -752,18 +762,18 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         if let bounds = boundsConstraint {
             if ctx.generationID != 0 {
                 if let rows = _bboxRowsAt(generation: ctx.generationID, bounds: bounds,
-                                          whereSQL: descriptor.whereSQL, limit: limit, offset: offset) {
+                                          whereSQL: descriptor.whereSQL, limit: limit, offset: offset, materialized: materialized) {
                     return rows
                 }
                 ctx = coordinator.resolveAfterStaleRead(failedGeneration: ctx.generationID,
                                                         table: Element.entityName)
                 if ctx.generationID != 0,
                    let rows = _bboxRowsAt(generation: ctx.generationID, bounds: bounds,
-                                          whereSQL: descriptor.whereSQL, limit: limit, offset: offset) {
+                                          whereSQL: descriptor.whereSQL, limit: limit, offset: offset, materialized: materialized) {
                     return rows
                 }
             }
-            return snapshotWithBounds(bounds, limit: limit, offset: offset)
+            return snapshotWithBounds(bounds, limit: limit, offset: offset, materialized: materialized)
         }
 
         if ctx.generationID != 0 {
@@ -771,7 +781,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                      orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false),
                                      generation: ctx.generationID,
                                      limit: limit, offset: offset,
-                                     groupBy: groupByColumn, distinctBy: distinctByColumn) {
+                                     groupBy: groupByColumn, distinctBy: distinctByColumn, materialized: materialized) {
                 return rows
             }
             ctx = coordinator.resolveAfterStaleRead(failedGeneration: ctx.generationID,
@@ -781,20 +791,20 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
                                      orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false),
                                      generation: ctx.generationID,
                                      limit: limit, offset: offset,
-                                     groupBy: groupByColumn, distinctBy: distinctByColumn) {
+                                     groupBy: groupByColumn, distinctBy: distinctByColumn, materialized: materialized) {
                 return rows
             }
         }
         return _gatedLiveRead {
             // Serves the memory family (no keepers ⇒ generationID 0) as well
             // as the post-stale fallback: same descriptor, same bindings.
-            _lattice.backend.objects(table: Element.entityName, where: descriptor.whereSQL, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false), limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn, params: descriptor.params).map { Element(dynamicObject: $0) }
+            _lattice.backend.objects(table: Element.entityName, where: descriptor.whereSQL, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: false), limit: limit, offset: offset, groupBy: groupByColumn, distinctBy: distinctByColumn, params: descriptor.params).map { _snapshotElement($0, materialized: materialized) }
         }
     }
 
     /// bbox rows at a held generation; nil = stale sentinel.
     private func _bboxRowsAt(generation: UInt64, bounds: BoundsConstraint,
-                             whereSQL: String?, limit: Int64?, offset: Int64?) -> [Element]? {
+                             whereSQL: String?, limit: Int64?, offset: Int64?, materialized: Bool) -> [Element]? {
         let rows = _lattice.backend.objectsWithinBBoxAt(
             generation: generation,
             table: Element.entityName, geoColumn: bounds.propertyName,
@@ -803,12 +813,12 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
             where: whereSQL, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: true),
             limit: limit, offset: offset, groupBy: groupByColumn)
         if _lattice.backend.lastGenerationReadStale() { return nil }
-        return rows.map { Element(dynamicObject: $0) }
+        return rows.map { _snapshotElement($0, materialized: materialized) }
     }
 
-    private func snapshotWithBounds(_ bounds: BoundsConstraint, limit: Int64?, offset: Int64?) -> [Element] {
+    private func snapshotWithBounds(_ bounds: BoundsConstraint, limit: Int64?, offset: Int64?, materialized: Bool) -> [Element] {
         return _gatedLiveRead {
-            _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: whereStatement?.predicate, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: true), limit: limit, offset: offset, groupBy: groupByColumn).map { Element(dynamicObject: $0) }
+            _lattice.backend.objectsWithinBBox(table: Element.entityName, geoColumn: bounds.propertyName, minLat: bounds.minLat, maxLat: bounds.maxLat, minLon: bounds.minLon, maxLon: bounds.maxLon, where: whereStatement?.predicate, orderBy: _effectiveOrderBySQL(qualifyTiebreaker: true), limit: limit, offset: offset, groupBy: groupByColumn).map { _snapshotElement($0, materialized: materialized) }
         }
     }
 

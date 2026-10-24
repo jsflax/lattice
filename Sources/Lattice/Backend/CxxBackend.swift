@@ -267,7 +267,7 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
 
 // MARK: - CxxBackend (wraps swift_lattice_ref)
 
-final class CxxBackend: LatticeBackend, GroupedCountBackend, StoredSchemaVersionBackend, @unchecked Sendable {
+final class CxxBackend: LatticeBackend, GroupedCountBackend, StoredSchemaVersionBackend, SyncLifecycleBackend, @unchecked Sendable {
     // The db ops are const forwarders on swift_lattice_ref, so they import
     // non-mutating on both paths and the handle can be a `let`.
     let ref: lattice.swift_lattice_ref
@@ -489,6 +489,19 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, StoredSchemaVersion
         reportQueryFailureIfAny()
     }
     func close() { ref.close() }
+
+    func connectSync() throws {
+        ref.connect_sync()
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+    }
+    func disconnectSync() throws {
+        ref.disconnect_sync()
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+    }
+    func reconnectSync() throws {
+        ref.reconnect_sync()
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+    }
 
     // Sync status
     func isSyncAgent() -> Bool { ref.is_sync_agent() }

@@ -172,5 +172,56 @@ final class RowCacheTests: BaseTest {
         #expect(Lattice.threadSQLStatementCount - base == 0,
                 "materializedSnapshot elements must read statement-free")
     }
+
+    // Budget starts BEFORE snapshot/model construction. A post-materialize
+    // budget alone misses the previous one-refetch + primary-key SQL per row.
+    @Test func materializedBatchSQLDoesNotGrowWithRowCount() throws {
+        let lattice = try testLattice(RcNote.self)
+        for i in 0..<128 {
+            let n = RcNote(); n.title = "n\(i)"; n.views = i
+            try lattice.add(n)
+        }
+        let results = lattice.objects(RcNote.self).sortedBy(\.views)
+        _ = results.materializedSnapshot(limit: 1) // Warm coordinator/reader setup.
+        let oneBase = Lattice.threadSQLStatementCount
+        let one = results.materializedSnapshot(limit: 1)
+        let oneSQL = Lattice.threadSQLStatementCount - oneBase
+        let batchBase = Lattice.threadSQLStatementCount
+        let all = results.materializedSnapshot()
+        let batchSQL = Lattice.threadSQLStatementCount - batchBase
+        #expect(one.count == 1 && all.count == 128)
+        #expect(batchSQL <= oneSQL + 2,
+                "batch hydration added per-row SQL: one=\(oneSQL), batch=\(batchSQL)")
+        let scalarBase = Lattice.threadSQLStatementCount
+        for (i, row) in all.enumerated() {
+            #expect(row.isMaterialized)
+            #expect(row.title == "n\(i)" && row.views == i)
+            #expect(row.primaryKey != nil && row.globalId != nil)
+            #expect(row.subtitle == nil)
+        }
+        #expect(Lattice.threadSQLStatementCount - scalarBase == 0)
+        // Opting into the new path cannot change an ordinary snapshot's mode.
+        let live = try #require(results.snapshot(limit: 1).first)
+        #expect(!live.isMaterialized)
+        live.views = 1000
+        #expect(all[0].views == 0)
+        #expect(live.views == 1000)
+    }
+
+    @Test func materializedBatchUsesTransactionWriterAndKeepsPagination() throws {
+        let lattice = try testLattice(RcNote.self)
+        _ = try makeNote(lattice)
+        try lattice.transaction {
+            let inserted = RcNote(); inserted.title = "uncommitted"; inserted.views = 100
+            try lattice.add(inserted)
+            let page = lattice.objects(RcNote.self).sortedBy(\.views)
+                .materializedSnapshot(limit: 1, offset: 1)
+            #expect(page.count == 1)
+            let row = try #require(page.first)
+            #expect(row.title == "uncommitted" && row.views == 100)
+            #expect(row.isMaterialized)
+        }
+    }
+
 }
 
