@@ -336,6 +336,13 @@ public protocol StoredSchemaVersionBackend: LatticeBackend {
     func storedSchemaVersion() throws -> Int
 }
 
+/// Optional same-handle WSS lifecycle capability. Local storage remains open.
+public protocol SyncLifecycleBackend: LatticeBackend {
+    func connectSync() throws
+    func disconnectSync() throws
+    func reconnectSync() throws
+}
+
 /// Optional scalar-query capability; other backends must explicitly support
 /// it rather than silently falling back to hydrating complete model rows.
 public protocol GroupedCountBackend: LatticeBackend {

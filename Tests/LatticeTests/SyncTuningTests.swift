@@ -46,8 +46,8 @@ class SyncTuningTests: BaseTest {
 // I2's end-to-end evidence (owed since 8ac403d): chunkSize actually reaches
 // the live synchronizer. With chunkSize 1, N inserted objects arrive at the
 // server as at least N separate auditLog frames; the default (1000) would
-// batch them into far fewer. Server lives on the suite (init/deinit) — the
-// per-test lifecycle trips Vapor's ServeCommand deinit assertion.
+// batch them into far fewer. The async fixture is joined before suite release;
+// synchronous shutdown cannot run Application.make's async storage hooks.
 @Suite("Sync Tuning Frame Tests", .serialized)
 actor SyncTuningFrameTests {
     let server: TestSyncServer
@@ -62,17 +62,26 @@ actor SyncTuningFrameTests {
     }
 
     deinit {
-        server.shutdown()
         try? Lattice.delete(for: .init(fileURL: serverURL))
         try? Lattice.delete(for: .init(fileURL: clientURL))
     }
 
     @Test(.timeLimit(.minutes(5))) func chunkSizeOne_forcesPerEntryFrames() async throws {
+        do { try await checkPerEntryFrames() }
+        catch {
+            try await server.shutdownAndWaitForTesting()
+            throw error
+        }
+        try await server.shutdownAndWaitForTesting()
+    }
+
+    private func checkPerEntryFrames() async throws {
         let client = try Lattice(TunedItem.self, configuration: .init(
             fileURL: clientURL,
             authorizationToken: "t",
             wssEndpoint: server.endpoint,
             syncTuning: .init(chunkSize: 1)))
+        defer { client.close() }
 
         // ONE transaction → one commit → one upload pass: with the default
         // chunk size all 5 entries ride a single frame, so per-entry frames

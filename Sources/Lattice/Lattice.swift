@@ -107,6 +107,14 @@ public struct Lattice {
     internal final class WebsocketClient: @unchecked Sendable {
         private var webSocketTask: URLSessionWebSocketTask?
         private var currentState: lattice.transport_state = .closed
+        private let stateLock = NSRecursiveLock()
+        private var acceptsCallbacks = false
+        private func withState<T>(_ body: () -> T) -> T {
+            stateLock.lock(); defer { stateLock.unlock() }; return body()
+        }
+        private func withCurrent(_ candidate: URLSession, _ body: () -> Void) {
+            withState { if acceptsCallbacks && session === candidate { body() } }
+        }
         // Recreated per connect attempt — see performConnect.
         private var session: URLSession
         private let delegateHandler: WebSocketDelegateHandler
@@ -122,29 +130,23 @@ public struct Lattice {
             // its task's cancellation fires didComplete(NSURLErrorCancelled)
             // — must not tear down the CURRENT attempt: without this guard the
             // cancel of attempt N-1 error-looped attempt N forever.
-            private func isCurrent(_ session: URLSession) -> Bool {
-                client?.session === session
-            }
-
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didOpenWithProtocol protocol: String?) {
-                guard isCurrent(session) else { return }
-                client?.handleOpen()
+                client?.withCurrent(session) { client?.handleOpen() }
             }
 
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-                guard isCurrent(session) else { return }
-                let reasonString = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                client?.handleClose(code: Int(closeCode.rawValue), reason: reasonString)
+                client?.withCurrent(session) {
+                    let text = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                    client?.handleClose(code: Int(closeCode.rawValue), reason: text)
+                }
             }
 
-            func urlSession(_ session: URLSession,
-                            task: URLSessionTask,
+            func urlSession(_ session: URLSession, task: URLSessionTask,
                             didCompleteWithError error: (any Swift.Error)?) {
-                guard isCurrent(session) else { return }
-                if let error = error {
-                    client?.handleError(error.localizedDescription)
+                client?.withCurrent(session) {
+                    if let error { client?.handleError(error.localizedDescription) }
                 }
             }
         }
@@ -180,7 +182,7 @@ public struct Lattice {
                 { ptr in
                     guard let ptr = ptr else { return .closed }
                     let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
-                    return client.currentState
+                    return client.withState { client.currentState }
                 },
                 // send_fn
                 { ptr, messagePtr in
@@ -195,12 +197,21 @@ public struct Lattice {
             let cxxPtr = UnsafeMutablePointer<lattice.generic_sync_transport>.allocate(capacity: 1)
             cxxPtr.initialize(to: cxxClient)
             self.cxxClientPtr = UnsafeMutableRawPointer(cxxPtr)
+            cxxPtr.pointee.set_destroy_callback { ptr in
+                guard let ptr else { return }
+                let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeRetainedValue()
+                client.withState {
+                    client.performDisconnect()
+                    client.cxxClientPtr = nil
+                }
+            }
 
             // Return as websocket_client* for unique_ptr
             return UnsafeMutableRawPointer(cxxPtr)
         }
 
         private func performConnect(url urlString: String, headers: lattice.HeadersMap) {
+            stateLock.lock(); defer { stateLock.unlock() }
             guard let url = URL(string: urlString) else {
                 triggerError("Invalid URL: \(urlString)")
                 return
@@ -214,7 +225,9 @@ public struct Lattice {
             // ever saw a 401 reconnected anonymously FOREVER (production:
             // hours of 60s-cadence 401s while the same token passed via curl).
             // An ephemeral config also drops cookies/credential caches.
-            session.finishTasksAndInvalidate()
+            acceptsCallbacks = false
+            webSocketTask?.cancel(with: .normalClosure, reason: nil)
+            session.invalidateAndCancel()
             session = URLSession(configuration: .ephemeral, delegate: delegateHandler, delegateQueue: nil)
 
             var request = URLRequest(url: url)
@@ -224,31 +237,31 @@ public struct Lattice {
                 request.setValue(String(value), forHTTPHeaderField: String(key))
             }
 
+            acceptsCallbacks = true
             currentState = .connecting
             webSocketTask = session.webSocketTask(with: request)
             webSocketTask?.maximumMessageSize = 128 * 1024 * 1024  // 128 MB (default is 1 MB)
             webSocketTask?.resume()
-            // Try receiving immediately AND after open
-//            startReceiving()
         }
 
         private func performDisconnect() {
-            currentState = .closing
-            // Nil out cxxClientPtr BEFORE the async cancel so that any delegate
-            // callbacks (didCloseWith, didCompleteWithError) that fire after the
-            // C++ synchronizer is destroyed become no-ops instead of use-after-free.
-            cxxClientPtr = nil
+            stateLock.lock(); defer { stateLock.unlock() }
+            acceptsCallbacks = false
+            currentState = .closed
             webSocketTask?.cancel(with: .normalClosure, reason: nil)
+            webSocketTask = nil
+            session.invalidateAndCancel()
+            // The C++ callback pointer belongs to the transport lifetime, not
+            // this connection attempt. Destruction retires it under this lock.
         }
 
         private func performSend(_ message: lattice.transport_message) {
-            guard let task = webSocketTask else { return }
-
-            let wsMessage = Self.webSocketMessage(message)
-
-            task.send(wsMessage) { [weak self] error in
-                if let error = error {
-                    self?.triggerError(error.localizedDescription)
+            stateLock.lock(); defer { stateLock.unlock() }
+            guard acceptsCallbacks, let task = webSocketTask else { return }
+            let sendingSession = session
+            task.send(Self.webSocketMessage(message)) { [weak self] error in
+                self?.withCurrent(sendingSession) {
+                    if let error { self?.handleError(error.localizedDescription) }
                 }
             }
         }
@@ -270,30 +283,31 @@ public struct Lattice {
         }
 
         private func startReceiving() {
+            let receivingSession = session
             webSocketTask?.receive { [weak self] result in
-                guard let self = self else {
-                    return
-                }
-                switch result {
-                case .success(let message):
-                    var cxxMessage = lattice.transport_message()
-                    switch message {
-                    case .string(let text):
-                        cxxMessage = lattice.transport_message.from_string(std.string(text))
-                    case .data(let data):
-                        var vec = lattice.ByteVector()
-                        for byte in data {
-                            vec.push_back(byte)
+                guard let self else { return }
+                self.withCurrent(receivingSession) {
+                    switch result {
+                    case .success(let message):
+                        var cxxMessage = lattice.transport_message()
+                        switch message {
+                        case .string(let text):
+                            cxxMessage = lattice.transport_message.from_string(std.string(text))
+                        case .data(let data):
+                            var vec = lattice.ByteVector()
+                            for byte in data {
+                                vec.push_back(byte)
+                            }
+                            cxxMessage = lattice.transport_message.from_binary(vec)
+                        @unknown default:
+                            break
                         }
-                        cxxMessage = lattice.transport_message.from_binary(vec)
-                    @unknown default:
-                        break
-                    }
-                    self.triggerMessage(cxxMessage)
-                    self.startReceiving()
+                        self.triggerMessage(cxxMessage)
+                        self.startReceiving()
 
-                case .failure(let error):
-                    self.triggerError(error.localizedDescription)
+                    case .failure(let error):
+                        self.handleError(error.localizedDescription)
+                    }
                 }
             }
         }
@@ -305,12 +319,15 @@ public struct Lattice {
         }
 
         private func handleClose(code: Int, reason: String) {
+            acceptsCallbacks = false
             currentState = .closed
             webSocketTask = nil
             triggerClose(code: code, reason: reason)
         }
 
         private func handleError(_ error: String) {
+            acceptsCallbacks = false
+            currentState = .closed
             triggerError(error)
         }
 
@@ -336,11 +353,7 @@ public struct Lattice {
             ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_close(Int32(code), std.string(reason))
         }
 
-        deinit {
-            // Note: Don't deallocate cxxClientPtr - C++ owns it via unique_ptr
-            // The Swift WebsocketClient is kept alive by passRetained() and should be
-            // released when C++ destroys the websocket_client (not implemented yet)
-        }
+        deinit { session.invalidateAndCancel() }
     }
 
     /// Registers the Swift network factory with C++ layer. Called once on first Lattice init.
@@ -554,6 +567,12 @@ public struct Lattice {
         }
         public var authorizationToken: String?
         public var wssEndpoint: URL?
+        /// WSS startup only; IPC targets retain their existing startup behavior.
+        /// On initial handle creation, deferred mode opens/migrates local storage
+        /// without WSS ownership, sync-only repair or a transport. Call connectSync()
+        /// after reading it. Same-configuration cached opens share the existing lifecycle.
+        public enum SyncStartup: Sendable, Hashable { case automatic, deferred }
+        public var syncStartup: SyncStartup = .automatic
         private var scheduler: Scheduler
 
         /// Schema migration definitions keyed by version number.
@@ -690,6 +709,7 @@ public struct Lattice {
             lhs.storage == rhs.storage &&
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
+            lhs.syncStartup == rhs.syncStartup &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
             lhs.syncFilter == rhs.syncFilter &&
@@ -703,6 +723,7 @@ public struct Lattice {
             hasher.combine(storage)
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
+            hasher.combine(syncStartup)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
             hasher.combine(syncFilter)
@@ -734,13 +755,15 @@ public struct Lattice {
                     isReadOnly: Bool = false, migration: [Int: Migration]? = nil,
                     syncFilter: SyncFilter? = nil,
                     busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs,
-                    syncTuning: SyncTuning? = nil) {
+                    syncTuning: SyncTuning? = nil,
+                    syncStartup: SyncStartup = .automatic) {
             // storage wins; fileURL is the long-standing convenience spelling;
             // neither → the default documents-directory database.
             self.storage = storage ?? .file(fileURL ?? Self.defaultDatabaseDirectory()
                 .appendingPathComponent("lattice\(wssEndpoint != nil ? "_ws" : "").sqlite"))
             self.authorizationToken = authorizationToken
             self.wssEndpoint = wssEndpoint
+            self.syncStartup = syncStartup
             self.scheduler = Scheduler()
             self.isReadOnly = isReadOnly
             self.migration = migration
@@ -761,6 +784,7 @@ public struct Lattice {
                 authorizationToken.map { std.string($0) } ?? std.string(),
                 currentScheduler.scheduler)
             config.read_only = isReadOnly
+            config.sync_autostart = syncStartup == .automatic
             config.busy_timeout_ms = Int32(busyTimeoutMs)
             if let auditRetention, auditRetention > 0 {
                 config.audit_retention_seconds = Int64(auditRetention.rounded(.up))
@@ -1613,6 +1637,33 @@ public struct Lattice {
     /// Whether the sync WebSocket connection is currently active.
     public var isSyncConnected: Bool {
         backend.isSyncConnected()
+    }
+
+    /// Start/resume configured WSS without replacing this handle or its local rows.
+    /// Already-open/connecting transport is left alone. Endpoint/token come from
+    /// the original configuration; a different delivery scope needs a new handle.
+    public func connectSync() throws {
+        guard let lifecycle = backend as? any SyncLifecycleBackend else {
+            throw Lattice.Error.databaseError("Sync lifecycle is unsupported by this backend")
+        }
+        try lifecycle.connectSync()
+    }
+
+    /// Pause WSS and its pending retries, retaining local storage and ownership.
+    /// This is not a suspension boundary: use close() to release database locks.
+    public func disconnectSync() throws {
+        guard let lifecycle = backend as? any SyncLifecycleBackend else {
+            throw Lattice.Error.databaseError("Sync lifecycle is unsupported by this backend")
+        }
+        try lifecycle.disconnectSync()
+    }
+
+    /// Replace only the transport attempt on this same database handle.
+    public func reconnectSync() throws {
+        guard let lifecycle = backend as? any SyncLifecycleBackend else {
+            throw Lattice.Error.databaseError("Sync lifecycle is unsupported by this backend")
+        }
+        try lifecycle.reconnectSync()
     }
 
     /// Explicitly close all database connections and tear down the synchronizer.

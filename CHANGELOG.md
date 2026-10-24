@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.4.0] - 2026-10-24
+
+### Added
+- Add `Configuration.syncStartup = .deferred` to open local storage before
+  acquiring WebSocket sync ownership, repairing sync state or creating a
+  transport. Start sync after the first local read with `connectSync()`.
+- Add throwing `connectSync()`, `disconnectSync()` and `reconnectSync()` methods
+  that retain the same local database handle, rows and observers. Custom
+  backends can opt into the additive `SyncLifecycleBackend` capability.
+
+### Fixed
+- Retain the native callback bridge across transport disconnect/reconnect and
+  retire it only when the transport is destroyed. Fence callbacks from retired
+  URLSession and Linux NIO connection attempts.
+- Prime explicit materialized snapshots from the scalars already fetched by
+  Core, avoiding per-row refetches and retaining the captured scalar values.
+  Relationship reads keep their existing live behavior.
+- Join asynchronous test-server shutdown before releasing fixture resources.
+
+### Compatibility
+- Requires the new Core 2.4.0 lifecycle and row-hydration support. Automatic
+  startup remains the default, and IPC startup behavior is unchanged.
+- `disconnectSync()` pauses WebSocket sync while retaining local storage and
+  ownership. Call `close()` to release native locks before app suspension.
+
 ## [2.3.0] - 2026-10-23
 
 ### Added

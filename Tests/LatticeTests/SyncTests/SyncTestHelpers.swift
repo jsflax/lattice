@@ -300,14 +300,20 @@ final class TestSyncServer: @unchecked Sendable {
          label: String = "TestSyncServer",
          hooks: Hooks = .init()) async throws {
         // Server-lifetime lattice — constructed BEFORE any handler can fire.
-        self.lattice = try Lattice(for: models, configuration: configuration)
+        let opened = try Lattice(for: models, configuration: configuration)
+        self.lattice = opened
         self.sockets = SocketStore(label: label)
         self.path = path
         self.diagnostic = SyncTestStageLog(label: label, store: configuration.fileURL.path)
 
-        var env = try Environment.detect()
-        env.arguments = ["vapor"]
-        self.app = try await Application.make(env)
+        do {
+            var env = try Environment.detect()
+            env.arguments = ["vapor"]
+            self.app = try await Application.make(env)
+        } catch {
+            opened.close()
+            throw error
+        }
         app.http.server.configuration.port = 0
 
         let (stream, continuation) = AsyncStream<Command>.makeStream()
@@ -400,12 +406,17 @@ final class TestSyncServer: @unchecked Sendable {
             hooks.connectEnqueued?()
         }
 
-        try await app.startup()
-        guard let localAddress = app.http.server.shared.localAddress,
-              let assignedPort = localAddress.port else {
-            throw TestSyncServerError.noPort
+        do {
+            try await app.startup()
+            guard let localAddress = app.http.server.shared.localAddress,
+                  let assignedPort = localAddress.port else {
+                throw TestSyncServerError.noPort
+            }
+            self.port = assignedPort
+        } catch {
+            try await shutdownAndWaitForTesting()
+            throw error
         }
-        self.port = assignedPort
     }
 
     // A test-only queue fence. AsyncStream cancellation releases the waiter
@@ -429,8 +440,8 @@ final class TestSyncServer: @unchecked Sendable {
         frameContinuation.finish()
         consumer?.cancel()
         await consumer?.value
+        defer { lattice.close() }
         try await app.asyncShutdown()
-        lattice.close()
     }
 
     func shutdown() {
