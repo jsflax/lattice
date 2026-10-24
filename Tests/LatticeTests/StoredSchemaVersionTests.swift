@@ -64,9 +64,11 @@ struct StoredSchemaVersionTests {
             let url = try fixture(); defer { cleanup(url) }
             let db = try reader(url)
             try execute(url, mutation)
+            let before = try Data(contentsOf: url)
             #expect(throws: Lattice.Error.self) { try db.storedSchemaVersion() }
             #expect(db.lastQueryError()?.isEmpty == false)
             db.close()
+            #expect(try Data(contentsOf: url) == before)
         }
     }
 
