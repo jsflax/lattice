@@ -921,31 +921,39 @@ public struct Lattice {
     /// (sockets, scheduler threads) and the entry expires — the old strong
     /// cache kept every instance alive for the life of the process.
     private final class WeakCacheEntry {
-        weak var backend: (any LatticeBackend)?
+        private final class WeakBackend {
+            weak var value: (any LatticeBackend)?
+            init(_ value: any LatticeBackend) { self.value = value }
+        }
+        private var backends: [WeakBackend]
+        var backend: (any LatticeBackend)? {
+            for candidate in backends.reversed() {
+                if let backend = candidate.value { return backend }
+            }
+            return nil
+        }
+        var liveBackends: [any LatticeBackend] { backends.compactMap { $0.value } }
         let configuration: Configuration
         let modelTypes: [any Model.Type]
         let schema: _Schema?
-        weak var isolation: (any Actor)?
-        weak var observerActorDelivery: ObserverActorDelivery?
-        let requiresActorContext: Bool
+        let isolation: (any Actor)?
+        let observerActorDelivery: ObserverActorDelivery?
 
         init(_ lattice: Lattice) {
-            self.backend = lattice.backend
+            self.backends = [WeakBackend(lattice.backend)]
             self.configuration = lattice.configuration
             self.modelTypes = lattice.modelTypes
             self.schema = lattice.schema
             self.isolation = lattice.isolation
             self.observerActorDelivery = lattice.observerActorDelivery
-            self.requiresActorContext = lattice.isolation != nil
+        }
+
+        func preserveBackends(_ previous: [any LatticeBackend]) {
+            backends = previous.map(WeakBackend.init) + backends
         }
 
         func resurrect() -> Lattice? {
             guard let backend else { return nil }
-            let isolation = isolation
-            let observerActorDelivery = observerActorDelivery
-            // Active facades own this context. The registry must neither pin a retired actor nor
-            // resurrect an actor-bound wrapper without its original isolation and delivery mailbox.
-            guard !requiresActorContext || (isolation != nil && observerActorDelivery != nil) else { return nil }
             return Lattice(backend: backend, configuration: configuration,
                            modelTypes: modelTypes, schema: schema, isolation: isolation,
                            observerActorDelivery: observerActorDelivery)
@@ -1089,7 +1097,18 @@ public struct Lattice {
         self.backend.setWALKeeperEvictionThresholdBytes(Int64(resultsTuning.walKeeperEvictionThresholdBytes))
         let key = CacheKey(self.backend)
         let entry = WeakCacheEntry(self)
-        Self.cacheLock.withLockUnchecked { Self.cache[key] = entry }
+        let retired = Self.cacheLock.withLockUnchecked {
+            let previous = Self.cache[key]
+            // Native cache hits have separate Swift backends (and query-error handlers). Keep weak
+            // candidates for every live facade, so releasing the newest cannot hide a surviving one.
+            let live = previous?.liveBackends ?? []
+            entry.preserveBackends(live)
+            Self.cache[key] = entry
+            // Weak loads temporarily retain backends. Neither their final release nor the retired
+            // metadata's actor/configuration releases may run under this process-global lock.
+            return (previous, live)
+        }
+        withExtendedLifetime(retired) {}
     }
 
     // MARK: Public Inits

@@ -12,6 +12,18 @@ private final class WeakLifetimeActor: @unchecked Sendable {
     init(_ value: LifetimeActor) { self.value = value }
 }
 
+private final class WeakLifetimeBackend {
+    weak var value: (any LatticeBackend)?
+    init(_ value: any LatticeBackend) { self.value = value }
+}
+
+private final class LifetimeErrorCount: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func increment() { lock.lock(); count += 1; lock.unlock() }
+    var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+}
+
 private actor LifetimeActor {
     func configuration(_ url: URL) -> Lattice.Configuration { .init(fileURL: url) }
 
@@ -42,6 +54,36 @@ private actor LifetimeActor {
         guard first.backend.identityHash == cached.backend.identityHash,
               let resurrected = Lattice(ref: copy.cxxLatticeRef) else { return false }
         return resurrected.isolation === self && cached.isolation === self
+    }
+
+    private func scopedSibling(_ url: URL, nativeIdentity: Int64) throws -> WeakLifetimeBackend? {
+        let sibling = try Lattice(ActorLifetimeItem.self, configuration: .init(fileURL: url))
+        guard sibling.backend.identityHash == nativeIdentity else { return nil }
+        return WeakLifetimeBackend(sibling.backend)
+    }
+
+    func originalFacadeSurvivesNewestFacadeRelease(_ url: URL) throws -> Bool {
+        let original = try Lattice(ActorLifetimeItem.self, configuration: .init(fileURL: url))
+        defer { original.close() }
+        guard let retired = try scopedSibling(url, nativeIdentity: original.backend.identityHash),
+              retired.value == nil,
+              let resurrected = Lattice(ref: original.cxxLatticeRef) else { return false }
+        return resurrected.backend === original.backend && resurrected.isolation === self
+    }
+
+    func cachedFacadesKeepSeparateQueryErrorHandlers(_ url: URL) throws -> Bool {
+        let original = try Lattice(ActorLifetimeItem.self, configuration: .init(fileURL: url))
+        let sibling = try Lattice(ActorLifetimeItem.self, configuration: .init(fileURL: url))
+        guard original.backend.identityHash == sibling.backend.identityHash,
+              original.backend !== sibling.backend else { original.close(); return false }
+        let originalErrors = LifetimeErrorCount(), siblingErrors = LifetimeErrorCount()
+        original.onQueryError { _ in originalErrors.increment() }
+        sibling.onQueryError { _ in siblingErrors.increment() }
+        original.close()
+        do { _ = try original.storedSchemaVersion(); return false } catch { }
+        guard originalErrors.value == 1 && siblingErrors.value == 0 else { return false }
+        do { _ = try sibling.storedSchemaVersion(); return false } catch { }
+        return originalErrors.value == 1 && siblingErrors.value == 1
     }
 }
 
@@ -93,5 +135,17 @@ struct ActorHandleLifetimeTests {
         let directory = try directory(); defer { try? FileManager.default.removeItem(at: directory) }
         let owner = LifetimeActor()
         #expect(try await owner.cachedHandleRetainsOriginalIsolation(directory.appendingPathComponent("shared.sqlite")))
+    }
+
+    @Test func newerFacadeCanExpireWhileOriginalTrampolineLookupRemainsValid() async throws {
+        let directory = try directory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let owner = LifetimeActor()
+        #expect(try await owner.originalFacadeSurvivesNewestFacadeRelease(directory.appendingPathComponent("nested.sqlite")))
+    }
+
+    @Test func nativeCacheHitsKeepQueryErrorCollectorsPerFacade() async throws {
+        let directory = try directory(); defer { try? FileManager.default.removeItem(at: directory) }
+        let owner = LifetimeActor()
+        #expect(try await owner.cachedFacadesKeepSeparateQueryErrorHandlers(directory.appendingPathComponent("errors.sqlite")))
     }
 }
