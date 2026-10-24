@@ -267,7 +267,7 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
 
 // MARK: - CxxBackend (wraps swift_lattice_ref)
 
-final class CxxBackend: LatticeBackend, GroupedCountBackend, @unchecked Sendable {
+final class CxxBackend: LatticeBackend, GroupedCountBackend, StoredSchemaVersionBackend, @unchecked Sendable {
     // The db ops are const forwarders on swift_lattice_ref, so they import
     // non-mutating on both paths and the handle can be a `let`.
     let ref: lattice.swift_lattice_ref
@@ -376,6 +376,17 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, @unchecked Sendable
         reportQueryFailureIfAny()
         return n
     }
+    func storedSchemaVersion() throws -> Int {
+        let value = Int(ref.storedSchemaVersion())
+        if let error = reportQueryFailureIfAny() {
+            throw Lattice.Error.databaseError(error)
+        }
+        guard value > 0 else {
+            throw Lattice.Error.databaseError("Invalid stored schema version")
+        }
+        return value
+    }
+
     func groupedCounts(table: String, groupBy: String, where whereClause: String?,
                        distinctBy: String?, params: [QueryParameter]) throws -> [GroupedCount] {
         let rows = ref.grouped_counts(std.string(table), std.string(groupBy),

@@ -1714,6 +1714,17 @@ public struct Lattice {
         backend.lastQueryError()
     }
 
+    /// Read the store's actual persisted schema version on the current read/transaction
+    /// route, independent of this handle's configured migration target. This scalar
+    /// query does not migrate or write the store. Missing, malformed, nonpositive,
+    /// out-of-range (greater than Int32.max), closed-store, and query failures throw.
+    public func storedSchemaVersion() throws -> Int {
+        guard let reader = backend as? any StoredSchemaVersionBackend else {
+            throw Lattice.Error.databaseError("Stored schema version is unsupported by this backend")
+        }
+        return try reader.storedSchemaVersion()
+    }
+
     /// Register a callback for sync connection state changes.
     public func onSyncStateChange(_ handler: @escaping @Sendable (Bool) -> Void) {
         backend.setOnSyncStateChange(handler)
