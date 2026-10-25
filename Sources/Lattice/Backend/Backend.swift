@@ -336,6 +336,14 @@ public protocol GroupedCountBackend: LatticeBackend {
                        distinctBy: String?, params: [QueryParameter]) throws -> [GroupedCount]
 }
 
+/// Optional local-only immutable metadata support. These values never become
+/// model rows or audit entries. A backend must implement atomic insertion on
+/// its existing transaction connection; a separate database is not conforming.
+public protocol LocalMetadataBackend: LatticeBackend {
+    func localMetadata(namespace: String, key: String) throws -> String?
+    func insertLocalMetadataIfAbsent(_ value: String, namespace: String, key: String) throws -> Bool
+}
+
 /// Neutral database-level surface. All members are per-query / per-snapshot, so
 /// array-of-existential returns (allocating once per snapshot) match today's
 /// vector-hydration cost. Class-bound for `final class` + `@inlinable`

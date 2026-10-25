@@ -267,7 +267,7 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
 
 // MARK: - CxxBackend (wraps swift_lattice_ref)
 
-final class CxxBackend: LatticeBackend, GroupedCountBackend, @unchecked Sendable {
+final class CxxBackend: LatticeBackend, GroupedCountBackend, LocalMetadataBackend, @unchecked Sendable {
     // The db ops are const forwarders on swift_lattice_ref, so they import
     // non-mutating on both paths and the handle can be a `let`.
     let ref: lattice.swift_lattice_ref
@@ -393,6 +393,22 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, @unchecked Sendable
         let ok = ref.delete_where(std.string(table), optStr(whereClause), columnValues(params))
         reportQueryFailureIfAny()
         return ok
+    }
+
+    func localMetadata(namespace: String, key: String) throws -> String? {
+        let result = ref.local_metadata(std.string(namespace), std.string(key))
+        if let message = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(message) }
+        return result.__convertToBool() ? String(result.pointee) : nil
+    }
+
+    func insertLocalMetadataIfAbsent(_ value: String, namespace: String, key: String) throws -> Bool {
+        guard TransactionFailureScope.isActive,
+              Lattice._threadHoldsExplicitTransaction(identityHash: identityHash) else {
+            throw LatticeError.transactionError("Local metadata insertion requires this handle's checked transaction")
+        }
+        let inserted = ref.insert_local_metadata_if_absent(std.string(namespace), std.string(key), std.string(value))
+        if let message = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(message) }
+        return inserted
     }
 
     // Maintenance
