@@ -272,7 +272,8 @@ extension Lattice {
     ///
     /// For every UPDATE row whose model declares `noHistoryProperties` that are
     /// listed in `changedFieldsNames` with a null/missing value, the row's
-    /// CURRENT value is read and filled in; if the live row is gone, the column
+    /// CURRENT value (including null for a nullable column) is read and filled
+    /// in; if the live row is gone, the column
     /// is dropped from both `changedFields` and `changedFieldsNames` (its
     /// DELETE row follows) — a null must never be shipped for a column the
     /// receiver may have declared NOT NULL. The stored audit rows are NEVER
@@ -311,9 +312,7 @@ extension Lattice {
             var fields = row.changedFields
             var keptNames = names
             for col in need {
-                let isNull: Bool
-                if let value = live[col], case .null = value { isNull = true } else { isNull = false }
-                if let value = live[col], !isNull {
+                if let value = live[col] {
                     fields[col] = value
                 } else {
                     fields.removeValue(forKey: col)
