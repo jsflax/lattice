@@ -890,12 +890,10 @@ private enum PreparedPushPage: Sendable {
     /// subscribers from other mounts over the same file share it as-is.
     private nonisolated static func openWatcher(fileURL: URL,
                                     context: MountPushContext) -> UnsafeSendableBox<Lattice>? {
-        // Same bounded busy budget as the relay's per-connection open: the
-        // core's instance cache does not key on `busyTimeoutMs`, so whichever
-        // open wins the race for a file installs the budget every aliased
-        // handle then runs with — a watcher opening first with the library's
-        // 30s default would silently restore the parking behavior 1.7.1
-        // removes.
+        // Use the relay's bounded default busy budget for watcher reads too,
+        // while respecting an explicitly customized mount timeout. The core
+        // cache includes busyTimeoutMs, so a different timeout creates a
+        // separate instance rather than replacing another handle's budget.
         var configuration = SyncRelayApplyPolicy.configuration(
             fileURL: fileURL, storeConfiguration: context.storeConfiguration)
         configuration.ipcTargets = nil

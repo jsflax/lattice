@@ -107,7 +107,12 @@ extension AuditLog: Codable {
         try container.encode(rowId, forKey: .rowId)
         try container.encodeIfPresent(globalRowId?.uuidString.lowercased(), forKey: .globalRowId)
         try container.encode(changedFields, forKey: .changedFields)
-        try container.encodeIfPresent(changedFieldsNames, forKey: .changedFieldsNames)
+        // Local UPDATE triggers retain null placeholders for unchanged columns.
+        // The wire contract is a list of changed column names; native receivers
+        // correctly reject non-string entries. Compact only those placeholders
+        // while encoding, preserving stored history and explicit null VALUES.
+        try container.encodeIfPresent(changedFieldsNames.map { $0.compactMap { $0 } },
+                                      forKey: .changedFieldsNames)
         try container.encode(timestamp, forKey: .timestamp)
         try container.encode(isFromRemote, forKey: .isFromRemote)
         try container.encode(isSynchronized, forKey: .isSynchronized)

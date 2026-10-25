@@ -866,17 +866,12 @@ extension Lattice {
             // socket's lifetime (a fresh Lattice per frame raced the weak
             // instance cache and segfaulted under real bursts — exit 139).
             //
-            // NOT one SQLite connection per socket: every relay-shaped open of
-            // the same file+schema aliases ONE cached `swift_lattice`
-            // (LatticeCache::get_or_create) and therefore ONE
-            // FULLMUTEX-serialized SQLite connection — leaked per-connection
-            // Lattices retain that shared instance rather than adding
-            // connections. That is why concurrent applies on a channel
-            // contend inside `begin_transaction` (they are siblings on one
-            // connection, not rivals for a file lock) and why 1.7.1
-            // serializes them per file instead. The instance cache does NOT
-            // key on `busyTimeoutMs`, so the first open of a file installs the
-            // budget every later aliased handle runs with.
+            // Matching file, schema, scheduler and connection settings can
+            // share a cached native instance and its SQLite connection.
+            // Different settings (including busyTimeoutMs), schedulers, or
+            // explicit independent opens can create separate connections to
+            // the same file. Per-file apply serialization handles contention
+            // for both shared instances and separate SQLite connections.
             let state = ConnectionRelayState()
 
             // Handlers go live IMMEDIATELY — synchronously on the socket's

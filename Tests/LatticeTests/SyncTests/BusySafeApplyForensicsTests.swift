@@ -393,13 +393,11 @@ final class BusySafeApplyForensicsTests: BaseTest {
     /// the BEGIN-acquisition budget, so a contended apply parks half a minute
     /// (twice, with the core's contained chunk retry) on a live socket.
     ///
-    /// Also pins the aliasing fact the old "ONE lattice per connection"
-    /// comment obscured: every relay-shaped open of one file returns ONE
-    /// cached instance, so leaked per-connection Lattices retain that shared
-    /// instance rather than adding SQLite connections — and since the instance
-    /// cache does not key on `busyTimeoutMs`, the FIRST open installs the
-    /// budget for every later aliased handle (which is why the observer-push
-    /// watcher open uses the same policy).
+    /// Also verifies that opens with the same schema, scheduler and relay
+    /// configuration share a cached instance. The current cache includes
+    /// busyTimeoutMs; an open with a different timeout does not replace the
+    /// budget of these matching handles. The observer-push watcher uses the
+    /// same policy to give its reads the same bounded default wait.
     @Test func relayOpensChannelStoresWithABoundedBusyBudget() async throws {
         let url = testTemporaryDirectory
             .appending(path: "alias-\(String.random(length: 12)).sqlite")
