@@ -344,6 +344,13 @@ public protocol LocalMetadataBackend: LatticeBackend {
     func insertLocalMetadataIfAbsent(_ value: String, namespace: String, key: String) throws -> Bool
 }
 
+/// Explicit native store-role preparation. Backends must validate the control
+/// state and normalize it inside an owned transaction, never by an unguarded
+/// flag update or by silently changing generic store-opening semantics.
+public protocol AuditedWritesBackend: LatticeBackend {
+    func prepareForAuditedWrites() throws -> Bool
+}
+
 /// Neutral database-level surface. All members are per-query / per-snapshot, so
 /// array-of-existential returns (allocating once per snapshot) match today's
 /// vector-hydration cost. Class-bound for `final class` + `@inlinable`

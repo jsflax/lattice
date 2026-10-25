@@ -19,8 +19,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
-        // Consumer receipt qualification: Core 2.2.8 plus atomic, unsynced
-        // local metadata, pinned to its implementation revision. This branch
+        // Consumer receipt qualification: atomic unsynced local metadata and
+        // explicit audited-writer preparation, pinned together. This branch
         // must be consumed by revision until the extension has a versioned
         // release (SwiftPM forbids revision deps in version-required packages).
         // For the two-repo dev loop use an UNCOMMITTED override:
@@ -63,7 +63,7 @@ let package = Package(
         // include synced rows without reopening the store.
         // 2.2.8 also requires the vector contention/readiness fixes and rejects
         // malformed sync changes before apply, acknowledgement or cursor advance.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "fcae6503326158e488cd5a66a0eaf3dd83a6112a"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "4cea8215fbf210a645eac030a577e45f2829de08"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
