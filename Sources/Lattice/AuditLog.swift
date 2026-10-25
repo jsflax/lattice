@@ -51,6 +51,10 @@ public class AuditLog: CustomStringConvertible {
     public package(set) var isFromRemote: Bool
     /// Whether or not this event has been synchronized
     public package(set) var isSynchronized: Bool = false
+    /// A snapshot of local state, applied only when the receiving row is absent.
+    /// Keep this provenance through relays so stale snapshots cannot overwrite
+    /// newer values or resurrect a tombstone on another replica.
+    public package(set) var synthesized: Bool = false
 
     /// `required` is needed because the class is non-final and
     /// Codable's `init(from:)` is a protocol requirement on `Self` —
@@ -76,6 +80,7 @@ public class AuditLog: CustomStringConvertible {
         self.timestamp = try container.decode(Date.self, forKey: .timestamp)
         self.isFromRemote = try container.decode(Bool.self, forKey: .isFromRemote)
         self.isSynchronized = try container.decode(Bool.self, forKey: .isSynchronized)
+        self.synthesized = try container.decodeIfPresent(Bool.self, forKey: .synthesized) ?? false
     }
 }
 
@@ -90,6 +95,7 @@ extension AuditLog: Codable {
         case timestamp
         case isFromRemote
         case isSynchronized
+        case synthesized
         case globalId
     }
 
@@ -116,6 +122,10 @@ extension AuditLog: Codable {
         try container.encode(timestamp, forKey: .timestamp)
         try container.encode(isFromRemote, forKey: .isFromRemote)
         try container.encode(isSynchronized, forKey: .isSynchronized)
+        // Match Core's wire format: legacy ordinary audits omit this flag.
+        if synthesized {
+            try container.encode(true, forKey: .synthesized)
+        }
     }
 }
 

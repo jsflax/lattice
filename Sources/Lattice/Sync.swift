@@ -25,6 +25,7 @@ extension AuditLog {
         let timestamp: String
         let isFromRemote: Bool
         let isSynchronized: Bool
+        let synthesized: Bool?
     }
 
     /// Create a Swift AuditLog from C++ audit_log_entry JSON
@@ -65,6 +66,7 @@ extension AuditLog {
 
         auditLog.isFromRemote = json.isFromRemote
         auditLog.isSynchronized = json.isSynchronized
+        auditLog.synthesized = json.synthesized ?? false
         auditLog.globalId = UUID(uuidString: json.globalId)  // internal(set): stored @Property
 
         return auditLog
@@ -87,6 +89,7 @@ extension AuditLog {
             self.timestamp = parsed.timestamp
             self.isFromRemote = parsed.isFromRemote
             self.isSynchronized = parsed.isSynchronized
+            self.synthesized = parsed.synthesized
             self.globalId = parsed.globalId  // internal(set): stored @Property
         } catch {
             // Fallback to empty audit log on parse failure
