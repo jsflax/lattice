@@ -1,6 +1,9 @@
 import Foundation
 import Testing
 import Vapor
+import NIOCore
+import NIOHTTP1
+import NIOPosix
 import NIOWebSocket
 import Lattice
 @testable import LatticeServerKit
@@ -178,6 +181,8 @@ private final class RelayHarness: @unchecked Sendable {
         handshake: SyncSchemaHandshake? = nil,
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
         onSetupFinished: (@Sendable () -> Void)? = nil,
+        maxBufferedFrameBytes: Int? = nil,
+        reauthorizeChannel: (@Sendable (Request, SyncChannel) async throws -> Void)? = nil,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) async throws {
         let diagnostics = RelayHarnessDiagnostics.make()
@@ -201,9 +206,10 @@ private final class RelayHarness: @unchecked Sendable {
         // after initialization. Other harnesses use distinct storage URLs.
         let hookStorageURL = storageURL
         let ingressHooks: RelayIngressTestHooks?
-        if let onSetupFinished {
+        if onSetupFinished != nil || maxBufferedFrameBytes != nil {
             ingressHooks = RelayIngressTestHooks(beforeAsyncSetup: {}, didBufferFrame: { _ in },
-                                                 didFinishAsyncSetup: onSetupFinished)
+                                                 didFinishAsyncSetup: { onSetupFinished?() },
+                                                 maxBufferedFrameBytes: maxBufferedFrameBytes)
         } else {
             ingressHooks = nil
         }
@@ -213,6 +219,7 @@ private final class RelayHarness: @unchecked Sendable {
             on: app.routes, path: path, for: schema, storageURL: storageURL,
             writePolicy: writePolicy, handshake: handshake,
             storeConfiguration: storeConfiguration,
+            reauthorizeChannel: reauthorizeChannel,
             channelExtractor: channelExtractor)
         try await app.startup()
         guard let assigned = app.http.server.shared.localAddress?.port else {
@@ -333,6 +340,92 @@ private func makeFrame(entries: [AuditLog]) throws -> [UInt8] {
     return SyncChannel(id: "group-\(gid)", userId: uid)
 }
 
+/// Raw WebSocket frames deliberately leave the close handshake unanswered.
+/// One small overflow frame exercises admission without a large stress buffer.
+private final class CloseIgnoringRelayPeer: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = WebSocketFrame
+    private let lock = NSLock()
+    private var closeFrames = 0
+    private var binaryFrames = 0
+    var observedClose: Bool { lock.withLock { closeFrames > 0 } }
+    var receivedBinaryFrames: Int { lock.withLock { binaryFrames } }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let frame = unwrapInboundIn(data)
+        lock.withLock {
+            if frame.opcode == .connectionClose { closeFrames += 1 }
+            if frame.opcode == .binary { binaryFrames += 1 }
+        }
+    }
+
+    func connect(to harness: RelayHarness, user: UUID) async throws -> any Channel {
+        let upgraded = harness.app.eventLoopGroup.next().makePromise(of: Void.self)
+        let completion = AtomicOnce()
+        let timeout = upgraded.futureResult.eventLoop.scheduleTask(in: .seconds(5)) {
+            if completion.tryFire() { upgraded.fail(Abort(.requestTimeout)) }
+        }
+        defer { timeout.cancel() }
+        let channel = try await ClientBootstrap(group: harness.app.eventLoopGroup)
+            .channelInitializer { channel in
+                let upgrader = NIOWebSocketClientUpgrader(
+                    maxFrameSize: 4096, automaticErrorHandling: true,
+                    upgradePipelineHandler: { channel, _ in
+                        channel.pipeline.addHandler(self).map {
+                            if completion.tryFire() { upgraded.succeed(()) }
+                        }
+                    })
+                return channel.pipeline.addHTTPClientHandlers(
+                    withClientUpgrade: (upgraders: [upgrader], completionHandler: { _ in }))
+            }.connect(host: "127.0.0.1", port: harness.port).get()
+        do {
+            var headers = HTTPHeaders()
+            headers.add(name: "Host", value: "127.0.0.1:\(harness.port)")
+            headers.add(name: "X-Test-User", value: user.uuidString)
+            let request = HTTPRequestHead(version: .http1_1, method: .GET,
+                                          uri: "/sync/group/g1", headers: headers)
+            channel.write(HTTPClientRequestPart.head(request), promise: nil)
+            try await channel.writeAndFlush(HTTPClientRequestPart.end(nil)).get()
+            try await upgraded.futureResult.get()
+            return channel
+        } catch {
+            timeout.cancel()
+            try? await channel.close().get()
+            throw error
+        }
+    }
+}
+
+private final class RelayAdmissionGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didEnter = false
+    private var released = false
+    private var allowed = true
+    private var continuation: CheckedContinuation<Void, Never>?
+    var entered: Bool { lock.withLock { didEnter } }
+    var isAllowed: Bool { lock.withLock { allowed } }
+    func revoke() { lock.withLock { allowed = false } }
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let resume = lock.withLock {
+                didEnter = true
+                if released { return true }
+                precondition(self.continuation == nil)
+                self.continuation = continuation
+                return false
+            }
+            if resume { continuation.resume() }
+        }
+    }
+    func release() {
+        let continuation = lock.withLock {
+            released = true
+            let result = self.continuation; self.continuation = nil
+            return result
+        }
+        continuation?.resume()
+    }
+}
+
 @Suite("Server Relay Generalization", .timeLimit(.minutes(5)))
 final class ServerRelayTests: BaseTest {
 
@@ -382,6 +475,131 @@ final class ServerRelayTests: BaseTest {
     }
 
     // MARK: Revocation kicks
+
+    @Test func postRegistrationRefusalDoesNotOpenStoreOrPublish() async throws {
+        let setups = RelaySetupCompletions()
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"], schema: [SimpleSyncObject.self],
+            onSetupFinished: { setups.noteFinished() },
+            reauthorizeChannel: { _, _ in throw Abort(.forbidden) }, channelExtractor: groupExtractor)
+        do {
+            let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+            try #require(await peer.wait { $0.isClosed })
+            try #require(await peer.wait { _ in setups.count == 1 })
+            #expect(peer.receivedAuditIds.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: harness.storageURL.appending(path: "group-g1.sqlite").path))
+            #expect(await harness.awaitConnectionCount(0, channelId: "group-g1") == 0)
+        } catch { await harness.shutdown(); throw error }
+        await harness.shutdown()
+    }
+
+    @Test func revocationBeforeRegistrationIsCaughtBySecondAuthorization() async throws {
+        let gate = RelayAdmissionGate()
+        let setups = RelaySetupCompletions()
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"], schema: [SimpleSyncObject.self],
+            onSetupFinished: { setups.noteFinished() },
+            reauthorizeChannel: { _, _ in guard gate.isAllowed else { throw Abort(.forbidden) } },
+            channelExtractor: { request in
+                let initiallyAuthorized = try await groupExtractor(request)
+                await gate.wait() // The grant can be revoked after this first check.
+                return initiallyAuthorized
+            })
+        do {
+            let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+            try #require(await peer.wait { _ in gate.entered })
+            #expect(await harness.handle.connectionCount(channelId: "group-g1") == 0)
+            gate.revoke()
+            await harness.handle.disconnectAll(channelId: "group-g1") // No entry yet: this kick alone misses it.
+            gate.release()
+            try #require(await peer.wait { $0.isClosed })
+            try #require(await peer.wait { _ in setups.count == 1 })
+            #expect(peer.receivedAuditIds.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: harness.storageURL.appending(path: "group-g1.sqlite").path))
+        } catch { gate.release(); await harness.shutdown(); throw error }
+        gate.release(); await harness.shutdown()
+    }
+
+    @Test func successfulReauthorizationCannotResurrectAnAlreadyKickedSocket() async throws {
+        let gate = RelayAdmissionGate()
+        let setups = RelaySetupCompletions()
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"], schema: [SimpleSyncObject.self],
+            onSetupFinished: { setups.noteFinished() },
+            reauthorizeChannel: { _, _ in await gate.wait() }, channelExtractor: groupExtractor)
+        do {
+            let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+            try #require(await peer.wait { _ in gate.entered })
+            #expect(await harness.handle.connectionCount(channelId: "group-g1") == 1)
+            await harness.handle.disconnectAll(channelId: "group-g1")
+            gate.release() // Callback succeeds, but the registered revocation flag is permanent.
+            try #require(await peer.wait { $0.isClosed })
+            try #require(await peer.wait { _ in setups.count == 1 })
+            #expect(peer.receivedAuditIds.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: harness.storageURL.appending(path: "group-g1.sqlite").path))
+        } catch { gate.release(); await harness.shutdown(); throw error }
+        gate.release(); await harness.shutdown()
+    }
+
+    @Test func pendingOverflowCannotBeAdmittedAfterSuccessfulReauthorization() async throws {
+        let gate = RelayAdmissionGate()
+        let setups = RelaySetupCompletions()
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"], schema: [SimpleSyncObject.self],
+            onSetupFinished: { setups.noteFinished() }, maxBufferedFrameBytes: 1024,
+            reauthorizeChannel: { _, _ in await gate.wait() }, channelExtractor: groupExtractor)
+        let hostile = CloseIgnoringRelayPeer()
+        var channel: (any Channel)?
+        do {
+            let connected = try await hostile.connect(to: harness, user: UUID())
+            channel = connected
+            let wait = FrameCollector()
+            try #require(await wait.wait { _ in gate.entered })
+            var bytes = connected.allocator.buffer(capacity: 1025)
+            bytes.writeRepeatingByte(0, count: 1025)
+            let overflow = WebSocketFrame(fin: true, opcode: .binary, maskKey: .random(), data: bytes)
+            try await connected.writeAndFlush(overflow).get()
+            try #require(await wait.wait { _ in hostile.observedClose })
+            // A normal WebSocket client would answer close and hide this race.
+            try #require(connected.isActive)
+            gate.release()
+            try #require(await wait.wait { _ in setups.count == 1 })
+            #expect(hostile.receivedBinaryFrames == 0)
+            #expect(!FileManager.default.fileExists(atPath: harness.storageURL.appending(path: "group-g1.sqlite").path))
+            #expect(await harness.handle.connectionCount(channelId: "group-g1") == 0)
+        } catch {
+            gate.release()
+            if let channel { try? await channel.close().get() }
+            await harness.shutdown()
+            throw error
+        }
+        gate.release()
+        if let channel { try? await channel.close().get() }
+        await harness.shutdown()
+    }
+
+    @Test func pendingReauthorizationIsExcludedFromPeerFanout() async throws {
+        let gate = RelayAdmissionGate()
+        let setups = RelaySetupCompletions()
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"], schema: [SimpleSyncObject.self],
+            onSetupFinished: { setups.noteFinished() },
+            reauthorizeChannel: { request, _ in
+                if request.headers.first(name: "X-Test-Pending") == "yes" {
+                    await gate.wait(); throw Abort(.forbidden)
+                }
+            }, channelExtractor: groupExtractor)
+        do {
+            let writer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+            let pending = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID(), headers: ["X-Test-Pending": "yes"])
+            try #require(await pending.wait { _ in gate.entered })
+            let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 81, floatValue: 1)) }
+            try await writer.socket!.send(try makeFrame(entries: entries))
+            try #require(await writer.wait { !$0.acks.isEmpty })
+            gate.release()
+            try #require(await pending.wait { $0.isClosed })
+            try #require(await pending.wait { _ in setups.count == 2 })
+            #expect(pending.receivedAuditIds.isEmpty)
+            await harness.handle.disconnectAll(channelId: "group-g1")
+            try #require(await writer.wait { $0.isClosed })
+        } catch { gate.release(); await harness.shutdown(); throw error }
+        gate.release(); await harness.shutdown()
+    }
 
     @Test func disconnectKicksOneUserThenDisconnectAllClearsChannel() async throws {
         let harness = try await RelayHarness(
