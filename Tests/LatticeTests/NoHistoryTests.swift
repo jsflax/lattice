@@ -11,7 +11,7 @@ import Foundation
     @NoHistory var text: String = ""
 }
 
-@Model final class NullableStreamedMessage {
+@Model final class NullableReplayMessage {
     @NoHistory var text: String?
     @NoHistory var fetchedAt: Date?
 }
@@ -119,17 +119,17 @@ final class NoHistoryTests: BaseTest {
     }
 
     @Test func nullableValuesAndClearsSurviveEncodedReplayWithoutRewritingHistory() throws {
-        let source = try testLattice(NullableStreamedMessage.self)
-        let receiver = try testLattice(NullableStreamedMessage.self)
+        let source = try testLattice(NullableReplayMessage.self)
+        let receiver = try testLattice(NullableReplayMessage.self)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let message = NullableStreamedMessage()
+        let message = NullableReplayMessage()
         message.text = "initial"
         message.fetchedAt = Date(timeIntervalSince1970: 1_700_000_000)
         try source.add(message)
         let initial = source.eventsAfter(id: 0).snapshot()
         _ = try receiver.receive(encoder.encode(ServerSentEvent.auditLog(initial)))
-        let baseline = try #require(receiver.objects(NullableStreamedMessage.self).snapshot().first)
+        let baseline = try #require(receiver.objects(NullableReplayMessage.self).snapshot().first)
         #expect(baseline.text == "initial")
         #expect(baseline.fetchedAt == message.fetchedAt)
         var cursor = try #require(initial.last?.primaryKey)
@@ -156,7 +156,7 @@ final class NoHistoryTests: BaseTest {
             message.fetchedAt = Date(timeIntervalSince1970: 1_700_000_100)
         }
         _ = try deliverUpdates()
-        let updated = try #require(receiver.objects(NullableStreamedMessage.self).snapshot().first)
+        let updated = try #require(receiver.objects(NullableReplayMessage.self).snapshot().first)
         #expect(updated.text == "latest")
         #expect(updated.fetchedAt == message.fetchedAt)
 
@@ -173,15 +173,15 @@ final class NoHistoryTests: BaseTest {
                 if case .null = value {} else { Issue.record("nullable clear must carry explicit null: \(column)") }
             }
         }
-        let result = try #require(receiver.objects(NullableStreamedMessage.self).snapshot().first)
+        let result = try #require(receiver.objects(NullableReplayMessage.self).snapshot().first)
         #expect(result.text == nil)
         #expect(result.fetchedAt == nil)
     }
 
     @Test func deletedNullableRowDropsLiveFieldsAndStillReplaysItsDeletion() throws {
-        let source = try testLattice(NullableStreamedMessage.self)
-        let receiver = try testLattice(NullableStreamedMessage.self)
-        let message = NullableStreamedMessage()
+        let source = try testLattice(NullableReplayMessage.self)
+        let receiver = try testLattice(NullableReplayMessage.self)
+        let message = NullableReplayMessage()
         message.text = "initial"
         message.fetchedAt = Date(timeIntervalSince1970: 1_700_000_000)
         try source.add(message)
@@ -189,18 +189,22 @@ final class NoHistoryTests: BaseTest {
         encoder.outputFormatting = [.sortedKeys]
         let initial = source.eventsAfter(id: 0).snapshot()
         _ = try receiver.receive(encoder.encode(ServerSentEvent.auditLog(initial)))
-        #expect(receiver.objects(NullableStreamedMessage.self).count == 1)
+        #expect(receiver.objects(NullableReplayMessage.self).count == 1)
         let cursor = try #require(initial.last?.primaryKey)
         source.transaction { message.text = nil; message.fetchedAt = nil }
-        source.delete(NullableStreamedMessage.self)
+        source.delete(NullableReplayMessage.self)
         let stored = source.eventsAfter(id: cursor).snapshot()
         let before = try encoder.encode(stored)
         let bound = source.lateBindNoHistory(stored)
         #expect(bound.contains { $0.operation == .delete })
         let updates = bound.filter { $0.operation == .update }
+        let storedUpdates = stored.filter { $0.operation == .update }
         #expect(!updates.isEmpty)
-        for row in updates {
-            for column in ["text", "fetchedAt"] {
+        #expect(updates.count == storedUpdates.count)
+        for (original, row) in zip(storedUpdates, updates) {
+            // Trigger payloads also contain null placeholders for unchanged
+            // columns. Only the original named fields are bound or dropped.
+            for column in ["text", "fetchedAt"] where original.changedFieldsNames?.contains(column) == true {
                 #expect(row.changedFields[column] == nil)
                 #expect(row.changedFieldsNames?.contains(column) != true)
             }
@@ -208,6 +212,6 @@ final class NoHistoryTests: BaseTest {
         #expect(try encoder.encode(source.eventsAfter(id: cursor).snapshot()) == before)
         #expect(bound.map(\.primaryKey) == stored.map(\.primaryKey))
         _ = try receiver.receive(encoder.encode(ServerSentEvent.auditLog(bound)))
-        #expect(receiver.objects(NullableStreamedMessage.self).isEmpty)
+        #expect(receiver.objects(NullableReplayMessage.self).isEmpty)
     }
 }

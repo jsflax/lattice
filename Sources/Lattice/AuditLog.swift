@@ -52,6 +52,15 @@ public class AuditLog: CustomStringConvertible {
     /// Whether or not this event has been synchronized
     public package(set) var isSynchronized: Bool = false
 
+    /// Wire-only names whose no-history values are observed SQL NULLs, not
+    /// raw UPDATE-history placeholders. This is deliberately not a column.
+    /// Old peers ignore the key and cannot apply these nullable clears.
+    @Transient public package(set) var noHistoryNulls: [String] = []
+
+    /// Detached wire provenance. Managed encoding reads the existing Core-owned
+    /// AuditLog.synthesized column; this property adds no model/SQL column.
+    @Transient public package(set) var synthesized: Bool = false
+
     /// `required` is needed because the class is non-final and
     /// Codable's `init(from:)` is a protocol requirement on `Self` —
     /// satisfying that on a non-final class can't be done from an
@@ -76,6 +85,82 @@ public class AuditLog: CustomStringConvertible {
         self.timestamp = try container.decode(Date.self, forKey: .timestamp)
         self.isFromRemote = try container.decode(Bool.self, forKey: .isFromRemote)
         self.isSynchronized = try container.decode(Bool.self, forKey: .isSynchronized)
+        self.noHistoryNulls = container.contains(.noHistoryNulls)
+            ? try container.decode([String].self, forKey: .noHistoryNulls) : []
+        self.synthesized = container.contains(.synthesized)
+            ? try container.decode(Bool.self, forKey: .synthesized) : false
+        try Self.validateNoHistoryNullWireValues(from: decoder, names: noHistoryNulls)
+        try validateNoHistoryNulls()
+    }
+
+    /// Also used for typed callers and the Core bridge, before re-encoding.
+    func validateNoHistoryNulls() throws {
+        guard !noHistoryNulls.isEmpty else { return }
+        let names = Set(changedFieldsNames?.compactMap { $0 } ?? [])
+        var seen = Set<String>()
+        for name in noHistoryNulls {
+            guard operation != .delete, !name.isEmpty, seen.insert(name).inserted,
+                  names.contains(name), let value = changedFields[name], case .null = value else {
+                throw DecodingError.dataCorrupted(.init(codingPath: [],
+                    debugDescription: "Invalid noHistoryNulls completeness metadata"))
+            }
+        }
+    }
+
+    /// AnyProperty intentionally accepts legacy/coercible payloads. Marked
+    /// NULLs need strict decoding so invalid input cannot become a clear.
+    static func validateNoHistoryNullWireValues(from decoder: Decoder, names: [String]) throws {
+        guard !names.isEmpty else { return }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let fields = try c.nestedContainer(keyedBy: FieldKey.self, forKey: .changedFields)
+        for name in names { _ = try fields.decode(ObservedNull.self, forKey: FieldKey(name)) }
+    }
+
+    private struct FieldKey: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init(_ value: String) { stringValue = value }
+        init?(stringValue: String) { self.init(stringValue) }
+        init?(intValue: Int) { return nil }
+    }
+
+    private struct ObservedNull: Decodable {
+        private enum Keys: String, CodingKey { case kind, value }
+        init(from decoder: Decoder) throws {
+            if try decoder.singleValueContainer().decodeNil() { return }
+            let c = try decoder.container(keyedBy: Keys.self)
+            guard try c.decode(Int.self, forKey: .kind) == AnyProperty.Kind.null.rawValue,
+                  c.contains(.value), try c.decodeNil(forKey: .value) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath,
+                    debugDescription: "Marked no-history value must be an explicit NULL"))
+            }
+        }
+    }
+
+    /// Core owns this existing provenance column outside Swift model metadata.
+    /// Never default a failed managed read to false: that would turn a snapshot
+    /// into an overwriting INSERT. One bounded read per managed encode, including
+    /// the detached copy made by lateBindNoHistory; no speculative lifetime cache.
+    private func wireSynthesized() throws -> Bool {
+        guard isManaged else { return synthesized }
+        guard let backend = _dynamicObject._ref.lattice, let globalId else {
+            throw EncodingError.invalidValue(self, .init(codingPath: [],
+                debugDescription: "Managed audit provenance is unavailable"))
+        }
+        let json = backend.noHistoryLiveValuesJSON(tableName: "AuditLog",
+            globalRowId: globalId.uuidString.lowercased(), columns: ["synthesized"])
+        let fields = try JSONDecoder().decode([String: AnyProperty].self, from: Data(json.utf8))
+        let flag: Int64?
+        switch fields["synthesized"] {
+        case .int(let value)?: flag = Int64(value)
+        case .int64(let value)?: flag = value
+        default: flag = nil
+        }
+        guard let flag, flag == 0 || flag == 1 else {
+            throw EncodingError.invalidValue(self, .init(codingPath: [],
+                debugDescription: "Managed audit provenance must be explicit 0 or 1"))
+        }
+        return flag == 1
     }
 }
 
@@ -91,9 +176,12 @@ extension AuditLog: Codable {
         case isFromRemote
         case isSynchronized
         case globalId
+        case noHistoryNulls
+        case synthesized
     }
 
     public func encode(to encoder: any Encoder) throws {
+        try validateNoHistoryNulls()
         var container = encoder.container(keyedBy: CodingKeys.self)
         // Both UUID fields encode as lowercase `.uuidString` so the
         // case stored in SQLite is preserved verbatim across every
@@ -111,6 +199,8 @@ extension AuditLog: Codable {
         try container.encode(timestamp, forKey: .timestamp)
         try container.encode(isFromRemote, forKey: .isFromRemote)
         try container.encode(isSynchronized, forKey: .isSynchronized)
+        if !noHistoryNulls.isEmpty { try container.encode(noHistoryNulls, forKey: .noHistoryNulls) }
+        if try wireSynthesized() { try container.encode(true, forKey: .synthesized) }
     }
 }
 
