@@ -344,6 +344,7 @@ private func makeFrame(entries: [AuditLog]) throws -> [UInt8] {
 /// One small overflow frame exercises admission without a large stress buffer.
 private final class CloseIgnoringRelayPeer: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = WebSocketFrame
+    typealias OutboundOut = WebSocketFrame
     private let lock = NSLock()
     private var closeFrames = 0
     private var binaryFrames = 0
@@ -352,6 +353,12 @@ private final class CloseIgnoringRelayPeer: ChannelInboundHandler, @unchecked Se
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let frame = unwrapInboundIn(data)
+        if frame.opcode == .ping {
+            // Keep the transport alive while deliberately ignoring Close. Otherwise
+            // the server's dead-peer timer can expire before reauthorization resumes.
+            let pong = WebSocketFrame(fin: true, opcode: .pong, maskKey: .random(), data: frame.unmaskedData)
+            context.writeAndFlush(wrapOutboundOut(pong), promise: nil)
+        }
         lock.withLock {
             if frame.opcode == .connectionClose { closeFrames += 1 }
             if frame.opcode == .binary { binaryFrames += 1 }
