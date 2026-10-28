@@ -243,7 +243,16 @@ public enum AnyProperty: PrimitiveProperty, Codable, Sendable {
     
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(kind, forKey: .kind)
+        // Swift Int is 64-bit on supported hosts, but the legacy wire int
+        // variant is decoded as a C++ int. Use the existing int64 variant for
+        // larger audit values; keep the legacy tag for its representable range.
+        let wireKind: Kind
+        if case .int(let value) = self, Int32(exactly: value) == nil {
+            wireKind = .int64
+        } else {
+            wireKind = kind
+        }
+        try container.encode(wireKind, forKey: .kind)
         switch self {
         case .int(let a0):
             try container.encode(a0, forKey: .value)
