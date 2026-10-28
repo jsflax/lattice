@@ -26,7 +26,9 @@ extension Lattice {
         var error = lattice.cxx_error()
         let createdRef = lattice.swift_lattice_ref.createDynamic(
             config: configuration.cxxConfiguration(), error: &error)
-        guard error.msg.empty() else { throw error }
+        guard error.msg.empty() else {
+            throw Lattice.Error.databaseError(String(error.msg))
+        }
         // `_optLatticeRef` normalizes the FRT-optional (16.4+) vs value-non-optional
         // (iOS 15 path) factory return — `guard let` directly on the factory result
         // only compiles on FRT platforms.

@@ -1,8 +1,6 @@
 import Foundation
 import Testing
 import CLatticeTestSQLite
-import CxxStdlib
-import LatticeSwiftCppBridge
 @testable import Lattice
 
 // Models used only to WRITE a database. The dynamic open never sees these types.
@@ -68,8 +66,12 @@ final class DynamicAPITests {
             unexpected.close()
         } catch { failure = error }
         let error = try #require(failure)
-        let nativeError = try #require(error as? lattice.cxx_error)
-        #expect(!nativeError.msg.empty(), "the checked factory must preserve the native failure message")
+        let databaseError = try #require(error as? Lattice.Error)
+        switch databaseError {
+        case .databaseError(let message):
+            #expect(!message.isEmpty, "the checked factory must preserve the native failure message")
+            #expect(String(describing: error).contains(message), "callers must see the native message")
+        }
         switch kind {
         case "missing": #expect(!FileManager.default.fileExists(atPath: url.path))
         case "directory":
