@@ -64,7 +64,9 @@ let package = Package(
         // 2.3.0 supplies strict schema metadata and shared scheduler context
         // ownership required by this wrapper's actor-context destructor.
         // 2.4.0 adds deferred same-handle sync and fetched-row hydration.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.4.0"),
+        // 2.4.1 preserves observed nullable NoHistory clears through sync and
+        // validates their transport metadata against physical field nullability.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.4.1"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",

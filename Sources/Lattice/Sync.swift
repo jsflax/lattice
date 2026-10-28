@@ -25,6 +25,32 @@ extension AuditLog {
         let timestamp: String
         let isFromRemote: Bool
         let isSynchronized: Bool
+        let noHistoryNulls: [String]
+        let synthesized: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case id, globalId, tableName, operation, rowId, globalRowId, changedFields
+            case changedFieldsNames, timestamp, isFromRemote, isSynchronized, noHistoryNulls, synthesized
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(Int64.self, forKey: .id)
+            globalId = try c.decode(String.self, forKey: .globalId)
+            tableName = try c.decode(String.self, forKey: .tableName)
+            operation = try c.decode(String.self, forKey: .operation)
+            rowId = try c.decode(Int64.self, forKey: .rowId)
+            globalRowId = try c.decode(String.self, forKey: .globalRowId)
+            changedFields = try c.decode([String: AnyProperty].self, forKey: .changedFields)
+            changedFieldsNames = try c.decode([String].self, forKey: .changedFieldsNames)
+            timestamp = try c.decode(String.self, forKey: .timestamp)
+            isFromRemote = try c.decode(Bool.self, forKey: .isFromRemote)
+            isSynchronized = try c.decode(Bool.self, forKey: .isSynchronized)
+            noHistoryNulls = c.contains(.noHistoryNulls)
+                ? try c.decode([String].self, forKey: .noHistoryNulls) : []
+            synthesized = c.contains(.synthesized) ? try c.decode(Bool.self, forKey: .synthesized) : false
+            try AuditLog.validateNoHistoryNullWireValues(from: decoder, names: noHistoryNulls)
+        }
     }
 
     /// Create a Swift AuditLog from C++ audit_log_entry JSON
@@ -36,23 +62,28 @@ extension AuditLog {
 
         let decoder = JSONDecoder()
         let json = try decoder.decode(CxxAuditLogJSON.self, from: data)
+        guard let operation = AuditLog.Operation(rawValue: json.operation) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [],
+                debugDescription: "Unknown audit operation"))
+        }
+        if !json.noHistoryNulls.isEmpty && json.operation != "INSERT" && json.operation != "UPDATE" {
+            throw DecodingError.dataCorrupted(.init(codingPath: [],
+                debugDescription: "noHistoryNulls requires an INSERT or UPDATE operation"))
+        }
 
         let auditLog = AuditLog()
 
         auditLog.tableName = json.tableName
 
-        // Parse operation
-        switch json.operation {
-        case "INSERT": auditLog.operation = .insert
-        case "UPDATE": auditLog.operation = .update
-        case "DELETE": auditLog.operation = .delete
-        default: auditLog.operation = .insert
-        }
+        auditLog.operation = operation
 
         auditLog.rowId = json.rowId
         auditLog.globalRowId = UUID(uuidString: json.globalRowId)
         auditLog.changedFields = json.changedFields
         auditLog.changedFieldsNames = json.changedFieldsNames
+        auditLog.noHistoryNulls = json.noHistoryNulls
+        auditLog.synthesized = json.synthesized
+        try auditLog.validateNoHistoryNulls()
 
         // Parse timestamp
         if let ts = Double(json.timestamp) {
@@ -84,6 +115,8 @@ extension AuditLog {
             self.globalRowId = parsed.globalRowId
             self.changedFields = parsed.changedFields
             self.changedFieldsNames = parsed.changedFieldsNames
+            self.noHistoryNulls = parsed.noHistoryNulls
+            self.synthesized = parsed.synthesized
             self.timestamp = parsed.timestamp
             self.isFromRemote = parsed.isFromRemote
             self.isSynchronized = parsed.isSynchronized
@@ -274,8 +307,9 @@ extension Lattice {
     /// listed in `changedFieldsNames` with a null/missing value, the row's
     /// CURRENT value is read and filled in; if the live row is gone, the column
     /// is dropped from both `changedFields` and `changedFieldsNames` (its
-    /// DELETE row follows) — a null must never be shipped for a column the
-    /// receiver may have declared NOT NULL. The stored audit rows are NEVER
+    /// DELETE row follows). An observed SQL NULL is retained and marked in
+    /// `noHistoryNulls`; a qualified receiver checks its column nullability.
+    /// The stored audit rows are NEVER
     /// written: a row that needs binding is replaced by a detached copy
     /// (Codable round-trip, `primaryKey` preserved for pk cursors) in the
     /// returned array; rows that need nothing are returned as-is. Invariant:
@@ -288,7 +322,7 @@ extension Lattice {
         }
         guard !noHistoryByTable.isEmpty else { return rows }
         var out = rows
-        for (index, stored) in rows.enumerated() where stored.operation == .update {
+        for (index, stored) in rows.enumerated() where stored.operation != .delete {
             guard let flagged = noHistoryByTable[stored.tableName],
                   let names = stored.changedFieldsNames else { continue }
             // A managed AuditLog writes every assignment back to the store; the
@@ -296,14 +330,28 @@ extension Lattice {
             guard let data = try? JSONEncoder().encode(stored),
                   let row = try? JSONDecoder().decode(AuditLog.self, from: data) else { continue }
             row.primaryKey = stored.primaryKey
+            row.noHistoryNulls = []
             let listed = names.compactMap { $0 }
+            if row.operation == .insert {
+                // INSERT history contains complete values, not placeholders.
+                row.noHistoryNulls = listed.filter { col in
+                    guard flagged.contains(col), let value = row.changedFields[col] else { return false }
+                    if case .null = value { return true }
+                    return false
+                }.sorted()
+                out[index] = row
+                continue
+            }
             let need = listed.filter { col in
                 guard flagged.contains(col) else { return false }
                 guard let value = row.changedFields[col] else { return true }
                 if case .null = value { return true }
                 return false
             }
-            guard !need.isEmpty, let globalRowId = row.globalRowId else { continue }
+            guard !need.isEmpty, let globalRowId = row.globalRowId else {
+                out[index] = row
+                continue
+            }
             let json = backend.noHistoryLiveValuesJSON(tableName: row.tableName,
                                                        globalRowId: globalRowId.uuidString.lowercased(),
                                                        columns: need)
@@ -311,10 +359,9 @@ extension Lattice {
             var fields = row.changedFields
             var keptNames = names
             for col in need {
-                let isNull: Bool
-                if let value = live[col], case .null = value { isNull = true } else { isNull = false }
-                if let value = live[col], !isNull {
+                if let value = live[col] {
                     fields[col] = value
+                    if case .null = value { row.noHistoryNulls.append(col) }
                 } else {
                     fields.removeValue(forKey: col)
                     keptNames.removeAll { $0 == col }
@@ -322,6 +369,7 @@ extension Lattice {
             }
             row.changedFields = fields
             row.changedFieldsNames = keptNames
+            row.noHistoryNulls.sort()
             out[index] = row
         }
         return out
