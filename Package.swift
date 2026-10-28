@@ -69,7 +69,7 @@ let package = Package(
         // Unreleased paired-source requirement for checked dynamic-open errors
         // and the reverse-link index/storage-epoch 7 migration.
         // Restore a released minimum Core version containing this API before any SDK tag.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "e65bb92e61a9a30d95195ecb1959a413ff5ffe17"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "2e15e0251fdae05b59f1d53a0f7dc45b070a35f7"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
