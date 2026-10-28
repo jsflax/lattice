@@ -4,7 +4,7 @@ name: Dynamic open development qualification
 # unchanged; this workflow neither labels the draft Core as released nor publishes.
 on:
   pull_request:
-    branches: [codex/hud-int64-audit-wire]
+    branches: [codex/hud-int64-audit-wire, codex/hud-dynamic-open-errors]
   workflow_dispatch:
 
 permissions:
@@ -32,7 +32,7 @@ jobs:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
       DEVELOPMENT_LEG: ${{ matrix.leg }}
-      CORE_SHA: 8ea970a6fd21eeb5f70561bf12ccc1f69cafa5fd
+      CORE_SHA: e65bb92e61a9a30d95195ecb1959a413ff5ffe17
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - name: Install Linux prerequisites
@@ -89,8 +89,8 @@ jobs:
           import hashlib, json, os
           from pathlib import Path
           expected = {
-              'Package.swift': '5484c5ef67acd961ffffce3e0bc204b14ff3fe8e913bd0b4d6b2d681c287cd95',
-              'Package.resolved': '5269a3cdd54b573216d1d73e918156d8b1b5208566751586da0853d8e1e53b2c',
+              'Package.swift': 'b17c0a0b71e464aa62ed8223996d35394b996193bc5460c32a1db29e8a50d2a7',
+              'Package.resolved': '64428b1817477f15ad91bd78140adcad5f5ef5b53b431c1131cca069dfd380f0',
               'Scripts/wrapper-expected-bindings.json': '46308d4346fce0996bde3603948fd5b0530b02f37c8fd89c9e5ecb502220a926',
           }
           actual = {name: hashlib.sha256(Path(name).read_bytes()).hexdigest() for name in expected}
