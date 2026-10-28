@@ -20,10 +20,17 @@ extension Lattice {
     public static func dynamic(fileURL: URL) throws -> Lattice {
         var configuration = Configuration(fileURL: fileURL)
         configuration.isReadOnly = true
+        // Opening or inspecting the file may fail inside C++. Convert that
+        // failure before touching the returned ref; Swift cannot catch a C++
+        // exception that escapes the interop call.
+        var error = lattice.cxx_error()
+        let createdRef = lattice.swift_lattice_ref.createDynamic(
+            config: configuration.cxxConfiguration(), error: &error)
+        guard error.msg.empty() else { throw error }
         // `_optLatticeRef` normalizes the FRT-optional (16.4+) vs value-non-optional
         // (iOS 15 path) factory return — `guard let` directly on the factory result
         // only compiles on FRT platforms.
-        guard let ref = _optLatticeRef(lattice.swift_lattice_ref.createDynamic(config: configuration.cxxConfiguration())) else {
+        guard let ref = _optLatticeRef(createdRef) else {
             throw Lattice.Error.databaseError("Could not open \(fileURL.path) dynamically")
         }
         return Lattice(backend: CxxBackend(ref),
