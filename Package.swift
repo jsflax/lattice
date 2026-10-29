@@ -143,6 +143,12 @@ let package = Package(
             dependencies: ["Lattice", "LatticeTestSupport"],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
+        // Keep macro consumers independent of imports in the broader SDK test suite.
+        .testTarget(
+            name: "LatticeUnionConsumerTests",
+            dependencies: ["Lattice"],
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
         .target(
             name: "LatticeServerKit",
             dependencies: [
