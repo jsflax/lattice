@@ -66,10 +66,10 @@ let package = Package(
         // 2.4.0 adds deferred same-handle sync and fetched-row hydration.
         // 2.4.1 preserves observed nullable NoHistory clears through sync and
         // validates their transport metadata against physical field nullability.
-        // Unreleased paired-source requirement for checked dynamic-open errors
-        // and the reverse-link index/storage-epoch 7 migration.
+        // Unreleased paired-source requirement for checked dynamic-open errors,
+        // the reverse-link index/storage-epoch 7 migration, and NACK/decode diagnostics.
         // Restore a released minimum Core version containing this API before any SDK tag.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "2e15e0251fdae05b59f1d53a0f7dc45b070a35f7"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "50c6a7a9bcecf387c4b98e3d83e532a7c4ebe986"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",

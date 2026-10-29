@@ -32,7 +32,7 @@ jobs:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
       DEVELOPMENT_LEG: ${{ matrix.leg }}
-      CORE_SHA: 2e15e0251fdae05b59f1d53a0f7dc45b070a35f7
+      CORE_SHA: 50c6a7a9bcecf387c4b98e3d83e532a7c4ebe986
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - name: Install Linux prerequisites
@@ -89,8 +89,8 @@ jobs:
           import hashlib, json, os
           from pathlib import Path
           expected = {
-              'Package.swift': 'a6f3c7ccb3fc1b9f9c99b743de745649d5903c512b3bedb2e5b8d3db9b4b42a8',
-              'Package.resolved': 'fa10383e41d55aa308255dfe08f4327dc10a7ddd1c2c308b477a77433c90259b',
+              'Package.swift': 'cb85e3f2b1423c600b0db88c2a8a13aaf848dadabcbe4fab57aeee9f4c924906',
+              'Package.resolved': 'c6e1c1ab0e593bdeb23748dacef50a6aea6d9ae129adec5964786eb1d1f734fd',
               'Scripts/wrapper-expected-bindings.json': '46308d4346fce0996bde3603948fd5b0530b02f37c8fd89c9e5ecb502220a926',
           }
           actual = {name: hashlib.sha256(Path(name).read_bytes()).hexdigest() for name in expected}
