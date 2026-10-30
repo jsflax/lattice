@@ -4,8 +4,8 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "626fb6cc7afd79cf1d9dda39a4c6ba646d94a161",
-      "version": "2.4.1"
+      "revision": "6afbe41b6ea4de63b27bb40e042ad9e455ba72ed",
+      "version": "2.4.2"
     },
     {
       "identity": "swift-sdk",
@@ -19,13 +19,13 @@
   "qualificationScope": "upstream-release-source-joins-only",
   "qualified": true,
   "releaseEvidence": {
-    "receiptSHA256": "acd80575a1858e690b20236319f807bae15f7acb03cd2f53b6fd29ab28aceea4",
+    "receiptSHA256": "88f2fb109d0d8463cd037e0a375e894ed9997cdbd1426dcd59a4718ec587d038",
     "releases": [
       {
-        "commit": "626fb6cc7afd79cf1d9dda39a4c6ba646d94a161",
-        "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.4.1",
+        "commit": "6afbe41b6ea4de63b27bb40e042ad9e455ba72ed",
+        "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.4.2",
         "repository": "https://github.com/jsflax/LatticeCore",
-        "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.4.1"
+        "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.4.2"
       },
       {
         "commit": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
@@ -34,8 +34,8 @@
         "tagURL": "https://github.com/jsflax/swift-sdk/tree/0.13.0"
       }
     ],
-    "scope": "Observed published Core 2.4.1 tag/source/release receipt from managed release40191979334, with unchanged Swift SDK 0.13.0 release/source binding. This records upstream releases only; wrapper graph and runtime qualification remain separate.",
-    "previousReceiptSHA256": "8547148990fa2f2cbf2cba337d28864ed6d99ed6e9cb4802efff86ec1ca834c4"
+    "scope": "Observed published Core 2.4.2 tag/source/release receipt from managed release 41084443808, with unchanged Swift SDK 0.13.0 release/source binding. This records upstream releases only; wrapper graph and runtime qualification remain separate.",
+    "previousReceiptSHA256": "acd80575a1858e690b20236319f807bae15f7acb03cd2f53b6fd29ab28aceea4"
   },
   "schema": "lattice.wrapper-dependency-bindings/1",
   "status": "UPSTREAM_RELEASE_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",

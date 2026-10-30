@@ -1,5 +1,47 @@
 # Changelog
 
+## [2.5.0] - 2026-10-30
+
+### Added
+- Add the optional `reauthorizeChannel` callback to `Lattice.configureSyncRelay`
+  for a second grant check after revocation registration and before store access
+  or initial delivery.
+- Expose publicly readable, transient `AuditLog.noHistoryNulls` and
+  `AuditLog.synthesized` metadata for observed nullable clears and snapshot
+  provenance; neither adds a model column.
+
+### Fixed
+- When `reauthorizeChannel` is configured, recheck relay authorization after
+  registering the connection for revocation and before opening its store or
+  sending data. Pending connections cannot receive fan-out, and buffer-limit
+  refusals revoke the connection.
+- Preserve intentional NULL clears on nullable `@NoHistory` fields through
+  Swift sync upload and replay. Keep the null provenance and synthesized-snapshot
+  metadata intact, and reject malformed metadata instead of treating it as a
+  valid change.
+- Encode Swift `Int` values outside the signed 32-bit range using the existing
+  Int64 wire representation, preserving wide values during native sync replay.
+- Convert native dynamic-open failures into Swift `databaseError` values with
+  the original error message instead of letting C++ exceptions escape the bridge.
+- Keep `@Union` string conversion inside the SDK so consumer modules can use the
+  generated code with `import Lattice`, without an additional `CxxStdlib` import.
+- Surface native sync decode failures and server upload rejections through the
+  paired Core diagnostics. Rejected uploads remain pending under the existing
+  retry policy.
+- Serialize test-relay compaction with its receive queue and report native
+  maintenance errors, preserving snapshot and fresh-client catch-up assertions.
+
+### Compatibility
+- Requires LatticeCore 2.4.2 for the checked dynamic-open bridge, NACK/decode
+  diagnostics, and indexed reverse-link lookups that distinguish link tables
+  from union side tables. Core's storage-epoch 7 migration installs the indexes
+  when an existing writable store opens.
+- Rebuild native and Swift bridge consumers together. The owned MCP SDK remains
+  pinned to 0.13.0.
+- Upgrade peers and relays together to retain nullable-clear metadata. Older
+  implementations may discard it; this release does not repair previously
+  acknowledged missed clears.
+
 ## [2.4.0] - 2026-10-24
 
 ### Added
