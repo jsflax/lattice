@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-import Lattice
+import CLatticeTestSQLite
+@testable import Lattice
 
 // Models used only to WRITE a database. The dynamic open never sees these types.
 @Model final class DynPerson {
@@ -18,14 +19,117 @@ import Lattice
 
 @Suite("Dynamic API Tests")
 final class DynamicAPITests {
+    private static func fixtureURL(_ prefix: String) throws -> URL {
+        let directory: URL
+        if let path = ProcessInfo.processInfo.environment["LATTICE_TMPDIR"] {
+            try #require(path.hasPrefix("/"), "LATTICE_TMPDIR must be absolute")
+            directory = URL(fileURLWithPath: path, isDirectory: true)
+        } else {
+            directory = testTemporaryDirectory
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("\(prefix)_\(UUID().uuidString).sqlite")
+    }
+
+    /// Test-only main-file oracle: immutable deliberately ignores the WAL.
+    /// The production dynamic reader must not use this mode.
+    private static func immutableDogCount(_ url: URL) throws -> Int64 {
+        var pointer: OpaquePointer?
+        let result = sqlite3_open_v2(url.absoluteString + "?immutable=1", &pointer,
+                                    SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil)
+        defer { if let pointer { sqlite3_close(pointer) } }
+        try #require(result == SQLITE_OK)
+        let db = try #require(pointer)
+        var statement: OpaquePointer?
+        defer { if let statement { sqlite3_finalize(statement) } }
+        try #require(sqlite3_prepare_v2(db, "SELECT count(*) FROM DynDog", -1, &statement, nil) == SQLITE_OK)
+        try #require(sqlite3_step(statement) == SQLITE_ROW)
+        return sqlite3_column_int64(statement, 0)
+    }
+
+    @Test(arguments: ["missing", "directory", "corrupt"])
+    func testDynamicOpenFailureIsCatchableAndSamePathRecovers(kind: String) throws {
+        let url = try Self.fixtureURL("dyn_failure")
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        let corrupt = Data("SQLite format 3\0".utf8) + Data(repeating: 0, count: 496)
+        switch kind {
+        case "missing": break
+        case "directory":
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        case "corrupt": try corrupt.write(to: url)
+        default: throw Lattice.Error.databaseError("unknown dynamic-open fixture")
+        }
+
+        var failure: (any Error)?
+        do {
+            let unexpected = try Lattice.dynamic(fileURL: url)
+            unexpected.close()
+        } catch { failure = error }
+        let error = try #require(failure)
+        let databaseError = try #require(error as? Lattice.Error)
+        switch databaseError {
+        case .databaseError(let message):
+            #expect(!message.isEmpty, "the checked factory must preserve the native failure message")
+            #expect(String(describing: error).contains(message), "callers must see the native message")
+        }
+        switch kind {
+        case "missing": #expect(!FileManager.default.fileExists(atPath: url.path))
+        case "directory":
+            #expect(try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: url.path).isEmpty)
+            try FileManager.default.removeItem(at: url)
+        case "corrupt":
+            #expect(try Data(contentsOf: url) == corrupt)
+            try FileManager.default.removeItem(at: url)
+        default: break
+        }
+
+        // A failed open must not poison the path cache or the next error result.
+        let writer = try Lattice(DynDog.self, configuration: .init(fileURL: url))
+        defer { writer.close() }
+        let dog = DynDog(); dog.name = "Recovered"
+        try writer.add(dog)
+        let reader = try Lattice.dynamic(fileURL: url)
+        defer { reader.close() }
+        #expect(reader.configuration.isReadOnly)
+        #expect(reader.dynamicObjects("DynDog").first?.name as? String == "Recovered")
+    }
+
+    @Test func testDynamicReadersRemainIndependentAndSeeUncheckpointedWAL() throws {
+        let url = try Self.fixtureURL("dyn_wal")
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        let writer = try Lattice(DynDog.self, configuration: .init(fileURL: url))
+        defer { writer.close() }
+        writer.checkpoint()
+        #expect(try Self.immutableDogCount(url) == 0)
+        let firstDog = DynDog(); firstDog.name = "First WAL row"
+        try writer.add(firstDog)
+        try #require(try Self.immutableDogCount(url) == 0, "fixture row must still live only in the WAL")
+
+        let first = try Lattice.dynamic(fileURL: url)
+        defer { first.close() }
+        let second = try Lattice.dynamic(fileURL: url)
+        defer { second.close() }
+        #expect(first.backend.identityHash != writer.backend.identityHash)
+        #expect(second.backend.identityHash != writer.backend.identityHash)
+        #expect(first.backend.identityHash != second.backend.identityHash)
+        #expect(first.isolation == nil && second.isolation == nil)
+        #expect(first.configuration.isReadOnly && second.configuration.isReadOnly)
+        #expect(first.dynamicObjects("DynDog").count == 1)
+        #expect(second.dynamicObjects("DynDog").first?.name as? String == "First WAL row")
+
+        first.close()
+        let secondDog = DynDog(); secondDog.name = "Second WAL row"
+        try writer.add(secondDog)
+        #expect(second.dynamicObjects("DynDog").count == 2,
+                "closing one dynamic connection must not close its sibling or the writer")
+    }
 
     @Test func testDynamicOpenRoundTrip() async throws {
-        let url = testTemporaryDirectory
-            .appending(path: "dyn_\(UUID().uuidString).sqlite")
+        let url = try Self.fixtureURL("dyn")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 
-        // 1. Write with typed models, then checkpoint + close so the read-only
-        //    (immutable) dynamic open sees the data in the main DB file.
+        // 1. Write with typed models, then checkpoint + close before reopening.
         do {
             let lattice = try Lattice(DynPerson.self, DynDog.self,
                                       configuration: .init(fileURL: url))
@@ -41,6 +145,7 @@ final class DynamicAPITests {
 
         // 2. Reopen dynamically — NO compile-time @Model types.
         let dyn = try Lattice.dynamic(fileURL: url)
+        defer { dyn.close() }
 
         // 3. Schema reconstructed from the file (kinds + flags recovered).
         let schema = dyn.dynamicSchema
@@ -79,8 +184,7 @@ final class DynamicAPITests {
     }
 
     @Test func testDynamicPredicateTranslation() async throws {
-        let url = testTemporaryDirectory
-            .appending(path: "dynq_\(UUID().uuidString).sqlite")
+        let url = try Self.fixtureURL("dynq")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 
         do {
@@ -94,6 +198,7 @@ final class DynamicAPITests {
         }
 
         let dyn = try Lattice.dynamic(fileURL: url)
+        defer { dyn.close() }
         let schema = try #require(dyn.dynamicSchema.first { $0.name == "DynPerson" }).properties
 
         func run(_ pred: [String: Any]) throws -> [DynamicObject] {
@@ -126,8 +231,7 @@ final class DynamicAPITests {
     }
 
     @Test func testDynamicSerialization() async throws {
-        let url = testTemporaryDirectory
-            .appending(path: "dyns_\(UUID().uuidString).sqlite")
+        let url = try Self.fixtureURL("dyns")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 
         do {
@@ -144,6 +248,7 @@ final class DynamicAPITests {
         }
 
         let dyn = try Lattice.dynamic(fileURL: url)
+        defer { dyn.close() }
         let row = try #require(dyn.dynamicObjects("DynPerson").first)
 
         // Depth 2: scalars native, embedded array inlined, link traversed.
@@ -170,8 +275,7 @@ final class DynamicAPITests {
     // == nullptr) via m->table_name(), segfaulting whenever an object with an
     // unset link was serialized at depth > 0.
     @Test func testDynamicNilLinkSerialization() async throws {
-        let url = testTemporaryDirectory
-            .appending(path: "dynnil_\(UUID().uuidString).sqlite")
+        let url = try Self.fixtureURL("dynnil")
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
 
         do {
@@ -184,6 +288,7 @@ final class DynamicAPITests {
         }
 
         let dyn = try Lattice.dynamic(fileURL: url)
+        defer { dyn.close() }
         let row = try #require(dyn.dynamicObjects("DynPerson").first)
 
         // Accessing the nil link returns nil rather than crashing.

@@ -1446,7 +1446,8 @@ class UnionMacro: ExtensionMacro {
                     }
 
                     public static func _fromCxxUnionValue(_ value: lattice.union_value) -> Self {
-                        let caseName = String(value.case_name)
+                        // Keep C++ string conversion inside Lattice's imported overlay.
+                        let caseName = String.fromCxxValue(value.case_name)
                         switch caseName {
                 \(raw: decodeCases.joined(separator: "\n"))
                         default: return .defaultValue

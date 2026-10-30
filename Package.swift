@@ -66,7 +66,9 @@ let package = Package(
         // 2.4.0 adds deferred same-handle sync and fetched-row hydration.
         // 2.4.1 preserves observed nullable NoHistory clears through sync and
         // validates their transport metadata against physical field nullability.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.4.1"),
+        // Released checked dynamic-open errors, reverse-link indexes/storage epoch 7,
+        // and native NACK/decode diagnostics.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.4.2"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -138,6 +140,12 @@ let package = Package(
         .testTarget(
             name: "LatticeConformanceTests",
             dependencies: ["Lattice", "LatticeTestSupport"],
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
+        // Keep macro consumers independent of imports in the broader SDK test suite.
+        .testTarget(
+            name: "LatticeUnionConsumerTests",
+            dependencies: ["Lattice"],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         .target(

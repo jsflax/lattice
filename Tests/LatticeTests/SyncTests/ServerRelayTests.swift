@@ -344,6 +344,7 @@ private func makeFrame(entries: [AuditLog]) throws -> [UInt8] {
 /// One small overflow frame exercises admission without a large stress buffer.
 private final class CloseIgnoringRelayPeer: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = WebSocketFrame
+    typealias OutboundOut = WebSocketFrame
     private let lock = NSLock()
     private var closeFrames = 0
     private var binaryFrames = 0
@@ -352,6 +353,12 @@ private final class CloseIgnoringRelayPeer: ChannelInboundHandler, @unchecked Se
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let frame = unwrapInboundIn(data)
+        if frame.opcode == .ping {
+            // Keep the transport alive while deliberately ignoring Close. Otherwise
+            // the server's dead-peer timer can expire before reauthorization resumes.
+            let pong = WebSocketFrame(fin: true, opcode: .pong, maskKey: .random(), data: frame.unmaskedData)
+            context.writeAndFlush(wrapOutboundOut(pong), promise: nil)
+        }
         lock.withLock {
             if frame.opcode == .connectionClose { closeFrames += 1 }
             if frame.opcode == .binary { binaryFrames += 1 }
@@ -361,10 +368,6 @@ private final class CloseIgnoringRelayPeer: ChannelInboundHandler, @unchecked Se
     func connect(to harness: RelayHarness, user: UUID) async throws -> any Channel {
         let upgraded = harness.app.eventLoopGroup.next().makePromise(of: Void.self)
         let completion = AtomicOnce()
-        let timeout = upgraded.futureResult.eventLoop.scheduleTask(in: .seconds(5)) {
-            if completion.tryFire() { upgraded.fail(Abort(.requestTimeout)) }
-        }
-        defer { timeout.cancel() }
         let channel = try await ClientBootstrap(group: harness.app.eventLoopGroup)
             .channelInitializer { channel in
                 let upgrader = NIOWebSocketClientUpgrader(
@@ -378,17 +381,26 @@ private final class CloseIgnoringRelayPeer: ChannelInboundHandler, @unchecked Se
                     withClientUpgrade: (upgraders: [upgrader], completionHandler: { _ in }))
             }.connect(host: "127.0.0.1", port: harness.port).get()
         do {
+            try Task.checkCancellation()
             var headers = HTTPHeaders()
             headers.add(name: "Host", value: "127.0.0.1:\(harness.port)")
             headers.add(name: "X-Test-User", value: user.uuidString)
             let request = HTTPRequestHead(version: .http1_1, method: .GET,
                                           uri: "/sync/group/g1", headers: headers)
             channel.write(HTTPClientRequestPart.head(request), promise: nil)
-            try await channel.writeAndFlush(HTTPClientRequestPart.end(nil)).get()
+            // Start the five-second upgrade response budget at request flush completion
+            // on the channel's event loop, independent of bootstrap and task resumption.
+            let timeout = try await channel.writeAndFlush(HTTPClientRequestPart.end(nil)).map {
+                channel.eventLoop.scheduleTask(in: .seconds(5)) {
+                    if completion.tryFire() { upgraded.fail(Abort(.requestTimeout)) }
+                }
+            }.get()
+            defer { timeout.cancel() }
+            try Task.checkCancellation()
             try await upgraded.futureResult.get()
+            try Task.checkCancellation()
             return channel
         } catch {
-            timeout.cancel()
             try? await channel.close().get()
             throw error
         }

@@ -1,6 +1,6 @@
 # Paired nullable no-history sync repair
 
-Status: the adapter is forward-ported from `465fcbd8ce3725e341a60e90ad068c8170ec29e7` to the current Swift 2.4 source line. The matching Core candidate is PR #69 (`e8db8588080e42c41328a4616128a0b325802099`). Current paired qualification is pending. The historical focused receipt below is not evidence for this port. The manifest selects the exact unreleased Core candidate. The strict released-binding verifier and its expectations remain unchanged and must refuse candidate qualification until an actual qualified Core release is bound.
+Status: this adapter is included in the Swift SDK 2.5.0 release candidate paired with Core 2.4.2. The original forward port from `465fcbd8ce3725e341a60e90ad068c8170ec29e7` used Core PR #69 (`e8db8588080e42c41328a4616128a0b325802099`); those candidate identifiers and the focused harness below are historical evidence. The final committed manifest, complete lock, and strict binding record identify the released Core dependency. Publication remains gated on the ordinary hosted Linux, macOS, and iOS checks against that exact release source; the historical focused receipt does not substitute for them.
 
 AuditLog now carries optional `noHistoryNulls` completeness metadata as an `@Transient` property. Manual Codable and the C++ JSON conversion retain it without creating a SQL column. Marked fields must be unique, named and explicitly NULL; the strict marker path does not accept AnyProperty's legacy coercion of malformed payloads to NULL.
 

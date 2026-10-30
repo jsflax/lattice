@@ -274,11 +274,13 @@ final class TestSyncServer: @unchecked Sendable {
     var auditFrameCount: Int { frameCounter.value }
     private enum Command: Sendable {
         case barrier(@Sendable () -> Void)
+        case forceCompactHistory(@Sendable (Result<Int64, TestSyncServerError>) -> Void)
         case connect(socket: TestUncheckedSendable<WebSocket>, cursor: UUID?)
         case frame(socket: TestUncheckedSendable<WebSocket>, data: Data,
                    audit: Bool, frame: UUID, auditIDs: [UUID], rowIDs: [UUID])
     }
     private let frameContinuation: AsyncStream<Command>.Continuation
+    private let compactionEnqueued: (@Sendable () -> Void)?
 
     // Optional async test seams. They suspend this fixture's consumer only;
     // they never park an event-loop or observation worker thread.
@@ -287,6 +289,7 @@ final class TestSyncServer: @unchecked Sendable {
         var beforeCatchUp: (@Sendable (Int) async -> Void)?
         var connectEnqueued: (@Sendable () -> Void)?
         var frameEnqueued: (@Sendable () -> Void)?
+        var compactionEnqueued: (@Sendable () -> Void)?
     }
     private var consumer: Task<Void, Never>?
 
@@ -305,6 +308,7 @@ final class TestSyncServer: @unchecked Sendable {
         self.sockets = SocketStore(label: label)
         self.path = path
         self.diagnostic = SyncTestStageLog(label: label, store: configuration.fileURL.path)
+        self.compactionEnqueued = hooks.compactionEnqueued
 
         do {
             var env = try Environment.detect()
@@ -329,6 +333,17 @@ final class TestSyncServer: @unchecked Sendable {
                 guard !Task.isCancelled else { break }
                 switch command {
                 case .barrier(let finish): finish()
+                case .forceCompactHistory(let finish):
+                    // Keep maintenance on the receive owner. A notification or
+                    // queue fence alone does not exclude the next incoming frame.
+                    let count = serverLattice.value.forceCompactHistory()
+                    // The bridge seals native failures as zero; read its thread-
+                    // local error before another query or suspension can hide it.
+                    if let error = serverLattice.value.lastQueryError() {
+                        finish(.failure(.compactionFailed(error)))
+                    } else {
+                        finish(.success(count))
+                    }
                 case .connect(let socket, let cursor):
                     let ws = socket.value
                     guard !ws.isClosed else { continue }
@@ -431,6 +446,36 @@ final class TestSyncServer: @unchecked Sendable {
         try Task.checkCancellation()
     }
 
+    /// Execute compaction between complete receive/catch-up commands, rather
+    /// than racing this owner's transaction from the caller's task.
+    func forceCompactHistoryForTesting() async throws -> Int64 {
+        try Task.checkCancellation()
+        let result = AsyncThrowingStream<Int64, any Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let enqueued = frameContinuation.yield(.forceCompactHistory { outcome in
+            switch outcome {
+            case .success(let count):
+                result.continuation.yield(count)
+                result.continuation.finish()
+            case .failure(let error):
+                result.continuation.finish(throwing: error)
+            }
+        })
+        switch enqueued {
+        case .enqueued:
+            compactionEnqueued?()
+        case .dropped, .terminated:
+            result.continuation.finish(throwing: TestSyncServerError.consumerStopped)
+        @unknown default:
+            result.continuation.finish(throwing: TestSyncServerError.consumerStopped)
+        }
+        for try await count in result.stream {
+            try Task.checkCancellation()
+            return count
+        }
+        try Task.checkCancellation()
+        throw TestSyncServerError.consumerStopped
+    }
+
     var endpoint: URL { URL(string: "http://localhost:\(port)/\(path)")! }
 
     /// New controlled fixtures release their async hooks first, then join the
@@ -450,5 +495,9 @@ final class TestSyncServer: @unchecked Sendable {
         app.shutdown()
     }
 
-    enum TestSyncServerError: Error { case noPort }
+    enum TestSyncServerError: Error {
+        case noPort
+        case compactionFailed(String)
+        case consumerStopped
+    }
 }

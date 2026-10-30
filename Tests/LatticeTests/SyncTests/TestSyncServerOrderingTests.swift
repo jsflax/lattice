@@ -16,6 +16,80 @@ actor TestSyncServerOrderingTests {
         try await check(.connectFirst)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func compactionWaitsForQueuedPersistence() async throws {
+        let directory = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let serverConfig = Lattice.Configuration(fileURL: directory.appendingPathComponent("server.sqlite"))
+        let entered = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let release = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let compactions = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let firstFrame = AtomicOnce()
+        let hooks = TestSyncServer.Hooks(
+            beforePersistence: {
+                if firstFrame.tryFire() {
+                    entered.continuation.yield(())
+                    for await _ in release.stream { break }
+                }
+            },
+            compactionEnqueued: { compactions.continuation.yield(()) })
+        let server = try await TestSyncServer(models: [SimpleSyncObject.self], configuration: serverConfig,
+                                              label: "ordered-compaction", hooks: hooks)
+        var testFailure: (any Error)?
+        do {
+            try await withTaskCancellationHandler {
+                let sender = try Lattice(SimpleSyncObject.self, configuration: .init(
+                    fileURL: directory.appendingPathComponent("sender.sqlite"),
+                    authorizationToken: "sender", wssEndpoint: server.endpoint))
+                defer { sender.close() }
+                try await server.sockets.waitForCountOrCancellation(1)
+                let object = SimpleSyncObject(value: 731, floatValue: 7.31)
+                try sender.add(object)
+                let target = try #require(object.globalId)
+                var enteredIterator = entered.stream.makeAsyncIterator()
+                try #require(await enteredIterator.next() != nil)
+                try Task.checkCancellation()
+                // The receive command is paused before SQL. Compaction must
+                // queue behind it, or it would snapshot an empty server.
+                #expect(server.lattice.objects(SimpleSyncObject.self).isEmpty)
+                let compact = Task { try await server.forceCompactHistoryForTesting() }
+                defer { compact.cancel() }
+                let count = try await withTaskCancellationHandler {
+                    var queuedIterator = compactions.stream.makeAsyncIterator()
+                    try #require(await queuedIterator.next() != nil)
+                    try Task.checkCancellation()
+                    release.continuation.yield(())
+                    release.continuation.finish()
+                    return try await compact.value
+                } onCancel: {
+                    compact.cancel()
+                    release.continuation.finish()
+                    compactions.continuation.finish()
+                }
+                #expect(count == 1, "Compaction must snapshot the preceding persisted row")
+                let snapshots = server.lattice.eventsAfter(globalId: nil)
+                #expect(snapshots.count == 1)
+                #expect(snapshots.first?.globalRowId == target)
+                #expect(server.lattice.objects(SimpleSyncObject.self).first?.globalId == target)
+                #expect(server.lattice.objects(SimpleSyncObject.self).first?.value == 731)
+            } onCancel: {
+                release.continuation.finish()
+                entered.continuation.finish()
+                compactions.continuation.finish()
+                server.diagnostic.emit(reason: "compaction_ordering_cancelled")
+            }
+        } catch {
+            testFailure = error
+        }
+        release.continuation.finish()
+        entered.continuation.finish()
+        compactions.continuation.finish()
+        try await server.shutdownAndWaitForTesting()
+        server.diagnostic.emit(reason: "compaction_ordering_finished")
+        try FileManager.default.removeItem(at: directory)
+        if let testFailure { throw testFailure }
+    }
+
     private func check(_ order: Order) async throws {
         let directory = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
