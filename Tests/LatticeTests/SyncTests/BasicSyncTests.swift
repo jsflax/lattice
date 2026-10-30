@@ -808,9 +808,9 @@ actor SyncTests {
         let lattice = localLattice1!
 
         // Step 1: Write data and wait for it to arrive in the SERVER's DB.
-        // The test server sends ACK before Task.detached DB persistence, so
-        // observing lattice1's isSynchronized is insufficient — observe the
-        // server DB directly via cross-instance changeStream notification.
+        // The test server ACKs before its command consumer persists the frame.
+        // Observe the server DB, then queue maintenance on that same consumer:
+        // the notification alone does not mean receive() has returned.
         let syncedConfig = self.syncedLatticeConfiguration
         var serverTask: Task<Void, any Error>?
         await withCheckedContinuation { continuation in
@@ -829,14 +829,16 @@ actor SyncTests {
 
         let obj = SimpleSyncObject(value: 555, floatValue: 5.5)
         try lattice.add(obj)
+        let expectedID = try #require(obj.globalId)
         try await serverTask?.value
 
         // Step 2: Force compact the server's audit log — replaces all history with INSERT snapshots
-        let serverEntries = syncedLattice.forceCompactHistory()
+        let serverEntries = try await server.forceCompactHistoryForTesting()
         #expect(serverEntries >= 1, "Server should create snapshot entries for existing objects")
 
         // Verify the server still has the data
         #expect(syncedLattice.objects(SimpleSyncObject.self).count >= 1, "Server data should survive compaction")
+        #expect(syncedLattice.objects(SimpleSyncObject.self).first(where: { $0.globalId == expectedID })?.value == 555)
 
         // Step 3: A fresh client connects — should receive data from the compacted snapshots.
         // Create an observer Lattice (no sync) FIRST to set up changeStream before
