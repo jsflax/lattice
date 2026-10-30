@@ -368,10 +368,6 @@ private final class CloseIgnoringRelayPeer: ChannelInboundHandler, @unchecked Se
     func connect(to harness: RelayHarness, user: UUID) async throws -> any Channel {
         let upgraded = harness.app.eventLoopGroup.next().makePromise(of: Void.self)
         let completion = AtomicOnce()
-        let timeout = upgraded.futureResult.eventLoop.scheduleTask(in: .seconds(5)) {
-            if completion.tryFire() { upgraded.fail(Abort(.requestTimeout)) }
-        }
-        defer { timeout.cancel() }
         let channel = try await ClientBootstrap(group: harness.app.eventLoopGroup)
             .channelInitializer { channel in
                 let upgrader = NIOWebSocketClientUpgrader(
@@ -385,17 +381,26 @@ private final class CloseIgnoringRelayPeer: ChannelInboundHandler, @unchecked Se
                     withClientUpgrade: (upgraders: [upgrader], completionHandler: { _ in }))
             }.connect(host: "127.0.0.1", port: harness.port).get()
         do {
+            try Task.checkCancellation()
             var headers = HTTPHeaders()
             headers.add(name: "Host", value: "127.0.0.1:\(harness.port)")
             headers.add(name: "X-Test-User", value: user.uuidString)
             let request = HTTPRequestHead(version: .http1_1, method: .GET,
                                           uri: "/sync/group/g1", headers: headers)
             channel.write(HTTPClientRequestPart.head(request), promise: nil)
-            try await channel.writeAndFlush(HTTPClientRequestPart.end(nil)).get()
+            // Start the five-second upgrade response budget at request flush completion
+            // on the channel's event loop, independent of bootstrap and task resumption.
+            let timeout = try await channel.writeAndFlush(HTTPClientRequestPart.end(nil)).map {
+                channel.eventLoop.scheduleTask(in: .seconds(5)) {
+                    if completion.tryFire() { upgraded.fail(Abort(.requestTimeout)) }
+                }
+            }.get()
+            defer { timeout.cancel() }
+            try Task.checkCancellation()
             try await upgraded.futureResult.get()
+            try Task.checkCancellation()
             return channel
         } catch {
-            timeout.cancel()
             try? await channel.close().get()
             throw error
         }
