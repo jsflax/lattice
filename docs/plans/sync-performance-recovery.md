@@ -1,6 +1,6 @@
 # Sync performance and automatic recovery handoff
 
-Recorded November 1, 2026. The goal is **paused and incomplete** at checkpoint 301, saved October 24. This is the current plan and resumption point, not a claim that the unfinished candidate is on main. Earlier subjective completion percentages were withdrawn because they had no measured denominator.
+Recorded November 1, 2026. The work is **archived and incomplete** at checkpoint 301, where the user paused it on October 24. The user subsequently cleared the chat's goal on November 1 to begin separate background-sync planning; clearing it did not complete or resume the work. This is its plan and resumption point, not a claim that the unfinished candidate is on main. Earlier subjective completion percentages were withdrawn because they had no measured denominator.
 
 The separate [iOS background sync plan](ios-background-sync.md) can proceed independently. Reconcile any shared fixes with current SDK/Core main before reusing the older recovery candidate.
 

@@ -1,93 +1,173 @@
 # iOS background sync integration plan
 
-Prepared November 1, 2026. **Proposed next goal; implementation has not started.** The [performance and recovery goal](sync-performance-recovery.md) remains paused and incomplete.
+Revised November 1, 2026 after source review and API discussion. This is a **planning deliverable; the proposed API is not implemented**. The previous performance/recovery goal was cleared after its [unfinished handoff](sync-performance-recovery.md) was saved. Its recovery candidate is not a dependency of this feature.
 
-## Goal
+## Goal and chosen approach
 
-Let an iOS app use BGTaskScheduler to make durable sync progress while it is in the background, stop safely on cancellation or expiration, and resume on the next opportunity without losing or acknowledging unapplied changes. Reuse Lattice's existing read-retirement, shutdown, deferred-connect, and sync-progress machinery. Add the smallest missing Core/Swift contracts needed to make completion truthful and testable.
+Provide an opt-in iOS background-refresh controller that periodically requests execution time, uses the app's existing Lattice store to make durable sync progress, and suspends its activity safely when the opportunity ends. Keep the caller API small. Reuse existing reader retirement, WSS ownership, teardown/setup, durable cursors, and ACK behavior.
 
-For an app's user, the benefit is fresher data on reopening and less foreground catch-up. This is opportunistic refresh: it does not promise a fixed interval or continuous background WebSocket service.
+The user wants the SDK to hide task registration code. The app still declares its permitted task identifier and Background Mode; Lattice handles the runtime registration, submission, rescheduling, expiration, and completion. A bounded sync attempt is sufficient for v1. It does not claim that every server change has arrived, nor that iOS will run at a fixed interval.
 
-## Existing support and the actual gap
+V1 targets **BGAppRefreshTask for one app-owned WSS store/controller**, on iOS 15 and later. Add processing-task policy only after this path works; it should reuse the same session engine. Arbitrary cross-process ownership coordination, IPC suspension, custom-actor UI adapters, a new server protocol, and the old automatic-recovery redesign are outside v1.
 
-Source baseline inspected: SDK [`751950358f49b934dfa8af1dcfd493b683cd9d0a`](https://github.com/jsflax/lattice/tree/751950358f49b934dfa8af1dcfd493b683cd9d0a), Core [`6afbe41b6ea4de63b27bb40e042ad9e455ba72ed`](https://github.com/jsflax/LatticeCore/tree/6afbe41b6ea4de63b27bb40e042ad9e455ba72ed). These are fetched main revisions, not the paused recovery candidate. The SDK declares iOS 15 support; the integration should preserve that minimum and non-iOS builds.
+## Proposed public API
 
-**Database lock release is already supported and exposed to Swift.** The earlier suggestion that it might simply need exposing from Core was too broad. The distinction is between the existing mechanisms and a verified completion boundary for the entire background session.
+Expose this type from the existing `Lattice` product on iOS, with BackgroundTasks/UIKit imports guarded from other platforms. The first adapter is `@MainActor`, matching the common UI-owned store. Validate that the supplied Lattice was created on that actor rather than moving a non-Sendable facade across executors.
 
-| Existing capability | What it supplies | What remains to establish |
-| --- | --- | --- |
-| [`retireAllGenerations()` and `resumeGenerations()`](https://github.com/jsflax/lattice/blob/751950358f49b934dfa8af1dcfd493b683cd9d0a/Sources/Lattice/Lattice.swift#L1696) | Retires retained reader generations, suppresses repinning in the existing coordinator, and supports lazy resumption. Already connected through the Swift backend/bridge to Core. | Settlement of active statements, writes, new/sibling owners, and deferred cleanup before suspension. Retirement alone is not whole-session quiescence. |
-| [`close()`](https://github.com/jsflax/lattice/blob/751950358f49b934dfa8af1dcfd493b683cd9d0a/Sources/Lattice/Lattice.swift#L1669) | Evicts generation caches and tears down storage/sync ownership. | Overall deadline/cancellation behavior and actual lock release. A sibling may inherit sync ownership; closing one facade is not necessarily process-wide shutdown. |
-| `Configuration.syncStartup` and `connectSync()` | Opens a store with deferred network startup, then connects intentionally. | A background-session coordinator that owns admission, lifecycle, and completion. `disconnectSync()` explicitly does not establish a suspension boundary. |
-| [Core `synchronizer_base::drain(deadline)`](https://github.com/jsflax/LatticeCore/blob/6afbe41b6ea4de63b27bb40e042ad9e455ba72ed/Sources/LatticeCore/src/sync.cpp#L1155) | Upload/ACK draining; close already shares a two-second drain budget. | Structured completion, cancellation propagation, and bounded underlying SQL/scheduler work. It returns `void` and is not exposed as a Swift background session. |
-| `SyncProgress`, pending counts, ACK tracking, durable download cursor | Progress and resumability foundations. | A defined end-to-end completion watermark. Socket connection, zero pending uploads, or the per-ACK `on_sync_complete` callback does not prove remote catch-up. |
+```swift
+@available(iOSApplicationExtension, unavailable)
+@MainActor
+public final class LatticeBackgroundSync {
+    public struct RefreshPolicy: Sendable {
+        public init(
+            identifier: String,
+            minimumInterval: TimeInterval = 15 * 60,
+            maxDuration: TimeInterval = 20
+        )
+    }
 
-[Core database close is logical](https://github.com/jsflax/LatticeCore/blob/6afbe41b6ea4de63b27bb40e042ad9e455ba72ed/Sources/LatticeCore/src/db.cpp#L201); physical destruction can wait for remaining owners. Read retirement also has a bounded retry and deferred-cleanup fallback. Tests must therefore observe actual transaction/lock settlement, rather than infer it from a `void` API returning.
+    public init(
+        refresh: RefreshPolicy,
+        lattice: @escaping @MainActor () async throws -> Lattice,
+        onError: (@MainActor (any Error) -> Void)? = nil
+    ) throws
 
-There is one concrete lifecycle discrepancy to resolve early: the public Swift docs promise automatic resumption on foreground/protected-data availability, but the inspected [`GenerationLifecycleObserver`](https://github.com/jsflax/lattice/blob/751950358f49b934dfa8af1dcfd493b683cd9d0a/Sources/Lattice/Results/GenerationCoordinator.swift#L1452) registers only the two retirement notifications. Verify and fix the observer/doc mismatch with a regression test. Existing manual retire/resume tests are useful foundations, not evidence that the automatic path works.
+    public func setForegroundActive(_ active: Bool)
 
-No BackgroundTasks scheduler integration was found in the inspected SDK Sources, Examples, or Tests. This is a source audit; no new runtime qualification was performed for this plan.
+    @discardableResult
+    public func refresh(maxDuration: TimeInterval? = nil)
+        async throws -> RefreshResult
+}
+```
 
-## Platform strategy
+This is a proposed declaration, not compiled API. The compiler check in milestone 1 must retain the iOS 15 minimum and Swift concurrency rules. An omitted manual duration uses the registered policy's budget. The adapter is app-only; existing Lattice support for extensions remains unchanged.
 
-Use **BGAppRefreshTask** for short incremental catch-up. Offer **BGProcessingTask** for larger backlogs, requesting network connectivity and making power policy explicit. An app owns task identifiers, Info.plist/background-mode configuration, and launch-time registration; the library provides the reusable sync-session adapter. Register each identifier once and early enough for launch delivery. [Apple strategies](https://developer.apple.com/documentation/backgroundtasks/choosing-background-strategies-for-your-app), [registration contract](https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler/register(fortaskwithidentifier:using:launchhandler:)).
+The initializer stores the provider and registers the launch handler **without opening the database**. The provider resolves the same app-owned store lazily, on foreground activation or task delivery. That permits a cold background launch to register even when protected data is unavailable, and avoids migrations/network startup before registration. An unresolved controller does not open a store just to suspend it. Use deferred WSS startup when creating the store for this controller. Measure cold-open/provider time too; defer unavailable protected stores or migration work that cannot fit the background opportunity rather than assuming constructor work is free or instantly cancellable.
 
-Treat the requested interval as a freshness preference. `earliestBeginDate` is a lower bound, not a promised start time. Refresh runtime is limited, and expiration may occur before the nominal allowance. Resubmit according to policy, handle scheduler refusal/restriction, and keep foreground catch-up as the reliable fallback. [Scheduling semantics](https://developer.apple.com/documentation/backgroundtasks/bgtaskrequest/earliestbegindate), [expiration handling](https://developer.apple.com/documentation/backgroundtasks/bgtask/expirationhandler).
+`setForegroundActive` synchronously records the latest desired state, then a serial internal driver performs asynchronous transitions. Returning from this setter means the request was recorded, not that all locks have already been released. It avoids creating a separate untracked Task for each UI lifecycle event. Transition failures go to `onError` after state is stable; refresh failures also propagate to their caller. The callback must not run while an internal state lock is held.
 
-BGContinuedProcessingTask is for work submitted from the foreground as a result of a person's action; it is not the periodic-sync mechanism. Silent pushes and background URLSession transfers are possible later triggers/transports, not requirements for this initial integration. [Continued-processing contract](https://developer.apple.com/documentation/backgroundtasks/bgcontinuedprocessingtaskrequest).
+`RefreshResult` should have a small outcome enum: `attempted`, or `deferred` with a reason such as foreground activity or another sync owner. `attempted` means the bounded operation ran and its owned cleanup completed, not full remote catch-up. A never-established connection, fatal transport/apply failure, or failed cleanup must not be relabeled as a successful attempt. Expiration and caller cancellation throw `CancellationError` only after owned cleanup is settled. Detailed progress counters are not required for v1.
 
-## Session contract to design first
+`maxDuration` is a cooperative attempt budget, including a cleanup reserve selected after measurement. It is not a real-time return guarantee or a promise that iOS grants that much runtime. A request for zero, negative, or nonfinite duration/interval is rejected. The first implementation measures cancellation under contention before documenting a tighter latency promise.
 
-1. **Own a sync window.** Deduplicate overlapping refresh, processing, manual-sync, and foreground requests per store. Give each launch a session/configuration generation so late callbacks from an expired or replaced session cannot finish or re-arm its successor. Define how same-process handles share ownership and how extensions/IPC participate. Do not close an app's active shared handle unexpectedly or claim control over another process.
-2. **Establish a meaningful target.** Capture a finite local upload boundary and, where the protocol supports it, a remote catch-up boundary. Confirm existing protocol capabilities before adding a barrier. Keep progress-only outcomes distinct if a remote boundary cannot be established; partial progress must never be presented as full catch-up.
-3. **Do bounded work.** Carry cancellation and a monotonic deadline through connection setup, upload, apply, ACK waits, SQLite contention, and cleanup. Audit the existing drain/close joins and callback reentrancy before promising a bound. Cancellation may skip an optional drain, but must preserve durable replay state and ACK correctness.
-4. **Prove suspension readiness.** Stop new session work, settle or cancel admitted work, retire readers, prevent racing repins, and confirm relevant writer/reader locks are gone. Keep logical close and physical resource settlement distinct. Reuse existing retirement/close mechanisms before inventing replacements.
-5. **Return an honest outcome.** Distinguish completed-to-boundary, partial durable progress, expired/cancelled, unavailable credentials/protected data, and failure. Define how each maps to `setTaskCompleted(success:)`; invoke completion exactly once, after cleanup. Expose enough diagnostics to explain partial progress without recording credentials or row contents.
-6. **Resume predictably.** Preserve progress across process death and reopen, handle authentication refresh and protected-data transitions, and clear reader suppression on the appropriate foreground path. Avoid creating permanent unpinned behavior or resuming background keepers prematurely.
+## What the app writes
 
-The API names and whether this is a separate Swift product are design decisions for the first milestone. Keep BackgroundTasks/UIKit dependencies out of Core and guard the adapter for supported Apple platforms.
+At early application initialization, create and retain one controller. `AppStore.openLattice()` below is the app's memoized accessor, not a fresh temporary database per task. This example assumes the AppStore holds a MainActor-created store with deferred WSS startup.
 
-## Milestones and acceptance
+```swift
+let store = AppStore()
+let sync = try LatticeBackgroundSync(
+    refresh: .init(
+        identifier: "com.example.app.sync-refresh",
+        minimumInterval: 15 * 60
+    ),
+    lattice: { try store.openLattice() },
+    onError: { error in
+        store.reportSyncError(error)
+    }
+)
+```
 
-### 1 Verify and specify the existing contracts
+For SwiftUI, construct this eagerly in the `App` initializer, retain it for the process lifetime, and forward the **App-level aggregate** scene phase. Do not delay registration until `onAppear`, a `.task` view modifier, or a lazy store accessor. Initialize the desired state from the current app lifecycle as well as observing changes.
 
-- Trace retire/resume/close/drain from Swift to physical resources; document ownership, completion, and reentrancy.
-- Add the automatic lifecycle regression and resolve the documented-resume mismatch.
-- Specify the completion boundary and proposed public result. Reuse the existing server protocol where possible; identify a minimal protocol addition only if required.
-- Decide a shared-store ownership policy and a cancellation path that does not rely on unbounded `close()` execution in an expiration handler.
+```swift
+// App-level scenePhase, not one window's view-level scenePhase.
+.onChange(of: scenePhase) { phase in
+    switch phase {
+    case .active:
+        sync.setForegroundActive(true)
+    case .background:
+        sync.setForegroundActive(false)
+    case .inactive:
+        break
+    @unknown default:
+        break
+    }
+}
+```
 
-### 2 Implement a scheduler-independent bounded sync session
+UIKit uses the same controller: create it during launch before `didFinishLaunching` returns, and forward active/background transitions. No caller writes `BGTaskScheduler.register`, an expiration handler, resubmission code, or `setTaskCompleted`. The adapter owns that identifier exclusively: **do not also attach SwiftUI `.backgroundTask` or another framework's handler for it**. The app can invoke `try await sync.refresh()` manually when it needs the same bounded operation.
 
-- Add only the missing Core/bridge/Swift result and cancellation hooks demonstrated by milestone 1.
-- Cover expiration before connect, during upload/apply/ACK, SQL contention, offline operation, auth failure, protected-data loss, sibling-owner handoff, and reopen after termination.
-- Preserve existing foreground sync, deferred startup, read caches, and supported platform behavior.
+The app's target must contain:
 
-### 3 Add the app-owned BGTaskScheduler adapter
+```xml
+<key>BGTaskSchedulerPermittedIdentifiers</key>
+<array>
+    <string>com.example.app.sync-refresh</string>
+</array>
+<key>UIBackgroundModes</key>
+<array>
+    <string>fetch</string>
+</array>
+```
 
-- Provide opt-in registration/submission, refresh/processing handlers, rescheduling, overlap coalescing, and exactly-once task completion.
-- Supply a small iOS host example with required identifiers/background modes and foreground/manual fallback. Include integration guidance for UIKit/SwiftUI and app-group stores.
-- Report requested versus actual launch, progress, outcome, cleanup duration, and retry eligibility. Do not describe OS scheduling delays as Core sync failures.
+Merge these entries into the target's existing configuration; Xcode may generate the plist from build settings. Enable Background Fetch in Background Modes for refresh. A future BGProcessingTask policy also needs the `processing` mode. These are build-time application requirements, not configuration a runtime package can create. [Permitted identifiers](https://developer.apple.com/documentation/bundleresources/information-property-list/bgtaskschedulerpermittedidentifiers), [registration](https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler/register(fortaskwithidentifier:using:launchhandler:)).
 
-### 4 Qualify and release
+## Responsibilities inside the adapter
 
-Use these initial engineering targets as the new goal's measurable acceptance criteria:
+### Registration and scheduling
 
-| Measure | Acceptance target |
+Register once, early, on every process launch, including background launches. Validate identifier syntax, the permitted identifier, required mode, and SDK-owned duplicate registrations before calling Apple. Reject a second conflicting SDK controller deterministically. Internal repeated setup by the same controller must not register twice. Pending requests do not reveal another library's registered handlers, so the SDK cannot guarantee detection of foreign duplicate registration.
+
+Registration succeeds or throws synchronously. Submission happens asynchronously; failures are reported through `onError` and are not confused with registration success. Ensure an initial request exists, schedule the next opportunity when a task is delivered, and ensure pending work when the app backgrounds. Preserve an earlier pending request instead of repeatedly moving it later on every lifecycle event. Apple has an app-wide refresh-request limit, so one refresh identifier should own this app's refresh policy; do not submit one per store/window.
+
+`minimumInterval` maps to the next request's `earliestBeginDate`. iOS may run later or not grant an opportunity. The policy uses one coalesced submission path, without tight retry loops. Handle disabled Background App Refresh, restricted scheduling, authentication/protected-data availability, and offline delivery as explicit outcomes. [Scheduling semantics](https://developer.apple.com/documentation/backgroundtasks/bgtaskrequest/earliestbegindate), [submission behavior](https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler/submit(_:)).
+
+Apple's current documentation introduces `submitTaskRequest(_:completionHandler:)` in iOS 27 and deprecates synchronous `submit(_:)` there. Use an availability-gated submission shim, with the legacy route for older supported systems. Run submission away from MainActor as instructed by the new API, passing immutable request data to that worker. Check the build SDK before choosing the exact Swift async spelling; do not drop iOS 15 support. [New submission API](https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler/submittaskrequest(_:completionhandler:)).
+
+### Task delivery and lifecycle
+
+The handler installs expiration handling before starting work, retains a handle to the Swift Task, and handles expiration racing Task creation. Expiration requests cancellation; it does not immediately report completion while database work still runs. A single completion owner calls `setTaskCompleted` once after the refresh and its cleanup end. A deliberate healthy bounded attempt can map to success without claiming global catch-up; cancellation, failed cleanup, and failed work map to failure. Define deferred-outcome mapping explicitly in tests. [Task completion](https://developer.apple.com/documentation/backgroundtasks/bgtask/settaskcompleted(success:)), [expiration](https://developer.apple.com/documentation/backgroundtasks/bgtask/expirationhandler).
+
+Keep only the necessary controller state: latest foreground intent, one current background attempt, transition generation, and any cleanup in flight. Reject or coalesce duplicate refresh calls without overlapping native owners; v1 can return a deferred/already-running outcome. Late callbacks carry the generation and cannot finish or disconnect a successor.
+
+If foreground activity arrives during refresh, release the background attempt's ownership and keep or resume foreground sync. If cleanup already started, join it before reconnecting the same store. When no foreground or refresh owner remains, suspend. Never close the app's store as routine refresh cleanup. Direct app calls to connect/disconnect must not compete with this controller after lifecycle ownership is delegated.
+
+A normal foreground-to-background transition needs its own short UIKit execution assertion to protect asynchronous cleanup; BGTaskScheduler is not a substitute for finishing work already in flight. Acquire that assertion before starting cleanup, handle refusal/expiration, and end it once. Do not create a second assertion just because an OS background task is already providing runtime. Never block MainActor waiting for native work that may call back onto MainActor. [UIKit execution assertion](https://developer.apple.com/documentation/uikit/uiapplication/beginbackgroundtask(withname:expirationhandler:)).
+
+## Smallest necessary Core and Swift changes
+
+Existing reader release is real and already exposed. Open idle SQLite connections need not all be physically destroyed to release transaction locks. The missing operation is **reversible suspension of owned sync and maintenance activity** while the app's database remains usable.
+
+The [source audit](ios-background-sync-source-audit.md) identifies concrete gaps in simply calling `disconnectSync()` plus `retireAllGenerations()`:
+
+- Disconnect leaves the WSS ownership flock held and the pacer capable of database maintenance.
+- Already queued remote applies can execute after disconnect returns.
+- Optional audit maintenance and queued Swift generation-maintenance ticks need settlement.
+- Default SQL busy waits can outlast a refresh cleanup opportunity.
+
+Implement an internal async suspension/acknowledgment path by reusing the existing WSS teardown/setup and read-retirement machinery. Stop new sync work, settle or cancel admitted work without ACKing unapplied rows, release this owner's WSS lock without sibling handoff, settle its maintenance, and retire its reader keepers. Keep the main store identity alive. Resume through existing setup and durable cursors. A failed/unfinished cleanup must remain an error, not a successful suspension receipt.
+
+Do not call all-channel `teardown_sync(false)` as though it were WSS-only: it also tears down IPC. V1 should validate unsupported IPC/independent same-process owner arrangements before starting, without silently changing them. Another process owning WSS is a deferred result, not a reason to invent a global broker. Same native-identity facades may share the single controller; independent owners require an explicit later design.
+
+Fix and test the automatic foreground/protected-data resume mismatch. Protected data becoming available is not foreground activation: it must not clear suppression or reconnect while the controller still intends suspension. Gate resumption on current lifecycle ownership and test unlock notifications racing cleanup. Keep existing retirement behavior and test new coordinators/racing accesses during suppression. Do not implement refresh by consuming `syncProgressStream` or replacing public state/error handlers: those are app-owned single slots. Reuse internal state or add a private observation seam only when needed.
+
+## Implementation sequence
+
+1. **Validate the small contract.** Compile the proposed caller API under Swift 6/iOS 15, test lazy provider isolation, and write deterministic regressions for queued apply after disconnect, reader retirement/resume, and retained ownership lock. Measure cleanup under SQL contention. Choose a cleanup reserve from these results; do not carry forward the draft's arbitrary one-second target.
+2. **Add reversible suspension.** Factor only the required WSS and maintenance pieces; bridge asynchronous completion without blocking the app actor. Preserve durable upload/replay and ACK rules. Test same-store reuse, no sibling handoff, and failure/cancellation paths before adding scheduling.
+3. **Build the thin controller.** Implement the desired-state driver, generation checks, lazy store provider, typed outcomes, execution-assertion lifetime, and hidden BGTaskScheduler plumbing. Preserve existing app progress/error subscribers.
+4. **Demonstrate the caller experience.** Add small SwiftUI and UIKit host examples, plist/capability instructions, clear registration errors, and a protected-data cold-launch case. Document minimum interval as a hint and the exclusive identifier/store ownership contract.
+5. **Qualify and ship.** Run focused lifecycle tests and existing affected Core/Swift tests/builds. Exercise a real iOS host, distinguishing debug-injected launches from naturally scheduled execution. Release coherent SDK/Core versions only if Core changes require them, and report actual limitations. Engram/Orbital notices follow a release if relevant; no direct or indirect shock-trooper contact.
+
+## Focused acceptance criteria
+
+| Scenario | Required observation |
 | --- | --- |
-| Data correctness | Zero lost durable edits, duplicate visible applications, or ACK/cursor advances past unapplied work across the failure matrix. |
-| Lifecycle repetition | At least 100 controlled background-session/expiration/resume cycles with exactly one completion per issued task, no overlapping owner, and no owned DB work after successful cleanup. |
-| Expiration cleanup | In the defined controlled device workload, cancellation-to-quiescence p95 at most 1 second and every observed case at most 2 seconds. Report failures; do not widen targets after seeing results without revisiting the design. |
-| Actual lock release | An independent process can acquire the expected write access and complete a TRUNCATE/RESTART WAL checkpoint after cleanup, checking SQLite return/busy results and the expected WAL state. Exercise retained Results, active reads/writes, and sibling handles. A writer succeeding or a PASSIVE checkpoint alone does not prove retained reader locks are gone; distinguish unrelated owners from this session's locks. |
-| Short refresh work | Start with a configurable 20-second work deadline and stop early enough for cleanup; handle immediate OS expiration at every stage. This is an app budget, not a guaranteed iOS runtime allocation. |
-| Real iOS behavior | Demonstrate launch, expiry handling, foreground return, and reopen on a physical device. Record at least one naturally OS-scheduled launch separately from simulated/debug launches. No promised cadence or maximum wait. |
-| Compatibility | Existing applicable Core/Swift suites and supported builds pass; changes to bridge contracts raise the SDK dependency floor coherently. |
+| App integration | Early registration without opening a protected store; valid plist works; invalid/missing configuration produces a useful error; no double registration from SDK setup. |
+| Submission policy | Initial/next requests, earlier-pending preservation, app-wide request contention, and failure reporting behave deterministically under a scheduler fake. |
+| Data safety | Expiration before connect, during upload/apply/ACK, and during contention loses no durable edits and never advances ACK/cursor state past unapplied changes. |
+| Cancellation | Task-creation/expiration and expiration/completion races invoke completion exactly once, after owned cleanup. Measure elapsed cleanup; document the validated budget and workload. |
+| Actual settlement | In a controlled fixture, an independent process can acquire the released `.sync.lock` and complete a checked TRUNCATE/RESTART checkpoint with expected WAL state. Writer access or PASSIVE checkpoint alone is insufficient evidence. |
+| Foreground takeover | An expired refresh cannot disconnect its foreground successor; the same Lattice/Results remain usable; rapid phase changes preserve the latest intent. |
+| Other producers | Audit-retention and queued generation-maintenance controls show no owned DB work after successful suspension. Unrelated process locks are distinguished from this controller's responsibility. |
+| App compatibility | Existing progress/error observers remain installed. No unexpected IPC teardown, separate owner takeover, temporary-handle close, or actor hop. |
+| Device behavior | Physical-device cold background launch, expiration, protected-data handling, and foreground return work. Record natural scheduling separately; it is not a deterministic CI or calendar guarantee. |
 
-Record device/OS, store size, batch sizes, network conditions, samples, and exact test populations before measuring. Use deterministic scheduler/clock tests for races and real SQLite processes for lock assertions; simulated BGTask launches alone cannot establish actual scheduling behavior. A device or naturally scheduled launch that is unavailable stays an open acceptance item.
+The app still owns unrelated writes and other background subsystems; this adapter cannot make arbitrary application activity safe for suspension. The documented ownership boundary and tests must state which producers it controls.
 
-Publish only after the agreed gates pass, with release notes separating scheduling opportunity, progress, and completion guarantees. Notify Engram and Orbital when relevant; never contact shock trooper directly or indirectly. No deployment or release is part of preparing this plan.
+## Corrections to the first draft
 
-## Scope boundaries
+The first draft put too much weight on remote catch-up boundaries and broad ownership coordination, and proposed timing/cycle counts without measurements. The audit also clarifies that physical destruction of every database connection is unnecessary. Useful opportunistic refresh needs a small caller-facing controller plus targeted suspension correctness in the existing implementation.
 
-This goal does not inherit the old eight-writer 50% latency target, complete its automatic-recovery redesign, or import its unqualified source bundle wholesale. If a shared lifetime bug blocks safe background sync, isolate the smallest fix and qualify it on current main. Fixed background intervals, always-on sockets, a general storage broker, and a new conflict-resolution model are outside this goal.
-
-The existing goal remains paused. This document defines the next objective and acceptance criteria; it does not mark the old goal complete or claim that a new active goal has already been created.
+Apple's SwiftUI `.backgroundTask` could otherwise provide registration/cancellation/completion for iOS 16+, but the user's chosen API hides that boilerplate. The SDK therefore uses BGTaskScheduler directly and supports iOS 15; callers must not register a second SwiftUI handler for its identifier. A later BGProcessingTask policy can share the same engine without changing the store-ownership design.
