@@ -573,6 +573,9 @@ public struct Lattice {
         /// after reading it. Same-configuration cached opens share the existing lifecycle.
         public enum SyncStartup: Sendable, Hashable { case automatic, deferred }
         public var syncStartup: SyncStartup = .automatic
+        /// Optional app background-refresh policy. `nil` leaves background
+        /// scheduling disabled. This value does not itself register a task.
+        public var backgroundSync: BackgroundSync?
         private var scheduler: Scheduler
 
         /// Schema migration definitions keyed by version number.
@@ -710,6 +713,7 @@ public struct Lattice {
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
             lhs.syncStartup == rhs.syncStartup &&
+            lhs.backgroundSync == rhs.backgroundSync &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
             lhs.syncFilter == rhs.syncFilter &&
@@ -724,6 +728,7 @@ public struct Lattice {
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
             hasher.combine(syncStartup)
+            hasher.combine(backgroundSync)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
             hasher.combine(syncFilter)
@@ -756,7 +761,8 @@ public struct Lattice {
                     syncFilter: SyncFilter? = nil,
                     busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs,
                     syncTuning: SyncTuning? = nil,
-                    syncStartup: SyncStartup = .automatic) {
+                    syncStartup: SyncStartup = .automatic,
+                    backgroundSync: BackgroundSync? = nil) {
             // storage wins; fileURL is the long-standing convenience spelling;
             // neither → the default documents-directory database.
             self.storage = storage ?? .file(fileURL ?? Self.defaultDatabaseDirectory()
@@ -764,6 +770,7 @@ public struct Lattice {
             self.authorizationToken = authorizationToken
             self.wssEndpoint = wssEndpoint
             self.syncStartup = syncStartup
+            self.backgroundSync = backgroundSync
             self.scheduler = Scheduler()
             self.isReadOnly = isReadOnly
             self.migration = migration

@@ -149,6 +149,10 @@ public enum ServerSentEvent: Codable {
     // sequence (e.g. a Results Slice) wrap it with `Array(...)`.
     case auditLog([AuditLog])
     case ack([UUID])
+    /// End of this connection's initial replay pass. The relay sends this
+    /// only when the client requests `lattice-catch-up-complete=1`.
+    /// It does not certify client uploads or future/live server changes.
+    case catchUpComplete
     /// Server refused a client frame (relay write-policy). The frame was
     /// neither applied nor fanned out; its entries stay unACKed client-side.
     /// Legacy clients ignore the unknown kind (C++ `from_json` → nullopt).
@@ -187,7 +191,7 @@ public enum ServerSentEvent: Codable {
     case floorReset(durableHead: UUID?, reason: String)
 
     private enum CodingKeys: String, CodingKey {
-        case kind, auditLog, ack, rejected, nack, nackReason, floorReset, floorReason
+        case kind, auditLog, ack, replayRequest, catchUpComplete, rejected, nack, nackReason, floorReset, floorReason
     }
 
     public init(from decoder: any Decoder) throws {
@@ -201,6 +205,15 @@ public enum ServerSentEvent: Codable {
         case "ack":
             let ids = try container.decode([UUID].self, forKey: .ack)
             self = .ack(ids)
+        case "catchUpComplete":
+            guard try container.decode(Bool.self, forKey: .catchUpComplete),
+                  !container.contains(.auditLog), !container.contains(.ack),
+                  !container.contains(.replayRequest), !container.contains(.rejected), !container.contains(.nack),
+                  !container.contains(.floorReset) else {
+                throw DecodingError.dataCorruptedError(forKey: .catchUpComplete,
+                    in: container, debugDescription: "Invalid initial replay completion marker")
+            }
+            self = .catchUpComplete
         case "rejected":
             let reason = try container.decode(String.self, forKey: .rejected)
             self = .rejected(reason: reason)
@@ -227,6 +240,9 @@ public enum ServerSentEvent: Codable {
         case .ack(let ids):
             try container.encode("ack", forKey: .kind)
             try container.encode(ids, forKey: .ack)
+        case .catchUpComplete:
+            try container.encode("catchUpComplete", forKey: .kind)
+            try container.encode(true, forKey: .catchUpComplete)
         case .rejected(let reason):
             try container.encode("rejected", forKey: .kind)
             try container.encode(reason, forKey: .rejected)
