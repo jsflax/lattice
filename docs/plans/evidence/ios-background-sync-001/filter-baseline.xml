@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="3" failures="2" disabled="0" errors="0" time="0.141" timestamp="2026-11-01T18:04:08.311" name="AllTests">
+  <testsuite name="FilteredSyncWindowDurability" tests="3" failures="2" disabled="0" skipped="0" errors="0" time="0.14" timestamp="2026-11-01T18:04:08.312">
+    <testcase name="OrdinaryUpdateSurvivesFullSendWindow" file="/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp" line="116" status="run" result="completed" time="0.052" timestamp="2026-11-01T18:04:08.312" classname="FilteredSyncWindowDurability" />
+    <testcase name="LeavingFilterSurvivesFullSendWindowAndReconnect" file="/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp" line="136" status="run" result="completed" time="0.042" timestamp="2026-11-01T18:04:08.364" classname="FilteredSyncWindowDurability">
+      <failure message="/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:145&#x0A;Value of: fixture.target_pending()&#x0A;  Actual: false&#x0A;Expected: true&#x0A;The unsent synthetic DELETE needs a durable retry source&#x0A;" type=""><![CDATA[/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:145
+Value of: fixture.target_pending()
+  Actual: false
+Expected: true
+The unsent synthetic DELETE needs a durable retry source
+]]></failure>
+      <failure message="/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:148&#x0A;Value of: fixture.peer_has_target()&#x0A;  Actual: true&#x0A;Expected: false&#x0A;ACKing the blockers must allow the target removal to reach the peer&#x0A;" type=""><![CDATA[/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:148
+Value of: fixture.peer_has_target()
+  Actual: true
+Expected: false
+ACKing the blockers must allow the target removal to reach the peer
+]]></failure>
+      <failure message="/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:152&#x0A;Value of: fixture.peer_has_target()&#x0A;  Actual: true&#x0A;Expected: false&#x0A;Reconnect must not leave a permanently stale filtered peer&#x0A;" type=""><![CDATA[/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:152
+Value of: fixture.peer_has_target()
+  Actual: true
+Expected: false
+Reconnect must not leave a permanently stale filtered peer
+]]></failure>
+    </testcase>
+    <testcase name="ReenteringFilterSurvivesFullSendWindowAndReconnect" file="/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp" line="157" status="run" result="completed" time="0.046" timestamp="2026-11-01T18:04:08.407" classname="FilteredSyncWindowDurability">
+      <failure message="/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:169&#x0A;Value of: fixture.target_pending()&#x0A;  Actual: false&#x0A;Expected: true&#x0A;The unsent synthetic INSERT needs a durable retry source&#x0A;" type=""><![CDATA[/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:169
+Value of: fixture.target_pending()
+  Actual: false
+Expected: true
+The unsent synthetic INSERT needs a durable retry source
+]]></failure>
+      <failure message="/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:172&#x0A;Value of: fixture.peer_has_target()&#x0A;  Actual: false&#x0A;Expected: true&#x0A;ACKing the blockers must allow the target INSERT to reach the peer&#x0A;" type=""><![CDATA[/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:172
+Value of: fixture.peer_has_target()
+  Actual: false
+Expected: true
+ACKing the blockers must allow the target INSERT to reach the peer
+]]></failure>
+      <failure message="/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:176&#x0A;Value of: fixture.peer_has_target()&#x0A;  Actual: false&#x0A;Expected: true&#x0A;Reconnect must recover the target rather than trust unsent membership&#x0A;" type=""><![CDATA[/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:176
+Value of: fixture.peer_has_target()
+  Actual: false
+Expected: true
+Reconnect must recover the target rather than trust unsent membership
+]]></failure>
+    </testcase>
+  </testsuite>
+</testsuites>
