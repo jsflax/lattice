@@ -1,0 +1,12 @@
+Running main() from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/GoogleTest/src/gtest_main.cc
+Note: Google Test filter = Sync.DestroyFromObserverCallbackDoesNotHang
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from Sync
+[ RUN      ] Sync.DestroyFromObserverCallbackDoesNotHang
+[       OK ] Sync.DestroyFromObserverCallbackDoesNotHang (20 ms)
+[----------] 1 test from Sync (20 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (20 ms total)
+[  PASSED  ] 1 test.

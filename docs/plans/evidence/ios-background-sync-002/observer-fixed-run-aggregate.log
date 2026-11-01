@@ -1,0 +1,4 @@
+callback depths=1 map=0x100da8d08
+guard=0x100dac678 own=1 refs=1
+callback destroyed owner
+returned fired=1 released=1

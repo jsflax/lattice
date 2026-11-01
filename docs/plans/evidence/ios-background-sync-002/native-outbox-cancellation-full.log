@@ -1,0 +1,305 @@
+Running main() from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/GoogleTest/src/gtest_main.cc
+Note: Google Test filter = DatabaseCancellation.*:BackgroundSyncCharacterization.*:FilteredSyncWindowDurability.*:Sync.*:MultiChannelSyncSet.*:AuditMaintenanceOwnership.*:AuditPayloadQualification.*:DeferredDelivery.*
+[==========] Running 137 tests from 8 test suites.
+[----------] Global test environment set-up.
+[----------] 23 tests from AuditMaintenanceOwnership
+[ RUN      ] AuditMaintenanceOwnership.AgeRegisterBeforeOwnershipKeepsEveryPendingID
+[       OK ] AuditMaintenanceOwnership.AgeRegisterBeforeOwnershipKeepsEveryPendingID (43 ms)
+[ RUN      ] AuditMaintenanceOwnership.AgeResetBeforeOwnershipKeepsEveryPendingID
+[       OK ] AuditMaintenanceOwnership.AgeResetBeforeOwnershipKeepsEveryPendingID (43 ms)
+[ RUN      ] AuditMaintenanceOwnership.CompactRegisterBeforeOwnershipKeepsEveryPendingID
+[       OK ] AuditMaintenanceOwnership.CompactRegisterBeforeOwnershipKeepsEveryPendingID (41 ms)
+[ RUN      ] AuditMaintenanceOwnership.CompactResetBeforeOwnershipKeepsEveryPendingID
+[       OK ] AuditMaintenanceOwnership.CompactResetBeforeOwnershipKeepsEveryPendingID (41 ms)
+[ RUN      ] AuditMaintenanceOwnership.AgeRegisterCannotCrossProtectedFloorRead
+[       OK ] AuditMaintenanceOwnership.AgeRegisterCannotCrossProtectedFloorRead (43 ms)
+[ RUN      ] AuditMaintenanceOwnership.AgeResetCannotCrossProtectedFloorRead
+[       OK ] AuditMaintenanceOwnership.AgeResetCannotCrossProtectedFloorRead (44 ms)
+[ RUN      ] AuditMaintenanceOwnership.CompactRegisterCannotCrossProtectedFloorRead
+[       OK ] AuditMaintenanceOwnership.CompactRegisterCannotCrossProtectedFloorRead (42 ms)
+[ RUN      ] AuditMaintenanceOwnership.CompactResetCannotCrossProtectedFloorRead
+[       OK ] AuditMaintenanceOwnership.CompactResetCannotCrossProtectedFloorRead (43 ms)
+[ RUN      ] AuditMaintenanceOwnership.PublicBoundCannotBypassWriterFloor
+[       OK ] AuditMaintenanceOwnership.PublicBoundCannotBypassWriterFloor (45 ms)
+[ RUN      ] AuditMaintenanceOwnership.PublicFalseHintCannotBypassLegacyCursor
+[       OK ] AuditMaintenanceOwnership.PublicFalseHintCannotBypassLegacyCursor (44 ms)
+[ RUN      ] AuditMaintenanceOwnership.FailedDeleteRestoresHistoryAndTriggerFlag
+[       OK ] AuditMaintenanceOwnership.FailedDeleteRestoresHistoryAndTriggerFlag (44 ms)
+[ RUN      ] AuditMaintenanceOwnership.UnreadableDisabledFlagNeverRestoresGuessedZero
+[       OK ] AuditMaintenanceOwnership.UnreadableDisabledFlagNeverRestoresGuessedZero (44 ms)
+[ RUN      ] AuditMaintenanceOwnership.AttachedOnlyImplicitReadIsNotJoined
+[       OK ] AuditMaintenanceOwnership.AttachedOnlyImplicitReadIsNotJoined (34 ms)
+[ RUN      ] AuditMaintenanceOwnership.TableFreeUDFCannotReenterMaintenance
+[       OK ] AuditMaintenanceOwnership.TableFreeUDFCannotReenterMaintenance (34 ms)
+[ RUN      ] AuditMaintenanceOwnership.UDFReentryRejectsBeforeContendedStoreGate
+[       OK ] AuditMaintenanceOwnership.UDFReentryRejectsBeforeContendedStoreGate (34 ms)
+[ RUN      ] AuditMaintenanceOwnership.ExistingExplicitTransactionIsNotJoined
+[       OK ] AuditMaintenanceOwnership.ExistingExplicitTransactionIsNotJoined (33 ms)
+[ RUN      ] AuditMaintenanceOwnership.ExistingImplicitReadIsNotJoined
+[       OK ] AuditMaintenanceOwnership.ExistingImplicitReadIsNotJoined (33 ms)
+[ RUN      ] AuditMaintenanceOwnership.BetweenStatementsOwnedAndSettledCallbackUnlocked
+[       OK ] AuditMaintenanceOwnership.BetweenStatementsOwnedAndSettledCallbackUnlocked (35 ms)
+[ RUN      ] AuditMaintenanceOwnership.CloseAfterAdmissionStillCommits
+[       OK ] AuditMaintenanceOwnership.CloseAfterAdmissionStillCommits (35 ms)
+[ RUN      ] AuditMaintenanceOwnership.CloseAfterAdmissionStillRollsBack
+[       OK ] AuditMaintenanceOwnership.CloseAfterAdmissionStillRollsBack (36 ms)
+[ RUN      ] AuditMaintenanceOwnership.FailedRollbackPoisonsAndPreservesOriginalError
+[       OK ] AuditMaintenanceOwnership.FailedRollbackPoisonsAndPreservesOriginalError (35 ms)
+[ RUN      ] AuditMaintenanceOwnership.CloseFromFileCommitCallbackRemainsSettled
+[       OK ] AuditMaintenanceOwnership.CloseFromFileCommitCallbackRemainsSettled (43 ms)
+[ RUN      ] AuditMaintenanceOwnership.SuccessfulFileCommitDoesNotRollBackObserverTransaction
+[       OK ] AuditMaintenanceOwnership.SuccessfulFileCommitDoesNotRollBackObserverTransaction (49 ms)
+[----------] 23 tests from AuditMaintenanceOwnership (929 ms total)
+
+[----------] 3 tests from BackgroundSyncCharacterization
+[ RUN      ] BackgroundSyncCharacterization.DisconnectDoesNotCancelAlreadyQueuedRemoteApply
+[       OK ] BackgroundSyncCharacterization.DisconnectDoesNotCancelAlreadyQueuedRemoteApply (21 ms)
+[ RUN      ] BackgroundSyncCharacterization.DestructionCancelsQueuedApplyAndPreservesLocalStore
+[       OK ] BackgroundSyncCharacterization.DestructionCancelsQueuedApplyAndPreservesLocalStore (18 ms)
+[ RUN      ] BackgroundSyncCharacterization.DisconnectRetainsWSSOwnershipUntilClose
+[       OK ] BackgroundSyncCharacterization.DisconnectRetainsWSSOwnershipUntilClose (17 ms)
+[----------] 3 tests from BackgroundSyncCharacterization (57 ms total)
+
+[----------] 14 tests from DatabaseCancellation
+[ RUN      ] DatabaseCancellation.ExistingApplicationTransactionIsNotAdoptedOrRolledBack
+[       OK ] DatabaseCancellation.ExistingApplicationTransactionIsNotAdoptedOrRolledBack (4 ms)
+[ RUN      ] DatabaseCancellation.ActiveStatementAndNestedScopeRejectAdmission
+[       OK ] DatabaseCancellation.ActiveStatementAndNestedScopeRejectAdmission (0 ms)
+[ RUN      ] DatabaseCancellation.OtherThreadsActiveSQLIsNotWaitedForOrInterrupted
+[       OK ] DatabaseCancellation.OtherThreadsActiveSQLIsNotWaitedForOrInterrupted (0 ms)
+[ RUN      ] DatabaseCancellation.CancelledBeginDoesNotRetryTheRemainingBudget
+[       OK ] DatabaseCancellation.CancelledBeginDoesNotRetryTheRemainingBudget (10 ms)
+[ RUN      ] DatabaseCancellation.CheckpointBudgetChangesPreserveCancellation
+[       OK ] DatabaseCancellation.CheckpointBudgetChangesPreserveCancellation (13 ms)
+[ RUN      ] DatabaseCancellation.TryBeginRestoresTheScopedCancellationHandler
+[       OK ] DatabaseCancellation.TryBeginRestoresTheScopedCancellationHandler (11 ms)
+[ RUN      ] DatabaseCancellation.NoncancelledScopePreservesWaitAndCommitBehavior
+[       OK ] DatabaseCancellation.NoncancelledScopePreservesWaitAndCommitBehavior (9 ms)
+[ RUN      ] DatabaseCancellation.BoundPrivateBeginCancellationLeavesSamePathAppConnectionUsable
+[       OK ] DatabaseCancellation.BoundPrivateBeginCancellationLeavesSamePathAppConnectionUsable (13 ms)
+[ RUN      ] DatabaseCancellation.BoundCheckpointPreservesCancellationAcrossBudgetChanges
+[       OK ] DatabaseCancellation.BoundCheckpointPreservesCancellationAcrossBudgetChanges (13 ms)
+[ RUN      ] DatabaseCancellation.BoundTryBeginRestoresCancellationForFollowingSQL
+[       OK ] DatabaseCancellation.BoundTryBeginRestoresCancellationForFollowingSQL (14 ms)
+[ RUN      ] DatabaseCancellation.ScopedOperationAlsoObservesItsPrivateBoundToken
+[       OK ] DatabaseCancellation.ScopedOperationAlsoObservesItsPrivateBoundToken (14 ms)
+[ RUN      ] DatabaseCancellation.ScopedOperationRestoresPrivateBoundHandlerOnExit
+[       OK ] DatabaseCancellation.ScopedOperationRestoresPrivateBoundHandlerOnExit (14 ms)
+[ RUN      ] DatabaseCancellation.BindingRejectsExistingApplicationTransactionAndReplacement
+[       OK ] DatabaseCancellation.BindingRejectsExistingApplicationTransactionAndReplacement (3 ms)
+[ RUN      ] DatabaseCancellation.BoundTokenOutlivesCallerAndSurvivesMovingIdleDatabase
+[       OK ] DatabaseCancellation.BoundTokenOutlivesCallerAndSurvivesMovingIdleDatabase (3 ms)
+[----------] 14 tests from DatabaseCancellation (126 ms total)
+
+[----------] 8 tests from AuditPayloadQualification
+[ RUN      ] AuditPayloadQualification.MemorySameRowCommitsRetainDistinctAuditIds
+[       OK ] AuditPayloadQualification.MemorySameRowCommitsRetainDistinctAuditIds (4 ms)
+[ RUN      ] AuditPayloadQualification.FileSameRowCommitsRetainDistinctAuditIds
+[       OK ] AuditPayloadQualification.FileSameRowCommitsRetainDistinctAuditIds (11 ms)
+[ RUN      ] AuditPayloadQualification.MemoryUpsertFieldsBelongToTheirOwnCommit
+[       OK ] AuditPayloadQualification.MemoryUpsertFieldsBelongToTheirOwnCommit (3 ms)
+[ RUN      ] AuditPayloadQualification.FileUpsertFieldsBelongToTheirOwnCommit
+[       OK ] AuditPayloadQualification.FileUpsertFieldsBelongToTheirOwnCommit (11 ms)
+[ RUN      ] AuditPayloadQualification.MemoryLinkCommitsRetainIdsAndParentFields
+[       OK ] AuditPayloadQualification.MemoryLinkCommitsRetainIdsAndParentFields (4 ms)
+[ RUN      ] AuditPayloadQualification.FileLinkCommitsRetainIdsAndParentFields
+[       OK ] AuditPayloadQualification.FileLinkCommitsRetainIdsAndParentFields (12 ms)
+[ RUN      ] AuditPayloadQualification.MemoryLaterRollbackPreservesOnlyEarlierCommittedAudit
+[       OK ] AuditPayloadQualification.MemoryLaterRollbackPreservesOnlyEarlierCommittedAudit (3 ms)
+[ RUN      ] AuditPayloadQualification.FileLaterRollbackPreservesOnlyEarlierCommittedAudit
+[       OK ] AuditPayloadQualification.FileLaterRollbackPreservesOnlyEarlierCommittedAudit (10 ms)
+[----------] 8 tests from AuditPayloadQualification (61 ms total)
+
+[----------] 7 tests from DeferredDelivery
+[ RUN      ] DeferredDelivery.ObserverReadsThroughSecondHandleDuringMultiWriteTxn
+[       OK ] DeferredDelivery.ObserverReadsThroughSecondHandleDuringMultiWriteTxn (16 ms)
+[ RUN      ] DeferredDelivery.PerTransactionBatchingAndOrder
+[       OK ] DeferredDelivery.PerTransactionBatchingAndOrder (3 ms)
+[ RUN      ] DeferredDelivery.AutocommitDeliversBeforeAddReturns
+[       OK ] DeferredDelivery.AutocommitDeliversBeforeAddReturns (3 ms)
+[ RUN      ] DeferredDelivery.RollbackDeliversNothingMemory
+[       OK ] DeferredDelivery.RollbackDeliversNothingMemory (3 ms)
+[ RUN      ] DeferredDelivery.RollbackDeliversNothingFile
+[       OK ] DeferredDelivery.RollbackDeliversNothingFile (10 ms)
+[ RUN      ] DeferredDelivery.ObserverWritebackIsDeliveredNotStranded
+[       OK ] DeferredDelivery.ObserverWritebackIsDeliveredNotStranded (3 ms)
+[ RUN      ] DeferredDelivery.ExceptionFromObserverSurfacesToWriter
+[       OK ] DeferredDelivery.ExceptionFromObserverSurfacesToWriter (3 ms)
+[----------] 7 tests from DeferredDelivery (44 ms total)
+
+[----------] 19 tests from FilteredSyncWindowDurability
+[ RUN      ] FilteredSyncWindowDurability.OrdinaryUpdateSurvivesFullSendWindow
+[       OK ] FilteredSyncWindowDurability.OrdinaryUpdateSurvivesFullSendWindow (31 ms)
+[ RUN      ] FilteredSyncWindowDurability.LeavingFilterSurvivesFullSendWindowAndReconnect
+[       OK ] FilteredSyncWindowDurability.LeavingFilterSurvivesFullSendWindowAndReconnect (32 ms)
+[ RUN      ] FilteredSyncWindowDurability.ReenteringFilterSurvivesFullSendWindowAndReconnect
+[       OK ] FilteredSyncWindowDurability.ReenteringFilterSurvivesFullSendWindowAndReconnect (36 ms)
+[ RUN      ] FilteredSyncWindowDurability.LeavingFilterRetriesAfterDisconnectBeforeAcknowledgment
+[       OK ] FilteredSyncWindowDurability.LeavingFilterRetriesAfterDisconnectBeforeAcknowledgment (31 ms)
+[ RUN      ] FilteredSyncWindowDurability.ReenteringFilterRetriesAfterDisconnectBeforeAcknowledgment
+[       OK ] FilteredSyncWindowDurability.ReenteringFilterRetriesAfterDisconnectBeforeAcknowledgment (33 ms)
+[ RUN      ] FilteredSyncWindowDurability.RemovalRetainsPayloadAcrossSourceRestart
+[       OK ] FilteredSyncWindowDurability.RemovalRetainsPayloadAcrossSourceRestart (37 ms)
+[ RUN      ] FilteredSyncWindowDurability.FullRowInsertRetainsPayloadAcrossSourceRestart
+[       OK ] FilteredSyncWindowDurability.FullRowInsertRetainsPayloadAcrossSourceRestart (38 ms)
+[ RUN      ] FilteredSyncWindowDurability.OrdinaryDeleteRetriesAfterSourceRestart
+[       OK ] FilteredSyncWindowDurability.OrdinaryDeleteRetriesAfterSourceRestart (37 ms)
+[ RUN      ] FilteredSyncWindowDurability.ReconciliationDeleteRetriesAfterSourceRestart
+[       OK ] FilteredSyncWindowDurability.ReconciliationDeleteRetriesAfterSourceRestart (36 ms)
+[ RUN      ] FilteredSyncWindowDurability.LatestFilterReconcilesAfterAdmittedDelivery
+[       OK ] FilteredSyncWindowDurability.LatestFilterReconcilesAfterAdmittedDelivery (30 ms)
+[ RUN      ] FilteredSyncWindowDurability.ClearingFilterDoesNotDiscardAdmittedDelivery
+[       OK ] FilteredSyncWindowDurability.ClearingFilterDoesNotDiscardAdmittedDelivery (27 ms)
+[ RUN      ] FilteredSyncWindowDurability.AcknowledgmentOnlyRemovesMatchingChannelDelivery
+[       OK ] FilteredSyncWindowDurability.AcknowledgmentOnlyRemovesMatchingChannelDelivery (29 ms)
+[ RUN      ] FilteredSyncWindowDurability.PrivateRemovalIsNotPublishedIntoGlobalAuditHistory
+[       OK ] FilteredSyncWindowDurability.PrivateRemovalIsNotPublishedIntoGlobalAuditHistory (33 ms)
+[ RUN      ] FilteredSyncWindowDurability.StagingRollbackKeepsSourcePendingAndMembership
+[       OK ] FilteredSyncWindowDurability.StagingRollbackKeepsSourcePendingAndMembership (30 ms)
+[ RUN      ] FilteredSyncWindowDurability.OutstandingStagingRemainsWithinSendWindow
+[       OK ] FilteredSyncWindowDurability.OutstandingStagingRemainsWithinSendWindow (47 ms)
+[ RUN      ] FilteredSyncWindowDurability.FirstConnectedCallbackCanRequestSync
+[       OK ] FilteredSyncWindowDurability.FirstConnectedCallbackCanRequestSync (26 ms)
+[ RUN      ] FilteredSyncWindowDurability.ClearingFilterWhileDisconnectedSurvivesConnect
+[       OK ] FilteredSyncWindowDurability.ClearingFilterWhileDisconnectedSurvivesConnect (28 ms)
+[ RUN      ] FilteredSyncWindowDurability.PendingPayloadSurvivesSourceHistoryCompaction
+[       OK ] FilteredSyncWindowDurability.PendingPayloadSurvivesSourceHistoryCompaction (40 ms)
+[ RUN      ] FilteredSyncWindowDurability.InvalidStoredPayloadDoesNotDiscardDelivery
+[       OK ] FilteredSyncWindowDurability.InvalidStoredPayloadDoesNotDiscardDelivery (32 ms)
+[----------] 19 tests from FilteredSyncWindowDurability (643 ms total)
+
+[----------] 8 tests from MultiChannelSyncSet
+[ RUN      ] MultiChannelSyncSet.PerSyncIdCrudIsolation
+[       OK ] MultiChannelSyncSet.PerSyncIdCrudIsolation (23 ms)
+[ RUN      ] MultiChannelSyncSet.ReconcileRemovalsScopedToChannel
+[       OK ] MultiChannelSyncSet.ReconcileRemovalsScopedToChannel (18 ms)
+[ RUN      ] MultiChannelSyncSet.MigrationSingleSlotAttribution
+[       OK ] MultiChannelSyncSet.MigrationSingleSlotAttribution (19 ms)
+[ RUN      ] MultiChannelSyncSet.MigrationMultiSlotDrops
+[       OK ] MultiChannelSyncSet.MigrationMultiSlotDrops (19 ms)
+[ RUN      ] MultiChannelSyncSet.CollapseCountIgnoresDeadChannels
+[       OK ] MultiChannelSyncSet.CollapseCountIgnoresDeadChannels (9 ms)
+[ RUN      ] MultiChannelSyncSet.RemoveSyncChannelState
+[       OK ] MultiChannelSyncSet.RemoveSyncChannelState (9 ms)
+[ RUN      ] MultiChannelSyncSet.AuditTriggerSelfHeal
+[       OK ] MultiChannelSyncSet.AuditTriggerSelfHeal (17 ms)
+[ RUN      ] MultiChannelSyncSet.ResetSyncStateScoped
+[       OK ] MultiChannelSyncSet.ResetSyncStateScoped (8 ms)
+[----------] 8 tests from MultiChannelSyncSet (126 ms total)
+
+[----------] 55 tests from Sync
+[ RUN      ] Sync.InsertTrigger
+[       OK ] Sync.InsertTrigger (3 ms)
+[ RUN      ] Sync.UpdateTrigger
+[       OK ] Sync.UpdateTrigger (3 ms)
+[ RUN      ] Sync.DeleteTrigger
+[       OK ] Sync.DeleteTrigger (3 ms)
+[ RUN      ] Sync.LinkTableTrigger
+[       OK ] Sync.LinkTableTrigger (3 ms)
+[ RUN      ] Sync.SyncControlDisables
+[       OK ] Sync.SyncControlDisables (3 ms)
+[ RUN      ] Sync.CompactAuditLog
+[       OK ] Sync.CompactAuditLog (5 ms)
+[ RUN      ] Sync.CompactAuditLogSchemaless
+[       OK ] Sync.CompactAuditLogSchemaless (23 ms)
+[ RUN      ] Sync.GenerateHistory
+[       OK ] Sync.GenerateHistory (7 ms)
+[ RUN      ] Sync.AuditLogEntryJson
+[       OK ] Sync.AuditLogEntryJson (0 ms)
+[ RUN      ] Sync.ServerSentEventJson
+[       OK ] Sync.ServerSentEventJson (0 ms)
+[ RUN      ] Sync.ServerSentNackRoundTripsWithoutAcknowledging
+[       OK ] Sync.ServerSentNackRoundTripsWithoutAcknowledging (0 ms)
+[ RUN      ] Sync.ServerSentNackOptionalReasonAndLegacyKeyFrames
+[       OK ] Sync.ServerSentNackOptionalReasonAndLegacyKeyFrames (0 ms)
+[ RUN      ] Sync.ServerSentNackRejectsMalformedAndAmbiguousFrames
+[       OK ] Sync.ServerSentNackRejectsMalformedAndAmbiguousFrames (0 ms)
+[ RUN      ] Sync.ServerSentAuditFailureReportsPositionWithoutWireValues
+[       OK ] Sync.ServerSentAuditFailureReportsPositionWithoutWireValues (0 ms)
+[ RUN      ] Sync.GenerateInstructionInsert
+[       OK ] Sync.GenerateInstructionInsert (0 ms)
+[ RUN      ] Sync.GenerateInstructionUpdate
+[       OK ] Sync.GenerateInstructionUpdate (0 ms)
+[ RUN      ] Sync.GenerateInstructionDelete
+[       OK ] Sync.GenerateInstructionDelete (0 ms)
+[ RUN      ] Sync.LegacyNetworkFactoryAcceptsSchedulerContext
+[       OK ] Sync.LegacyNetworkFactoryAcceptsSchedulerContext (0 ms)
+[ RUN      ] Sync.SynchronizerConnectAndUpload
+[       OK ] Sync.SynchronizerConnectAndUpload (12 ms)
+[ RUN      ] Sync.SynchronizerReceiveAck
+[       OK ] Sync.SynchronizerReceiveAck (16 ms)
+[ RUN      ] Sync.SynchronizerNackReportsReasonWithoutAcknowledgingOrImmediateResend
+[       OK ] Sync.SynchronizerNackReportsReasonWithoutAcknowledgingOrImmediateResend (60 ms)
+[ RUN      ] Sync.SynchronizerNackRetainsAckTimeoutRecovery
+[       OK ] Sync.SynchronizerNackRetainsAckTimeoutRecovery (366 ms)
+[ RUN      ] Sync.SynchronizerReceiveRemote
+[       OK ] Sync.SynchronizerReceiveRemote (18 ms)
+[ RUN      ] Sync.DestroyRaceNocrash
+[       OK ] Sync.DestroyRaceNocrash (158 ms)
+[ RUN      ] Sync.ApplyRemoteVec0OnTarget
+[       OK ] Sync.ApplyRemoteVec0OnTarget (11 ms)
+[ RUN      ] Sync.BlobJsonRoundTrip
+[       OK ] Sync.BlobJsonRoundTrip (3 ms)
+[ RUN      ] Sync.BlobSurvivesServerSentEventRoundTrip
+[       OK ] Sync.BlobSurvivesServerSentEventRoundTrip (3 ms)
+[ RUN      ] Sync.BlobVec0QueryableAfterRemoteApply
+[       OK ] Sync.BlobVec0QueryableAfterRemoteApply (10 ms)
+[ RUN      ] Sync.BlobVec0CrossConnectionAfterRemoteApply
+[       OK ] Sync.BlobVec0CrossConnectionAfterRemoteApply (14 ms)
+[ RUN      ] Sync.DeletedRowCancelsOnApply
+[       OK ] Sync.DeletedRowCancelsOnApply (9 ms)
+[ RUN      ] Sync.ChunkedProcessing
+[       OK ] Sync.ChunkedProcessing (6 ms)
+[ RUN      ] Sync.DuplicateEntrySkipped
+[       OK ] Sync.DuplicateEntrySkipped (10 ms)
+[ RUN      ] Sync.ReplayAcknowledgesFirstUnionAndLinkEntries
+[       OK ] Sync.ReplayAcknowledgesFirstUnionAndLinkEntries (10 ms)
+[ RUN      ] Sync.FailedLinkEnsureIsNotMemoizedAsSuccess
+[       OK ] Sync.FailedLinkEnsureIsNotMemoizedAsSuccess (3 ms)
+[ RUN      ] Sync.BackoffNotResetOnFlappyOpen
+[       OK ] Sync.BackoffNotResetOnFlappyOpen (1546 ms)
+[ RUN      ] Sync.WindowedCounterSanity
+[       OK ] Sync.WindowedCounterSanity (27 ms)
+[ RUN      ] Sync.ThrottleCoalescing
+[       OK ] Sync.ThrottleCoalescing (519 ms)
+[ RUN      ] Sync.CheckpointPrimitiveUnderLoad
+[       OK ] Sync.CheckpointPrimitiveUnderLoad (335 ms)
+[ RUN      ] Sync.PacerDrivenTruncateWhenIdle
+[       OK ] Sync.PacerDrivenTruncateWhenIdle (168 ms)
+[ RUN      ] Sync.PacerRunsReadPoolMaintenancePerPath
+[       OK ] Sync.PacerRunsReadPoolMaintenancePerPath (128 ms)
+[ RUN      ] Sync.CursorAdvancesOnAck
+[       OK ] Sync.CursorAdvancesOnAck (27 ms)
+[ RUN      ] Sync.CursorHoldsBelowUnackedAndResendsAfterReconnect
+[       OK ] Sync.CursorHoldsBelowUnackedAndResendsAfterReconnect (1296 ms)
+[ RUN      ] Sync.CursorCrashRecoveryStaleLowFloor
+[       OK ] Sync.CursorCrashRecoveryStaleLowFloor (1345 ms)
+[ RUN      ] Sync.CursorBoundedQueryUnderStall
+[       OK ] Sync.CursorBoundedQueryUnderStall (304 ms)
+[ RUN      ] Sync.ExistingDbGainsUploadFloor
+[       OK ] Sync.ExistingDbGainsUploadFloor (55 ms)
+[ RUN      ] Sync.AuditChangeLookupIndexed
+[       OK ] Sync.AuditChangeLookupIndexed (20 ms)
+[ RUN      ] Sync.DestroyFromObserverCallbackDoesNotHang
+[       OK ] Sync.DestroyFromObserverCallbackDoesNotHang (33 ms)
+[ RUN      ] Sync.ImmediateQueueSerializesFilterAndACKDuringUpload
+[       OK ] Sync.ImmediateQueueSerializesFilterAndACKDuringUpload (213 ms)
+[ RUN      ] Sync.ExplicitDisconnectCancelsQueuedRetryAcrossLaterConnect
+[       OK ] Sync.ExplicitDisconnectCancelsQueuedRetryAcrossLaterConnect (32 ms)
+[ RUN      ] Sync.GenericTransportRetiresContextOnlyAtDestruction
+[       OK ] Sync.GenericTransportRetiresContextOnlyAtDestruction (0 ms)
+[ RUN      ] Sync.DeferredSiblingDoesNotConsumeAutomaticOwnerHandoff
+[       OK ] Sync.DeferredSiblingDoesNotConsumeAutomaticOwnerHandoff (566 ms)
+[ RUN      ] Sync.DisconnectFencesAlreadyAdmittedOpenBeforePublishingFinalState
+[       OK ] Sync.DisconnectFencesAlreadyAdmittedOpenBeforePublishingFinalState (32 ms)
+[ RUN      ] Sync.TerminalErrorPublishesDisconnectedWithoutRequiringCloseCallback
+[       OK ] Sync.TerminalErrorPublishesDisconnectedWithoutRequiringCloseCallback (39 ms)
+[ RUN      ] Sync.ConnectRemainsIdempotentAcrossOpenStateHandoff
+[       OK ] Sync.ConnectRemainsIdempotentAcrossOpenStateHandoff (102 ms)
+[ RUN      ] Sync.StateRegistrationCatchupRejectsRetiredConnection
+[       OK ] Sync.StateRegistrationCatchupRejectsRetiredConnection (24 ms)
+[----------] 55 tests from Sync (7595 ms total)
+
+[----------] Global test environment tear-down
+[==========] 137 tests from 8 test suites ran. (9585 ms total)
+[  PASSED  ] 137 tests.

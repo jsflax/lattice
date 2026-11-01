@@ -1,0 +1,18 @@
+{
+  "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-focused-native-tests.log": {
+    "bytes": 2426456,
+    "sha256": "81fcc9ae903bbb309a03a4c30723f2c3ea5ce2becd072e7a4d7f7d3b073fb0ac"
+  },
+  "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-native-build.log": {
+    "bytes": 200934,
+    "sha256": "8f81a4d5e9799e4829954ea2d4175a1be8a71941296d16209e23135ebffb79b3"
+  },
+  "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-focused-tests.log": {
+    "bytes": 10236,
+    "sha256": "3064662d820cbef1bb0a9b92deb3c0b7bdf4314ffb14b164f32486d4956daaee"
+  },
+  "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/tls-fix-build.log": {
+    "bytes": 70414,
+    "sha256": "d947bbc5f796e6a4d0040072f942b133854dd5e8e0af8a919234fffbf22e285b"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-build/arm64-apple-macosx/debug/LatticeCoreTests",
+    "--gtest_filter=DatabaseCancellation.*:BackgroundSyncCharacterization.*:FilteredSyncWindowDurability.*:Sync.*:MultiChannelSyncSet.*:AuditMaintenanceOwnership.*:AuditPayloadQualification.*:DeferredDelivery.*",
+    "--gtest_output=xml:/Users/jason/localdev/lattice-bg-sync-evidence-20261101/native-outbox-cancellation-full.xml"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 9.633001709007658
+}
