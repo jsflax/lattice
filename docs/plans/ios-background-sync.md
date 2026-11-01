@@ -1,6 +1,6 @@
 # iOS background sync integration plan
 
-Revised November 1, 2026 after source review and API discussion. This is a **planning deliverable; the proposed API is not implemented**. The previous performance/recovery goal was cleared after its [unfinished handoff](sync-performance-recovery.md) was saved. Its recovery candidate is not a dependency of this feature.
+Revised November 1, 2026 after source review and API discussion. **Needs revision before implementation:** the [adversarial review](ios-background-sync-red-team.md) identifies unresolved completion semantics, account/store lifetime, composability, and integration issues. The proposed API below remains a review candidate, not an implementation-ready contract. The previous performance/recovery goal was cleared after its [unfinished handoff](sync-performance-recovery.md) was saved. Its recovery candidate is not a dependency of this feature.
 
 ## Goal and chosen approach
 

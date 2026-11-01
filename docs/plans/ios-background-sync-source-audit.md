@@ -1,6 +1,6 @@
 # Background sync source audit
 
-November 1, 2026. Read-only inspection of SDK `751950358f49b934dfa8af1dcfd493b683cd9d0a` and Core `6afbe41b6ea4de63b27bb40e042ad9e455ba72ed`, with separate reviews of the smallest caller API and actual lifetime behavior. No product code, native execution, or device qualification was performed. These findings support the [revised plan](ios-background-sync.md).
+November 1, 2026. Read-only inspection of SDK `751950358f49b934dfa8af1dcfd493b683cd9d0a` and Core `6afbe41b6ea4de63b27bb40e042ad9e455ba72ed`, with separate reviews of the smallest caller API and actual lifetime behavior. No product code, native execution, or device qualification was performed. Read these findings with the later [adversarial review](ios-background-sync-red-team.md); individual source findings do not validate the entire proposed integration.
 
 ## Reuse before adding APIs
 
@@ -32,7 +32,7 @@ The store's actor is part of its [scheduler/cache identity](https://github.com/j
 
 ## Scope removed from the first draft
 
-The wire protocol has audit changes, ACKs, replay requests, and NACKs, with no end-of-snapshot message. That does not block a bounded refresh attempt. Do not add a remote catch-up watermark merely to return from a background operation; do not label progress as complete server convergence.
+The inspected C++ event enum has audit changes, ACKs, replay requests, and NACKs. Swift ServerSentEvent also has `rejected` and `floorReset`; the original whole-protocol census was incomplete. No initial-catch-up-complete message was identified. A global catch-up watermark is not automatically required, but a finite refresh completion rule still needs selection. Compare an explicit best-effort idle policy with a small completion signal; do not label progress as complete server convergence.
 
 Remove the arbitrary 100-cycle, p95 one-second, and absolute two-second acceptance numbers from the initial draft. Start with deterministic lifecycle/lock tests and measured cleanup under a declared workload. Natural iOS scheduling is useful device evidence, not a deterministic CI timer or guaranteed release-date gate.
 
