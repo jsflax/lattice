@@ -1,0 +1,310 @@
+{
+  "checkpoint": 293,
+  "atUTC": "2026-10-23T21:51:07.839665+00:00",
+  "goalState": "PAUSE_READY_AWAITING_UPDATE_GOAL_CONFIRMATION",
+  "previousTurnClassification": "PROGRESS",
+  "goalTurn": "PROGRESS",
+  "engineeringEstimatePercent": null,
+  "externalBlocker": null,
+  "userStopCondition": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/PAUSE-AFTER-NEXT-RELEASE-20261023-002.json",
+    "bytes": 865,
+    "sha256": "8e2bb9fcc1b4093444fc10925a9952a350b517e93677c65f9f77375489253fd4"
+  },
+  "routing": {
+    "notifyAfterRelease": [
+      "engram-integration-hardening",
+      "orbital"
+    ],
+    "shockTrooper": "All direct and indirect contact revoked by latest human; Engram cancellation already tool accepted.",
+    "parent": "Do not wake human-paused lattice chat."
+  },
+  "currentLiveCompilerOrNativeSession": null,
+  "diagnostic008": {
+    "status": "TERMINAL_COMPILE_FAILURE_NO_TESTS_ISSUED",
+    "originalSession": 71816,
+    "exitCode": 1,
+    "result": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-successor-fixes-diagnostic-20261023-008/execution-001/RESULT.json",
+      "bytes": 2710,
+      "sha256": "422fc3cf2aea7ece47b0fe923f6e6ef5a95f1601298d3b235a39b8ed8bb87120"
+    },
+    "allIssuedEndingsKnown": true,
+    "sourceAndDonorsUnchanged": true,
+    "ownerBudgetSatisfied": true,
+    "successfulCompileIndices": [
+      0,
+      2
+    ],
+    "failedCompileIndex": 1,
+    "cause": "Appended AuthenticatedRelaySessionTests.cpp guard uses ambiguous std::shared_ptr<swift_lattice>; separate successor must qualify lattice::swift_lattice. Original008 preserved."
+  },
+  "sourceReviews": {
+    "temp002": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-ready-temp-preflight-independent-review-20261023-002/REVIEW.json",
+      "bytes": 4915,
+      "sha256": "a743df24ec83cf8538e46db53fea1da5204a735566b1c2ac7df6c3575e2bb3d5"
+    },
+    "publicHandoff": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-public-handoff-controller-union-independent-review-20261023-001/REVIEW.json",
+      "bytes": 9479,
+      "sha256": "891e7dc4ca826f5a0aeb51bcadd9953dc02da7ac9c1165d3be411d5adfc70647"
+    },
+    "queueAndInitialization": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-known-query-tail-corrections-independent-review-20261023-001/REVIEW.json",
+      "bytes": 10480,
+      "sha256": "9e9dd6b71430b84bd857d23c08db67bdc7c7599c605db9cc2594c7d6404319a1"
+    },
+    "neutralCoreHeld": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-known-query-core-storage-ending-independent-review-20261023-001/REVIEW.json",
+      "bytes": 6459,
+      "sha256": "ac4fb809dd742360c5c67afed1f967b93706ba7d5651de69ddb6a3053760c295"
+    },
+    "neutralCoreUngated": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-known-query-core-storage-ungated-independent-review-20261023-001/REVIEW.json",
+      "bytes": 3158,
+      "sha256": "c0941996f813a98c3f6b79ee9bf55ba2844b341fd5831f4fdf6e8a54a5a8b19d"
+    },
+    "opaqueRollback": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-known-query-opaque-rollback-tail-independent-review-20261023-001/REVIEW.json",
+      "bytes": 6852,
+      "sha256": "ea7bab7bfe3b12213180dc34c09776fad7aecbbef1669ac230b6755b9d1e83fc"
+    },
+    "failureDispositionHeld": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-known-query-delivery-failure-disposition-independent-review-20261023-001/REVIEW.json",
+      "bytes": 7536,
+      "sha256": "c841c5512eef220b653f0636ad7c650d629c112b9a13cd92446cc745e303dc8d"
+    }
+  },
+  "detachedQuery": {
+    "status": "UNSELECTED SOURCE ONLY",
+    "neutralCoreFinding": "Real BEGIN owns a gate lease even with null store gate; Core3 incorrectly rejected it. Separate reviewed no-gate successor required in any composition.",
+    "failureDispositionFinding": "HOLD: self-pin and same-thread identity prove storage, not an active error recipient. A later drain can otherwise clear and destroy an unread callback error after original caller returned.",
+    "completeRouteDesign": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-tail-quiescence-source-design-20261023-001/DESIGN-READY.json",
+      "bytes": 6692,
+      "sha256": "9868ad3075b724224aedf40f17633a66da0182dde1a16747bf3cac7c1a715936"
+    },
+    "completeRouteDesignState": "Actual caller/custody map and last-actor publication design frozen, unimplemented and not release-approved. Includes late-error outcome proposal.",
+    "implementationWork": "Agents completed current review/design packets and were told to start no new broad workstream while Root moves to the next qualified release and pause."
+  },
+  "lastBroadRuntime": {
+    "source": "diagnostic007",
+    "total": 183,
+    "passed": 175,
+    "failed": 8
+  },
+  "lastFullRuntime": {
+    "source": "ordinary006",
+    "total": 3408,
+    "passed": 3295,
+    "failed": 103,
+    "skipped": 10,
+    "originalOwnerTimeGatePassed": false
+  },
+  "acceptance": {
+    "fullCore": false,
+    "fullRecovery": false,
+    "performanceTarget": false,
+    "affectedPlatforms": false,
+    "nextReleasePublished": true,
+    "finalGoalReleaseAndAdoption": false
+  },
+  "disk": {
+    "availableGiBAtObservation": 51.58,
+    "floorGiB": 12,
+    "blocker": false
+  },
+  "downstreamObservations": {
+    "engram": {
+      "threadId": "01a0a2fa-5cbd-77f0-8082-2ad6bb5c6fa8",
+      "cursor": "4b1b4a30-a534-4ed7-ac43-50b37c856f9a:21",
+      "reported": "0.15.18/build36 installed and running on Laptop2;25 post-install and76 preservation checks passed; open-session runtime version verification pending",
+      "shockTrooperCancellationSentAndAccepted": true
+    },
+    "orbitalPriorTarget": {
+      "threadId": "01a1647d-7b6c-7253-8f60-734737273775",
+      "cursor": "8f9512f7-eb52-4b20-b072-598d92dff211:30",
+      "reported": "Unrelated Workup queued build; not evidence of Lattice adoption"
+    },
+    "humanPausedParent": "Untouched; never message or wake",
+    "orbitalRecipient": {
+      "threadId": "01a1647d-7b6c-7253-8f60-734737273775",
+      "title": "orbital",
+      "hostId": "local"
+    }
+  },
+  "nextActions": [
+    "Call update_goal(status=paused) now, report returned status and stop.",
+    "Resume broader work only after explicit human resumption.",
+    "On resumption read goal state and this checkpoint, preserve immutable failures and follow the unfinished resume frontier. No shock-trooper contact."
+  ],
+  "nextRelease": {
+    "version": "Swift Lattice 2.2.5",
+    "core": "2.2.8",
+    "base": "519ef5a4e221156cd6cc5b4aceaf99f82f46cbc9",
+    "worktree": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-20261023-001",
+    "evidence": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001",
+    "scope": "Raise Core dependency floor/full actual lock/upstream binding to released2.2.8; complete platform qualification; no unfinished automatic recovery included.",
+    "resolverSession": null,
+    "status": "SDK_225_PUBLISHED_VERIFIED_NOTICES_ACCEPTED_PAUSE_READY",
+    "upstreamJoins": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/UPSTREAM-JOINS.json",
+      "bytes": 1264,
+      "sha256": "7172df170950d1fe3601e9e9e7f608ad2f4fdd974fdbb4b7b2320f3d9d9e21a9"
+    },
+    "resolverExitCode": 0,
+    "head": "94968e21956105df22d33bd19c8af72097ab5517",
+    "tree": "3239d6d752e570f4dfd85b4d78f6e6792ff6dfec",
+    "pullRequest": "https://github.com/jsflax/lattice/pull/24",
+    "originalRun": 40018135076,
+    "checkoutSHA": "45b8358439a4d25b021b3008011e36be9b22bdc8",
+    "requiredJobStatus": {
+      "macos": "success",
+      "linux-stable": "success",
+      "ios-xcode": "success"
+    },
+    "nightly": "PR and main originals both passed and exact test populations verified",
+    "sourceReview": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-source-review-20261023-001/REVIEW.json",
+      "bytes": 4255,
+      "sha256": "e0db7228a0b9774aadf385e03ff4e2f8b5c4ae3fc2c795acb677bc5e3d1dda33"
+    },
+    "toolsSeal": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/tools/SEAL.json",
+      "bytes": 1328,
+      "sha256": "c9bb6b3b497b12b56efe8f96ead6d50f238be66d881b6a36e28644a7bc0d2f38"
+    },
+    "toolsRootReview": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/TOOLS-ROOT-REVIEW.json",
+      "bytes": 1296,
+      "sha256": "ab6452c1b7ebd4de4abe85cf69d85765ce9c38a34408c4f14592759ac061f1c7"
+    },
+    "merged": true,
+    "main": "a672e82bb9b6eb52305cbd1857721ce0908d7dc8",
+    "prVerified": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/pr-ci-40018135076/VERIFIED.json",
+      "bytes": 274423,
+      "sha256": "96f8e3a8b95beac20210fe58eb8ffdc0957a8dc3080a4bf008fa624ae23f7b90"
+    },
+    "mainVerified": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/main-ci-40020247538/VERIFIED.json",
+      "bytes": 274439,
+      "sha256": "5226c83fe0a4130d614b8a0a34ad6699a712dc952fd45f4d956fda8235d38ae3"
+    },
+    "mainCI": 40020247538,
+    "tag": "2.2.5",
+    "tagObject": "ffe3463a0c85f256f36780d9fba1ce26c3543655",
+    "releaseCI": 40022303458,
+    "releaseRunURL": "https://github.com/jsflax/lattice/actions/runs/40022303458",
+    "localPreflight": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/release-dispatch-001/preflight.result.json",
+      "bytes": 72,
+      "sha256": "36b11c7df52c511993d93aaa851868d1789586c5c4d4e636e39fee256455e6de"
+    },
+    "resumeFrontier": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/UNFINISHED-RESUME-FRONTIER-20261023-001.json",
+      "bytes": 3180,
+      "sha256": "e58099f6c361406efeae8f6229725b8ce6110505c253f3afe0aa2a03c0371242"
+    },
+    "releaseAttempt": 2,
+    "originalFailure": {
+      "attempt": 1,
+      "conclusion": "cancelled",
+      "reason": "macOS original 30-minute timeout",
+      "unfinishedTest": "contendedApplyNacksPromptlyInsteadOfParking()",
+      "verification": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/release-ci-40022303458/VERIFICATION.json",
+        "bytes": 187993,
+        "sha256": "7ecb49b2f7a7c25db84e8cc2e23a22932aeb4b64492a9bfcbc64c2bf56cee839"
+      },
+      "failureReview": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/RELEASE-ATTEMPT1-FAILURE-REVIEW.json",
+        "bytes": 2463,
+        "sha256": "9e5478a57f5b06a991583194123b6e0ac3c2cba70c1bf3160575f2889b5ae24a"
+      },
+      "sourceTriage": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/release-contended-apply-source-triage-001/REVIEW.json",
+        "bytes": 22134,
+        "sha256": "bb332d919b9769c5552bcc103d6f4b9169711c8d905890eeaad0eaddd139de16"
+      },
+      "causalFixEstablished": false,
+      "preserved": true
+    },
+    "retry": {
+      "dispatch": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/release-retry-dispatch-001/retry.result.json",
+        "bytes": 194,
+        "sha256": "0d79f3cce0fd3b71b58b1de15216cbf20dba24e1e31ff670fa3454d4bf94ec1b"
+      },
+      "preflight": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/release-retry-dispatch-001/preflight.result.json",
+        "bytes": 67,
+        "sha256": "aeed088aa0a85ed12843e14352e569b6db9a717f2239390fafc2e75234c90f3c"
+      },
+      "runObservation": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/release-retry-dispatch-001/attempt2-observed.json",
+        "bytes": 11781,
+        "sha256": "33479487c9240247b0412aeba6d9aab8a32c2cc6c95faa1c106ac91e7ae96d98"
+      },
+      "sourceUnchanged": true,
+      "tagUnchanged": true,
+      "originalLimitsUnchanged": true,
+      "onlyOneDiagnosticRetryAuthorized": true
+    },
+    "publication": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/publication-attempt2-001/PUBLICATION-VERIFIED.json",
+      "bytes": 268004,
+      "sha256": "3c3572c30d04614d5a3215f8859a7bee26993851595b8757474f02a0bb0daeae"
+    },
+    "retryVerified": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/release-ci-40022303458-attempt2/VERIFIED.json",
+      "bytes": 584151,
+      "sha256": "30361277274dc280a14636afbef971dee472afd396773875fd837c3711067c70"
+    },
+    "downstreamNotices": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/DOWNSTREAM-NOTICES.json",
+      "bytes": 4892,
+      "sha256": "bf0e2278f0e64497d7f8f771f35148fbea7188e32fa87d414a08d59d1e3423de"
+    },
+    "publishedAt": "2026-10-23T21:46:48Z",
+    "releaseURL": "https://github.com/jsflax/lattice/releases/tag/2.2.5",
+    "requiredReleaseGatesVerified": true,
+    "allFourLegsVerified": true,
+    "actualPlatformAttempts": {
+      "linux-stable": 1,
+      "macos-swiftpm": 2,
+      "ios-xcode": 1,
+      "linux-nightly": 1
+    },
+    "originalTimeoutCauseResolved": false,
+    "downstreamAdoptionVerified": false,
+    "retryTargetEnding": {
+      "test": "contendedApplyNacksPromptlyInsteadOfParking()",
+      "passed": true,
+      "seconds": 20.913,
+      "nackMilliseconds": 4161,
+      "externalLockHeldAtNack": true,
+      "holderExitedNormally": true,
+      "holderExitStatus": 0,
+      "durableRows": 1
+    }
+  },
+  "remainingScope": {
+    "resumeFrontier": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/UNFINISHED-RESUME-FRONTIER-20261023-001.json",
+      "bytes": 3180,
+      "sha256": "e58099f6c361406efeae8f6229725b8ce6110505c253f3afe0aa2a03c0371242"
+    },
+    "fullAutomaticRecovery": false,
+    "performanceTarget": false,
+    "fullPrivateCoreQualification": false,
+    "downstreamAdoption": false,
+    "unresolvedReleaseFixtureTimeout": true,
+    "humanChoices": [
+      "Ambiguous old local edit: use server value and preserve local edit for resolution.",
+      "First recovery upgrade: one-time managed restart."
+    ],
+    "originalFailuresRetained": true
+  }
+}

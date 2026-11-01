@@ -1,0 +1,28 @@
+{
+  "stage": "COMPILE",
+  "command": [
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/compile.py",
+    "7c126d7426a5403da4393729c717a7ae55ba1e983a3f643ba8ecef5c9239303f"
+  ],
+  "cwd": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/execution-001",
+  "capSeconds": 5400,
+  "signals": [
+    15
+  ],
+  "signalErrors": [],
+  "stopReason": "KeyboardInterrupt()",
+  "globalDescendantEndingNotClaimed": true,
+  "minimumFreeBytes": 135175282688,
+  "pid": 53663,
+  "pgid": 53663,
+  "exitCode": -15,
+  "leaderReaped": true,
+  "processGroupAbsent": null,
+  "groupQueryError": {
+    "errno": 1,
+    "message": "[Errno 1] Operation not permitted"
+  },
+  "elapsedSeconds": 1948.7785598339979,
+  "knownEnding": false
+}
