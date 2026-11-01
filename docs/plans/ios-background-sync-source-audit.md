@@ -37,3 +37,7 @@ The wire protocol has audit changes, ACKs, replay requests, and NACKs, with no e
 Remove the arbitrary 100-cycle, p95 one-second, and absolute two-second acceptance numbers from the initial draft. Start with deterministic lifecycle/lock tests and measured cleanup under a declared workload. Natural iOS scheduling is useful device evidence, not a deterministic CI timer or guaranteed release-date gate.
 
 The resulting scope is one app-facing controller, thin Apple scheduling plumbing, and targeted suspension fixes. It does not require importing the old recovery candidate.
+
+## Automatic lifecycle observation
+
+The caller does not need to forward state or permit swizzling. Existing `GenerationLifecycleObserver` already uses public UIKit notifications. The controller can use the same supported mechanism, with [UIApplication applicationState](https://developer.apple.com/documentation/uikit/uiapplication/applicationstate) providing aggregate state across scenes. Initial inactivity, transient focus loss, and a background scene beside an active scene must be tested separately. Observe before taking the initial state snapshot and keep lifecycle delivery on MainActor. Automatic observation changes the caller surface; it does not replace the required native suspension work.
