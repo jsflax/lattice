@@ -54,6 +54,7 @@ private func foreignCommit(dbPath: String, sql: String) throws {
         throw ForeignWriteError(message: "cannot open \(dbPath)")
     }
     defer { sqlite3_close(db) }
+    try registerCurrentWriterForFixtureMutation(db)
     sqlite3_busy_timeout(db, 5000)
     guard sqlite3_create_function(db, "sync_disabled", 0, SQLITE_UTF8, nil,
                                   { ctx, _, _ in sqlite3_result_int(ctx, 0) },

@@ -28,6 +28,7 @@ struct ExistingSchemaAccessTests {
         var pointer: OpaquePointer?
         try #require(sqlite3_open(url.path, &pointer) == SQLITE_OK)
         defer { sqlite3_close(pointer) }
+        try registerCurrentWriterForFixtureMutation(pointer)
         try #require(sqlite3_exec(pointer, sql, nil, nil, nil) == SQLITE_OK)
     }
     private func image(_ url: URL) -> [Data] {

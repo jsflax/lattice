@@ -1068,11 +1068,17 @@ final class BusySafeApplyForensicsTests: BaseTest {
         }
         let nacks = clients.reduce(0) { $0 + $1.nacks.count }
         print("FORENSIC concurrency: clients=\(clientCount) acked=\(acked) nacks=\(nacks)")
+        phase("acked_expect_begin", -1, nil, nil)
         #expect(acked == clientCount, "every concurrent upload must apply")
+        phase("acked_expect_returned", -1, nil, nil)
+        phase("nacks_expect_begin", -1, nil, nil)
         #expect(nacks == 0, "serialized applies must not contend")
+        phase("nacks_expect_returned", -1, nil, nil)
         // The existing recorder closes once; preserve apply facts before cleanup.
         // Early throws use the deferred fallback, never an extra wait or poll.
+        phase("recorder_snapshot_begin", -1, nil, nil)
         recorder?.emitSnapshot(partial: true)
+        phase("recorder_snapshot_returned", -1, nil, nil)
 
         phase("shutdown_begin", -1, nil, nil)
         await harness.shutdown_keepingStorage()

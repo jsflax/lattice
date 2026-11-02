@@ -26,6 +26,7 @@ struct LatestAuditStampTests {
         var connection: OpaquePointer?
         try #require(sqlite3_open(file.path, &connection) == SQLITE_OK)
         defer { sqlite3_close(connection) }
+        try registerCurrentWriterForFixtureMutation(connection)
         try #require(sqlite3_exec(connection, sql, nil, nil, nil) == SQLITE_OK)
     }
     private func oldStamp(_ db: Lattice, _ id: UUID) throws -> UUID {

@@ -337,37 +337,90 @@ actor EngramSyncRealismTests {
     }
 
     /// Set up a server-side observer that counts inserts of `tableName`.
-    /// The observer is **guaranteed to be listening** before this method returns
-    /// (via withCheckedContinuation), eliminating the race where data arrives
-    /// before the observer is ready.
-    /// Returns a detached Task whose value is the total insert count.
-    /// Timeout is handled by each test's .timeLimit.
+    /// Return only after synchronous stream registration, or throw the open error.
+    /// The readiness channel has one element and does not own observer cancellation.
     private func observeInserts(
         on config: Lattice.Configuration,
         tableName: String,
         expected: Int
-    ) async -> Task<Int, any Error> {
+    ) async throws -> Task<Int, any Error> {
         let observerCfg = observerConfig(from: config)
-        var task: Task<Int, any Error>!
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            task = Task<Int, any Error>.detached {
+        let readiness = AsyncThrowingStream<Bool, any Error>.makeStream(
+            bufferingPolicy: .bufferingOldest(1))
+        let task = Task<Int, any Error>.detached {
+            let observationID = UUID()
+            var received = 0
+            var unresolved = 0
+            var count = 0
+            var reportedBatches = 0
+            let report: (String, Int, Int, Int) -> Void = { phase, references, missing, matching in
+                let line = "ENGRAM observer phase=\(phase) id=\(observationID) table=\(tableName) expected=\(expected) references=\(references) unresolved=\(missing) inserts=\(matching)\n"
+                FileHandle.standardError.write(Data(line.utf8))
+            }
+            defer { report("exit", received, unresolved, count) }
+            do {
+                try Task.checkCancellation()
                 let db = try Lattice(EngramMemory.self, EngramEdge.self, configuration: observerCfg)
                 let stream = db.changeStream
-                continuation.resume()
-                var count = 0
+                try Task.checkCancellation()
+                readiness.continuation.yield(true)
+                readiness.continuation.finish()
+                report("ready", received, unresolved, count)
                 for try await changes in stream {
+                    try Task.checkCancellation()
                     let resolved = changes.compactMap { $0.resolve(isolation: nil, on: db) }
                     let inserts = resolved.filter { $0.tableName == tableName && $0.operation == .insert }
+                    received += changes.count
+                    unresolved += changes.count - resolved.count
                     if !inserts.isEmpty {
                         count += inserts.count
                         print("[TEST] Server observer: +\(inserts.count) \(tableName) (total: \(count)/\(expected))")
                     }
+                    if reportedBatches < 8 {
+                        report("batch", received, unresolved, count)
+                        reportedBatches += 1
+                    }
                     if count >= expected { return count }
                 }
+                try Task.checkCancellation()
                 return count
+            } catch {
+                // A later observation error cannot change an already-finished
+                // readiness channel; an open error reaches the waiting caller.
+                readiness.continuation.finish(throwing: error)
+                throw error
             }
         }
-        return task
+        do {
+            try await withTaskCancellationHandler {
+                var iterator = readiness.stream.makeAsyncIterator()
+                guard try await iterator.next() == true else { throw CancellationError() }
+                try Task.checkCancellation()
+            } onCancel: {
+                task.cancel()
+            }
+            return task
+        } catch {
+            task.cancel()
+            _ = await task.result
+            throw error
+        }
+    }
+
+    private func insertCount(from task: Task<Int, any Error>) async throws -> Int {
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            let count = try await task.value
+            try Task.checkCancellation()
+            return count
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func cancelAndJoin(_ observers: [Task<Int, any Error>]) async {
+        for observer in observers { observer.cancel() }
+        for observer in observers { _ = await observer.result }
     }
 
     // =========================================================================
@@ -381,121 +434,130 @@ actor EngramSyncRealismTests {
     // =========================================================================
     @Test(.timeLimit(.minutes(3)))
     func test_ToggleSyncOnPreExistingData() async throws {
-        let channel = "realism-toggle-\(String.random(length: 8))"
-        let syncedProject = "project-2"
-        let totalProjects = 5
-        let memoriesPerProject = 100
-        let edgesPerProject = 50  // 50 edges per project (between consecutive memories)
+        var observers: [Task<Int, any Error>] = []
+        do {
+            let channel = "realism-toggle-\(String.random(length: 8))"
+            let syncedProject = "project-2"
+            let totalProjects = 5
+            let memoriesPerProject = 100
+            let edgesPerProject = 50  // 50 edges per project (between consecutive memories)
 
-        print("[TEST] === Toggle Sync on Pre-Existing Data ===")
+            print("[TEST] === Toggle Sync on Pre-Existing Data ===")
 
-        // --- 1. Create local Lattice with IPC target but NO sync filter ---
-        localConfig.ipcTargets = [.init(channel: channel)]
-        let local = try Lattice(EngramMemory.self, EngramEdge.self, configuration: localConfig)
-        print("[TEST] Local Lattice created (no sync filter yet)")
+            // --- 1. Create local Lattice with IPC target but NO sync filter ---
+            localConfig.ipcTargets = [.init(channel: channel)]
+            let local = try Lattice(EngramMemory.self, EngramEdge.self, configuration: localConfig)
+            print("[TEST] Local Lattice created (no sync filter yet)")
 
-        // --- 2. Insert 500 memories + 250 edges into local BEFORE any sync ---
-        print("[TEST] Inserting \(totalProjects * memoriesPerProject) memories + \(totalProjects * edgesPerProject) edges...")
-        var globalIdsByProject: [String: [UUID]] = [:]
+            // --- 2. Insert 500 memories + 250 edges into local BEFORE any sync ---
+            print("[TEST] Inserting \(totalProjects * memoriesPerProject) memories + \(totalProjects * edgesPerProject) edges...")
+            var globalIdsByProject: [String: [UUID]] = [:]
 
-        for projectIndex in 0..<totalProjects {
-            let projectName = "project-\(projectIndex)"
-            var projectGlobalIds: [UUID] = []
+            for projectIndex in 0..<totalProjects {
+                let projectName = "project-\(projectIndex)"
+                var projectGlobalIds: [UUID] = []
 
-            for memoryIndex in 0..<memoriesPerProject {
-                let memory = EngramMemory(
-                    content: "Memory \(memoryIndex) for \(projectName)",
-                    project: projectName,
-                    topic: "topic-\(memoryIndex % 5)",
-                    embedding: [Float(projectIndex) * 100 + Float(memoryIndex), Float(memoryIndex) * 0.1],
-                    importance: (memoryIndex % 5) + 1,
-                    isPrivate: false
-                )
-                try local.add(memory)
-                projectGlobalIds.append(memory.globalId!)
+                for memoryIndex in 0..<memoriesPerProject {
+                    let memory = EngramMemory(
+                        content: "Memory \(memoryIndex) for \(projectName)",
+                        project: projectName,
+                        topic: "topic-\(memoryIndex % 5)",
+                        embedding: [Float(projectIndex) * 100 + Float(memoryIndex), Float(memoryIndex) * 0.1],
+                        importance: (memoryIndex % 5) + 1,
+                        isPrivate: false
+                    )
+                    try local.add(memory)
+                    projectGlobalIds.append(memory.globalId!)
+                }
+                globalIdsByProject[projectName] = projectGlobalIds
+
+                // Create edges between consecutive memories
+                for edgeIndex in 0..<edgesPerProject {
+                    let edge = EngramEdge(
+                        sourceGlobalId: projectGlobalIds[edgeIndex],
+                        targetGlobalId: projectGlobalIds[edgeIndex + 1],
+                        relation: "relates_to"
+                    )
+                    try local.add(edge)
+                }
             }
-            globalIdsByProject[projectName] = projectGlobalIds
+            print("[TEST] All data inserted. Local has \(local.objects(EngramMemory.self).count) memories, \(local.objects(EngramEdge.self).count) edges")
 
-            // Create edges between consecutive memories
-            for edgeIndex in 0..<edgesPerProject {
-                let edge = EngramEdge(
-                    sourceGlobalId: projectGlobalIds[edgeIndex],
-                    targetGlobalId: projectGlobalIds[edgeIndex + 1],
-                    relation: "relates_to"
-                )
-                try local.add(edge)
+            // --- 3. NOW toggle sync: build filter for one project ---
+            let expectedMemories = memoriesPerProject  // 100
+            // filter.include(EngramEdge.self) with no WHERE syncs ALL edges (250).
+            // In real Engram, edges are filtered by endpoint membership — TODO: add subquery filter.
+            let expectedEdges = totalProjects * edgesPerProject  // 250 (all edges, unfiltered)
+
+            let memoryPredicate: @Sendable (Query<EngramMemory>) -> Query<Bool> = { $0.project == syncedProject }
+            var filter = Lattice.SyncFilter()
+            filter.include(EngramMemory.self, where: memoryPredicate)
+            filter.include(EngramEdge.self)
+
+            let startTime = ContinuousClock.now
+            print("[TEST] Applying sync filter (project=\(syncedProject))...")
+            local.updateSyncFilter(filter)
+            let filterApplyTime = ContinuousClock.now - startTime
+            print("[TEST] updateSyncFilter took \(filterApplyTime)")
+
+            // --- 4. Start server observers BEFORE creating synced Lattice ---
+            // Observer is guaranteed listening before observeInserts returns.
+            let serverMemoryWaitTask = try await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: expectedMemories)
+            observers.append(serverMemoryWaitTask)
+            let serverEdgeWaitTask = try await observeInserts(on: serverConfig, tableName: "EngramEdge", expected: expectedEdges)
+            observers.append(serverEdgeWaitTask)
+
+            // --- 5. Create synced Lattice (IPC client + WSS) ---
+            try await Task.sleep(for: .milliseconds(200))
+            syncedConfig.ipcTargets = [.init(channel: channel)]
+            syncedConfig.authorizationToken = "engram-token"
+            syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
+            let synced = try Lattice(EngramMemory.self, EngramEdge.self, configuration: syncedConfig)
+            let connectTime = ContinuousClock.now - startTime
+            print("[TEST] Synced Lattice created (IPC + WSS), elapsed: \(connectTime)")
+
+            // --- 6. Wait for server to receive memories AND edges ---
+            let serverMemoryCount = try await insertCount(from: serverMemoryWaitTask)
+            let serverEdgeCount = try await insertCount(from: serverEdgeWaitTask)
+            let totalTime = ContinuousClock.now - startTime
+            print("[TEST] Server received \(serverMemoryCount) memories, \(serverEdgeCount) edges in \(totalTime)")
+
+            // --- 7. Verify ---
+            let syncedMemories = synced.objects(EngramMemory.self)
+            print("[TEST] Synced DB: \(syncedMemories.count) memories")
+            #expect(syncedMemories.count == expectedMemories,
+                    "Synced should have \(expectedMemories) memories, got \(syncedMemories.count)")
+            for mem in syncedMemories {
+                #expect(mem.project == syncedProject, "Wrong project: \(mem.project)")
             }
+
+            let server = try Lattice(EngramMemory.self, EngramEdge.self, configuration: serverConfig)
+            let serverMemories = server.objects(EngramMemory.self)
+            let serverEdges = server.objects(EngramEdge.self)
+            print("[TEST] Server DB: \(serverMemories.count) memories, \(serverEdges.count) edges")
+            let syncedCheck = try Lattice(EngramMemory.self, EngramEdge.self, configuration: observerConfig(from: syncedConfig))
+            print("[TEST] Synced DB: \(syncedCheck.objects(EngramMemory.self).count) memories, \(syncedCheck.objects(EngramEdge.self).count) edges")
+            #expect(serverMemories.count == expectedMemories,
+                    "Server should have \(expectedMemories) memories, got \(serverMemories.count)")
+            #expect(serverEdges.count == expectedEdges,
+                    "Server should have \(expectedEdges) edges, got \(serverEdges.count)")
+
+            // Verify embedding round-trip
+            let sample = serverMemories.first { $0.content.contains("Memory 0 for project-2") }
+            #expect(sample != nil, "Sample memory not found on server")
+            if let s = sample {
+                let e = s.embedding.elements
+                #expect(e.count == 2)
+                #expect(Swift.abs(e[0] - 200.0) < 0.001, "embedding[0] mismatch: \(e[0])")
+            }
+
+            print("[TEST] === Toggle sync test complete ===")
+            print("[TEST] TIMING: filter apply=\(filterApplyTime), total=\(totalTime)")
+            await cancelAndJoin(observers)
+        } catch {
+            await cancelAndJoin(observers)
+            throw error
         }
-        print("[TEST] All data inserted. Local has \(local.objects(EngramMemory.self).count) memories, \(local.objects(EngramEdge.self).count) edges")
-
-        // --- 3. NOW toggle sync: build filter for one project ---
-        let expectedMemories = memoriesPerProject  // 100
-        // filter.include(EngramEdge.self) with no WHERE syncs ALL edges (250).
-        // In real Engram, edges are filtered by endpoint membership — TODO: add subquery filter.
-        let expectedEdges = totalProjects * edgesPerProject  // 250 (all edges, unfiltered)
-
-        let memoryPredicate: @Sendable (Query<EngramMemory>) -> Query<Bool> = { $0.project == syncedProject }
-        var filter = Lattice.SyncFilter()
-        filter.include(EngramMemory.self, where: memoryPredicate)
-        filter.include(EngramEdge.self)
-
-        let startTime = ContinuousClock.now
-        print("[TEST] Applying sync filter (project=\(syncedProject))...")
-        local.updateSyncFilter(filter)
-        let filterApplyTime = ContinuousClock.now - startTime
-        print("[TEST] updateSyncFilter took \(filterApplyTime)")
-
-        // --- 4. Start server observers BEFORE creating synced Lattice ---
-        // Observer is guaranteed listening before observeInserts returns.
-        let serverMemoryWaitTask = await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: expectedMemories)
-        let serverEdgeWaitTask = await observeInserts(on: serverConfig, tableName: "EngramEdge", expected: expectedEdges)
-
-        // --- 5. Create synced Lattice (IPC client + WSS) ---
-        try await Task.sleep(for: .milliseconds(200))
-        syncedConfig.ipcTargets = [.init(channel: channel)]
-        syncedConfig.authorizationToken = "engram-token"
-        syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
-        let synced = try Lattice(EngramMemory.self, EngramEdge.self, configuration: syncedConfig)
-        let connectTime = ContinuousClock.now - startTime
-        print("[TEST] Synced Lattice created (IPC + WSS), elapsed: \(connectTime)")
-
-        // --- 6. Wait for server to receive memories AND edges ---
-        let serverMemoryCount = try await serverMemoryWaitTask.value
-        let serverEdgeCount = try await serverEdgeWaitTask.value
-        let totalTime = ContinuousClock.now - startTime
-        print("[TEST] Server received \(serverMemoryCount) memories, \(serverEdgeCount) edges in \(totalTime)")
-
-        // --- 7. Verify ---
-        let syncedMemories = synced.objects(EngramMemory.self)
-        print("[TEST] Synced DB: \(syncedMemories.count) memories")
-        #expect(syncedMemories.count == expectedMemories,
-                "Synced should have \(expectedMemories) memories, got \(syncedMemories.count)")
-        for mem in syncedMemories {
-            #expect(mem.project == syncedProject, "Wrong project: \(mem.project)")
-        }
-
-        let server = try Lattice(EngramMemory.self, EngramEdge.self, configuration: serverConfig)
-        let serverMemories = server.objects(EngramMemory.self)
-        let serverEdges = server.objects(EngramEdge.self)
-        print("[TEST] Server DB: \(serverMemories.count) memories, \(serverEdges.count) edges")
-        let syncedCheck = try Lattice(EngramMemory.self, EngramEdge.self, configuration: observerConfig(from: syncedConfig))
-        print("[TEST] Synced DB: \(syncedCheck.objects(EngramMemory.self).count) memories, \(syncedCheck.objects(EngramEdge.self).count) edges")
-        #expect(serverMemories.count == expectedMemories,
-                "Server should have \(expectedMemories) memories, got \(serverMemories.count)")
-        #expect(serverEdges.count == expectedEdges,
-                "Server should have \(expectedEdges) edges, got \(serverEdges.count)")
-
-        // Verify embedding round-trip
-        let sample = serverMemories.first { $0.content.contains("Memory 0 for project-2") }
-        #expect(sample != nil, "Sample memory not found on server")
-        if let s = sample {
-            let e = s.embedding.elements
-            #expect(e.count == 2)
-            #expect(Swift.abs(e[0] - 200.0) < 0.001, "embedding[0] mismatch: \(e[0])")
-        }
-
-        print("[TEST] === Toggle sync test complete ===")
-        print("[TEST] TIMING: filter apply=\(filterApplyTime), total=\(totalTime)")
     }
 
     // =========================================================================
@@ -503,99 +565,108 @@ actor EngramSyncRealismTests {
     // =========================================================================
     @Test(.timeLimit(.minutes(2)))
     func test_ToggleOffThenOn() async throws {
-        let channel = "realism-offon-\(String.random(length: 8))"
-        let syncedProject = "my-project"
+        var observers: [Task<Int, any Error>] = []
+        do {
+            let channel = "realism-offon-\(String.random(length: 8))"
+            let syncedProject = "my-project"
 
-        print("[TEST] === Toggle Off Then On ===")
+            print("[TEST] === Toggle Off Then On ===")
 
-        // Local with IPC + initial filter
-        var filter = Lattice.SyncFilter()
-        filter.include(EngramMemory.self, where: { $0.project == syncedProject })
-        localConfig.ipcTargets = [.init(channel: channel, syncFilter: filter)]
-        let local = try Lattice(EngramMemory.self, configuration: localConfig)
-        try await Task.sleep(for: .milliseconds(200))
+            // Local with IPC + initial filter
+            var filter = Lattice.SyncFilter()
+            filter.include(EngramMemory.self, where: { $0.project == syncedProject })
+            localConfig.ipcTargets = [.init(channel: channel, syncFilter: filter)]
+            let local = try Lattice(EngramMemory.self, configuration: localConfig)
+            try await Task.sleep(for: .milliseconds(200))
 
-        // Synced with IPC + WSS
-        syncedConfig.ipcTargets = [.init(channel: channel)]
-        syncedConfig.authorizationToken = "token"
-        syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
-        // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
-        // the last reference tears the instance down (weak instance cache) and
-        // takes the relay with it. `let _ =` only ever worked because the old
-        // strong cache leaked the instance.
-        let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
-        defer { withExtendedLifetime(hub) {} }
-        try await Task.sleep(for: .milliseconds(500))
+            // Synced with IPC + WSS
+            syncedConfig.ipcTargets = [.init(channel: channel)]
+            syncedConfig.authorizationToken = "token"
+            syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
+            // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
+            // the last reference tears the instance down (weak instance cache) and
+            // takes the relay with it. `let _ =` only ever worked because the old
+            // strong cache leaked the instance.
+            let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
+            defer { withExtendedLifetime(hub) {} }
+            try await Task.sleep(for: .milliseconds(500))
 
-        // Set up observer BEFORE inserting so we don't miss events
-        let phase1Task = await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: 50)
+            // Set up observer BEFORE inserting so we don't miss events
+            let phase1Task = try await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: 50)
+            observers.append(phase1Task)
 
-        // Insert 50 memories
-        for i in 0..<50 {
-            try local.add(EngramMemory(
-                content: "Mem \(i)",
-                project: syncedProject,
-                embedding: [Float(i)]
-            ))
+            // Insert 50 memories
+            for i in 0..<50 {
+                try local.add(EngramMemory(
+                    content: "Mem \(i)",
+                    project: syncedProject,
+                    embedding: [Float(i)]
+                ))
+            }
+            print("[TEST] Inserted 50 memories")
+
+            // Wait for server to receive them
+            let count1 = try await insertCount(from: phase1Task)
+            print("[TEST] Server has \(count1) after initial sync")
+
+            let server1 = try Lattice(EngramMemory.self, configuration: serverConfig)
+            #expect(server1.objects(EngramMemory.self).count == 50)
+
+            // --- Toggle OFF ---
+            let startOff = ContinuousClock.now
+            local.updateSyncFilter(Lattice.SyncFilter())  // empty filter = sync nothing
+            let offTime = ContinuousClock.now - startOff
+            print("[TEST] Toggle OFF took \(offTime)")
+
+            // Insert 20 more while sync is off — these should NOT reach server
+            for i in 50..<70 {
+                try local.add(EngramMemory(
+                    content: "Mem \(i)",
+                    project: syncedProject,
+                    embedding: [Float(i)]
+                ))
+            }
+            try await Task.sleep(for: .seconds(1))
+            let server2 = try Lattice(EngramMemory.self, configuration: serverConfig)
+            let countWhileOff = server2.objects(EngramMemory.self).count
+            print("[TEST] Server has \(countWhileOff) after inserting 20 while off (should still be 50)")
+            // Note: server may have received synthetic DELETEs from toggle-off reconciliation,
+            // so count could be 0 or 50 depending on implementation. The key assertion is
+            // that the 20 new memories did NOT arrive.
+            #expect(countWhileOff <= 50, "Server should not have the 20 new memories")
+
+            // --- Toggle back ON ---
+            // Set up observer BEFORE toggling so we don't miss events
+            let phase3Task = try await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: 20)
+            observers.append(phase3Task)
+
+            var filterOn = Lattice.SyncFilter()
+            filterOn.include(EngramMemory.self, where: { $0.project == syncedProject })
+            let startOn = ContinuousClock.now
+            local.updateSyncFilter(filterOn)
+            let onTime = ContinuousClock.now - startOn
+            print("[TEST] Toggle ON took \(onTime)")
+
+            // Should eventually get all 70 memories on server
+            // (reconcile_sync_filter Phase 2 re-sends everything matching the new filter)
+            // After re-toggle, reconcile sends all 70 matching rows. But 50 are duplicates on
+            // the server (already synced). Only 20 new inserts appear in the server's AuditLog.
+            let count3 = try await insertCount(from: phase3Task)
+            print("[TEST] Server received \(count3) new inserts after toggle back on")
+
+            let server3 = try Lattice(EngramMemory.self, configuration: serverConfig)
+            let finalCount = server3.objects(EngramMemory.self).count
+            print("[TEST] Server total: \(finalCount) memories")
+            #expect(finalCount >= 70,
+                    "Server should have all 70 memories after re-toggle, got \(finalCount)")
+
+            print("[TEST] === Toggle off/on complete ===")
+            print("[TEST] TIMING: off=\(offTime), on=\(onTime)")
+            await cancelAndJoin(observers)
+        } catch {
+            await cancelAndJoin(observers)
+            throw error
         }
-        print("[TEST] Inserted 50 memories")
-
-        // Wait for server to receive them
-        let count1 = try await phase1Task.value
-        print("[TEST] Server has \(count1) after initial sync")
-
-        let server1 = try Lattice(EngramMemory.self, configuration: serverConfig)
-        #expect(server1.objects(EngramMemory.self).count == 50)
-
-        // --- Toggle OFF ---
-        let startOff = ContinuousClock.now
-        local.updateSyncFilter(Lattice.SyncFilter())  // empty filter = sync nothing
-        let offTime = ContinuousClock.now - startOff
-        print("[TEST] Toggle OFF took \(offTime)")
-
-        // Insert 20 more while sync is off — these should NOT reach server
-        for i in 50..<70 {
-            try local.add(EngramMemory(
-                content: "Mem \(i)",
-                project: syncedProject,
-                embedding: [Float(i)]
-            ))
-        }
-        try await Task.sleep(for: .seconds(1))
-        let server2 = try Lattice(EngramMemory.self, configuration: serverConfig)
-        let countWhileOff = server2.objects(EngramMemory.self).count
-        print("[TEST] Server has \(countWhileOff) after inserting 20 while off (should still be 50)")
-        // Note: server may have received synthetic DELETEs from toggle-off reconciliation,
-        // so count could be 0 or 50 depending on implementation. The key assertion is
-        // that the 20 new memories did NOT arrive.
-        #expect(countWhileOff <= 50, "Server should not have the 20 new memories")
-
-        // --- Toggle back ON ---
-        // Set up observer BEFORE toggling so we don't miss events
-        let phase3Task = await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: 20)
-
-        var filterOn = Lattice.SyncFilter()
-        filterOn.include(EngramMemory.self, where: { $0.project == syncedProject })
-        let startOn = ContinuousClock.now
-        local.updateSyncFilter(filterOn)
-        let onTime = ContinuousClock.now - startOn
-        print("[TEST] Toggle ON took \(onTime)")
-
-        // Should eventually get all 70 memories on server
-        // (reconcile_sync_filter Phase 2 re-sends everything matching the new filter)
-        // After re-toggle, reconcile sends all 70 matching rows. But 50 are duplicates on
-        // the server (already synced). Only 20 new inserts appear in the server's AuditLog.
-        let count3 = try await phase3Task.value
-        print("[TEST] Server received \(count3) new inserts after toggle back on")
-
-        let server3 = try Lattice(EngramMemory.self, configuration: serverConfig)
-        let finalCount = server3.objects(EngramMemory.self).count
-        print("[TEST] Server total: \(finalCount) memories")
-        #expect(finalCount >= 70,
-                "Server should have all 70 memories after re-toggle, got \(finalCount)")
-
-        print("[TEST] === Toggle off/on complete ===")
-        print("[TEST] TIMING: off=\(offTime), on=\(onTime)")
     }
 
     // =========================================================================
@@ -603,54 +674,62 @@ actor EngramSyncRealismTests {
     // =========================================================================
     @Test(.timeLimit(.minutes(5)))
     func test_PrivateMemoriesNeverSync() async throws {
-        let channel = "realism-private-\(String.random(length: 8))"
+        var observers: [Task<Int, any Error>] = []
+        do {
+            let channel = "realism-private-\(String.random(length: 8))"
 
-        print("[TEST] === Private Memories Never Sync ===")
+            print("[TEST] === Private Memories Never Sync ===")
 
-        var filter = Lattice.SyncFilter()
-        filter.include(EngramMemory.self, where: { $0.project == "myproject" && !$0.isPrivate })
-        localConfig.ipcTargets = [.init(channel: channel, syncFilter: filter)]
-        let local = try Lattice(EngramMemory.self, configuration: localConfig)
-        try await Task.sleep(for: .milliseconds(200))
+            var filter = Lattice.SyncFilter()
+            filter.include(EngramMemory.self, where: { $0.project == "myproject" && !$0.isPrivate })
+            localConfig.ipcTargets = [.init(channel: channel, syncFilter: filter)]
+            let local = try Lattice(EngramMemory.self, configuration: localConfig)
+            try await Task.sleep(for: .milliseconds(200))
 
-        syncedConfig.ipcTargets = [.init(channel: channel)]
-        syncedConfig.authorizationToken = "token"
-        syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
-        // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
-        // the last reference tears the instance down (weak instance cache) and
-        // takes the relay with it. `let _ =` only ever worked because the old
-        // strong cache leaked the instance.
-        let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
-        defer { withExtendedLifetime(hub) {} }
-        try await Task.sleep(for: .milliseconds(500))
+            syncedConfig.ipcTargets = [.init(channel: channel)]
+            syncedConfig.authorizationToken = "token"
+            syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
+            // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
+            // the last reference tears the instance down (weak instance cache) and
+            // takes the relay with it. `let _ =` only ever worked because the old
+            // strong cache leaked the instance.
+            let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
+            defer { withExtendedLifetime(hub) {} }
+            try await Task.sleep(for: .milliseconds(500))
 
-        // Set up observer BEFORE inserting so we don't miss events
-        let observerTask = await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: 30)
+            // Set up observer BEFORE inserting so we don't miss events
+            let observerTask = try await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: 30)
+            observers.append(observerTask)
 
-        // Insert mix of private and public
-        for i in 0..<30 {
-            try local.add(EngramMemory(
-                content: "Public \(i)", project: "myproject", isPrivate: false
-            ))
+            // Insert mix of private and public
+            for i in 0..<30 {
+                try local.add(EngramMemory(
+                    content: "Public \(i)", project: "myproject", isPrivate: false
+                ))
+            }
+            for i in 0..<20 {
+                try local.add(EngramMemory(
+                    content: "Private \(i)", project: "myproject", isPrivate: true
+                ))
+            }
+            print("[TEST] Inserted 30 public + 20 private")
+
+            let count = try await insertCount(from: observerTask)
+            print("[TEST] Server received \(count) memories (expected 30 public)")
+
+            let server = try Lattice(EngramMemory.self, configuration: serverConfig)
+            let serverMemories = server.objects(EngramMemory.self)
+            #expect(serverMemories.count == 30, "Server should have 30, got \(serverMemories.count)")
+            for mem in serverMemories {
+                #expect(!mem.isPrivate, "Private memory leaked to server: \(mem.content)")
+            }
+
+            print("[TEST] === Private memories test complete ===")
+            await cancelAndJoin(observers)
+        } catch {
+            await cancelAndJoin(observers)
+            throw error
         }
-        for i in 0..<20 {
-            try local.add(EngramMemory(
-                content: "Private \(i)", project: "myproject", isPrivate: true
-            ))
-        }
-        print("[TEST] Inserted 30 public + 20 private")
-
-        let count = try await observerTask.value
-        print("[TEST] Server received \(count) memories (expected 30 public)")
-
-        let server = try Lattice(EngramMemory.self, configuration: serverConfig)
-        let serverMemories = server.objects(EngramMemory.self)
-        #expect(serverMemories.count == 30, "Server should have 30, got \(serverMemories.count)")
-        for mem in serverMemories {
-            #expect(!mem.isPrivate, "Private memory leaked to server: \(mem.content)")
-        }
-
-        print("[TEST] === Private memories test complete ===")
     }
 
     // =========================================================================
@@ -658,61 +737,69 @@ actor EngramSyncRealismTests {
     // =========================================================================
     @Test(.timeLimit(.minutes(2)))
     func test_MultipleProjectsSync() async throws {
-        let channel = "realism-multi-\(String.random(length: 8))"
-        let syncedProjects = ["alpha", "beta", "gamma"]
+        var observers: [Task<Int, any Error>] = []
+        do {
+            let channel = "realism-multi-\(String.random(length: 8))"
+            let syncedProjects = ["alpha", "beta", "gamma"]
 
-        print("[TEST] === Multiple Projects Sync ===")
+            print("[TEST] === Multiple Projects Sync ===")
 
-        var filter = Lattice.SyncFilter()
-        filter.include(EngramMemory.self, where: { $0.project.in(syncedProjects) })
-        localConfig.ipcTargets = [.init(channel: channel, syncFilter: filter)]
-        let local = try Lattice(EngramMemory.self, configuration: localConfig)
-        try await Task.sleep(for: .milliseconds(200))
+            var filter = Lattice.SyncFilter()
+            filter.include(EngramMemory.self, where: { $0.project.in(syncedProjects) })
+            localConfig.ipcTargets = [.init(channel: channel, syncFilter: filter)]
+            let local = try Lattice(EngramMemory.self, configuration: localConfig)
+            try await Task.sleep(for: .milliseconds(200))
 
-        syncedConfig.ipcTargets = [.init(channel: channel)]
-        syncedConfig.authorizationToken = "token"
-        syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
-        // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
-        // the last reference tears the instance down (weak instance cache) and
-        // takes the relay with it. `let _ =` only ever worked because the old
-        // strong cache leaked the instance.
-        let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
-        defer { withExtendedLifetime(hub) {} }
-        try await Task.sleep(for: .milliseconds(500))
+            syncedConfig.ipcTargets = [.init(channel: channel)]
+            syncedConfig.authorizationToken = "token"
+            syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
+            // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
+            // the last reference tears the instance down (weak instance cache) and
+            // takes the relay with it. `let _ =` only ever worked because the old
+            // strong cache leaked the instance.
+            let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
+            defer { withExtendedLifetime(hub) {} }
+            try await Task.sleep(for: .milliseconds(500))
 
-        // Set up observer BEFORE inserting so we don't miss events
-        let perProject = 40
-        let expectedTotal = syncedProjects.count * perProject  // 120
-        let observerTask = await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: expectedTotal)
+            // Set up observer BEFORE inserting so we don't miss events
+            let perProject = 40
+            let expectedTotal = syncedProjects.count * perProject  // 120
+            let observerTask = try await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: expectedTotal)
+            observers.append(observerTask)
 
-        // Insert across synced + unsynced projects
-        for project in syncedProjects {
-            for i in 0..<perProject {
-                try local.add(EngramMemory(content: "\(project)-\(i)", project: project))
+            // Insert across synced + unsynced projects
+            for project in syncedProjects {
+                for i in 0..<perProject {
+                    try local.add(EngramMemory(content: "\(project)-\(i)", project: project))
+                }
             }
+            // Also insert into projects NOT in filter
+            for i in 0..<perProject {
+                try local.add(EngramMemory(content: "unsynced-\(i)", project: "unsynced-project"))
+            }
+            for i in 0..<perProject {
+                try local.add(EngramMemory(content: "private-proj-\(i)", project: "private-only"))
+            }
+            print("[TEST] Inserted \(syncedProjects.count * perProject) synced + \(2 * perProject) unsynced")
+
+            let count = try await insertCount(from: observerTask)
+            print("[TEST] Server received \(count) memories (expected \(expectedTotal))")
+
+            let server = try Lattice(EngramMemory.self, configuration: serverConfig)
+            let serverMemories = server.objects(EngramMemory.self)
+            #expect(serverMemories.count == expectedTotal,
+                    "Server should have \(expectedTotal), got \(serverMemories.count)")
+
+            let serverProjectNames = Set(serverMemories.map(\.project))
+            #expect(serverProjectNames == Set(syncedProjects),
+                    "Server projects should be \(syncedProjects), got \(serverProjectNames)")
+
+            print("[TEST] === Multiple projects test complete ===")
+            await cancelAndJoin(observers)
+        } catch {
+            await cancelAndJoin(observers)
+            throw error
         }
-        // Also insert into projects NOT in filter
-        for i in 0..<perProject {
-            try local.add(EngramMemory(content: "unsynced-\(i)", project: "unsynced-project"))
-        }
-        for i in 0..<perProject {
-            try local.add(EngramMemory(content: "private-proj-\(i)", project: "private-only"))
-        }
-        print("[TEST] Inserted \(syncedProjects.count * perProject) synced + \(2 * perProject) unsynced")
-
-        let count = try await observerTask.value
-        print("[TEST] Server received \(count) memories (expected \(expectedTotal))")
-
-        let server = try Lattice(EngramMemory.self, configuration: serverConfig)
-        let serverMemories = server.objects(EngramMemory.self)
-        #expect(serverMemories.count == expectedTotal,
-                "Server should have \(expectedTotal), got \(serverMemories.count)")
-
-        let serverProjectNames = Set(serverMemories.map(\.project))
-        #expect(serverProjectNames == Set(syncedProjects),
-                "Server projects should be \(syncedProjects), got \(serverProjectNames)")
-
-        print("[TEST] === Multiple projects test complete ===")
     }
 
     // =========================================================================
@@ -727,54 +814,62 @@ actor EngramSyncRealismTests {
     // See the fix/sync-lifetime-tests effort; re-enable with a real fix.
     @Test(.timeLimit(.minutes(5)))
     func test_UpdatesSyncCorrectly() async throws {
-        let channel = "realism-update-\(String.random(length: 8))"
+        var observers: [Task<Int, any Error>] = []
+        do {
+            let channel = "realism-update-\(String.random(length: 8))"
 
-        print("[TEST] === Updates Sync Correctly ===")
+            print("[TEST] === Updates Sync Correctly ===")
 
-        var filter = Lattice.SyncFilter()
-        filter.include(EngramMemory.self, where: { $0.project == "myproject" })
-        localConfig.ipcTargets = [.init(channel: channel, syncFilter: filter)]
-        let local = try Lattice(EngramMemory.self, configuration: localConfig)
-        try await Task.sleep(for: .milliseconds(200))
+            var filter = Lattice.SyncFilter()
+            filter.include(EngramMemory.self, where: { $0.project == "myproject" })
+            localConfig.ipcTargets = [.init(channel: channel, syncFilter: filter)]
+            let local = try Lattice(EngramMemory.self, configuration: localConfig)
+            try await Task.sleep(for: .milliseconds(200))
 
-        syncedConfig.ipcTargets = [.init(channel: channel)]
-        syncedConfig.authorizationToken = "token"
-        syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
-        // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
-        // the last reference tears the instance down (weak instance cache) and
-        // takes the relay with it. `let _ =` only ever worked because the old
-        // strong cache leaked the instance.
-        let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
-        defer { withExtendedLifetime(hub) {} }
-        try await Task.sleep(for: .milliseconds(500))
+            syncedConfig.ipcTargets = [.init(channel: channel)]
+            syncedConfig.authorizationToken = "token"
+            syncedConfig.wssEndpoint = URL(string: "http://localhost:\(port)/test")
+            // The IPC→WSS relay hub. It must stay alive for the whole test: dropping
+            // the last reference tears the instance down (weak instance cache) and
+            // takes the relay with it. `let _ =` only ever worked because the old
+            // strong cache leaked the instance.
+            let hub = try Lattice(EngramMemory.self, configuration: syncedConfig)
+            defer { withExtendedLifetime(hub) {} }
+            try await Task.sleep(for: .milliseconds(500))
 
-        // Set up observer BEFORE inserting so we don't miss events
-        let observerTask = await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: 10)
+            // Set up observer BEFORE inserting so we don't miss events
+            let observerTask = try await observeInserts(on: serverConfig, tableName: "EngramMemory", expected: 10)
+            observers.append(observerTask)
 
-        // Insert 10 memories
-        for i in 0..<10 {
-            try local.add(EngramMemory(content: "Original \(i)", project: "myproject", importance: 1))
+            // Insert 10 memories
+            for i in 0..<10 {
+                try local.add(EngramMemory(content: "Original \(i)", project: "myproject", importance: 1))
+            }
+            let _ = try await insertCount(from: observerTask)
+            print("[TEST] Initial 10 synced")
+
+            // Update importance on all of them
+            for mem in local.objects(EngramMemory.self) {
+                mem.importance = 5
+            }
+            print("[TEST] Updated all 10 importance → 5")
+
+            // Give sync time to propagate updates (per-entry sync is ~1/sec)
+            try await Task.sleep(for: .seconds(15))
+
+            let server = try Lattice(EngramMemory.self, configuration: serverConfig)
+            let serverMemories = server.objects(EngramMemory.self)
+            #expect(serverMemories.count == 10, "Server should still have 10")
+            for mem in serverMemories {
+                #expect(mem.importance == 5, "Server memory importance should be 5, got \(mem.importance)")
+            }
+
+            print("[TEST] === Updates test complete ===")
+            await cancelAndJoin(observers)
+        } catch {
+            await cancelAndJoin(observers)
+            throw error
         }
-        let _ = try await observerTask.value
-        print("[TEST] Initial 10 synced")
-
-        // Update importance on all of them
-        for mem in local.objects(EngramMemory.self) {
-            mem.importance = 5
-        }
-        print("[TEST] Updated all 10 importance → 5")
-
-        // Give sync time to propagate updates (per-entry sync is ~1/sec)
-        try await Task.sleep(for: .seconds(15))
-
-        let server = try Lattice(EngramMemory.self, configuration: serverConfig)
-        let serverMemories = server.objects(EngramMemory.self)
-        #expect(serverMemories.count == 10, "Server should still have 10")
-        for mem in serverMemories {
-            #expect(mem.importance == 5, "Server memory importance should be 5, got \(mem.importance)")
-        }
-
-        print("[TEST] === Updates test complete ===")
     }
 }
 #endif // ENGRAM_TESTS
