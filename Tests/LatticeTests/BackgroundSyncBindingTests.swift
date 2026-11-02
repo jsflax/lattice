@@ -188,49 +188,6 @@ struct BackgroundSyncBindingTests {
         #expect(native.isCancelled)
     }
 
-    @Test func lineageResumesDistinctNativeMembersButOnlyOwnerRefreshes() async throws {
-        let primary = BindingBackend(identity: 91101), first = BindingBackend(identity: 91102)
-        let latest = BindingBackend(identity: 91102), second = BindingBackend(identity: 91103)
-        let lineage = BackgroundSyncLineage()
-        let group = try BackgroundSyncBindings.attachManaged(capability: primary, owner: nil,
-            lineage: lineage, ownsLifecycle: true)
-        for member in [first, latest, second] {
-            let joined = try BackgroundSyncBindings.attachManaged(capability: member, owner: nil,
-                lineage: lineage, ownsLifecycle: false)
-            #expect(joined === group)
-        }
-        #expect(try await group.perform(.resume) == .completed)
-        #expect(primary.recordedCommands == [.resume])
-        #expect(first.count == 0)
-        #expect(latest.recordedCommands == [.resume])
-        #expect(second.recordedCommands == [.resume])
-        #expect(try await group.perform(.suspend) == .completed)
-        #expect(try await group.perform(.refresh(duration: 2)) == .completed)
-        #expect(primary.recordedCommands.prefix(2) == [.resume, .suspend])
-        #expect(primary.count == 3)
-        if case let .refresh(duration) = primary.recordedCommands.last {
-            #expect(duration > 0 && duration <= 2)
-        } else { Issue.record("Only the primary should refresh") }
-        #expect(latest.recordedCommands == [.resume, .suspend, .suspend])
-        #expect(second.recordedCommands == [.resume, .suspend, .suspend])
-    }
-
-    @Test func alreadyRunningOwnerLeavesBorrowedForegroundWorkAlone() async throws {
-        let primary = BindingBackend(identity: 91104) { command, _ in
-            if case .refresh = command { return .alreadyRunning }
-            return .completed
-        }
-        let borrowed = BindingBackend(identity: 91105)
-        let lineage = BackgroundSyncLineage()
-        let group = try BackgroundSyncBindings.attachManaged(capability: primary, owner: nil,
-            lineage: lineage, ownsLifecycle: true)
-        _ = try BackgroundSyncBindings.attachManaged(capability: borrowed, owner: nil,
-            lineage: lineage, ownsLifecycle: false)
-        #expect(try await group.perform(.resume) == .completed)
-        #expect(try await group.perform(.refresh(duration: 2)) == .alreadyRunning)
-        #expect(borrowed.recordedCommands == [.resume])
-    }
-
     @Test func derivedCloseDoesNotInvalidateOwnerOrSibling() async throws {
         let primary = BindingBackend(identity: 91106), derived = BindingBackend(identity: 91107)
         let sibling = BindingBackend(identity: 91108), lineage = BackgroundSyncLineage()
@@ -365,13 +322,65 @@ struct BackgroundSyncBindingTests {
 
 }
 
-/// These tests deliberately park native work or its owning actor while the
-/// caller cancels or preempts it. SwiftPM's XCTest phase runs before its parallel Swift
-/// Testing phase, so their two-second admission prerequisite measures this
-/// scenario instead of competing with every SQL benchmark in the package.
+/// These tests exercise cancellation ordering or require a successful native
+/// admission within a two-second budget. SwiftPM's XCTest phase runs before its
+/// parallel Swift Testing phase, so those deadlines measure this scenario
+/// instead of competing with every SQL benchmark in the package.
 /// Keeping the suite-name prefix also includes them in the strict cooperative
 /// executor CI pass; no timeout or cancellation contract is relaxed.
 final class BackgroundSyncBindingTestsOrdering: XCTestCase {
+    func testLineageResumesDistinctNativeMembersButOnlyOwnerRefreshes() async throws {
+        let primary = BindingBackend(identity: 91101), first = BindingBackend(identity: 91102)
+        let latest = BindingBackend(identity: 91102), second = BindingBackend(identity: 91103)
+        let lineage = BackgroundSyncLineage()
+        let group = try BackgroundSyncBindings.attachManaged(capability: primary, owner: nil,
+            lineage: lineage, ownsLifecycle: true)
+        for member in [first, latest, second] {
+            let joined = try BackgroundSyncBindings.attachManaged(capability: member, owner: nil,
+                lineage: lineage, ownsLifecycle: false)
+            XCTAssertTrue(joined === group)
+        }
+        let resumed = try await group.perform(.resume)
+        XCTAssertEqual(resumed, .completed)
+        XCTAssertEqual(primary.recordedCommands, [.resume])
+        XCTAssertEqual(first.count, 0)
+        XCTAssertEqual(latest.recordedCommands, [.resume])
+        XCTAssertEqual(second.recordedCommands, [.resume])
+        let suspended = try await group.perform(.suspend)
+        XCTAssertEqual(suspended, .completed)
+        let started = ContinuousClock.now
+        let outcome = try await group.perform(.refresh(duration: 2))
+        let elapsed = started.duration(to: ContinuousClock.now)
+        XCTAssertEqual(outcome, .completed, "Refresh budget=2s, elapsed=\(elapsed)")
+        XCTAssertEqual(primary.recordedCommands.prefix(2), [.resume, .suspend])
+        XCTAssertEqual(primary.count, 3)
+        if case let .refresh(duration) = primary.recordedCommands.last {
+            XCTAssertTrue(duration > 0 && duration <= 2)
+        } else { XCTFail("Only the primary should refresh") }
+        XCTAssertEqual(latest.recordedCommands, [.resume, .suspend, .suspend])
+        XCTAssertEqual(second.recordedCommands, [.resume, .suspend, .suspend])
+    }
+
+    func testAlreadyRunningOwnerLeavesBorrowedForegroundWorkAlone() async throws {
+        let primary = BindingBackend(identity: 91104) { command, _ in
+            if case .refresh = command { return .alreadyRunning }
+            return .completed
+        }
+        let borrowed = BindingBackend(identity: 91105)
+        let lineage = BackgroundSyncLineage()
+        let group = try BackgroundSyncBindings.attachManaged(capability: primary, owner: nil,
+            lineage: lineage, ownsLifecycle: true)
+        _ = try BackgroundSyncBindings.attachManaged(capability: borrowed, owner: nil,
+            lineage: lineage, ownsLifecycle: false)
+        let resumed = try await group.perform(.resume)
+        XCTAssertEqual(resumed, .completed)
+        let started = ContinuousClock.now
+        let outcome = try await group.perform(.refresh(duration: 2))
+        let elapsed = started.duration(to: ContinuousClock.now)
+        XCTAssertEqual(outcome, .alreadyRunning, "Refresh budget=2s, elapsed=\(elapsed)")
+        XCTAssertEqual(borrowed.recordedCommands, [.resume])
+    }
+
     func testCancelledCallerWaitsForNativeSettlement() async throws {
         let entered = BindingSignal(), stopped = BindingSignal(), settled = BindingSignal()
         let backend = BindingBackend(identity: 91006) { _, token in

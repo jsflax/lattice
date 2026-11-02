@@ -1,0 +1,246 @@
+{
+  "record_status": "Verified foreground phone network progress; background-task success remains unqualified. SDK release still unpublished after required macOS failure.",
+  "source_receipts": [
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-network-followup/raw/ios-host/device-receipts/managed-after-user-unlock.227f961187c8.jsonl",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/managed-after-user-unlock.jsonl",
+      "sha256": "227f961187c8c3935a905cfddf6023191b28fbed0e96757cdb2b27032892055a",
+      "bytes": 20095
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-network-followup/raw/ios-host/device-receipts/managed-network-before-delivery.3835a0ef44b6.jsonl",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/managed-network-before-delivery.jsonl",
+      "sha256": "3835a0ef44b605eef3e66f6b779257468c02c5fbb4cb5347d2c9812698c2ab57",
+      "bytes": 21559
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-network-followup/raw/ios-host/device-receipts/managed-network-followup-final.89df4fe34ce7.jsonl",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/managed-network-followup-final.jsonl",
+      "sha256": "89df4fe34ce7212c6a645f6f87f820b7362f9201bfa2a8946a801680e6e56000",
+      "bytes": 22475
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-network-followup/raw/ios-host/device-receipts/lldb-network-followup-attempt.9b7336a1877c.txt",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lldb-network-followup-attempt.txt",
+      "sha256": "9b7336a1877c226806c35930b4b989db9f17eef6bc46d14a21c1911421e0a7e1",
+      "bytes": 14062
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-network-followup/raw/ios-host/device-receipts/device-network-final-managed-return.0b77934bae88.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/device-network-final-managed-return.json",
+      "sha256": "0b77934bae88bc3ac1b6e769d1864a4ee8747ea069c5edc6ce003cb79284427d",
+      "bytes": 1328
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-network-followup/raw/ios-host/relay/device-normal-001.c2916195ab57.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/relay/device-normal-001.log",
+      "sha256": "c2916195ab571cc46617ddf31570c7fcbf051c0e2cf4d106216dff2e46176e5f",
+      "bytes": 1592
+    }
+  ],
+  "binary": "Existing corrected dispatch-worker managed binary; no production change for this device follow-up, per coordinator.",
+  "permission": "User accepted Local Network permission; do not describe this as locked-phone/protected-data qualification.",
+  "foreground_network": {
+    "active_and_connected_at_UTC": "2026-11-02T03:45:14Z",
+    "initial_pending": 25,
+    "acknowledged": 25,
+    "pending_after_ACK": 0,
+    "initial_remote_received": 2001,
+    "initial_remote_received_by_UTC": "2026-11-02T03:45:19Z",
+    "ordinary_foreground_snapshot_at_UTC": "2026-11-02T03:47:52Z",
+    "snapshot_rows": 2026,
+    "snapshot_fixture_rows": 25,
+    "snapshot_pending": 0,
+    "interpretation": "Foreground network upload acknowledgements and remote-row receipt are verified; the local snapshot contains the original 25 fixture rows plus 2001 received rows.",
+    "transient_event": "A socket-not-connected callback and reconnection occur before the snapshot; no cause is assigned."
+  },
+  "system_lifecycle": {
+    "background_event_at_UTC": "2026-11-02T03:47:54Z",
+    "debugger_cached_application_state": 2,
+    "later_foreground_active_and_connected_at_UTC": "2026-11-02T03:49:52Z",
+    "qualification": "Actual lifecycle events and cached state, not a cold launch or complete foreground-takeover race proof."
+  },
+  "debug_delivery_attempts": {
+    "first_completion_callback_hit_count": 1,
+    "first_completion_success_BOOL": null,
+    "first_completion_BOOL_captured": false,
+    "second_delivery_completion_hit_observed": false,
+    "successful_BGTask_sync_qualified": false,
+    "coordinator_observation": "Snapshot expression stalled until the app returned to foreground; a second delivery produced no observed completion hit. These observations are coordinator-reported rather than a completed success receipt.",
+    "temporary_debugger_UIExecutionAssertion": {
+      "identifier": 14,
+      "explicitly_ended": true,
+      "scope": "Additional debugger-owned UIKit assertion, not an unassisted scheduler/runtime qualification."
+    }
+  },
+  "safe_events": [
+    {
+      "timestamp": "2026-11-02T03:45:14Z",
+      "event": "scene-active",
+      "fields": {}
+    },
+    {
+      "timestamp": "2026-11-02T03:45:14Z",
+      "event": "sync-state",
+      "fields": {
+        "connected": "true"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:45:14Z",
+      "event": "sync-progress",
+      "fields": {
+        "acked": "0",
+        "pending": "25",
+        "received": "0",
+        "total": "25"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:45:15Z",
+      "event": "sync-progress",
+      "fields": {
+        "acked": "25",
+        "pending": "0",
+        "received": "0",
+        "total": "25"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:45:17Z",
+      "event": "sync-progress",
+      "fields": {
+        "acked": "25",
+        "pending": "0",
+        "received": "1000",
+        "total": "25"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:45:19Z",
+      "event": "sync-progress",
+      "fields": {
+        "acked": "25",
+        "pending": "0",
+        "received": "2000",
+        "total": "25"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:45:19Z",
+      "event": "sync-progress",
+      "fields": {
+        "acked": "25",
+        "pending": "0",
+        "received": "2001",
+        "total": "25"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:47:34Z",
+      "event": "sync-state",
+      "fields": {
+        "connected": "false"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:47:34Z",
+      "event": "sync-progress",
+      "fields": {
+        "acked": "25",
+        "pending": "0",
+        "received": "2001",
+        "total": "25"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:47:34Z",
+      "event": "sync-error",
+      "fields": {
+        "message": "The operation couldn\u2019t be completed. Socket is not connected"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:47:35Z",
+      "event": "sync-state",
+      "fields": {
+        "connected": "true"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:47:35Z",
+      "event": "sync-progress",
+      "fields": {
+        "acked": "25",
+        "pending": "0",
+        "received": "2026",
+        "total": "25"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:47:52Z",
+      "event": "foreground-snapshot",
+      "fields": {
+        "fixtureRows": "25",
+        "pending": "0",
+        "rows": "2026"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:47:53Z",
+      "event": "scene-inactive",
+      "fields": {}
+    },
+    {
+      "timestamp": "2026-11-02T03:47:54Z",
+      "event": "scene-background",
+      "fields": {}
+    },
+    {
+      "timestamp": "2026-11-02T03:49:52Z",
+      "event": "scene-foreground",
+      "fields": {}
+    },
+    {
+      "timestamp": "2026-11-02T03:49:52Z",
+      "event": "scene-active",
+      "fields": {}
+    },
+    {
+      "timestamp": "2026-11-02T03:49:52Z",
+      "event": "sync-state",
+      "fields": {
+        "connected": "true"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T03:50:16Z",
+      "event": "scene-inactive",
+      "fields": {}
+    },
+    {
+      "timestamp": "2026-11-02T03:50:18Z",
+      "event": "scene-background",
+      "fields": {}
+    },
+    {
+      "timestamp": "2026-11-02T03:51:01Z",
+      "event": "scene-foreground",
+      "fields": {}
+    }
+  ],
+  "end_state": {
+    "restoration_operation": "devicectl.device.process.launch",
+    "restoration_outcome": "success",
+    "coordinator_report": "Debugger detached/quit and managed app restored.",
+    "source_limit": "Successful launch request does not independently establish a final active-state callback."
+  },
+  "limits": [
+    "No successful finite BGTask completion receipt: the BOOL was not captured.",
+    "No natural OS scheduling, true cold launch, locked-phone behavior, or expiration during active transfer qualification.",
+    "Prior independent WAL cleanup receipts retain their earlier scopes; this network follow-up does not add a new independent post-network WAL checkpoint.",
+    "Required macOS SDK release failure remains under investigation; no SDK publication or consumer delivery is claimed."
+  ],
+  "privacy": "Only safe fields are included. Device/session identifiers, LAN addresses, private app-container paths, signing metadata, and screenshots remain outside repo-facing summaries. Raw snapshots, including the live relay log snapshot, must remain private/local.",
+  "subsequent_evidence": "phone-candidate-success.json adds successful debugger-triggered BGTask completion and manual finite sync on the Core bootstrap candidate. Earlier unqualified attempts and their source scopes remain historical; do not treat those earlier limits as the latest coverage state."
+}

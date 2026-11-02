@@ -1,0 +1,251 @@
+{
+  "status": "PR CI passed all four legs. Exact-main workflow concluded success with required legs passed and optional nightly failed. Subsequent required macOS release job failed; SDK publication has not occurred.",
+  "PR_run": "https://github.com/jsflax/lattice/actions/runs/41380305623",
+  "PR_commit": "009edebcc146d185af2a898ea0c882ad02015a1d",
+  "main_commit": "d0ca27e4c1b98501dec4215f11403f281962691a",
+  "merged_at": "2026-11-02T03:11:46Z",
+  "identical_tree": "708c33c7483a298a760d4f9135a774a707b6aa5f",
+  "all_four_PR_legs_passed": true,
+  "job_results": [
+    {
+      "name": "ios-build",
+      "conclusion": "success",
+      "url": "https://github.com/jsflax/lattice/actions/runs/41380305623/job/125069441583"
+    },
+    {
+      "name": "linux (swiftlang/swift:nightly-main-noble)",
+      "conclusion": "success",
+      "url": "https://github.com/jsflax/lattice/actions/runs/41380305623/job/125069441762"
+    },
+    {
+      "name": "macos",
+      "conclusion": "success",
+      "url": "https://github.com/jsflax/lattice/actions/runs/41380305623/job/125069441807"
+    },
+    {
+      "name": "linux (swift:6.3-noble)",
+      "conclusion": "success",
+      "url": "https://github.com/jsflax/lattice/actions/runs/41380305623/job/125069441830"
+    }
+  ],
+  "test_observations": {
+    "macOS": {
+      "XCTest": {
+        "tests": 12,
+        "seconds": 10.862
+      },
+      "Swift_Testing": {
+        "tests": 832,
+        "suites": 125,
+        "seconds": 104.981
+      },
+      "strict": {
+        "XCTest": {
+          "tests": 10,
+          "seconds": 10.457
+        },
+        "Swift_Testing": {
+          "tests": 15,
+          "suites": 1,
+          "seconds": 0.172
+        }
+      }
+    },
+    "stable_Linux": {
+      "XCTest": {
+        "tests": 12,
+        "seconds": 5.453
+      },
+      "Swift_Testing": {
+        "tests": 810,
+        "suites": 122,
+        "seconds": 103.646
+      }
+    },
+    "nightly": {
+      "XCTest": {
+        "tests": 12,
+        "seconds": 5.6
+      },
+      "Swift_Testing": {
+        "tests": 803,
+        "suites": 119,
+        "seconds": 97.53
+      },
+      "separate_auxiliary_Swift_Testing_runs": [
+        {
+          "tests": 1,
+          "suites": 1,
+          "seconds": 0.001
+        },
+        {
+          "tests": 4,
+          "suites": 1,
+          "seconds": 0.007
+        },
+        {
+          "tests": 2,
+          "suites": 1,
+          "seconds": 0.001
+        }
+      ]
+    }
+  },
+  "timing_limit": "Observed CI run durations, not performance guarantees. Nightly auxiliary test runs are listed separately, not folded into the principal suite count.",
+  "source_receipts": [
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-pr38-isolated-ci-passed.9515caa43df5.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr38-isolated-ci-passed.json",
+      "sha256": "9515caa43df51367b2e735055b38ff1e6882fedd7d26f3c473108e5835ac1bb0",
+      "bytes": 12428
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-pr38-isolated-macos-ci.43f4b9f089e6.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr38-isolated-macos-ci.log",
+      "sha256": "43f4b9f089e69c1dd7a80bf3d79cdd741ef64d0a2efccb1079d63ac4e9edd87b",
+      "bytes": 3863064
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-pr38-isolated-linux-stable-ci.cc2dc534c426.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr38-isolated-linux-stable-ci.log",
+      "sha256": "cc2dc534c426953967b70a7a5ad073296e00b8ba7a3988e8aed8118f623dc687",
+      "bytes": 2702058
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-pr38-isolated-nightly-ci.17ca5da8c75c.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr38-isolated-nightly-ci.log",
+      "sha256": "17ca5da8c75cd72a15793bea66472b837496e9388f25201adfd147e076318e19",
+      "bytes": 1305206
+    }
+  ],
+  "documentation": {
+    "status": "published and verified",
+    "workflow": "https://github.com/jsflax/lattice/actions/runs/41381739885",
+    "source_commit": "d0ca27e4c1b98501dec4215f11403f281962691a",
+    "guide": "https://jsflax.github.io/lattice/documentation/lattice/backgroundsync/",
+    "DocC_data": "https://jsflax.github.io/lattice/data/documentation/lattice/backgroundsync.json",
+    "DocC_data_SHA256": "6e0aae0bd9ed9d8782b937349e9e469a0adfd588543d0ec1c02c4e55b84b997c",
+    "title": "Background Sync on iOS",
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-docs-verification.e518a84f5b7d.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-docs-verification.json",
+        "sha256": "e518a84f5b7d7c6979732b3f86e0f12376833c1c6cdf05df911969a4421ef22e",
+        "bytes": 540
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-backgroundsync-published-docc.6e0aae0bd9ed.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-backgroundsync-published-docc.json",
+        "sha256": "6e0aae0bd9ed9d8782b937349e9e469a0adfd588543d0ec1c02c4e55b84b997c",
+        "bytes": 23043
+      }
+    ]
+  },
+  "production_source": {
+    "Sources_manifest_lock_unchanged_since": "edb48f3702675b55143a51fe30856590e28d8a54",
+    "source_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-release-record-staging/merge-source-provenance.ed675dc2207a.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/merge-source-provenance.json",
+      "sha256": "ed675dc2207a21c1d14f645ba23796f11bd88301a43606de5ac4027282b60d98",
+      "bytes": 678
+    }
+  },
+  "main_CI_final": {
+    "run": "https://github.com/jsflax/lattice/actions/runs/41381739897",
+    "source_commit": "d0ca27e4c1b98501dec4215f11403f281962691a",
+    "status": "completed",
+    "overall_conclusion": "success",
+    "all_legs_green": false,
+    "required_macos_stable_linux_iOS": "passed",
+    "optional_nightly": "failed",
+    "job_results": [
+      {
+        "name": "linux (swiftlang/swift:nightly-main-noble)",
+        "status": "completed",
+        "conclusion": "failure",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41381739897/job/125073819322"
+      },
+      {
+        "name": "ios-build",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41381739897/job/125073819587"
+      },
+      {
+        "name": "macos",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41381739897/job/125073819649"
+      },
+      {
+        "name": "linux (swift:6.3-noble)",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41381739897/job/125073819671"
+      }
+    ],
+    "source_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-main-ci-passed.edd1cc28ec5b.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-main-ci-passed.json",
+      "sha256": "edd1cc28ec5b363a8254343be4dfb4596c0d5e3ecadb88bb5feb1636fbcd1408",
+      "bytes": 12428
+    }
+  },
+  "optional_main_nightly_failure": {
+    "test": "lineageResumesDistinctNativeMembersButOnlyOwnerRefreshes",
+    "assertion": "try await group.perform(.refresh(duration: 2)) == .completed",
+    "Swift_Testing": {
+      "tests": 803,
+      "suites": 119,
+      "seconds": 99.261,
+      "issues": 1
+    },
+    "test_total_seconds": 30.223,
+    "actual_return_enum_directly_logged": false,
+    "observed_postconditions": "The refresh command/count and borrower-suspension assertions after the failing expectation recorded no further issues.",
+    "source_facts": [
+      "The fake backend defaults to completed and records every command.",
+      "The binding applies a real monotonic two-second deadline to the refresh and required borrower cleanup.",
+      "A completed receipt is changed to budgetExhausted if that deadline has elapsed after cleanup."
+    ],
+    "inference": "The single mismatch is consistent with post-settlement budget exhaustion under parallel load, inferred from source and the subsequent postconditions; the log does not print the returned enum or isolate refresh elapsed time.",
+    "clock_scope": "Fake-backend test using the real monotonic clock; not a real network sync failure.",
+    "optional_policy": "The nightly matrix entry is experimental and continue-on-error; stable Linux remains required.",
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-main-nightly-ci.0992eae1855b.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-main-nightly-ci.log",
+        "sha256": "0992eae1855b6b48840e51c17c7a1259d0c39a56668c2c44b98b504bb2e6d7cb",
+        "bytes": 1360149
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-source/Tests/LatticeTests/BackgroundSyncBindingTests.26496f49ac59.swift",
+        "original_path": "/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/Tests/LatticeTests/BackgroundSyncBindingTests.swift",
+        "sha256": "26496f49ac5962e0fa8947dd1e6d1fd0232f8869da767017964cd598a1ceec55",
+        "bytes": 22186
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-source/Sources/Lattice/BackgroundSyncBinding.96fb46904a20.swift",
+        "original_path": "/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/Sources/Lattice/BackgroundSyncBinding.swift",
+        "sha256": "96fb46904a20aa970ca340a460b43edd5bfa302c8c8e1db313c308f1806d9218",
+        "bytes": 26765
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-source/.github/workflows/ci.c5391b3f114a.yml",
+        "original_path": "/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/.github/workflows/ci.yml",
+        "sha256": "c5391b3f114aab8f5f2a413e349703704c23d4460cd80970d950d13f4f818fc5",
+        "bytes": 15302
+      }
+    ]
+  },
+  "initial_main_CI_snapshot": {
+    "run": "https://github.com/jsflax/lattice/actions/runs/41381739897",
+    "status": "running",
+    "stable_Linux": "passed",
+    "iOS": "passed",
+    "macOS": "testing",
+    "nightly": "building",
+    "source": "Coordinator status; final conclusion pending"
+  },
+  "release_workflow_failure_evidence": "release-failure-summary.json"
+}

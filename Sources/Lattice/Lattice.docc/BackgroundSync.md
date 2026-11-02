@@ -223,9 +223,9 @@ update the `LatticeServerKit` relay for confirmed finite completion. Native
 durable outbox tracking and the relay's negotiated completion marker work
 together; forcing an older Core version omits part of that contract.
 
-Lattice 2.6.0 requires Core 2.5.0. Upgrade and restart all processes that own
+Lattice 2.6.1 requires Core 2.5.1. Upgrade and restart all processes that own
 the store's sync channels together. Rebuild native iOS bridge objects and Swift
-consumers together; Core 2.5.0 consistently uses shared-pointer-backed value
+consumers together; Core 2.5.0 and later use shared-pointer-backed value
 handles on iOS, so previously compiled iOS foreign-reference objects cannot be
 mixed with the new bridge.
 

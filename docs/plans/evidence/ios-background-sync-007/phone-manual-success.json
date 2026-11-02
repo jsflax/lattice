@@ -1,0 +1,270 @@
+{
+  "record_status": "Verified public manual finite sync and subsequent cleanup/reopen on the physical phone; not an Apple BGTask success receipt",
+  "source_scope": {
+    "SDK_source": "edb48f3702675b55143a51fe30856590e28d8a54",
+    "Core_version": "2.5.0",
+    "binary": "Existing corrected managed host binary in manual mode, not the pending native bootstrap candidate.",
+    "configuration": "Fresh fixture; public manual syncOnce; managed bundle plist still declares the background identifier, which remained unbound in manual mode.",
+    "source_attribution": "Coordinator identifies existing device binary; no new build or candidate validation is inferred."
+  },
+  "observations": {
+    "rows_inserted": 25,
+    "uploads_acknowledged": 25,
+    "pending_after_ack": 0,
+    "received_progress_rows": 2026,
+    "public_result": "completed",
+    "start_UTC": "2026-11-02T04:00:39Z",
+    "return_UTC": "2026-11-02T04:00:41Z",
+    "observed_elapsed_seconds": 1.967076166649349,
+    "elapsed_basis": "Monotonic host log difference between manual-sync-started and manual-sync-returned; single observation, not a guarantee.",
+    "independent_checkpoint": {
+      "checkpointed": "0",
+      "code": "0",
+      "frames": "0",
+      "journalFinalizeCode": "0",
+      "journalMode": "wal",
+      "journalPrepareCode": "0",
+      "journalReadCode": "100",
+      "qualification": "wal-truncate-completed",
+      "qualified": "true"
+    },
+    "rows_before_and_after_close_reopen": 2051,
+    "fixture_rows_preserved": 25,
+    "normal_callback_reopen": true,
+    "cleanup_and_reopen_UTC": "2026-11-02T04:01:47Z"
+  },
+  "safe_events": [
+    {
+      "event": "manual-mode-unbound-registration",
+      "timestamp": "2026-11-02T04:00:25Z",
+      "fields": {
+        "reason": "managed host plist declaration"
+      }
+    },
+    {
+      "event": "open-returned",
+      "timestamp": "2026-11-02T04:00:25Z",
+      "fields": {
+        "mode": "manual",
+        "rows": "0"
+      }
+    },
+    {
+      "event": "scene-connected",
+      "timestamp": "2026-11-02T04:00:25Z",
+      "fields": {}
+    },
+    {
+      "event": "scene-foreground",
+      "timestamp": "2026-11-02T04:00:25Z",
+      "fields": {}
+    },
+    {
+      "event": "scene-active",
+      "timestamp": "2026-11-02T04:00:25Z",
+      "fields": {}
+    },
+    {
+      "event": "foreground-snapshot",
+      "timestamp": "2026-11-02T04:00:39Z",
+      "fields": {
+        "fixtureRows": "25",
+        "pending": "0",
+        "rows": "25"
+      }
+    },
+    {
+      "event": "write-returned",
+      "timestamp": "2026-11-02T04:00:39Z",
+      "fields": {
+        "inserted": "25"
+      }
+    },
+    {
+      "event": "manual-sync-started",
+      "timestamp": "2026-11-02T04:00:39Z",
+      "fields": {}
+    },
+    {
+      "event": "sync-progress",
+      "timestamp": "2026-11-02T04:00:39Z",
+      "fields": {
+        "acked": "0",
+        "pending": "0",
+        "received": "0",
+        "total": "0"
+      }
+    },
+    {
+      "event": "sync-state",
+      "timestamp": "2026-11-02T04:00:40Z",
+      "fields": {
+        "connected": "true"
+      }
+    },
+    {
+      "event": "sync-progress",
+      "timestamp": "2026-11-02T04:00:40Z",
+      "fields": {
+        "acked": "0",
+        "pending": "25",
+        "received": "0",
+        "total": "25"
+      }
+    },
+    {
+      "event": "sync-progress",
+      "timestamp": "2026-11-02T04:00:40Z",
+      "fields": {
+        "acked": "25",
+        "pending": "0",
+        "received": "0",
+        "total": "25"
+      }
+    },
+    {
+      "event": "sync-progress",
+      "timestamp": "2026-11-02T04:00:41Z",
+      "fields": {
+        "acked": "25",
+        "pending": "0",
+        "received": "1000",
+        "total": "25"
+      }
+    },
+    {
+      "event": "sync-progress",
+      "timestamp": "2026-11-02T04:00:41Z",
+      "fields": {
+        "acked": "25",
+        "pending": "0",
+        "received": "2000",
+        "total": "25"
+      }
+    },
+    {
+      "event": "sync-progress",
+      "timestamp": "2026-11-02T04:00:41Z",
+      "fields": {
+        "acked": "25",
+        "pending": "0",
+        "received": "2026",
+        "total": "25"
+      }
+    },
+    {
+      "event": "manual-sync-returned",
+      "timestamp": "2026-11-02T04:00:41Z",
+      "fields": {
+        "result": "completed"
+      }
+    },
+    {
+      "event": "independent-checkpoint",
+      "timestamp": "2026-11-02T04:01:47Z",
+      "fields": {
+        "checkpointed": "0",
+        "code": "0",
+        "frames": "0",
+        "journalFinalizeCode": "0",
+        "journalMode": "wal",
+        "journalPrepareCode": "0",
+        "journalReadCode": "100",
+        "qualification": "wal-truncate-completed",
+        "qualified": "true"
+      }
+    },
+    {
+      "event": "foreground-snapshot",
+      "timestamp": "2026-11-02T04:01:47Z",
+      "fields": {
+        "fixtureRows": "25",
+        "pending": "0",
+        "rows": "2051"
+      }
+    },
+    {
+      "event": "close-returned",
+      "timestamp": "2026-11-02T04:01:47Z",
+      "fields": {}
+    },
+    {
+      "event": "open-returned",
+      "timestamp": "2026-11-02T04:01:47Z",
+      "fields": {
+        "mode": "manual",
+        "rows": "2051"
+      }
+    },
+    {
+      "event": "foreground-snapshot",
+      "timestamp": "2026-11-02T04:01:47Z",
+      "fields": {
+        "fixtureRows": "25",
+        "pending": "0",
+        "rows": "2051"
+      }
+    },
+    {
+      "event": "progress-stream-ended",
+      "timestamp": "2026-11-02T04:01:47Z",
+      "fields": {}
+    },
+    {
+      "event": "sync-progress",
+      "timestamp": "2026-11-02T04:01:47Z",
+      "fields": {
+        "acked": "0",
+        "pending": "0",
+        "received": "0",
+        "total": "0"
+      }
+    }
+  ],
+  "postrun_state": "Coordinator reports all debuggers closed and the original managed fixture restored by a fresh eager launch.",
+  "limits": [
+    "This is public manual syncOnce success, not setTaskCompletedWithSuccess(true) from an Apple BGTask.",
+    "It does not prove operation in a plist without background identifiers: the separate manual binary retains its earlier failure/cancellation/cleanup qualification only.",
+    "No natural scheduling, true OS cold launch, locked-phone protected-data behavior, or active-transfer expiration qualification is added.",
+    "This existing binary does not qualify the pending Core bootstrap correction or intended successor release."
+  ],
+  "private_raw_receipts": [
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/manual-reachable-start.83d19c065ba9.jsonl",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/manual-reachable-start.jsonl",
+      "sha256": "83d19c065ba978134167e5aa7d6ff5220d91629df44c43550057645462e04917",
+      "bytes": 24063
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/manual-reachable-result.1c4fed279496.jsonl",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/manual-reachable-result.jsonl",
+      "sha256": "1c4fed27949624b158e02f553da7c960e4fca29f46a2d56f4a12b83a09edd973",
+      "bytes": 26146
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/manual-reachable-complete-reopen.3d72c893365f.jsonl",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/manual-reachable-complete-reopen.jsonl",
+      "sha256": "3d72c893365f04d77ee4ce303bf11e580df5187eb582d817877f0370a5f24631",
+      "bytes": 27587
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/lldb-manual-reachable-completed-reopen.24d0b4364411.txt",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lldb-manual-reachable-completed-reopen.txt",
+      "sha256": "24d0b4364411f25e9070788d7ec8952e0c24f44232f668fe4cac007d8cac5424",
+      "bytes": 1166
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/device-reachable-manual-launch.e3a19151c011.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/device-reachable-manual-launch.json",
+      "sha256": "e3a19151c011d0eb4ab97af1d06e643c59e742f29cc8144f74a5fd1a96abc4d2",
+      "bytes": 1698
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/device-after-manual-network-managed-return.ea2032f489e8.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/device-after-manual-network-managed-return.json",
+      "sha256": "ea2032f489e8451ab9b008ac033298f1be556775232d7cc74b43f7fdada7ad19",
+      "bytes": 1662
+    }
+  ],
+  "subsequent_evidence": "phone-candidate-success.json adds successful debugger-triggered BGTask completion and manual finite sync on the Core bootstrap candidate. Earlier unqualified attempts and their source scopes remain historical; do not treat those earlier limits as the latest coverage state."
+}
