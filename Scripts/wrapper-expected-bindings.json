@@ -4,8 +4,8 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "543ad0be9d69b65f116c487483b05becb6707990",
-      "version": "2.2.8"
+      "revision": "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
+      "selection": "revision"
     },
     {
       "identity": "swift-sdk",
@@ -15,10 +15,13 @@
       "version": "0.13.0"
     }
   ],
-  "qualificationNote": "Qualified means the recorded Core and SDK release/source joins only. The strict consumer independently verifies a complete committed lock and drift; these expectations do not qualify the wrapper graph, compilation, tests or products.",
-  "qualificationScope": "upstream-release-source-joins-only",
+  "qualificationNote": "Qualified refers only to explicitly reviewed upstream source identities. Core uses its exact revision, while Swift SDK retains its original exact release version and revision. Prior release evidence is historical; it does not qualify this wrapper graph, compilation, tests or products.",
+  "qualificationScope": "reviewed-upstream-source-identities-only",
   "qualified": true,
-  "releaseEvidence": {
+  "schema": "lattice.wrapper-dependency-bindings/1",
+  "status": "EXACT_REVISION_AND_VERSION_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",
+  "wrapperGraphAccepted": false,
+  "previousReleaseEvidence": {
     "receiptSHA256": "7172df170950d1fe3601e9e9e7f608ad2f4fdd974fdbb4b7b2320f3d9d9e21a9",
     "releases": [
       {
@@ -37,7 +40,17 @@
     "scope": "Observed upstream tag/source joins for Core 2.2.8 and Swift SDK 0.13.0. Receipts are evidence, not runtime dependencies.",
     "previousReceiptSHA256": "ee009a1169b3e4bdbc276930fa1f611fa838cd8e55820c492d5121b7303d2f65"
   },
-  "schema": "lattice.wrapper-dependency-bindings/1",
-  "status": "UPSTREAM_RELEASE_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",
-  "wrapperGraphAccepted": false
+  "sourceEvidence": {
+    "latticecore": {
+      "revision": "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
+      "selection": "revision",
+      "scope": "Reviewed exact audit-fence Core source revision; not a fabricated versioned release."
+    },
+    "swift-sdk": {
+      "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
+      "version": "0.13.0",
+      "scope": "Unchanged original released SDK source binding."
+    }
+  }
 }
