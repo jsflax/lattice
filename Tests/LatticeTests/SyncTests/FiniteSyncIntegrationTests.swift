@@ -61,7 +61,8 @@ final class FiniteRelayHarness: @unchecked Sendable {
     private let counts: NIOLockedValueBox<Counts>
     private let hooks: RelayIngressTestHooks
 
-    init(pausedSetup: Bool = false,
+    init(isolation: isolated (any Actor)? = #isolation,
+         pausedSetup: Bool = false,
          schema: [any Lattice.Model.Type] = [SimpleSyncObject.self]) async throws {
         let directory = LatticeTestScratch.directory.appendingPathComponent("finite-relay-\(UUID().uuidString)")
         let storage = directory.appendingPathComponent("relay")
@@ -178,7 +179,7 @@ private actor FiniteSyncIntegrationDriver {
     private func withRelay(pausedSetup: Bool = false,
                            schema: [any Lattice.Model.Type] = [SimpleSyncObject.self],
                            _ body: (FiniteRelayHarness) async throws -> Void) async throws {
-        let harness = try await FiniteRelayHarness(pausedSetup: pausedSetup, schema: schema)
+        let harness = try await FiniteRelayHarness(isolation: self, pausedSetup: pausedSetup, schema: schema)
         do { try await body(harness) }
         catch {
             try await harness.shutdown()

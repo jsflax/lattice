@@ -20,7 +20,7 @@ struct MainFileCurrentnessTests {
         let file = root.appending(path: "main.sqlite")
         let owner = try Lattice(MainFileCurrentnessItem.self, configuration: .init(fileURL: file))
         defer { owner.close() }
-        try owner.add(MainFileCurrentnessItem())
+        try owner.add(MainFileCurrentnessItem(value: "unchanged"))
         let before = try owner.auditReadFence()
         try owner.requireMainFileUnmoved(expectedPath: file.path)
         let after = try owner.auditReadFence()
@@ -33,7 +33,7 @@ struct MainFileCurrentnessTests {
         let file = root.appending(path: "main.sqlite"), retired = root.appending(path: "retired.sqlite")
         let owner = try Lattice(MainFileCurrentnessItem.self, configuration: .init(fileURL: file))
         defer { owner.close() }
-        try owner.add(MainFileCurrentnessItem())
+        try owner.add(MainFileCurrentnessItem(value: "unchanged"))
         try owner.requireMainFileUnmoved(expectedPath: file.path)
         try FileManager.default.moveItem(at: file, to: retired)
         #expect(throws: (any Error).self) { try owner.requireMainFileUnmoved(expectedPath: file.path) }
