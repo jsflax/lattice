@@ -267,7 +267,7 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
 
 // MARK: - CxxBackend (wraps swift_lattice_ref)
 
-final class CxxBackend: LatticeBackend, GroupedCountBackend, LocalMetadataBackend, AuditedWritesBackend, @unchecked Sendable {
+final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditReadFenceBackend, LocalMetadataBackend, AuditedWritesBackend, @unchecked Sendable {
     // The db ops are const forwarders on swift_lattice_ref, so they import
     // non-mutating on both paths and the handle can be a `let`.
     let ref: lattice.swift_lattice_ref
@@ -393,6 +393,35 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, LocalMetadataBacken
         let ok = ref.delete_where(std.string(table), optStr(whereClause), columnValues(params))
         reportQueryFailureIfAny()
         return ok
+    }
+
+    func auditReadFence() throws -> AuditReadFence {
+        let value = ref.auditReadFence()
+        // Capture the sealed error before any other bridge call can clear its thread-local slot.
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+        let cursor: AuditCursor
+        if value.cursor.head == 0 && value.cursor.floor == 0 && value.cursor.head_global_id.empty() {
+            cursor = AuditCursor(head: 0, headID: nil, floor: 0)
+        } else {
+            guard value.cursor.head > 0, value.cursor.floor > 0, value.cursor.floor <= value.cursor.head,
+                  let id = UUID(uuidString: String(value.cursor.head_global_id)) else {
+                throw Lattice.Error.databaseError("Invalid audit read fence cursor")
+            }
+            cursor = AuditCursor(head: Int64(value.cursor.head), headID: id, floor: Int64(value.cursor.floor))
+        }
+        let generation: UUID?
+        if value.has_history_generation {
+            guard let id = UUID(uuidString: String(value.history_generation)) else {
+                throw Lattice.Error.databaseError("Invalid audit history generation")
+            }
+            generation = id
+        } else {
+            guard value.history_generation.empty() else {
+                throw Lattice.Error.databaseError("Invalid absent audit history generation")
+            }
+            generation = nil
+        }
+        return AuditReadFence(cursor: cursor, historyGeneration: generation)
     }
 
     func localMetadata(namespace: String, key: String) throws -> String? {

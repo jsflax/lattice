@@ -63,7 +63,7 @@ let package = Package(
         // include synced rows without reopening the store.
         // 2.2.8 also requires the vector contention/readiness fixes and rejects
         // malformed sync changes before apply, acknowledgement or cursor advance.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "4cea8215fbf210a645eac030a577e45f2829de08"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",

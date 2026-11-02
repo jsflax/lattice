@@ -30,9 +30,12 @@ struct LocalMetadataTests {
             }
         }
         try db.withTransaction {
-            #expect(try db.insertLocalMetadataIfAbsent("receipt", namespace: namespace, key: "op"))
-            #expect(!(try db.insertLocalMetadataIfAbsent("different", namespace: namespace, key: "op")))
-            #expect(try db.localMetadata(namespace: namespace, key: "op") == "receipt")
+            let inserted = try db.insertLocalMetadataIfAbsent("receipt", namespace: namespace, key: "op")
+            #expect(inserted)
+            let insertedAgain = try db.insertLocalMetadataIfAbsent("different", namespace: namespace, key: "op")
+            #expect(!insertedAgain)
+            let storedReceipt = try db.localMetadata(namespace: namespace, key: "op")
+            #expect(storedReceipt == "receipt")
         }
         #expect(db.objects(AuditLog.self).count == 0)
         #expect(try db.localMetadata(namespace: "different.namespace", key: "op") == nil)
