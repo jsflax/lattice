@@ -4,7 +4,7 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "c4d8556525c1125d314bb8ee3537f34dc590f004",
+      "revision": "846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
       "selection": "revision"
     },
     {
@@ -42,13 +42,13 @@
   },
   "sourceEvidence": {
     "latticecore": {
-      "revision": "c4d8556525c1125d314bb8ee3537f34dc590f004",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/c4d8556525c1125d314bb8ee3537f34dc590f004",
+      "revision": "846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
       "selection": "revision",
       "parents": [
-        "37de8560c7db0c5b46f6475748f01732c9443208"
+        "c4d8556525c1125d314bb8ee3537f34dc590f004"
       ],
-      "scope": "Source-reviewed shared Core9 successor preserving finite background sync, durable outbox migration and currentness, with stack-owned registry callback depth valid during late thread cleanup and reuse of the exact bounded encoded entry in delivery admission/send fallback. Upstream runtime evidence and this wrapper graph, compilation, tests and products are qualified separately; this binding makes no runtime acceptance claim."
+      "scope": "Source-reviewed shared Core9 successor preserving finite background sync, durable outbox migration and currentness, with stack-owned registry callback depth valid during late thread cleanup and reuse of the exact bounded encoded entry in delivery admission/send fallback. Filtered reconciliation now selects only registered internal data tables, excluding vector/FTS/RTree index artifacts while preserving link and geo-list delivery. Upstream runtime evidence and this wrapper graph, compilation, tests and products are qualified separately; this binding makes no runtime acceptance claim."
     },
     "swift-sdk": {
       "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
