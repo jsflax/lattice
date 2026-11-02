@@ -1312,8 +1312,12 @@ public struct Lattice {
         latticeSHMURL = fileURL.deletingPathExtension().appendingPathExtension("sqlite-shm")
         latticeWALURL = fileURL.deletingPathExtension().appendingPathExtension("sqlite-wal")
         try FileManager.default.removeItem(at: fileURL)
-        try FileManager.default.removeItem(at: latticeSHMURL)
-        try FileManager.default.removeItem(at: latticeWALURL)
+        // SQLite can unlink WAL/SHM when the last connection closes. Their
+        // absence is already clean; preserve every other removal failure.
+        for sidecar in [latticeSHMURL, latticeWALURL] {
+            do { try FileManager.default.removeItem(at: sidecar) }
+            catch let error as CocoaError where error.code == .fileNoSuchFile { }
+        }
     }
 
     /// Recursively discover all Model types linked from the given schema.
