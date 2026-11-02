@@ -296,11 +296,11 @@ jobs:
 
       # Native sync may block while waiting for cancellation. One cooperative
       # worker makes accidental Task.detached blocking reproducibly fail.
-      - name: Background bindings with one cooperative worker
+      - name: Background sync with one cooperative worker
         env:
           LIBDISPATCH_COOPERATIVE_POOL_STRICT: '1'
         working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
-        run: swift test --skip-build --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --filter BackgroundSyncBindingTests
+        run: swift test --skip-build --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --filter 'BackgroundSyncBindingTests|FiniteSyncIntegrationTests'
 
       - *after_test
       - *consumer_finalize

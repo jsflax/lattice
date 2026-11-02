@@ -1,5 +1,5 @@
 import Foundation
-import Testing
+import XCTest
 import Vapor
 import NIOConcurrencyHelpers
 import LatticeTestSupport
@@ -8,6 +8,7 @@ import LatticeTestSupport
 
 private enum FiniteIntegrationFailure: Error {
     case timedOut(String)
+    case invalidPremise(String)
     case noPort
 }
 
@@ -165,8 +166,9 @@ private final class FiniteProgressLog: Sendable {
     }
 }
 
-@Suite("Finite sync public API and shipping relay", .serialized)
-actor FiniteSyncIntegrationTests {
+/// Keep the client facade and its callbacks on one actor even though XCTest
+/// owns test discovery and ordering.
+private actor FiniteSyncIntegrationDriver {
     private func withRelay(pausedSetup: Bool = false,
                            _ body: (FiniteRelayHarness) async throws -> Void) async throws {
         let harness = try await FiniteRelayHarness(pausedSetup: pausedSetup)
@@ -196,37 +198,44 @@ actor FiniteSyncIntegrationTests {
         await consumer.value
     }
 
-    @Test(.timeLimit(.minutes(1)))
     func emptyStoreCompletesAndSettlesItsPrivateSession() async throws {
         try await withRelay { harness in
             let client = try Lattice(SimpleSyncObject.self, configuration: harness.clientConfiguration())
             defer { client.close() }
-            #expect(!client.backend.isSyncAgent())
+            XCTAssertFalse(client.backend.isSyncAgent())
             let identity = client.backend.identityHash
-            #expect(try await client.syncOnce(maximumDuration: 10) == .completed)
-            #expect(client.backend.identityHash == identity)
-            #expect(!client.backend.isSyncAgent())
-            #expect(!client.isSyncConnected)
-            #expect(client.objects(SimpleSyncObject.self).isEmpty)
+            do {
+                let started = ContinuousClock.now
+                let outcome = try await client.syncOnce(maximumDuration: 10)
+                XCTAssertEqual(outcome, .completed,
+                               "Finite sync budget=10s, elapsed=\(started.duration(to: ContinuousClock.now))")
+            }
+            XCTAssertEqual(client.backend.identityHash, identity)
+            XCTAssertFalse(client.backend.isSyncAgent())
+            XCTAssertFalse(client.isSyncConnected)
+            XCTAssertTrue(client.objects(SimpleSyncObject.self).isEmpty)
         }
     }
 
-    @Test(.timeLimit(.minutes(1)))
     func completedUploadsHaveDurableRelayRowsAndNoPendingAuditWork() async throws {
         try await withRelay { harness in
             let client = try Lattice(SimpleSyncObject.self, configuration: harness.clientConfiguration())
             defer { client.close() }
             try client.add(contentsOf: (0..<7).map { SimpleSyncObject(value: $0, floatValue: Float($0)) })
-            #expect(try await client.syncOnce(maximumDuration: 15) == .completed)
+            do {
+                let started = ContinuousClock.now
+                let outcome = try await client.syncOnce(maximumDuration: 15)
+                XCTAssertEqual(outcome, .completed,
+                               "Finite sync budget=15s, elapsed=\(started.duration(to: ContinuousClock.now))")
+            }
             let persisted = try harness.coWriter()
             defer { persisted.close() }
-            #expect(Set(persisted.objects(SimpleSyncObject.self).map(\.value)) == Set(0..<7))
-            #expect(client.pendingSyncEntryCount == 0)
-            #expect(!client.backend.isSyncAgent())
+            XCTAssertEqual(Set(persisted.objects(SimpleSyncObject.self).map(\.value)), Set(0..<7))
+            XCTAssertEqual(client.pendingSyncEntryCount, 0)
+            XCTAssertFalse(client.backend.isSyncAgent())
         }
     }
 
-    @Test(.timeLimit(.minutes(2)))
     func completionWaitsForEveryInitialReplayPage() async throws {
         try await withRelay { harness in
             let donor = try harness.coWriter()
@@ -236,16 +245,20 @@ actor FiniteSyncIntegrationTests {
             try donor.add(contentsOf: (0..<count).map { SimpleSyncObject(value: $0, floatValue: Float($0)) })
             let client = try Lattice(SimpleSyncObject.self, configuration: harness.clientConfiguration())
             defer { client.close() }
-            #expect(try await client.syncOnce(maximumDuration: 30) == .completed)
+            do {
+                let started = ContinuousClock.now
+                let outcome = try await client.syncOnce(maximumDuration: 30)
+                XCTAssertEqual(outcome, .completed,
+                               "Finite sync budget=30s, elapsed=\(started.duration(to: ContinuousClock.now))")
+            }
             // No eventual-read wait: all pages must be present at completion.
             let values = client.objects(SimpleSyncObject.self).map(\.value)
-            #expect(values.count == count)
-            #expect(Set(values) == Set(0..<count))
-            #expect(!client.isSyncConnected)
+            XCTAssertEqual(values.count, count)
+            XCTAssertEqual(Set(values), Set(0..<count))
+            XCTAssertFalse(client.isSyncConnected)
         }
     }
 
-    @Test(.timeLimit(.minutes(1)))
     func cancellationDuringRelaySetupSettlesAndSameHandleCanSyncAgain() async throws {
         try await withRelay(pausedSetup: true) { harness in
             try await self.checkCancellationDuringRelaySetup(harness)
@@ -256,7 +269,7 @@ actor FiniteSyncIntegrationTests {
         let client = try Lattice(SimpleSyncObject.self, configuration: harness.clientConfiguration())
         defer { client.close() }
         let identity = client.backend.identityHash
-        // Both the facade and the child operation stay on this suite actor.
+        // Both the facade and the child operation stay on this driver actor.
         // The explicit isolated parameter preserves that proof across Task.
         let operation = Task { [self] in
             try await client.syncOnce(maximumDuration: 30, isolation: self)
@@ -266,7 +279,7 @@ actor FiniteSyncIntegrationTests {
             operation.cancel()
             do {
                 _ = try await operation.value
-                Issue.record("Cancelled finite sync returned normally")
+                XCTFail("Cancelled finite sync returned normally")
             } catch is CancellationError { }
         } catch {
             operation.cancel()
@@ -274,19 +287,23 @@ actor FiniteSyncIntegrationTests {
             _ = try? await operation.value
             throw error
         }
-        #expect(!client.backend.isSyncAgent())
-        #expect(!client.isSyncConnected)
+        XCTAssertFalse(client.backend.isSyncAgent())
+        XCTAssertFalse(client.isSyncConnected)
         try client.add(SimpleSyncObject(value: 91, floatValue: 9.1))
-        #expect(client.objects(SimpleSyncObject.self).first?.value == 91)
+        XCTAssertEqual(client.objects(SimpleSyncObject.self).first?.value, 91)
         harness.releaseSetup()
-        #expect(try await client.syncOnce(maximumDuration: 15) == .completed)
-        #expect(client.backend.identityHash == identity)
+        do {
+            let started = ContinuousClock.now
+            let outcome = try await client.syncOnce(maximumDuration: 15)
+            XCTAssertEqual(outcome, .completed,
+                           "Finite sync budget=15s, elapsed=\(started.duration(to: ContinuousClock.now))")
+        }
+        XCTAssertEqual(client.backend.identityHash, identity)
         let persisted = try harness.coWriter()
         defer { persisted.close() }
-        #expect(persisted.objects(SimpleSyncObject.self).first?.value == 91)
+        XCTAssertEqual(persisted.objects(SimpleSyncObject.self).first?.value, 91)
     }
 
-    @Test(.timeLimit(.minutes(1)))
     func ordinaryManualCycleLeavesResultsAbleToPinNewReadGenerations() async throws {
         try await withRelay { harness in
             var configuration = harness.clientConfiguration()
@@ -295,35 +312,52 @@ actor FiniteSyncIntegrationTests {
             defer { client.close() }
             try client.add(SimpleSyncObject(value: 1, floatValue: 1))
             let results = client.objects(SimpleSyncObject.self)
-            #expect(results.count == 1)
-            try #require(client.backend.localReadGenerationsOutstanding() > 0,
-                         "test premise: ordinary file Results own a read generation")
-            #expect(try await client.syncOnce(maximumDuration: 15) == .completed)
+            XCTAssertEqual(results.count, 1)
+            guard client.backend.localReadGenerationsOutstanding() > 0 else {
+                let message = "test premise: ordinary file Results own a read generation"
+                XCTFail(message)
+                throw FiniteIntegrationFailure.invalidPremise(message)
+            }
+            do {
+                let started = ContinuousClock.now
+                let outcome = try await client.syncOnce(maximumDuration: 15)
+                XCTAssertEqual(outcome, .completed,
+                               "Finite sync budget=15s, elapsed=\(started.duration(to: ContinuousClock.now))")
+            }
             // Retire only native pins, not the Swift suppression latch, then
             // force a fresh epoch. An accidentally latched coordinator cannot
             // create a new generation here without resumeGenerations().
             client.backend.retireAllReadGenerations()
             try client.add(SimpleSyncObject(value: 2, floatValue: 2))
-            #expect(results.count == 2)
-            #expect(client.backend.localReadGenerationsOutstanding() > 0,
+            XCTAssertEqual(results.count, 2)
+            XCTAssertGreaterThan(client.backend.localReadGenerationsOutstanding(), 0,
                     "manual syncOnce must not leave ordinary reads latched off")
-            #expect(client.configuration.auditRetention == 600)
+            XCTAssertEqual(client.configuration.auditRetention, 600)
         }
     }
 
-    @Test(.timeLimit(.minutes(2)))
     func preOwnershipProgressSubscriberSurvivesFiniteCyclesAndForegroundConnect() async throws {
         try await withRelay { harness in
             let client = try Lattice(SimpleSyncObject.self, configuration: harness.clientConfiguration())
             defer { client.close() }
-            #expect(!client.backend.isSyncAgent())
+            XCTAssertFalse(client.backend.isSyncAgent())
             try await withProgress(client) { progress in
                 try client.add(SimpleSyncObject(value: 1, floatValue: 1))
-                #expect(try await client.syncOnce(maximumDuration: 15) == .completed)
+                do {
+                    let started = ContinuousClock.now
+                    let outcome = try await client.syncOnce(maximumDuration: 15)
+                    XCTAssertEqual(outcome, .completed,
+                                   "Finite sync budget=15s, elapsed=\(started.duration(to: ContinuousClock.now))")
+                }
                 try await finiteWait("first finite native ACK progress") { progress.hasNativeACK(atLeast: 1) }
 
                 try client.add(contentsOf: (2...3).map { SimpleSyncObject(value: $0, floatValue: Float($0)) })
-                #expect(try await client.syncOnce(maximumDuration: 15) == .completed)
+                do {
+                    let started = ContinuousClock.now
+                    let outcome = try await client.syncOnce(maximumDuration: 15)
+                    XCTAssertEqual(outcome, .completed,
+                                   "Finite sync budget=15s, elapsed=\(started.duration(to: ContinuousClock.now))")
+                }
                 // Per-synchronizer counters restart each cycle; >=2 cannot be
                 // satisfied by a buffered event from the one-row first cycle.
                 try await finiteWait("second finite native ACK progress") { progress.hasNativeACK(atLeast: 2) }
@@ -333,13 +367,12 @@ actor FiniteSyncIntegrationTests {
                 try await finiteWait("foreground native ACK progress") { progress.hasNativeACK(atLeast: 3) }
                 let persisted = try harness.coWriter()
                 defer { persisted.close() }
-                #expect(Set(persisted.objects(SimpleSyncObject.self).map(\.value)) == Set(1...6))
+                XCTAssertEqual(Set(persisted.objects(SimpleSyncObject.self).map(\.value)), Set(1...6))
                 try client.disconnectSync()
             }
         }
     }
 
-    @Test(.timeLimit(.minutes(1)))
     func olderServerWithoutMarkerReturnsBudgetExhaustedAfterDurableProgress() async throws {
         let directory = LatticeTestScratch.directory.appendingPathComponent("finite-legacy-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -364,14 +397,92 @@ actor FiniteSyncIntegrationTests {
             wssEndpoint: server.endpoint, syncStartup: .deferred))
         defer { client.close() }
         try client.add(SimpleSyncObject(value: 20, floatValue: 2))
-        #expect(try await client.syncOnce(maximumDuration: 3) == .budgetExhausted)
+        do {
+            let started = ContinuousClock.now
+            let outcome = try await client.syncOnce(maximumDuration: 3)
+            XCTAssertEqual(outcome, .budgetExhausted,
+                           "Finite sync budget=3s, elapsed=\(started.duration(to: ContinuousClock.now))")
+        }
         // The old fixture ACKs before persistence; join its receive consumer
         // before claiming durable progress. It never emits completion markers.
         try await server.waitForCommandsForTesting()
-        #expect(Set(server.lattice.objects(SimpleSyncObject.self).map(\.value)) == [10, 20])
-        #expect(Set(client.objects(SimpleSyncObject.self).map(\.value)) == [10, 20])
-        #expect(client.pendingSyncEntryCount == 0)
-        #expect(!client.backend.isSyncAgent())
-        #expect(!client.isSyncConnected)
+        XCTAssertEqual(Set(server.lattice.objects(SimpleSyncObject.self).map(\.value)), [10, 20])
+        XCTAssertEqual(Set(client.objects(SimpleSyncObject.self).map(\.value)), [10, 20])
+        XCTAssertEqual(client.pendingSyncEntryCount, 0)
+        XCTAssertFalse(client.backend.isSyncAgent())
+        XCTAssertFalse(client.isSyncConnected)
+    }
+}
+
+/// Preserve the former per-case Swift Testing limits. The timeout cancels and
+/// joins the actor operation, including its native/relay cleanup; no abandoned
+/// detached work can escape into the next test.
+private func withFiniteIntegrationDeadline(
+    seconds: Int,
+    operation: @escaping @Sendable () async throws -> Void
+) async throws {
+    try await withThrowingTaskGroup(of: Void.self) { tasks in
+        tasks.addTask { try await operation() }
+        tasks.addTask {
+            try await Task.sleep(for: .seconds(seconds))
+            throw FiniteIntegrationFailure.timedOut("finite integration test exceeded \(seconds)s")
+        }
+        defer { tasks.cancelAll() }
+        _ = try await tasks.next()
+    }
+}
+
+/// SwiftPM runs XCTest before the parallel Swift Testing phase. The shipping
+/// relay's async setup must not compete with the package-wide SQL stress burst
+/// when these conformance checks require completion within 10/15/30 seconds.
+/// Every case and its native budget remains unchanged; there are no retries.
+final class FiniteSyncIntegrationTests: XCTestCase {
+    func testEmptyStoreCompletesAndSettlesItsPrivateSession() async throws {
+        let driver = FiniteSyncIntegrationDriver()
+        try await withFiniteIntegrationDeadline(seconds: 60) {
+            try await driver.emptyStoreCompletesAndSettlesItsPrivateSession()
+        }
+    }
+
+    func testCompletedUploadsHaveDurableRelayRowsAndNoPendingAuditWork() async throws {
+        let driver = FiniteSyncIntegrationDriver()
+        try await withFiniteIntegrationDeadline(seconds: 60) {
+            try await driver.completedUploadsHaveDurableRelayRowsAndNoPendingAuditWork()
+        }
+    }
+
+    func testCompletionWaitsForEveryInitialReplayPage() async throws {
+        let driver = FiniteSyncIntegrationDriver()
+        try await withFiniteIntegrationDeadline(seconds: 120) {
+            try await driver.completionWaitsForEveryInitialReplayPage()
+        }
+    }
+
+    func testCancellationDuringRelaySetupSettlesAndSameHandleCanSyncAgain() async throws {
+        let driver = FiniteSyncIntegrationDriver()
+        try await withFiniteIntegrationDeadline(seconds: 60) {
+            try await driver.cancellationDuringRelaySetupSettlesAndSameHandleCanSyncAgain()
+        }
+    }
+
+    func testOrdinaryManualCycleLeavesResultsAbleToPinNewReadGenerations() async throws {
+        let driver = FiniteSyncIntegrationDriver()
+        try await withFiniteIntegrationDeadline(seconds: 60) {
+            try await driver.ordinaryManualCycleLeavesResultsAbleToPinNewReadGenerations()
+        }
+    }
+
+    func testPreOwnershipProgressSubscriberSurvivesFiniteCyclesAndForegroundConnect() async throws {
+        let driver = FiniteSyncIntegrationDriver()
+        try await withFiniteIntegrationDeadline(seconds: 120) {
+            try await driver.preOwnershipProgressSubscriberSurvivesFiniteCyclesAndForegroundConnect()
+        }
+    }
+
+    func testOlderServerWithoutMarkerReturnsBudgetExhaustedAfterDurableProgress() async throws {
+        let driver = FiniteSyncIntegrationDriver()
+        try await withFiniteIntegrationDeadline(seconds: 60) {
+            try await driver.olderServerWithoutMarkerReturnsBudgetExhaustedAfterDurableProgress()
+        }
     }
 }

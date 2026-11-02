@@ -310,33 +310,6 @@ struct BackgroundSyncBindingTests {
         }
     }
 
-    @Test func invalidationCancelsBeforeAQueuedActorHopCanStartNativeWork() async throws {
-        let backend = BindingBackend(identity: 91118), owner = BindingOwner(BindingBackend(identity: 91119))
-        let lineage = BackgroundSyncLineage()
-        let group = try BackgroundSyncBindings.attachManaged(capability: backend, owner: owner,
-            lineage: lineage, ownsLifecycle: true)
-        let entered = BindingSignal(), release = BindingSignal()
-        let occupied = Task { await owner.hold(entered: entered, release: release) }
-        defer { release.set() }
-        let didEnter = await entered.waitAsync()
-        if !didEnter { release.set(); await occupied.value }
-        try #require(didEnter, "The owner actor must be occupied before queueing native admission")
-        let work = Task { try await group.perform(.resume) }
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while group.activeOperationCount == 0 && ContinuousClock.now < deadline { await Task.yield() }
-        #expect(group.activeOperationCount == 1)
-        BackgroundSyncBindings.invalidate(identity: backend.identityHash)
-        release.set()
-        await occupied.value
-        do {
-            _ = try await work.value
-            Issue.record("Retired queued work must be cancelled before native startup")
-        } catch is CancellationError {}
-        #expect(backend.count == 0)
-        withExtendedLifetime(owner) {}
-    }
-
-
     @Test func expiredNativeAliasDoesNotBlockLaterAddressReuse() throws {
         let primary = BindingBackend(identity: 91120), lineage = BackgroundSyncLineage()
         let group = try BackgroundSyncBindings.attachManaged(capability: primary, owner: nil,
@@ -392,8 +365,8 @@ struct BackgroundSyncBindingTests {
 
 }
 
-/// These two tests deliberately park synchronous native work until the caller
-/// cancels or preempts it. SwiftPM's XCTest phase runs before its parallel Swift
+/// These tests deliberately park native work or its owning actor while the
+/// caller cancels or preempts it. SwiftPM's XCTest phase runs before its parallel Swift
 /// Testing phase, so their two-second admission prerequisite measures this
 /// scenario instead of competing with every SQL benchmark in the package.
 /// Keeping the suite-name prefix also includes them in the strict cooperative
@@ -459,6 +432,35 @@ final class BackgroundSyncBindingTestsOrdering: XCTestCase {
             XCTFail("Foreground takeover should cancel the manual pass")
         } catch is CancellationError {}
         XCTAssertEqual(backend.count, 2)
+    }
+
+    func testInvalidationCancelsBeforeAQueuedActorHopCanStartNativeWork() async throws {
+        let backend = BindingBackend(identity: 91118), owner = BindingOwner(BindingBackend(identity: 91119))
+        let lineage = BackgroundSyncLineage()
+        let group = try BackgroundSyncBindings.attachManaged(capability: backend, owner: owner,
+            lineage: lineage, ownsLifecycle: true)
+        let entered = BindingSignal(), release = BindingSignal()
+        let occupied = Task { await owner.hold(entered: entered, release: release) }
+        defer { release.set() }
+        let didEnter = await entered.waitAsync()
+        guard didEnter else {
+            release.set(); await occupied.value
+            XCTFail("The owner actor must be occupied before queueing native admission")
+            return
+        }
+        let work = Task { try await group.perform(.resume) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while group.activeOperationCount == 0 && ContinuousClock.now < deadline { await Task.yield() }
+        XCTAssertEqual(group.activeOperationCount, 1)
+        BackgroundSyncBindings.invalidate(identity: backend.identityHash)
+        release.set()
+        await occupied.value
+        do {
+            _ = try await work.value
+            XCTFail("Retired queued work must be cancelled before native startup")
+        } catch is CancellationError {}
+        XCTAssertEqual(backend.count, 0)
+        withExtendedLifetime(owner) {}
     }
 
 }
