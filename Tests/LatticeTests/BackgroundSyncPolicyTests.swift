@@ -83,4 +83,32 @@ struct BackgroundSyncPolicyTests {
             identifier: identifier, minimumInterval: 1)
         try policy.validate(permittedIdentifiers: [identifier])
     }
+
+    @Test func derivedConfigurationRetainsLifecycleWithoutCredentialsOrTaskPolicy() throws {
+        var original = Lattice.Configuration(fileURL: URL(fileURLWithPath: "/unused/policy.sqlite"),
+            authorizationToken: "fixture", wssEndpoint: URL(string: "ws://localhost/sync"),
+            backgroundSync: .appRefresh(identifier: identifier))
+        let lineage = BackgroundSyncLineage()
+        original.backgroundSyncLineage = lineage
+        var derived = original.withoutBackgroundTaskOwnership()
+        #expect(derived.backgroundSyncLineage === lineage)
+        #expect(derived.backgroundSync == nil)
+        #expect(derived.backgroundSyncManaged)
+        #expect(derived.wssEndpoint == nil)
+        #expect(derived.authorizationToken == nil)
+        #expect(derived.ipcTargets == nil)
+        derived.isReadOnly = true
+        try derived.validateBackgroundSyncStore()
+        derived.backgroundSync = .appRefresh(identifier: identifier)
+        #expect(throws: (any Swift.Error).self) { try derived.validateBackgroundSyncStore() }
+    }
+
+    @Test func runtimeLineageDoesNotChangeConfigurationValueIdentity() {
+        var first = Lattice.Configuration(fileURL: URL(fileURLWithPath: "/unused/identity.sqlite"))
+        var second = first
+        first.backgroundSyncLineage = BackgroundSyncLineage()
+        second.backgroundSyncLineage = BackgroundSyncLineage()
+        #expect(first == second)
+        #expect(first.hashValue == second.hashValue)
+    }
 }

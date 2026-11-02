@@ -17,23 +17,20 @@ Started November 1, 2026. Implement and release the [config-first integration](i
 
 - [x] User approved config-first API, implementation, release, and consumer notifications.
 - [x] Refreshed baselines and isolated Core work from existing changes.
-- [ ] Finite completion and compatibility probe.
-- [ ] Teardown/resumption and contention probe.
+- [x] Finite completion and compatibility probe (native plus negotiated relay tests).
+- [x] Teardown/resumption and contention probe (173 native tests; review follow-up pending).
 - [x] Actor-safe API and registration compiler probe (not production scheduler qualification).
-- [ ] Core/server/SDK integration.
+- [x] Core/server/SDK integration (87 selected SDK tests passed).
 - [ ] Lifecycle, lifetime, and host qualification.
 - [ ] CI, release, and artifact verification.
 - [ ] Engram, Orbital, and HUD notification receipts.
 
 ## Current checkpoint
 
-Initial probes are in [checkpoint 001](evidence/ios-background-sync-001/README.md). The completed correctness and relay slice is in [checkpoint 002](evidence/ios-background-sync-002/README.md). No background-sync implementation is released.
+Initial probes are in [checkpoint 001](evidence/ios-background-sync-001/README.md), the outbox/relay slice in [checkpoint 002](evidence/ios-background-sync-002/README.md), and current integration qualification in [checkpoint 003](evidence/ios-background-sync-003/README.md). **No background-sync implementation is released.**
 
-- Core `c6194c3`: all 137 affected native tests passed, including 19 filtered-delivery durability cases and 14 cancellation cases. A channel-private durable outbox now preserves synthetic transitions across full windows, lost ACKs, filter changes, restart, and source-history compaction. Pending outbox data requires a coherent Core upgrade; downgrade safety is not promised.
-- Core `b9bffbc`: fixed a pre-existing observer-destruction hang caused by duplicated callback-depth state in SwiftBuild's aggregate library. The released baseline reproduced it; the fixed source passes both raw and aggregate package boundaries.
-- SDK `860d043`: config policy, strict catch-up marker codec, and ordered negotiated server marker implemented; 13 focused tests passed, including the shipping relay's 2,001-record replay and legacy negotiation behavior.
-- SQLite busy cancellation is supported on owned private connections and strict shared-writer scopes. These tests do not yet qualify complete sync expiration or long SQL. Actual native lifecycle integration remains in progress.
-- Actor/extension compiler probes passed. A further weak-actor hop probe verifies that idle task registration need not retain the store actor. Production weak binding, early registration, finite API, and Apple lifecycle integration are in progress.
-- Native finite-cycle receipt and fixed-horizon implementation now has deterministic tests prepared; coordinated execution remains pending integration.
-- The lab iPhone 13 Pro is connected and available for later real-host checks. Device task execution and naturally scheduled delivery have not yet been tested.
-- SDK tests required SwiftPM's native backend because default SwiftBuild failed dependency scanning in the existing test graph. Full release CI and published artifact verification remain outstanding.
+- Native finite sync and managed suspension/resumption are implemented. All 185 affected native tests passed at `aa4407c`; a test-only retention follow-up then passed all 24 lifecycle cases, bringing distinct native coverage to 186. Core PR 77 passed final branch CI and is merged at `62fc557`; main/release CI and publication remain. The full Swift bridge consumption probe also passed.
+- SDK config-first registration, lifecycle handling, weak actor binding, serialized manual/automatic work, `syncOnce`, and public docs are implemented. The first full selected SDK run passed 69 tests and exposed a UUID-ACK timing bug now fixed in Core. Copied-handle lifecycle integration is complete; the updated selected suite passed 87 tests, including native cross-actor checks. The seven-row upload case dropped from 10.049s to 0.359s in individual local runs.
+- The lab phone is connected; the private host, UI tests, and disposable relay are prepared, and Xcode resolved both candidate local packages. The disposable relay is built/running and the Xcode phone build is underway. Installation, actual iOS lifecycle/task execution, and natural delivery have not yet been qualified.
+- Intended releases are Core 2.5.0 and SDK 2.6.0. The temporary Core edit override must be removed and replaced by the published version before SDK release.
+- SDK local tests use SwiftPM's native backend because default SwiftBuild failed dependency scanning in the existing test graph. Full release CI, phone host build, published artifact verification, and consumer notices remain outstanding.

@@ -67,4 +67,5 @@ the `CHANGELOG.md` 1.0.0 section carries the same pointers in prose.
 ### Synchronization
 
 - <doc:Sync>
+- <doc:BackgroundSync>
 - <doc:IPC>

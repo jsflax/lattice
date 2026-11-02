@@ -11,12 +11,54 @@ extension Lattice.Configuration {
         /// iOS chooses whether and when to run it; the interval is not a timer.
         case appRefresh(identifier: String, minimumInterval: TimeInterval = 15 * 60)
     }
+
+    /// Derived readers may share a managed native store but never become a
+    /// second process-level task registration or lifecycle owner.
+    internal func withoutBackgroundTaskOwnership(queryOnly: Bool = false) -> Self {
+        var copy = self
+        if backgroundSync != nil || backgroundSyncManaged {
+            copy.syncStartup = .deferred
+            copy.backgroundSyncManaged = true
+            // The inherited owner uploads this file. A derived reader never
+            // opens another transport or carries account credentials itself.
+            copy.wssEndpoint = nil
+            copy.authorizationToken = nil
+            copy.ipcTargets = nil
+        }
+        copy.backgroundSync = nil
+        return copy
+    }
+
+    internal func validateBackgroundSyncStore() throws {
+        try backgroundSyncLineage?.validate()
+        guard backgroundSync != nil || backgroundSyncManaged else { return }
+        guard case .file = storage, ipcTargets?.isEmpty != false else {
+            throw Lattice.Error.databaseError("Managed background lifecycle requires a file store without unmanaged IPC targets.")
+        }
+        if backgroundSync != nil {
+            guard !isReadOnly, wssEndpoint != nil, authorizationToken?.isEmpty == false else {
+                throw Lattice.Error.databaseError("Background sync requires a writable file store, a WSS endpoint and nonempty token.")
+            }
+        }
+    }
+}
+
+extension Lattice {
+    /// Register before app launch finishes when the store opens lazily.
+    /// This declaration does not open storage or infer a model schema.
+    /// Normal initialization also registers before opening its store.
+    public static func registerBackgroundTasks(configuration: Configuration = defaultConfiguration) throws {
+        guard let policy = configuration.backgroundSync else { return }
+        try BackgroundTaskScheduler.shared.register(policy: policy)
+    }
 }
 
 /// Portable validation used by the registration/open integration. Keep this
 /// separate from value construction so configuration remains ordinary data.
-/// Integration with the native scheduler and store binding is still pending.
 extension Lattice.Configuration.BackgroundSync {
+    internal var identifier: String {
+        switch self { case let .appRefresh(identifier, _): return identifier }
+    }
     internal func validate(permittedIdentifiers: Set<String>) throws {
         switch self {
         case let .appRefresh(identifier, minimumInterval):

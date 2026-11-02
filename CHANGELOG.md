@@ -1,5 +1,44 @@
 # Changelog
 
+## [2.6.0] - 2026-11-01
+
+### Added
+- Opt into iOS background refresh through `Lattice.Configuration.backgroundSync`.
+  Lattice registers the configured task, observes application lifecycle, and
+  binds work to the retained store. Lazy stores can call
+  `Lattice.registerBackgroundTasks(configuration:)` before launch finishes.
+- Add `syncOnce(maximumDuration:)` for a finite sync opportunity independent of
+  Apple task registration. Completion confirms the starting upload horizon,
+  negotiated initial replay, and owned cleanup; cancellation waits for cleanup.
+- Send an ordered catch-up completion marker from `LatticeServerKit` only when
+  a client requests it. Older servers remain usable but cannot confirm finite
+  completion, so a finite caller receives an unconfirmed/budget outcome.
+- Coordinate background suspension and foreground resumption across the
+  original store, references resolved on other actors, and internal query
+  connections. Derived handles stay local; the original owner syncs the file.
+
+### Fixed
+- Preserve public sync progress subscriptions across deferred ownership,
+  repeated finite sessions, and foreground reconnection.
+- Fence expired tasks and closed account bindings from successors. Settle
+  owned work and retire managed readers before reporting task completion;
+  preserve ordinary manual callers' existing reader behavior.
+- Pair with Core's UUID acknowledgement case fix, durable filtered outbox,
+  callback lifetime corrections, and cancellable owned SQLite waits.
+
+### Compatibility
+- Requires LatticeCore 2.5.0. Upgrade and restart every process owning a store's
+  sync channels together; older Core owners do not replay pending durable
+  outbox rows. Downgrading with pending outbox data is unsupported.
+- Background scheduling requires an iOS host app, Background fetch capability,
+  the matching `BGTaskSchedulerPermittedIdentifiers` entry, and a writable
+  file-backed WSS store with a nonempty authorization token. It is off by default.
+- Register before app launch finishes. Intervals are scheduling hints; iOS
+  controls delivery. No scene-state forwarding or swizzling is required.
+- Close the retained original store at logout. Closing it also retires its
+  managed derived connections; stale references cannot reopen that lineage.
+  Reopen with new configuration and references for another account.
+
 ## [2.5.0] - 2026-10-30
 
 ### Added

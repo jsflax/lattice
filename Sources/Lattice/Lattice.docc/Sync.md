@@ -20,6 +20,11 @@ let lattice = try Lattice(Person.self, configuration: config)
 // Changes are automatically synced via WebSocket
 ```
 
+For iOS background refresh opportunities, opt in through the store's
+configuration. Lattice handles task registration, lifecycle observation, and
+cleanup; an app-owned handler can instead call `syncOnce` on a deferred store.
+See <doc:BackgroundSync> for app settings, lazy opening, and completion results.
+
 ## How it works
 
 Consumer-level contract (the transport and conflict machinery live in the
