@@ -1,0 +1,25 @@
+{
+  "scope": "Final release closure: SDK2.6.1/Core2.5.1 published/verified; CI/docs pass; authorized notices accepted after verification, adoption unverified. Private raw receipts remain outside repository.",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "9095bce7770032a3485c36a2428eff1775d48d90edaad680b181dc38a233ea73",
+      "bytes": 2542
+    },
+    {
+      "path": "ci-and-docs-verification.json",
+      "sha256": "14b7c25d1a3ed32e8c5d1be4e811cf8e198e4bb72c48a594862cad2e394f5ee6",
+      "bytes": 21746
+    },
+    {
+      "path": "consumer-delivery.json",
+      "sha256": "c749a48492a969fd9ff1254ec513c82519d18e93a77d09571a8b67ef996fb7a0",
+      "bytes": 2094
+    },
+    {
+      "path": "release-verification.json",
+      "sha256": "a643a001c6415ca4390d1ecdc8e18069c504730b5ce09e966da31bab7cc53efe",
+      "bytes": 18015
+    }
+  ]
+}

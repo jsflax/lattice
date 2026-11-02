@@ -1,0 +1,565 @@
+{
+  "record_status": "VERIFIED: PR39 and exact-main CI all four legs, all seven release jobs, and exact-source docs deployment/content checks passed",
+  "SDK_source": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+  "pull_request": {
+    "url": "https://github.com/jsflax/lattice/pull/39",
+    "head_source": "6c587a1dd4c83cb33b3ec0be5baf588b53985658",
+    "merged_at": "2026-11-02T04:54:31Z",
+    "merge_source": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+    "merge_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-pr39-merged.5f0080db01aa.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr39-merged.json",
+      "sha256": "5f0080db01aaeaf5c5c86f75bee9fda35574aabf4c27e4f18ba0681f947fc5e7",
+      "bytes": 236
+    }
+  },
+  "PR_CI": {
+    "url": "https://github.com/jsflax/lattice/actions/runs/41389763844",
+    "source": "6c587a1dd4c83cb33b3ec0be5baf588b53985658",
+    "status": "completed",
+    "conclusion": "success",
+    "all_four_jobs_passed": true,
+    "jobs": [
+      {
+        "name": "macos",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41389763844/job/125098343950"
+      },
+      {
+        "name": "linux (swift:6.3-noble)",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41389763844/job/125098344073"
+      },
+      {
+        "name": "ios-build",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41389763844/job/125098344161"
+      },
+      {
+        "name": "linux (swiftlang/swift:nightly-main-noble)",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41389763844/job/125098344172"
+      }
+    ],
+    "final_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-pr39-final-ci.5b983c539748.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr39-final-ci.json",
+      "sha256": "5b983c53974810108e5da9938cb0d18da14a072b0fc9008fd13c23d171dcc89d",
+      "bytes": 12495
+    },
+    "at_merge_snapshot": {
+      "url": "https://github.com/jsflax/lattice/actions/runs/41389763844",
+      "source": "6c587a1dd4c83cb33b3ec0be5baf588b53985658",
+      "required_jobs_passed": true,
+      "overall_status_at_snapshot": "in_progress",
+      "optional_nightly_status_at_snapshot": "in_progress",
+      "jobs": [
+        {
+          "name": "macos",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/jsflax/lattice/actions/runs/41389763844/job/125098343950"
+        },
+        {
+          "name": "linux (swift:6.3-noble)",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/jsflax/lattice/actions/runs/41389763844/job/125098344073"
+        },
+        {
+          "name": "ios-build",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/jsflax/lattice/actions/runs/41389763844/job/125098344161"
+        },
+        {
+          "name": "linux (swiftlang/swift:nightly-main-noble)",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/jsflax/lattice/actions/runs/41389763844/job/125098344172"
+        }
+      ],
+      "receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-pr39-required-green.32fcb8619db5.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr39-required-green.json",
+        "sha256": "32fcb8619db525987d5b2fccb19cb968fa64009ec731dc01708f2ab78f776de6",
+        "bytes": 12292
+      }
+    },
+    "test_observations": {
+      "macOS": {
+        "XCTest": {
+          "tests": 14,
+          "seconds": 10.432
+        },
+        "Swift_Testing": {
+          "tests": 830,
+          "suites": 125,
+          "seconds": 105.144
+        },
+        "strict": {
+          "XCTest": {
+            "tests": 12,
+            "seconds": 10.584
+          },
+          "Swift_Testing": {
+            "tests": 13,
+            "suites": 1,
+            "seconds": 0.164
+          }
+        },
+        "receipt": {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-pr39-macos-raw.18903708bc28.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr39-macos-raw.log",
+          "sha256": "18903708bc28e7a2ce312dad1afd80fdc742947f4dca95b6d25dde5cf543e4ba",
+          "bytes": 2950504
+        }
+      },
+      "stable_Linux": {
+        "XCTest": {
+          "tests": 14,
+          "seconds": 5.313
+        },
+        "Swift_Testing": {
+          "tests": 808,
+          "suites": 122,
+          "seconds": 99.938
+        },
+        "receipt": {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-pr39-linux-stable.48c70c6c1963.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr39-linux-stable.log",
+          "sha256": "48c70c6c1963e71b384d89de3c403b4031c30bcb81b17cf16a4846150ce39126",
+          "bytes": 3237888
+        }
+      },
+      "nightly_Linux": {
+        "XCTest": {
+          "tests": 14,
+          "seconds": 5.643
+        },
+        "Swift_Testing_principal": {
+          "tests": 801,
+          "suites": 119,
+          "seconds": 99.725
+        },
+        "auxiliary_runs_kept_separate": [
+          {
+            "tests": 1,
+            "suites": 1,
+            "seconds": 0.001
+          },
+          {
+            "tests": 4,
+            "suites": 1,
+            "seconds": 0.006
+          },
+          {
+            "tests": 2,
+            "suites": 1,
+            "seconds": 0.001
+          }
+        ],
+        "receipt": {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-pr39-linux-nightly-raw.8974ea6bd207.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr39-linux-nightly-raw.log",
+          "sha256": "8974ea6bd20704b71043811d62d6ddbede7a6e965c9ad3498b21e02a3e662bda",
+          "bytes": 1312885
+        },
+        "raw_log_contains_one_NUL": true
+      },
+      "iOS": "Build passed; no device execution implied.",
+      "scope": "CI run observations, not performance guarantees. Logs are frozen from successful fetches; the empty failed macOS fetch is excluded."
+    }
+  },
+  "main_CI": {
+    "url": "https://github.com/jsflax/lattice/actions/runs/41391009161",
+    "source": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+    "status": "completed",
+    "conclusion": "success",
+    "all_four_jobs_passed": true,
+    "jobs": [
+      {
+        "name": "linux (swiftlang/swift:nightly-main-noble)",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41391009161/job/125102179108"
+      },
+      {
+        "name": "macos",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41391009161/job/125102179354"
+      },
+      {
+        "name": "linux (swift:6.3-noble)",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41391009161/job/125102179415"
+      },
+      {
+        "name": "ios-build",
+        "status": "completed",
+        "conclusion": "success",
+        "url": "https://github.com/jsflax/lattice/actions/runs/41391009161/job/125102179607"
+      }
+    ],
+    "verified_completion_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-main-ci.6bd2d6339f9d.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-main-ci.json",
+      "sha256": "6bd2d6339f9d7a0e5f2aab4f0320af9acd48a09882e10ba2ba8a9e5b3e67ede5",
+      "bytes": 12495
+    },
+    "test_observations": {
+      "macOS": {
+        "XCTest": {
+          "tests": 14,
+          "seconds": 9.68
+        },
+        "Swift_Testing": {
+          "tests": 830,
+          "suites": 125,
+          "seconds": 107.336
+        },
+        "strict": {
+          "XCTest": {
+            "tests": 12,
+            "seconds": 10.062
+          },
+          "Swift_Testing": {
+            "tests": 13,
+            "suites": 1,
+            "seconds": 0.089
+          }
+        },
+        "receipt": {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-main-macos-raw.a9fce6783d3e.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-main-macos-raw.log",
+          "sha256": "a9fce6783d3e2dbf3bfd24f5faa8bf54d064e55ff6046ae6cd951037f85131b5",
+          "bytes": 2946283
+        }
+      },
+      "stable_Linux": {
+        "XCTest": {
+          "tests": 14,
+          "seconds": 5.328
+        },
+        "Swift_Testing": {
+          "tests": 808,
+          "suites": 122,
+          "seconds": 101.374
+        },
+        "receipt": {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-main-linux-stable-raw.897a651cae5b.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-main-linux-stable-raw.log",
+          "sha256": "897a651cae5b27794278a09962a6f7cf9ce611194e4f0434e3326820b10781b2",
+          "bytes": 2704849
+        }
+      },
+      "nightly": {
+        "status": "passed",
+        "raw_receipt": {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-main-linux-nightly-raw.5df3446b9184.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-main-linux-nightly-raw.log",
+          "sha256": "5df3446b9184f54ffae200b4dc4b9bb821c581e1fb6e08cadf3ff4b5ee596ebb",
+          "bytes": 1356799
+        }
+      },
+      "iOS": "Build passed; no device execution implied.",
+      "scope": "Observed CI durations, not performance guarantees."
+    }
+  },
+  "docs": {
+    "url": "https://github.com/jsflax/lattice/actions/runs/41391009173",
+    "source": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+    "status": "PASSED and published guide verified",
+    "verified_at": "2026-11-02T04:59:45.105565+00:00",
+    "workflow": {
+      "conclusion": "success",
+      "event": "push",
+      "head_branch": "main",
+      "head_sha": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+      "html_url": "https://github.com/jsflax/lattice/actions/runs/41391009173",
+      "id": 41391009173,
+      "path": ".github/workflows/docs.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    "required_jobs": [
+      {
+        "conclusion": "success",
+        "head_sha": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+        "html_url": "https://github.com/jsflax/lattice/actions/runs/41391009173/job/125102179251",
+        "id": 125102179251,
+        "name": "build",
+        "run_id": 41391009173,
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "head_sha": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+        "html_url": "https://github.com/jsflax/lattice/actions/runs/41391009173/job/125103393661",
+        "id": 125103393661,
+        "name": "deploy",
+        "run_id": 41391009173,
+        "status": "completed"
+      }
+    ],
+    "published_content": {
+      "bytes": 23039,
+      "data_url": "https://jsflax.github.io/lattice/data/documentation/lattice/backgroundsync.json",
+      "page_url": "https://jsflax.github.io/lattice/documentation/lattice/backgroundsync/",
+      "sha256": "39dc8e554bbf04b6ae194ee25a3cd9ebaedb5f944c1b19d3276ef4fa578e8633",
+      "title": "Background Sync on iOS"
+    },
+    "source_document": {
+      "commit": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+      "git_blob_sha": "4d5e820dd85d389ee41878864d6471a9e53f2cbb",
+      "path": "Sources/Lattice/Lattice.docc/BackgroundSync.md",
+      "sha256": "8108866bc15f995f9732978f3c64c546ef464badfe6eeca9d365df5e498447af"
+    },
+    "checks": [
+      {
+        "check": "exact_main_docs_run",
+        "detail": {
+          "conclusion": "success",
+          "event": "push",
+          "head_branch": "main",
+          "head_sha": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+          "html_url": "https://github.com/jsflax/lattice/actions/runs/41391009173",
+          "id": 41391009173,
+          "path": ".github/workflows/docs.yml",
+          "run_attempt": 1,
+          "status": "completed"
+        },
+        "passed": true
+      },
+      {
+        "check": "docs_workflow_succeeded",
+        "detail": null,
+        "passed": true
+      },
+      {
+        "check": "job:build",
+        "detail": [
+          {
+            "conclusion": "success",
+            "head_sha": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+            "html_url": "https://github.com/jsflax/lattice/actions/runs/41391009173/job/125102179251",
+            "id": 125102179251,
+            "name": "build",
+            "run_id": 41391009173,
+            "status": "completed"
+          }
+        ],
+        "passed": true
+      },
+      {
+        "check": "job:deploy",
+        "detail": [
+          {
+            "conclusion": "success",
+            "head_sha": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+            "html_url": "https://github.com/jsflax/lattice/actions/runs/41391009173/job/125103393661",
+            "id": 125103393661,
+            "name": "deploy",
+            "run_id": 41391009173,
+            "status": "completed"
+          }
+        ],
+        "passed": true
+      },
+      {
+        "check": "current_main_contains_source",
+        "detail": {
+          "current_main_sha": "248b1864f866134dc0f167f6adfd79eac4c8be61"
+        },
+        "passed": true
+      },
+      {
+        "check": "guide_identity",
+        "detail": null,
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:release_guidance",
+        "detail": "Lattice 2.6.1 requires Core 2.5.1.",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:configuration_api",
+        "detail": "backgroundSync: .appRefresh(",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:permitted_identifier",
+        "detail": "BGTaskSchedulerPermittedIdentifiers",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:background_modes",
+        "detail": "UIBackgroundModes",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:fetch_capability",
+        "detail": "<string>fetch</string>",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:lazy_registration",
+        "detail": "Lattice.registerBackgroundTasks(configuration: configuration)",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:early_registration",
+        "detail": "before launch finishes",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:retained_owner",
+        "detail": "Retain the returned store on its owning actor.",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:deferred_manual_store",
+        "detail": "syncStartup: .deferred",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:manual_finite_api",
+        "detail": "syncOnce(maximumDuration: 20)",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:partial_result",
+        "detail": "budgetExhausted",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:cancellation",
+        "detail": "CancellationError",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:scheduling_limits",
+        "detail": "iOS decides whether and when an opportunity runs.",
+        "passed": true
+      },
+      {
+        "check": "source_and_rendered:coherent_rebuild",
+        "detail": "Rebuild native iOS bridge objects and Swift consumers together",
+        "passed": true
+      }
+    ],
+    "linkage_scope": "Successful exact-source main Docs build/deploy plus current served guide content checks; DocC JSON has no embedded source SHA, so this is not byte-for-byte deployment-artifact attestation.",
+    "verified_completion_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-verification/docs-verification.2494d1097a4b.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-verification/docs-verification.json",
+      "sha256": "2494d1097a4bc81bbe0f2c1a386f3179d85ab130fd4137727b0afaeb10848dbf",
+      "bytes": 6118
+    },
+    "source_snapshot": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-verification/docs-41391009173-248b1864f866-20261102T045943.251157Z/BackgroundSync.8108866bc15f.md",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-verification/docs-41391009173-248b1864f866-20261102T045943.251157Z/BackgroundSync.md",
+      "sha256": "8108866bc15f995f9732978f3c64c546ef464badfe6eeca9d365df5e498447af",
+      "bytes": 10889
+    },
+    "served_DocC_snapshot": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-verification/docs-41391009173-248b1864f866-20261102T045943.251157Z/backgroundsync.39dc8e554bbf.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-verification/docs-41391009173-248b1864f866-20261102T045943.251157Z/backgroundsync.json",
+      "sha256": "39dc8e554bbf04b6ae194ee25a3cd9ebaedb5f944c1b19d3276ef4fa578e8633",
+      "bytes": 23039
+    },
+    "verifier_log": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-docc-verifier.ab082ef0aebc.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-docc-verifier.log",
+      "sha256": "ab082ef0aebc580209f1d88e4250e83a63af7828ff26121b2e75996366188535",
+      "bytes": 297
+    }
+  },
+  "release_CI": {
+    "url": "https://github.com/jsflax/lattice/actions/runs/41392446229",
+    "source": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+    "all_seven_jobs_passed": true,
+    "receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-release-ci.c066a152d18c.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-release-ci.json",
+      "sha256": "c066a152d18cdd481e30d5b6ccf30f4bec757e84c7c86b348851d2fa681ab48a",
+      "bytes": 15614
+    },
+    "test_observations": {
+      "macOS": {
+        "XCTest": {
+          "tests": 14,
+          "seconds": 10.59
+        },
+        "Swift_Testing": {
+          "tests": 830,
+          "suites": 125,
+          "seconds": 119.531
+        },
+        "strict": {
+          "XCTest": {
+            "tests": 12,
+            "seconds": 8.747
+          },
+          "Swift_Testing": {
+            "tests": 13,
+            "suites": 1,
+            "seconds": 0.174
+          }
+        },
+        "receipt": {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-release-macos-raw.1180e576524b.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-release-macos-raw.log",
+          "sha256": "1180e576524b66c5f5345abf0677a8e99824b8f662cc06809d197fd99f577bee",
+          "bytes": 3875293
+        }
+      },
+      "stable_Linux": {
+        "XCTest": {
+          "tests": 14,
+          "seconds": 5.304
+        },
+        "Swift_Testing": {
+          "tests": 808,
+          "suites": 122,
+          "seconds": 101.745
+        },
+        "receipt": {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-release-linux-stable-raw.f1fa9fa3c017.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-release-linux-stable-raw.log",
+          "sha256": "f1fa9fa3c0171259afae075e6c557624381e58956a0f5c617818998857b0ac1f",
+          "bytes": 2592005
+        }
+      },
+      "nightly_Linux": {
+        "XCTest": {
+          "tests": 14,
+          "seconds": 5.345
+        },
+        "Swift_Testing_principal": {
+          "tests": 801,
+          "suites": 119,
+          "seconds": 82.103
+        },
+        "auxiliary_test_counts_kept_separate": [
+          1,
+          4,
+          2
+        ],
+        "receipt": {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-release-linux-nightly-raw.762d08186ad1.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-release-linux-nightly-raw.log",
+          "sha256": "762d08186ad17aab0811ea8c90fb9d77f5cecef000d5450445cce51bc1b65427",
+          "bytes": 1351954
+        }
+      },
+      "scope": "Observed run durations, not performance guarantees."
+    }
+  }
+}

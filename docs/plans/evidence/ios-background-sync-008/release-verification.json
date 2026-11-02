@@ -1,0 +1,476 @@
+{
+  "record_status": "SDK 2.6.1 and Core 2.5.1 published and verified; all release checks passed",
+  "Core": {
+    "version": "2.5.1",
+    "status": "published and verified",
+    "source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+    "release_url": "https://github.com/jsflax/LatticeCore/releases/tag/2.5.1",
+    "receipt": "../ios-background-sync-007/core-2.5.1-verification.json"
+  },
+  "SDK": {
+    "merged_source": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+    "publication_status": "PUBLISHED AND VERIFIED",
+    "tag_source_verified": true,
+    "release_workflow": "https://github.com/jsflax/lattice/actions/runs/41392446229",
+    "release_url": "https://github.com/jsflax/lattice/releases/tag/2.6.1",
+    "source_archive_verified": true,
+    "tag_source": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+    "tag_status": "Pushed; remote annotated tag peels to intended source",
+    "release_workflow_status": "completed: all seven jobs succeeded",
+    "preflight_passed": true,
+    "dispatch_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-dispatch.ffc5fb607fb7.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-dispatch.json",
+      "sha256": "ffc5fb607fb7c5e19588bb52705ffde2017f9237371edda3dd6e08c82644b048",
+      "bytes": 442
+    },
+    "preflight_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-preflight.c9b8549f4f71.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-preflight.log",
+      "sha256": "c9b8549f4f71ffe2cd9c09bd04fa1726b6a27e5811cea8e9320092ee0a2b8762",
+      "bytes": 602
+    },
+    "remote_tag_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-remote-tag.732890ee9573.txt",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-remote-tag.txt",
+      "sha256": "732890ee9573629090da77e0d03fada23732dc07b114be105a151cd9a4c736d2",
+      "bytes": 117
+    },
+    "verification_kind": "Source-only SDK release: verify published source archive and local verification report.",
+    "release_receipt_asset": "Not applicable: SDK does not publish the Core-style release-receipt asset.",
+    "source_archive_SHA256": "6f4d2bc46626a0cbad3acb3bbfa23fadd282bd88947258d1d2d0fd9425dd0794",
+    "local_verification_report": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-verification/verification.b3c614ed8b53.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-verification/verification.json",
+      "sha256": "b3c614ed8b53281b509fc2d86c3047a7867572baa28bda54c28092e32c0f1a25",
+      "bytes": 4735
+    },
+    "local_verification_report_SHA256": "b3c614ed8b53281b509fc2d86c3047a7867572baa28bda54c28092e32c0f1a25",
+    "version": "2.6.1",
+    "published_at": "2026-11-02T05:23:19Z",
+    "source_archive_files": 350,
+    "published_source_content_digest": "954f73faa6c7ab7dfccb4e97714fe3c92fbf6ef3958da476bec7d7d767590a30",
+    "verification_time": "2026-11-02T05:24:29.761316+00:00",
+    "passed_checks": 30,
+    "failed_checks": [],
+    "check_results": [
+      {
+        "check": "approved_complete_dependency_baseline",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-core-2.5.1-Package.resolved",
+          "sha256": "d9dd37f97458dc72edab88c5006f7dafd66facd846744570797615e01cb4f313",
+          "pin_count": 34
+        }
+      },
+      {
+        "check": "expected_commit_available_locally",
+        "passed": true,
+        "scope": "publication",
+        "detail": "248b1864f866134dc0f167f6adfd79eac4c8be61"
+      },
+      {
+        "check": "git_archive_contains_all_tracked_files",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "tracked_count": 350,
+          "archived_count": 350
+        }
+      },
+      {
+        "check": "tag_ref_exact",
+        "passed": true,
+        "scope": "publication",
+        "detail": "refs/tags/2.6.1"
+      },
+      {
+        "check": "tag_resolves_to_expected_commit",
+        "passed": true,
+        "scope": "publication",
+        "detail": [
+          {
+            "type": "tag",
+            "sha": "0bc4dd8dd52c0da8f7a2b856979b6cfca8e4a548"
+          },
+          {
+            "type": "commit",
+            "sha": "248b1864f866134dc0f167f6adfd79eac4c8be61"
+          }
+        ]
+      },
+      {
+        "check": "current_main_contains_release_commit",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "main_sha": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+          "comparison": "identical",
+          "ahead_by": 0,
+          "behind_by": 0
+        }
+      },
+      {
+        "check": "release_run_identity",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "id": 41392446229,
+          "run_attempt": 1,
+          "path": ".github/workflows/release.yml",
+          "event": "push",
+          "head_branch": "2.6.1",
+          "head_sha": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/jsflax/lattice/actions/runs/41392446229"
+        }
+      },
+      {
+        "check": "release_run_expected_commit",
+        "passed": true,
+        "scope": "publication",
+        "detail": "248b1864f866134dc0f167f6adfd79eac4c8be61"
+      },
+      {
+        "check": "release_run_completed",
+        "passed": true,
+        "scope": "publication",
+        "detail": "completed"
+      },
+      {
+        "check": "release_workflow_success",
+        "passed": true,
+        "scope": "workflow",
+        "detail": "success"
+      },
+      {
+        "check": "release_job:ios-build",
+        "passed": true,
+        "scope": "publication",
+        "detail": [
+          {
+            "id": 125106571995,
+            "name": "tests / ios-build",
+            "status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125106571995"
+          }
+        ]
+      },
+      {
+        "check": "release_job:linux (swift:6.3-noble)",
+        "passed": true,
+        "scope": "publication",
+        "detail": [
+          {
+            "id": 125106571825,
+            "name": "tests / linux (swift:6.3-noble)",
+            "status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125106571825"
+          }
+        ]
+      },
+      {
+        "check": "release_job:macos",
+        "passed": true,
+        "scope": "publication",
+        "detail": [
+          {
+            "id": 125106572040,
+            "name": "tests / macos",
+            "status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125106572040"
+          }
+        ]
+      },
+      {
+        "check": "release_job:preflight",
+        "passed": true,
+        "scope": "publication",
+        "detail": [
+          {
+            "id": 125106571616,
+            "name": "preflight",
+            "status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125106571616"
+          }
+        ]
+      },
+      {
+        "check": "release_job:release",
+        "passed": true,
+        "scope": "publication",
+        "detail": [
+          {
+            "id": 125110414774,
+            "name": "release",
+            "status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125110414774"
+          }
+        ]
+      },
+      {
+        "check": "push_ci_present_for_exact_commit",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "count": 1
+        }
+      },
+      {
+        "check": "push_ci_run:41391009161",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "id": 41391009161,
+          "run_attempt": 1,
+          "head_sha": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+          "head_branch": "main",
+          "event": "push",
+          "path": ".github/workflows/ci.yml",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/jsflax/lattice/actions/runs/41391009161"
+        }
+      },
+      {
+        "check": "push_ci_job:41391009161:ios-build",
+        "passed": true,
+        "scope": "publication",
+        "detail": [
+          {
+            "id": 125102179607,
+            "name": "ios-build",
+            "status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/jsflax/lattice/actions/runs/41391009161/job/125102179607"
+          }
+        ]
+      },
+      {
+        "check": "push_ci_job:41391009161:linux (swift:6.3-noble)",
+        "passed": true,
+        "scope": "publication",
+        "detail": [
+          {
+            "id": 125102179415,
+            "name": "linux (swift:6.3-noble)",
+            "status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/jsflax/lattice/actions/runs/41391009161/job/125102179415"
+          }
+        ]
+      },
+      {
+        "check": "push_ci_job:41391009161:macos",
+        "passed": true,
+        "scope": "publication",
+        "detail": [
+          {
+            "id": 125102179354,
+            "name": "macos",
+            "status": "completed",
+            "conclusion": "success",
+            "html_url": "https://github.com/jsflax/lattice/actions/runs/41391009161/job/125102179354"
+          }
+        ]
+      },
+      {
+        "check": "published_stable_release",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "id": 431098451,
+          "tag_name": "2.6.1",
+          "draft": false,
+          "prerelease": false,
+          "published_at": "2026-11-02T05:23:19Z",
+          "html_url": "https://github.com/jsflax/lattice/releases/tag/2.6.1",
+          "tarball_url": "https://api.github.com/repos/jsflax/lattice/tarball/2.6.1"
+        }
+      },
+      {
+        "check": "release_source_archive_url",
+        "passed": true,
+        "scope": "publication",
+        "detail": "https://api.github.com/repos/jsflax/lattice/tarball/2.6.1"
+      },
+      {
+        "check": "published_source_matches_all_expected_files",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "file_count": 350,
+          "missing": [],
+          "extra": [],
+          "changed": []
+        }
+      },
+      {
+        "check": "published_manifest_exact",
+        "passed": true,
+        "scope": "publication"
+      },
+      {
+        "check": "core_manifest_floor_2_5_1",
+        "passed": true,
+        "scope": "publication",
+        "detail": [
+          "2.5.1"
+        ]
+      },
+      {
+        "check": "published_complete_lockfile_exact",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "sha256": "d9dd37f97458dc72edab88c5006f7dafd66facd846744570797615e01cb4f313"
+        }
+      },
+      {
+        "check": "complete_resolved_pins",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "pin_count": 34,
+          "expected_pin_count": 34
+        }
+      },
+      {
+        "check": "dependency:latticecore",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "identity": "latticecore",
+          "kind": "remoteSourceControl",
+          "location": "https://github.com/jsflax/LatticeCore.git",
+          "state": {
+            "revision": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+            "version": "2.5.1"
+          }
+        }
+      },
+      {
+        "check": "dependency:swift-sdk",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "identity": "swift-sdk",
+          "kind": "remoteSourceControl",
+          "location": "https://github.com/jsflax/swift-sdk.git",
+          "state": {
+            "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
+            "version": "0.13.0"
+          }
+        }
+      },
+      {
+        "check": "published_version_evidence",
+        "passed": true,
+        "scope": "publication",
+        "detail": {
+          "file": "CHANGELOG.md",
+          "sha256": "be05b0eee40d2524885d200f88f57d3d6f1bed6ed0a2e327babe84634e01ec34"
+        }
+      }
+    ],
+    "source_archive_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-verification/run-41392446229-248b1864f866-20261102T052425.373638Z/published-source.tar.6f4d2bc46626.gz",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-verification/run-41392446229-248b1864f866-20261102T052425.373638Z/published-source.tar.gz",
+      "sha256": "6f4d2bc46626a0cbad3acb3bbfa23fadd282bd88947258d1d2d0fd9425dd0794",
+      "bytes": 3770036
+    },
+    "source_comparison_manifests": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-verification/run-41392446229-248b1864f866-20261102T052425.373638Z/expected-files.fd98c8c31d52.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-verification/run-41392446229-248b1864f866-20261102T052425.373638Z/expected-files.json",
+        "sha256": "fd98c8c31d5207b5060085a08f2ab4f66ff8b77ba9afdcda25684d89fee4f5db",
+        "bytes": 72682
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-verification/run-41392446229-248b1864f866-20261102T052425.373638Z/published-files.fd98c8c31d52.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-verification/run-41392446229-248b1864f866-20261102T052425.373638Z/published-files.json",
+        "sha256": "fd98c8c31d5207b5060085a08f2ab4f66ff8b77ba9afdcda25684d89fee4f5db",
+        "bytes": 72682
+      }
+    ],
+    "checks_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-verification/run-41392446229-248b1864f866-20261102T052425.373638Z/checks.21cec43c42c5.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-verification/run-41392446229-248b1864f866-20261102T052425.373638Z/checks.json",
+      "sha256": "21cec43c42c56e31821ef791609fdc10d8ffa40c5a071c29344c31e0ea99d533",
+      "bytes": 8196
+    },
+    "release_notes": {
+      "body_exact": true,
+      "body_SHA256": "0053c500d95038c179a249fcb347d28a74e23bfeddc106a01f0bd949a5ce7e06",
+      "verified_at": "2026-11-02T05:24:33.171317+00:00",
+      "receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-release-notes-verification.8569b908dd25.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-release-notes-verification.json",
+        "sha256": "8569b908dd250ed1278d3e3c1228999d0c9ddb8849eacf128423a1877f888690",
+        "bytes": 299
+      }
+    },
+    "release_CI": {
+      "source": "248b1864f866134dc0f167f6adfd79eac4c8be61",
+      "url": "https://github.com/jsflax/lattice/actions/runs/41392446229",
+      "conclusion": "success",
+      "all_seven_jobs_passed": true,
+      "jobs": [
+        {
+          "name": "preflight",
+          "conclusion": "success",
+          "url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125106571616"
+        },
+        {
+          "name": "tests / linux (swift:6.3-noble)",
+          "conclusion": "success",
+          "url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125106571825"
+        },
+        {
+          "name": "tests / linux (swiftlang/swift:nightly-main-noble)",
+          "conclusion": "success",
+          "url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125106571969"
+        },
+        {
+          "name": "tests / ios-build",
+          "conclusion": "success",
+          "url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125106571995"
+        },
+        {
+          "name": "tests / macos",
+          "conclusion": "success",
+          "url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125106572040"
+        },
+        {
+          "name": "release",
+          "conclusion": "success",
+          "url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125110414774"
+        },
+        {
+          "name": "notify-slack / announce",
+          "conclusion": "success",
+          "url": "https://github.com/jsflax/lattice/actions/runs/41392446229/job/125110474437"
+        }
+      ],
+      "receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/sdk-2.6.1-release-ci.c066a152d18c.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.1-release-ci.json",
+        "sha256": "c066a152d18cdd481e30d5b6ccf30f4bec757e84c7c86b348851d2fa681ab48a",
+        "bytes": 15614
+      }
+    }
+  },
+  "historical_failed_tag": {
+    "version": "2.6.0",
+    "status": "Immutable tag; no published Release after required release-job failure.",
+    "evidence": "../ios-background-sync-007/release-failure-summary.json"
+  },
+  "release_requirements_satisfied": true
+}
