@@ -1,0 +1,40 @@
+{
+  "record_status": "All three authorized consumer notices accepted after verified publication; downstream adoption remains unverified",
+  "versions": {
+    "SDK": "2.6.1 published and verified",
+    "Core": "2.5.1 published and verified"
+  },
+  "consumers": {
+    "engram-integration-hardening": {
+      "delivery": "ACCEPTED",
+      "receipt_SHA256": "db53a4604e8cb4dfee10fd8c326c7f24ed304c4dbe172d193d27aed9daf1adb3",
+      "message_SHA256": "ab23afe5955f889d274a1255c685a98fc72890ab9171728d92e8b15799c0ef9b",
+      "adoption_verified": false
+    },
+    "Orbital": {
+      "delivery": "ACCEPTED",
+      "receipt_SHA256": "3cee4b0b10a04b7433e78d99855564031e0be7217017054ed093dd43205eb32c",
+      "message_SHA256": "d6d4749d8fb7242f5477ebba0d91c79d30b55a98186dbbc55d3d2cab58ce80de",
+      "adoption_verified": false
+    },
+    "HUD": {
+      "delivery": "ACCEPTED",
+      "receipt_SHA256": "3251252700052cc0bfcf6501cdc9ef0e6b9a530c03172a471ccade4cc52dff6d",
+      "message_SHA256": "d6d4749d8fb7242f5477ebba0d91c79d30b55a98186dbbc55d3d2cab58ce80de",
+      "adoption_verified": false
+    }
+  },
+  "constraints": "Coordinator owns sending. No direct or indirect shock-trooper contact. Keep private chat identifiers outside repository-facing records.",
+  "observed_at": "2026-11-02T05:25:53.219475+00:00",
+  "publication_verified_before_delivery": true,
+  "safe_summary_receipt": {
+    "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/closure/raw/consumer-delivery-verification.1f41551ee321.json",
+    "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/consumer-delivery-verification.json",
+    "sha256": "1f41551ee3212e3ae5189c135b90f3ac60a55d6a2b13802d579060ec637010a1",
+    "bytes": 1627
+  },
+  "shock_trooper_contacted": false,
+  "engram_forwarding_to_shock_trooper_explicitly_canceled": true,
+  "delivery_scope": "Successful send_message_to_thread returns identify each intended destination. Delivery accepted; no downstream code adoption or acknowledgement inferred.",
+  "notification_requirements_satisfied": true
+}

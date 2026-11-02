@@ -2,9 +2,9 @@
 
 ## Current status
 
-Candidate release record, November 1, 2026 local time (November 2 UTC). **Core 2.5.1 is published and verified. SDK 2.6.1 is not yet published; full and strict tests against its verified published Core pin pass, with candidate CI, publication, and notices pending.** SDK tag 2.6.0 remains immutable and unpublished after its required release job failed. Core PR/main/release checks and native/candidate phone qualification pass. This is a progress record, not a completion receipt.
+Released, verified, and notified on November 2, 2026. **Lattice 2.6.1 and Core 2.5.1 are published and verified. All PR/main CI legs, release jobs, and caller-guide checks pass. Notices to Engram integration hardening, Orbital, and HUD were accepted after verification.** Downstream adoption remains unverified. [Checkpoint 008](evidence/ios-background-sync-008/README.md) records the final release and delivery evidence; checkpoint 007 remains historical and unchanged.
 
-The goal remains to publish and verify the config-first background-sync release, then notify `engram-integration-hardening`, Orbital, and HUD with coherent versions and upgrade instructions. No direct or indirect shock-trooper contact. The earlier recovery goal remains separate.
+The config-first background-sync release and authorized notification work are complete. No direct or indirect shock-trooper contact occurred; Engram forwarding was explicitly canceled. The earlier recovery goal remains separate.
 
 ## Milestones
 
@@ -12,18 +12,22 @@ The goal remains to publish and verify the config-first background-sync release,
 - [x] Finite completion, durable outbox, actor binding, suspension/resumption, and caller documentation.
 - [x] Published and verified Core 2.5.0, followed by the Core 2.5.1 bootstrap correction.
 - [x] Complete local suite and strict cooperative-worker regression.
-- [x] All four PR CI legs passed on the identical tree merged to main.
-- [x] Published caller guide verified for exact main source.
+- [x] Initial PR 38 passed all four CI legs on the identical tree merged to main.
+- [x] Initial merged caller guide published and verified.
 - [x] Recorded physical-device evidence and its explicit limits.
-- [x] Exact-main CI receipt: overall success, with optional nightly failure recorded explicitly.
+- [x] Initial exact-main CI receipt: overall success, with optional nightly failure recorded explicitly.
 - [x] SDK 2.6.0 tag pushed at qualified main source.
 - [x] Reproduced the native WAL bootstrap race in old/current Core; focused candidate tests and all 800 probe opens pass.
 - [x] Core correction merged after all PR checks passed; candidate phone manual sync and debugger-triggered BGTask success/settlement/reopen verified.
 - [x] Core 2.5.1 exact-main/release CI, publication, and source/tag/archive/receipt verification.
 - [x] SDK published Core 2.5.1 pin verified; all other dependency pins unchanged and no edit override.
 - [x] Actual published Core 2.5.1 SDK full and strict test suites pass.
-- [ ] Finish candidate CI; publish SDK 2.6.1 and verify artifacts.
-- [ ] Safe Engram, Orbital, and HUD delivery receipts.
+- [x] PR 39 merged; final macOS, stable Linux, nightly, and iOS checks all passed.
+- [x] Exact-source docs build/deploy and served guide version/API checks verified.
+- [x] Exact-main CI passed all four legs.
+- [x] SDK 2.6.1 preflight and remote tag/source match verified; release workflow dispatched.
+- [x] SDK 2.6.1 published; source/tag/archive, all 350 files, and all 30 verification checks pass.
+- [x] Engram, Orbital, and HUD notices accepted after publication verification; safe receipts recorded.
 
 ## Source and validation
 
@@ -49,15 +53,15 @@ A freshly built candidate host against Core `820f0ba` repeats public manual succ
 
 The host used an additional temporary UIKit assertion for debugger setup and explicitly ended it. This verifies debug delivery and settlement, not natural scheduling, cold/locked launch, active-transfer expiration, or takeover during active work. The candidate manual pass still uses a managed plist with an unbound declared identifier. [The candidate phone receipt](evidence/ios-background-sync-007/phone-candidate-success.json) preserves exact scope and source/build hashes.
 
-## Remaining release records
+## Release history and closeout
 
-[Core 2.5.1](https://github.com/jsflax/LatticeCore/releases/tag/2.5.1) is now published with matching source, tag, workflow, archive, and receipt verification. The earlier Core 2.5.0 release remains historical evidence. **SDK tag 2.6.0 is immutable at `d0ca27e4c1b98501dec4215f11403f281962691a`.** Required [release macOS job 125079754321](https://github.com/jsflax/lattice/actions/runs/41383687634/job/125079754321) failed: 12 XCTest cases passed (8.404s), but 832 Swift Testing cases/125 suites reported one issue (92.388s). `pushAndCatchupComposeExactlyOnceAcrossRedial` caught an opaque native `lattice::cxx_error`; the exact cause is unproven. Other release legs were still running at the update; SDK 2.6.0 remains unpublished.
+[Core 2.5.1](https://github.com/jsflax/LatticeCore/releases/tag/2.5.1) is now published with matching source, tag, workflow, archive, and receipt verification. The earlier Core 2.5.0 release remains historical evidence. **SDK tag 2.6.0 is immutable at `d0ca27e4c1b98501dec4215f11403f281962691a`.** Required [release macOS job 125079754321](https://github.com/jsflax/lattice/actions/runs/41383687634/job/125079754321) failed: 12 XCTest cases passed (8.404s), but 832 Swift Testing cases/125 suites reported one issue (92.388s). `pushAndCatchupComposeExactlyOnceAcrossRedial` caught an opaque native `lattice::cxx_error`; the exact cause is unproven. Other release legs were still running at the update; no SDK 2.6.0 GitHub Release was created.
 
 The native investigation reproduces the same fresh-file `PRAGMA journal_mode = WAL` lock failure in independently compiled Core 2.4.2 (24/200 raw and 12/200 store opens) and Core 2.5.0 (22/200 and 18/200). All initialized-file controls pass. This establishes an existing failure class in the same toolchain/SQLite environment; the opaque original Swift CI error still prevents exact attribution. The narrow bootstrap candidate passes all 800 probe opens and 23 focused native tests in 0.767s.
 
-The test-only SDK diagnostic/isolation follow-up passes 14 XCTest cases in 5.830s plus 830 Swift Testing cases / 125 suites in 84.831s (build 125.22s). Strict testing passes 12 XCTest cases in 5.807s plus 13 Swift Testing cases in 0.110s. These passes precede the pending native pin and do not qualify the complete successor. Frozen receipts and limitations are in [checkpoint 007's investigation](evidence/ios-background-sync-007/fresh-open-investigation.json).
+The test-only SDK diagnostic/isolation follow-up passes 14 XCTest cases in 5.830s plus 830 Swift Testing cases / 125 suites in 84.831s (build 125.22s). Strict testing passes 12 XCTest cases in 5.807s plus 13 Swift Testing cases in 0.110s. These passes preceded the then-pending native pin and do not qualify the complete successor. Frozen receipts and limitations are in [checkpoint 007's investigation](evidence/ios-background-sync-007/fresh-open-investigation.json).
 
-[Core PR 79](https://github.com/jsflax/LatticeCore/pull/79) passed all four checks and merged as `d2241191c1a630e0aaf0d8a5a38b0520c9614c4c`, with an identical tree to tested candidate `820f0ba`. Exact-main and release CI passed; Core 2.5.1 is published and verified, including 911 archived files and release-receipt SHA-256 `98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde`. The SDK manifest/actual checkout now use published Core 2.5.1, with 34 pins, other pins unchanged, and no edit override. The real new-pin full suite passes 14 XCTest cases in 6.225s (outer suite 6.228s), plus 830 Swift Testing cases / 125 suites in 72.437s after a 162.11s build. Strict testing passes 12 XCTest cases in 6.078s (outer suite 6.080s), plus 13 Swift Testing cases / one suite in 0.162s. Candidate CI, SDK 2.6.1 publication/artifact verification, and Engram/Orbital/HUD delivery remain pending in [checkpoint 007's status record](evidence/ios-background-sync-007/release-and-delivery-status.json). SDK tag 2.6.0 will not be retargeted. The coordinator owns release and notices. Do not mark the goal complete from this candidate record.
+[Core PR 79](https://github.com/jsflax/LatticeCore/pull/79) passed all four checks and merged as `d2241191c1a630e0aaf0d8a5a38b0520c9614c4c`, with an identical tree to tested candidate `820f0ba`. Exact-main and release CI passed; Core 2.5.1 is published and verified, including 911 archived files and release-receipt SHA-256 `98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde`. The SDK manifest/actual checkout now use published Core 2.5.1, with 34 pins, other pins unchanged, and no edit override. The real new-pin full suite passes 14 XCTest cases in 6.225s (outer suite 6.228s), plus 830 Swift Testing cases / 125 suites in 72.437s after a 162.11s build. Strict testing passes 12 XCTest cases in 6.078s (outer suite 6.080s), plus 13 Swift Testing cases / one suite in 0.162s. PR39 and exact-main CI subsequently passed all four legs. SDK 2.6.1 publication/source verification and accepted Engram/Orbital/HUD delivery are recorded in [checkpoint 008](evidence/ios-background-sync-008/README.md). Checkpoint 007 preserves the historical qualification state. SDK tag 2.6.0 will not be retargeted. The coordinator owns release and notices. Delivery acceptance does not establish downstream adoption.
 
 **Desktop provenance correction:** the optional `sdk-wal-core-integration-*` runs passed against Core 2.5.0, not the intended fix, because SwiftPM restored its published resolved state. Those passes do not qualify Core 2.5.1. The correction and verified actual new pin are retained in [checkpoint 007](evidence/ios-background-sync-007/source-and-pin-verification.json); the subsequent real new-pin full and strict passes have their own frozen receipts and rechecked pin/checkout hashes. Native and candidate-phone source proofs remain valid.
 
