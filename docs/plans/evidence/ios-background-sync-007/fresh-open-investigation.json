@@ -1,0 +1,784 @@
+{
+  "record_status": "Bootstrap correction released as verified Core 2.5.1. Actual published SDK pin and full/strict suites passed; candidate CI and SDK publication remain pending.",
+  "relation_to_release_failure": "The original Swift release CI error was opaque. Reproducing a native WAL bootstrap failure is a plausible explanation, not proof that it caused that CI failure.",
+  "setup": {
+    "rounds_per_case": 100,
+    "simultaneous_opens_per_round": 2,
+    "opens_per_case": 200,
+    "statement_busy_budgets_ms": [
+      30000,
+      2000
+    ],
+    "sqlite_version": "3.54.0",
+    "process_alarm_seconds": 60,
+    "external_process_limit_seconds": 65,
+    "same_probe_sha256": "0a56d5ceb8672607ca4199bb0bc61ee70270de7e79f9f3ff9190b729d461143c",
+    "scope": "Native raw database and lattice_db constructors; excludes Swift model-schema and cache layers. Fresh files are disposable fixtures; initialized-file controls open the same file before the concurrent pair.",
+    "harness_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/fresh_open.0a56d5ceb867.cpp",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/fresh_open.cpp",
+        "sha256": "0a56d5ceb8672607ca4199bb0bc61ee70270de7e79f9f3ff9190b729d461143c",
+        "bytes": 5305
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/run.a9576a8c1e31.py",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/run.py",
+        "sha256": "a9576a8c1e31a877a53895f604b075d8ca670a537d0fc29439a8b5f1795923a5",
+        "bytes": 7295
+      }
+    ]
+  },
+  "provenance": {
+    "baseline": {
+      "version": "Core 2.4.2",
+      "fresh_core": true,
+      "implementation_objects_freshly_built": 11,
+      "probe_caller_freshly_built": true,
+      "reused_objects": 0,
+      "description": "Exported 2.4.2 headers and implementation compiled together; no baseline-header/current-object substitution.",
+      "manifest_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/manifest.0eb9b631630e.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/manifest.json",
+        "sha256": "0eb9b631630e28e7d4dab414fbfb629cad9b77b7104b71dae2536978de46d01e",
+        "bytes": 25837
+      },
+      "results_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/results.ef7a93dca111.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/results.json",
+        "sha256": "ef7a93dca1111489b997eb30767850d0c55774242bfb65e2c664c7fcf587ad95",
+        "bytes": 2163
+      },
+      "compile_and_link_receipts": [
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-0.ceba76cd131b.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-0.json",
+          "sha256": "ceba76cd131b3cb26b28b46f3da8eda214e3c1d45ffa09402cd69926258c622f",
+          "bytes": 1806
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-0.e3b0c44298fc.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-0.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-1.b994d000d657.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-1.json",
+          "sha256": "b994d000d6578f6004f7dbec1d847017115331d3bbdd856b3c6bc7136f32bfaf",
+          "bytes": 1806
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-1.e3b0c44298fc.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-1.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-10.bb40fc84844e.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-10.json",
+          "sha256": "bb40fc84844e4f7dd73a3ebb7de682f9ed6cbcbc337fa5cc388f544ce08a70c9",
+          "bytes": 1789
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-10.e3b0c44298fc.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-10.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-11.a3c392af1d29.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-11.json",
+          "sha256": "a3c392af1d2942548d8b0b91aef659ca3154e3c5881f77be2baa22f8e0443e08",
+          "bytes": 1704
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-11.c51edb3e1f55.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-11.log",
+          "sha256": "c51edb3e1f55822cc2b73138e2c303aeb410e7f48bbef18764ec0ab44e3c0f7e",
+          "bytes": 2577
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-2.e9a72bafc83c.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-2.json",
+          "sha256": "e9a72bafc83ca7c7acb2fd3cf0bb45dac007e760cf02d04006100874b410bc96",
+          "bytes": 1804
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-2.e3b0c44298fc.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-2.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-3.99016b03723a.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-3.json",
+          "sha256": "99016b03723a5cc5e86dc34e3c6f0194468303af3c77aee1d9436f29d08233ec",
+          "bytes": 1752
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-3.d00cd86898f9.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-3.log",
+          "sha256": "d00cd86898f983b117c4e1f52862dea86bef393996aef29c1159a58e246cbcbf",
+          "bytes": 2403
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-4.cb7cfa0fbfd7.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-4.json",
+          "sha256": "cb7cfa0fbfd7e407d4988177b76b967043ac9e9cede62cda93af9c3661ace405",
+          "bytes": 1754
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-4.8cfd8213cfca.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-4.log",
+          "sha256": "8cfd8213cfcaf57283c483e71c42006038478fc2d4da898f107a2df9286915f9",
+          "bytes": 2393
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-5.77ad32ccbec2.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-5.json",
+          "sha256": "77ad32ccbec2bcbbc72bd5061606cd90176cd4275a345f1100843755f1320bc2",
+          "bytes": 1762
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-5.51fe861b5b29.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-5.log",
+          "sha256": "51fe861b5b291958fd80412af7c8fc8df58babc8aed3fc9ee8731f99a5e1c28b",
+          "bytes": 2616
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-6.851027632ec6.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-6.json",
+          "sha256": "851027632ec65dbcacaa44fb6accca8c994c09294df061370689fd82084e2aed",
+          "bytes": 1762
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-6.e3b0c44298fc.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-6.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-7.b08c160dddc3.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-7.json",
+          "sha256": "b08c160dddc307e5503241d64f4cd86be56be3700d587fbf1e4c8e8668612c2b",
+          "bytes": 1766
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-7.ff125187d16f.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-7.log",
+          "sha256": "ff125187d16fd0bf229b433135fe59367d83daf0ce247602f70593a0e26fb659",
+          "bytes": 2620
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-8.ca5fd6fa2742.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-8.json",
+          "sha256": "ca5fd6fa2742c7b27bf6ed49585631a93c62c6c20c7c1bdff4b23ba279929b0f",
+          "bytes": 1760
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-8.e3b0c44298fc.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-8.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-9.40a7760ab1cb.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-9.json",
+          "sha256": "40a7760ab1cbb4e0cc132a85874d06f502372466870b19242999126c36deb077",
+          "bytes": 1755
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/compile-9.c23d7c740b31.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/compile-9.log",
+          "sha256": "c23d7c740b3194dc1032abee6655319e4ed2d0de2670777b5ef4fc5b09a8316c",
+          "bytes": 3328
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/link.8eed60ce180d.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/link.json",
+          "sha256": "8eed60ce180d7d4aee04cd15eec5648ec6b363c3063af7300cb40f34d746b725",
+          "bytes": 1960
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/link.e3b0c44298fc.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/link.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        }
+      ]
+    },
+    "current": {
+      "version": "Core 2.5.0",
+      "fresh_core": false,
+      "probe_caller_freshly_built": true,
+      "reused_qualified_objects": 11,
+      "description": "Probe caller compiled against matching current headers and qualified Core/SQLiteVec objects; exact source/object hashes and commands retained.",
+      "manifest_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/manifest.f6bffa400659.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/manifest.json",
+        "sha256": "f6bffa4006593e696fc388fd23c26cfe5178f28221bbdf7b840325445dad7136",
+        "bytes": 10494
+      },
+      "results_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/results.dbc5a48014ee.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/results.json",
+        "sha256": "dbc5a48014ee21bcb9055543d8f3ca5d26825c082a2b1216951214be29f58e72",
+        "bytes": 2150
+      },
+      "compile_and_link_receipts": [
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/compile-0.615c138e591e.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/compile-0.json",
+          "sha256": "615c138e591ee553933be14075a04224aac81f585267181454b7ab7daf6215ac",
+          "bytes": 1572
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/compile-0.f3c783ae4467.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/compile-0.log",
+          "sha256": "f3c783ae4467991b904090ad64115769421ef104fce2daa4296e7c42aed30e48",
+          "bytes": 2321
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/link.f8604c14f003.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/link.json",
+          "sha256": "f8604c14f003205ede26beed9364ef3d4ffadffcdbddca3e69447259350b24e7",
+          "bytes": 2100
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/link.e3b0c44298fc.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/link.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        }
+      ]
+    },
+    "current_fixed": {
+      "version": "Local bootstrap candidate source, subsequently published as Core 2.5.1",
+      "fresh_core": false,
+      "probe_caller_freshly_built": true,
+      "reused_qualified_objects": 11,
+      "description": "Identical probe with candidate headers and rebuilt candidate Core objects; manifest retains source/object hashes and commands.",
+      "manifest_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/manifest.09274604b544.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/manifest.json",
+        "sha256": "09274604b54463af9d87b17e8e61174303209515a494ab286cb8410e80e1fcc1",
+        "bytes": 10518
+      },
+      "results_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/results.20edd4add292.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/results.json",
+        "sha256": "20edd4add2924d3709d643009c026fc2b9d5916ee550bdf7b169e60e34c67234",
+        "bytes": 2223
+      },
+      "compile_and_link_receipts": [
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/compile-0.a1debccb0b70.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/compile-0.json",
+          "sha256": "a1debccb0b707ab25a52e94a21f9daaa4c804a83a18c3db59a6eea0d10581e5e",
+          "bytes": 1590
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/compile-0.f3c783ae4467.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/compile-0.log",
+          "sha256": "f3c783ae4467991b904090ad64115769421ef104fce2daa4296e7c42aed30e48",
+          "bytes": 2321
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/link.14c7ae204fa0.json",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/link.json",
+          "sha256": "14c7ae204fa0c9c294bf2803371c616a7e6563e8933d762ede61b9b18beaafd4",
+          "bytes": 2117
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/link.e3b0c44298fc.log",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/link.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        }
+      ]
+    }
+  },
+  "results": [
+    {
+      "version": "Core 2.4.2",
+      "mode": "database",
+      "file_initialized_before_pair": false,
+      "opens": 200,
+      "failures": 24,
+      "exit": 2,
+      "timed_out": false,
+      "run_elapsed_seconds": 0.5084014590829611,
+      "failing_open_microseconds": {
+        "minimum": 215,
+        "median": 262.0,
+        "maximum": 2413
+      },
+      "exception_messages": [
+        "SQL execution failed: database is locked (SQL: PRAGMA journal_mode = WAL)"
+      ],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/database-primed-0.849cbdcdb7b9.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/database-primed-0.log",
+        "sha256": "849cbdcdb7b98ec90366d94d04c26b6ccf08c0db598b2227996e51dcc57688c3",
+        "bytes": 25809
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/database-primed-0.6f1a78a89b11.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/database-primed-0.json",
+        "sha256": "6f1a78a89b11cfbd636bdcfc9f1bb709748ddfa4da65c5795dd7c4ac470d3dc3",
+        "bytes": 476
+      }
+    },
+    {
+      "version": "Core 2.4.2",
+      "mode": "database",
+      "file_initialized_before_pair": true,
+      "opens": 200,
+      "failures": 0,
+      "exit": 0,
+      "timed_out": false,
+      "run_elapsed_seconds": 0.39508008398115635,
+      "failing_open_microseconds": null,
+      "exception_messages": [],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/database-primed-1.7b25b3937335.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/database-primed-1.log",
+        "sha256": "7b25b393733558f09c2341fade137398e986beb3b31b4a69dccb5e51c15dd0ab",
+        "bytes": 23488
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/database-primed-1.2b2239a0b577.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/database-primed-1.json",
+        "sha256": "2b2239a0b57703ca2aae137ff18bd8cbf1dd98b3a562b0a102a6cc00af115fbf",
+        "bytes": 477
+      }
+    },
+    {
+      "version": "Core 2.4.2",
+      "mode": "store",
+      "file_initialized_before_pair": false,
+      "opens": 200,
+      "failures": 12,
+      "exit": 2,
+      "timed_out": false,
+      "run_elapsed_seconds": 1.245770666981116,
+      "failing_open_microseconds": {
+        "minimum": 361,
+        "median": 498.0,
+        "maximum": 571
+      },
+      "exception_messages": [
+        "SQL execution failed: database is locked (SQL: PRAGMA journal_mode = WAL)"
+      ],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/store-primed-0.52fc1fe10133.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/store-primed-0.log",
+        "sha256": "52fc1fe10133f0140cb37b1965343a9993bd32f15bd4dcfcf11d61bfc3165be0",
+        "bytes": 24736
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/store-primed-0.fa8d5ee6a664.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/store-primed-0.json",
+        "sha256": "fa8d5ee6a6641397168b276306587f42f58a7d700f7b181648b9c7a56a834b57",
+        "bytes": 466
+      }
+    },
+    {
+      "version": "Core 2.4.2",
+      "mode": "store",
+      "file_initialized_before_pair": true,
+      "opens": 200,
+      "failures": 0,
+      "exit": 0,
+      "timed_out": false,
+      "run_elapsed_seconds": 1.7086392500204965,
+      "failing_open_microseconds": null,
+      "exception_messages": [],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/store-primed-1.9413227ba75f.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/store-primed-1.log",
+        "sha256": "9413227ba75f890ec3e21d4da294df9ece2486b0d6e621e52d40756b14b4d2ad",
+        "bytes": 23621
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/baseline/store-primed-1.a04cac6b6189.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/baseline/store-primed-1.json",
+        "sha256": "a04cac6b61892412042a77ad4f897b8bee3eae76b6bca1c1544e3b891fe5893a",
+        "bytes": 467
+      }
+    },
+    {
+      "version": "Core 2.5.0",
+      "mode": "database",
+      "file_initialized_before_pair": false,
+      "opens": 200,
+      "failures": 22,
+      "exit": 2,
+      "timed_out": false,
+      "run_elapsed_seconds": 0.5008119579870254,
+      "failing_open_microseconds": {
+        "minimum": 182,
+        "median": 239.5,
+        "maximum": 2280
+      },
+      "exception_messages": [
+        "SQL execution failed: database is locked (SQL: PRAGMA journal_mode = WAL)"
+      ],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/database-primed-0.f2abc688a729.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/database-primed-0.log",
+        "sha256": "f2abc688a7295b8859be2810945a9eb20ec679a54636ee67e2a2aa656bd60aca",
+        "bytes": 25621
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/database-primed-0.888003543ba0.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/database-primed-0.json",
+        "sha256": "888003543ba02aaf0110e9fab675b6896c40c1c9eac97bb3b428c09faf5b3cd3",
+        "bytes": 473
+      }
+    },
+    {
+      "version": "Core 2.5.0",
+      "mode": "database",
+      "file_initialized_before_pair": true,
+      "opens": 200,
+      "failures": 0,
+      "exit": 0,
+      "timed_out": false,
+      "run_elapsed_seconds": 0.297326665953733,
+      "failing_open_microseconds": null,
+      "exception_messages": [],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/database-primed-1.4c37d1ef6435.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/database-primed-1.log",
+        "sha256": "4c37d1ef6435a1c735e55c4eee2b6cf1c823b47852bf4037ccb68507a0e21159",
+        "bytes": 23503
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/database-primed-1.f0f1a414a5ff.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/database-primed-1.json",
+        "sha256": "f0f1a414a5ffe23d9b66e30ab3091aab6f99352b55a3d81532d062097459ee80",
+        "bytes": 472
+      }
+    },
+    {
+      "version": "Core 2.5.0",
+      "mode": "store",
+      "file_initialized_before_pair": false,
+      "opens": 200,
+      "failures": 18,
+      "exit": 2,
+      "timed_out": false,
+      "run_elapsed_seconds": 0.6621217080391943,
+      "failing_open_microseconds": {
+        "minimum": 282,
+        "median": 322.0,
+        "maximum": 2263
+      },
+      "exception_messages": [
+        "SQL execution failed: database is locked (SQL: PRAGMA journal_mode = WAL)"
+      ],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/store-primed-0.d80415b9b65f.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/store-primed-0.log",
+        "sha256": "d80415b9b65fa66e4e7f26c480fba4329b6ca7f42cd63f760620286f74acedfe",
+        "bytes": 25278
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/store-primed-0.00ae093a96ac.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/store-primed-0.json",
+        "sha256": "00ae093a96ac798036026403a64e99749286a11bcfcee1f856b06a8cbbfa609d",
+        "bytes": 464
+      }
+    },
+    {
+      "version": "Core 2.5.0",
+      "mode": "store",
+      "file_initialized_before_pair": true,
+      "opens": 200,
+      "failures": 0,
+      "exit": 0,
+      "timed_out": false,
+      "run_elapsed_seconds": 1.1433065000455827,
+      "failing_open_microseconds": null,
+      "exception_messages": [],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/store-primed-1.5cb48958ba9d.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/store-primed-1.log",
+        "sha256": "5cb48958ba9d197f4289a78abf3b882611b802c49414ec21a3405eed54fb4395",
+        "bytes": 23621
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current/store-primed-1.787438dca437.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current/store-primed-1.json",
+        "sha256": "787438dca437a14915f6c54f8691d49e987cda79d318626947907acc22cda514",
+        "bytes": 464
+      }
+    },
+    {
+      "version": "Core bootstrap candidate (intended 2.5.1)",
+      "mode": "database",
+      "file_initialized_before_pair": false,
+      "opens": 200,
+      "failures": 0,
+      "exit": 0,
+      "timed_out": false,
+      "run_elapsed_seconds": 0.6705704170744866,
+      "failing_open_microseconds": null,
+      "exception_messages": [],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/database-primed-0.103f057583b1.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/database-primed-0.log",
+        "sha256": "103f057583b183758dc28a26f1e259aa00224523c00f987d9b75ed109c53e6f4",
+        "bytes": 23597
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/database-primed-0.f62434db1498.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/database-primed-0.json",
+        "sha256": "f62434db1498c72d0d2cb5f813abd9e08865cac0b4be6395efeb6c82107d5ecb",
+        "bytes": 491
+      }
+    },
+    {
+      "version": "Core bootstrap candidate (intended 2.5.1)",
+      "mode": "database",
+      "file_initialized_before_pair": true,
+      "opens": 200,
+      "failures": 0,
+      "exit": 0,
+      "timed_out": false,
+      "run_elapsed_seconds": 0.3337172920582816,
+      "failing_open_microseconds": null,
+      "exception_messages": [],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/database-primed-1.bcd1c462d1c4.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/database-primed-1.log",
+        "sha256": "bcd1c462d1c4cade479ae3e8a18eacfc1a57eca64c8bae5035256c97a7f54316",
+        "bytes": 23507
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/database-primed-1.a9ea46525c65.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/database-primed-1.json",
+        "sha256": "a9ea46525c65f38598484809388e998a01ca555d5695a6e0b44c80be32b36443",
+        "bytes": 491
+      }
+    },
+    {
+      "version": "Core bootstrap candidate (intended 2.5.1)",
+      "mode": "store",
+      "file_initialized_before_pair": false,
+      "opens": 200,
+      "failures": 0,
+      "exit": 0,
+      "timed_out": false,
+      "run_elapsed_seconds": 0.7232493750052527,
+      "failing_open_microseconds": null,
+      "exception_messages": [],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/store-primed-0.37c02064e196.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/store-primed-0.log",
+        "sha256": "37c02064e196eeb6f89ed156130f5d5fc105c70aee57dd9e471deed36e1f9a6d",
+        "bytes": 23619
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/store-primed-0.9361ab1e7430.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/store-primed-0.json",
+        "sha256": "9361ab1e7430e780f71d235b6aef4b82a084c81a4d6008c8bd174f06a2362e3f",
+        "bytes": 482
+      }
+    },
+    {
+      "version": "Core bootstrap candidate (intended 2.5.1)",
+      "mode": "store",
+      "file_initialized_before_pair": true,
+      "opens": 200,
+      "failures": 0,
+      "exit": 0,
+      "timed_out": false,
+      "run_elapsed_seconds": 0.8929048329591751,
+      "failing_open_microseconds": null,
+      "exception_messages": [],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/store-primed-1.be8a681d6cd4.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/store-primed-1.log",
+        "sha256": "be8a681d6cd44abad4e752e94ee915e80a74c3a23e7296442ab800652ebb4012",
+        "bytes": 23619
+      },
+      "execution_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/current-fixed/store-primed-1.67fbdea6d75b.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/current-fixed/store-primed-1.json",
+        "sha256": "67fbdea6d75bdf3eececbb17fb8e1df77c88ca8d88acbcf413aa8e9a6b4480ec",
+        "bytes": 482
+      }
+    }
+  ],
+  "finding": "The same native database-is-locked exception at PRAGMA journal_mode = WAL reproduces with both independently built Core 2.4.2 and current Core 2.5.0. Every initialized-file control passes. This failure class is therefore not unique to the new Core source in this toolchain/SQLite environment.",
+  "timing_interpretation": "Median failing opens range from 239.5 to 498 microseconds; observed maxima reach 2,413 microseconds. These are far below the configured 2,000/30,000 ms statement budgets. These runs are diagnostic observations, not performance guarantees or a failure-rate comparison.",
+  "primary_reference": {
+    "url": "https://www.sqlite.org/c3ref/busy_handler.html",
+    "title": "Register A Callback To Handle SQLITE_BUSY Errors",
+    "paraphrase": "SQLite may omit a configured busy callback when invoking it could cause deadlock, returning SQLITE_BUSY directly. A busy timeout alone does not guarantee every lock conflict waits for that interval.",
+    "scope": "Documents why immediate SQLITE_BUSY is possible; does not prove the exact internal SQLite lock state in these runs.",
+    "snapshot_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/probes/fresh-open/sqlite-busy-handler.b0f271fd9ab8.html",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/fresh-open/sqlite-busy-handler.html",
+      "sha256": "b0f271fd9ab80375113a48958fd0e678e87ac2ffae6442219fcf1bf890cdbae3",
+      "bytes": 7155
+    }
+  },
+  "SDK_diagnostic_followup": {
+    "scope": "Test-only open-error diagnostics and two previously planned binding-test isolation changes; this is not validation of the pending native bootstrap fix.",
+    "full": {
+      "coordinator_reported_exit": 0,
+      "build_seconds": 125.22,
+      "XCTest": {
+        "tests": 14,
+        "failures": 0,
+        "seconds": 5.83
+      },
+      "Swift_Testing": {
+        "tests": 830,
+        "suites": 125,
+        "issues": 0,
+        "seconds": 84.831
+      },
+      "receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-release-open-diagnostic-full.a0307e9b7c53.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-open-diagnostic-full.log",
+        "sha256": "a0307e9b7c538aa83d0e1d56b60ad25e2caad07719a871767b209ce69e1d765e",
+        "bytes": 1046435
+      }
+    },
+    "strict_cooperative_worker": {
+      "coordinator_reported_exit": 0,
+      "XCTest": {
+        "tests": 12,
+        "failures": 0,
+        "seconds": 5.807
+      },
+      "Swift_Testing": {
+        "tests": 13,
+        "suites": 1,
+        "issues": 0,
+        "seconds": 0.11
+      },
+      "receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-release-open-diagnostic-strict.1685ca6fa663.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-open-diagnostic-strict.log",
+        "sha256": "1685ca6fa663fb2ced858a7aaebd41c2942d4719fa03d47514f93cc6232f5085",
+        "bytes": 9081
+      }
+    },
+    "validation_limits": "No native-fix, next-candidate CI, publication, or artifact-verification result is claimed by these test passes."
+  },
+  "next_candidate": {
+    "Core": "2.5.1 published and verified",
+    "SDK": "2.6.1 intended, not yet published",
+    "Core_merged_source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+    "status": "Core 2.5.1 published/verified; actual SDK pin and full/strict suites passed. Candidate CI, SDK publication/artifacts/delivery pending.",
+    "Core_PR_and_main_CI": "All checks/runs passed",
+    "phone_qualification": "Candidate manual finite sync and debugger-triggered BGTask success/settlement/reopen verified; natural scheduling and other explicit device gaps remain."
+  },
+  "native_correction_followup": {
+    "status": "Focused qualification passed; subsequent Core PR/main/release checks passed and Core 2.5.1 is published. Actual new-pin SDK full/strict suites now pass; candidate CI/publication remain pending.",
+    "same_probe": {
+      "cases": 4,
+      "total_opens": 800,
+      "failures": 0,
+      "fresh_file_opens": 400,
+      "fresh_file_failures": 0,
+      "initialized_file_opens": 400,
+      "initialized_file_failures": 0
+    },
+    "focused_tests": {
+      "tests": 23,
+      "failures": 0,
+      "seconds": 0.767,
+      "suites": [
+        {
+          "name": "DatabaseCancellation",
+          "tests": 16,
+          "seconds": 0.158
+        },
+        {
+          "name": "DatabaseWalBootstrap",
+          "tests": 7,
+          "seconds": 0.608
+        }
+      ],
+      "new_bootstrap_cases": [
+        "HeldReaderReleaseAllowsHelperAndRestoresTimeout",
+        "ConstructorExhaustsOneConfiguredBudgetAndReleasesLocks",
+        "ZeroBudgetConstructorFailsImmediatelyAndReleasesLocks",
+        "BoundCancellationSettlesHelperWithoutChangingOtherReader",
+        "NonBusyCorruptFileErrorIsNotRetried",
+        "MemoryAndReadOnlyOpenKeepTheirJournalBehavior",
+        "FreshConcurrentConstructorsWithDifferentBudgetsBothSucceed"
+      ],
+      "log_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/core-wal-bootstrap-tests.8c936802d601.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-wal-bootstrap-tests.log",
+        "sha256": "8c936802d6013354f51c51163049bcb6ac2b4805fb5748fdff71f76c982d2ff2",
+        "bytes": 200571
+      },
+      "xml_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/core-wal-bootstrap-tests.af33eef7916e.xml",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-wal-bootstrap-tests.xml",
+        "sha256": "af33eef7916e3559b682292f325a6d31d1731007f0f7b486e24ef84a8597b8f0",
+        "bytes": 7866
+      }
+    },
+    "interpretation": "The diagnostic probe changed from 40 failures in 400 fresh current-version opens to zero in 400 fresh candidate opens; all four candidate cases total 800 successful opens. This bounded sample plus focused tests supports the correction, not a universal zero-failure guarantee or exact attribution of the original opaque Swift CI error."
+  },
+  "Core_fix_merge_and_PR_CI": {
+    "head_source": "820f0ba022d23531f9b4525f623e514f3e4c50b0",
+    "pull_request": "https://github.com/jsflax/LatticeCore/pull/79",
+    "status": "All four PR checks passed; merged. Subsequent exact-main and release workflows passed; Core 2.5.1 published and verified.",
+    "checks": [
+      {
+        "name": "capi-linux",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/jsflax/LatticeCore/actions/runs/41386525509/job/125088467309"
+      },
+      {
+        "name": "build-and-test",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/jsflax/LatticeCore/actions/runs/41386525490/job/125088467157"
+      },
+      {
+        "name": "build-and-test",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/jsflax/LatticeCore/actions/runs/41386525508/job/125088467411"
+      },
+      {
+        "name": "capi-macos",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/jsflax/LatticeCore/actions/runs/41386525509/job/125088467183"
+      }
+    ],
+    "merge_source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+    "merged_at": "2026-11-02T04:13:32Z",
+    "tree_identity": "Coordinator compared PR source and merged source trees: identical; diff empty.",
+    "receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/core-pr79-green.9ca84c7d392c.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-pr79-green.json",
+        "sha256": "9ca84c7d392c495f025348f10e192ebc5784e2c926c7b733944bed035faf9c58",
+        "bytes": 1208
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/core-pr79-merged.990b6150fae0.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-pr79-merged.json",
+        "sha256": "990b6150fae0e34c86777683782f77624c131f8d0e6b92c545300f993c6ab2d9",
+        "bytes": 174
+      }
+    ]
+  },
+  "candidate_device_evidence": "phone-candidate-success.json",
+  "publication_and_pin_evidence": "source-and-pin-verification.json"
+}

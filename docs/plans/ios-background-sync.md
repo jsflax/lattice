@@ -1,6 +1,6 @@
 # iOS background sync implementation plan
 
-Updated November 1, 2026. **Active implementation goal; not released.** The user approved the config-first direction after the [adversarial review](ios-background-sync-red-team.md). The initial probes below must settle the remaining contracts before readiness is claimed. See the [progress record](ios-background-sync-progress.md) for evidence and release status.
+Candidate release record, November 1, 2026 local time (November 2 UTC). **Core 2.5.1 is published and verified. SDK 2.6.1 remains unpublished; its actual published Core pin and full/strict local test passes are verified; candidate CI/publication/notices remain pending.** SDK tag 2.6.0 is immutable and unpublished after a required release-job failure. The user approved the config-first direction after the [adversarial review](ios-background-sync-red-team.md). Native correction checks, Core CI, and candidate phone qualification pass. The original implementation checkpoints below are retained as the plan; current evidence and remaining release work are in [checkpoint 007](evidence/ios-background-sync-007/README.md) and the [progress record](ios-background-sync-progress.md).
 
 ## Goal and finish line
 
@@ -10,8 +10,7 @@ Publish and verify the Lattice release and matching Core release if required. No
 
 ## Approved caller direction
 
-Implemented in the candidate; integration qualification and release remain
-pending. The caller guide is [Background Sync on iOS](../../Sources/Lattice/Lattice.docc/BackgroundSync.md).
+Implemented and merged at `d0ca27e4c1b98501dec4215f11403f281962691a`; all four PR CI legs passed on an identical tree. Main CI concluded success overall with required macOS/stable Linux/iOS passed and optional nightly failed. SDK tag 2.6.0 is immutable at that source. Required macOS job 125079754321 failed in release workflow 41383687634, so SDK 2.6.0 remains unpublished. The [published caller guide](https://jsflax.github.io/lattice/documentation/lattice/backgroundsync/) is verified for that main commit; the repository guide remains [Background Sync on iOS](../../Sources/Lattice/Lattice.docc/BackgroundSync.md).
 
 ```swift
 let lattice = try Lattice(
@@ -75,3 +74,15 @@ Preserve earlier pending requests and distinguish registration from submission f
 | Resources | Measured contention cleanup and no owned work after full suspension. |
 | Host/release | Real host coverage honestly recorded; required CI; clean versioned pins; changelog/migration docs; verified publication. |
 | Adoption | Engram, Orbital, HUD receive exact versions and setup instructions; delivery receipts recorded. |
+
+## Release record and remaining evidence
+
+Between `edb48f3` and tagged main, the production Sources, package manifest, and lock are unchanged; those later changes isolate conformance/ordering tests without excluding them or extending their budgets. That historical comparison does not cover the subsequent native bootstrap correction. PR CI passed macOS, stable Linux, nightly, and iOS, including the supplemental strict cooperative-worker regression. Main CI run 41381739897 concluded success overall, but its optional nightly leg failed one two-second fake-backend refresh expectation. Source and subsequent postconditions are consistent with post-settlement budget exhaustion under load; this is an inference, because the returned enum and isolated refresh duration were not logged. Required main legs passed. Checkpoint 007 preserves this exception rather than claiming all main legs were green.
+
+Physical evidence covers managed early expiration, actual system background entry, independent WAL cleanup, lazy unbound/later binding, and manual failure/pre-admission cancellation with durable 25-row reopen. After Local Network permission was accepted, foreground sync acknowledged 25 uploads, received 2,001 remote rows, and an ordinary callback read 2,026 rows including the 25 fixture rows. At that earlier stage, successful finite BGTask completion was unqualified: one debugger callback hit lacked its success BOOL and a second attempt had no observed hit. The extra debugger-owned UIKit assertion was ended and the managed app restored; that attempt added no post-network WAL checkpoint. The later candidate checks below qualify successful debugger-triggered BGTask completion and its independent post-completion WAL checkpoint. Expiration during active transfers, foreground takeover during active work, locked-phone behavior, natural scheduling, and true OS cold launch remain coverage gaps.
+
+The native diagnostic reproduces the same WAL bootstrap lock failure in independently built Core 2.4.2 and Core 2.5.0; all initialized-file controls pass. The narrow candidate correction passes all 800 probe opens and 23 focused native tests. The SDK test-only diagnostic/isolation follow-up also passes full and strict local runs. These findings are preserved in [checkpoint 007](evidence/ios-background-sync-007/fresh-open-investigation.json); they do not prove the exact cause of the original opaque Swift CI error.
+
+The reachable-relay public manual `syncOnce` phone pass now returns `.completed`, with acknowledged uploads, received rows, qualified independent WAL cleanup, and durable close/reopen. That pass uses the existing corrected binary and the managed plist in manual mode; that earlier pass does not qualify Apple BGTask completion, a successful network pass in the separate no-background-plist binary, or the native correction. A later candidate host built against Core `820f0ba` verifies public manual completion and actual debugger-triggered BGTask success while backgrounded, followed by independent WAL cleanup before foreground restore and durable reopen. The temporary host UIKit assertion is disclosed and ended. Natural scheduling, true cold launch, locked-phone behavior, active-transfer expiration, and foreground takeover during active work remain unqualified.
+
+Core PR 79 passed all checks and merged as `d2241191c1a630e0aaf0d8a5a38b0520c9614c4c`, identical in tree to the tested candidate. Core exact-main/release CI passed, and Core 2.5.1 is published and verified. The SDK actual published pin is verified; an earlier optional desktop pass that instead used Core 2.5.0 is explicitly corrected in the evidence. The subsequent actual published-pin SDK full and strict suites pass, with separate frozen receipts. **Pending before goal completion:** finish candidate CI, publish and verify SDK 2.6.1, then record delivery to Engram, Orbital, and HUD. SDK tag 2.6.0 will not be retargeted. The Core successor release/receipt are verified; the SDK successor release, artifact/receipt digests, and safe notice confirmations remain absent. The old SDK tag is not a publication receipt.

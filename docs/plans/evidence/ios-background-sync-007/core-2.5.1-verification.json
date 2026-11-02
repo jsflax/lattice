@@ -1,0 +1,287 @@
+{
+  "assetDigestMatches": true,
+  "checks": [
+    {
+      "check": "expected_commit_available_locally",
+      "detail": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+      "passed": true
+    },
+    {
+      "check": "local_archive_contains_every_tracked_file",
+      "detail": {
+        "archiveCount": 911,
+        "trackedCount": 911
+      },
+      "passed": true
+    },
+    {
+      "check": "tag_ref_exact",
+      "detail": "refs/tags/2.5.1",
+      "passed": true
+    },
+    {
+      "check": "tag_matches_expected_source",
+      "detail": [
+        {
+          "sha": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+          "type": "commit"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "check": "workflow_identity",
+      "detail": {
+        "conclusion": "success",
+        "event": "workflow_dispatch",
+        "head_branch": "main",
+        "head_sha": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+        "html_url": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073",
+        "id": 41387813073,
+        "path": ".github/workflows/release.yml",
+        "run_attempt": 1,
+        "status": "completed"
+      },
+      "passed": true
+    },
+    {
+      "check": "workflow_exact_source",
+      "detail": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+      "passed": true
+    },
+    {
+      "check": "workflow_completed",
+      "detail": "completed",
+      "passed": true
+    },
+    {
+      "check": "required_job:preflight",
+      "detail": [
+        {
+          "conclusion": "success",
+          "head_sha": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+          "html_url": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073/job/125092448545",
+          "id": 125092448545,
+          "name": "preflight",
+          "run_id": 41387813073,
+          "status": "completed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "check": "required_job:release",
+      "detail": [
+        {
+          "conclusion": "success",
+          "head_sha": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+          "html_url": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073/job/125094384753",
+          "id": 125094384753,
+          "name": "release",
+          "run_id": 41387813073,
+          "status": "completed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "check": "required_job:test-capi / capi-linux",
+      "detail": [
+        {
+          "conclusion": "success",
+          "head_sha": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+          "html_url": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073/job/125092485505",
+          "id": 125092485505,
+          "name": "test-capi / capi-linux",
+          "run_id": 41387813073,
+          "status": "completed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "check": "required_job:test-capi / capi-macos",
+      "detail": [
+        {
+          "conclusion": "success",
+          "head_sha": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+          "html_url": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073/job/125092485536",
+          "id": 125092485536,
+          "name": "test-capi / capi-macos",
+          "run_id": 41387813073,
+          "status": "completed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "check": "required_job:test-linux / build-and-test",
+      "detail": [
+        {
+          "conclusion": "success",
+          "head_sha": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+          "html_url": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073/job/125092485516",
+          "id": 125092485516,
+          "name": "test-linux / build-and-test",
+          "run_id": 41387813073,
+          "status": "completed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "check": "required_job:test-macos / build-and-test",
+      "detail": [
+        {
+          "conclusion": "success",
+          "head_sha": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+          "html_url": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073/job/125092485529",
+          "id": 125092485529,
+          "name": "test-macos / build-and-test",
+          "run_id": 41387813073,
+          "status": "completed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "check": "stable_published_release",
+      "detail": {
+        "draft": false,
+        "html_url": "https://github.com/jsflax/LatticeCore/releases/tag/2.5.1",
+        "id": 431070828,
+        "prerelease": false,
+        "published_at": "2026-11-02T04:26:27Z",
+        "tag_name": "2.5.1",
+        "tarball_url": "https://api.github.com/repos/jsflax/LatticeCore/tarball/2.5.1"
+      },
+      "passed": true
+    },
+    {
+      "check": "one_release_receipt_asset",
+      "detail": {
+        "count": 1
+      },
+      "passed": true
+    },
+    {
+      "check": "receipt_asset_uploaded",
+      "detail": {
+        "browser_download_url": "https://github.com/jsflax/LatticeCore/releases/download/2.5.1/release-receipt.json",
+        "digest": "sha256:98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde",
+        "id": 700500852,
+        "name": "release-receipt.json",
+        "size": 384,
+        "state": "uploaded"
+      },
+      "passed": true
+    },
+    {
+      "check": "receipt_digest_matches_github_asset",
+      "detail": {
+        "bytes": 384,
+        "computed": "98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde",
+        "githubDigest": "sha256:98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde"
+      },
+      "passed": true
+    },
+    {
+      "check": "receipt_contract",
+      "detail": {
+        "artifacts": {},
+        "candidateDigest": "deaffd3364f4367f0f24e90aaea6d8302b43f1033b18e9e8c11a61a46a39f2e6",
+        "createdAt": "2026-11-02T04:26:24.339252+00:00",
+        "runAttempt": "1",
+        "schemaVersion": 1,
+        "sourceSha": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+        "state": "validated-and-packaged",
+        "workflowRun": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073"
+      },
+      "passed": true
+    },
+    {
+      "check": "receipt_exact_source",
+      "detail": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+      "passed": true
+    },
+    {
+      "check": "receipt_exact_workflow_and_attempt",
+      "detail": {
+        "runAttempt": "1",
+        "workflowRun": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073"
+      },
+      "passed": true
+    },
+    {
+      "check": "source_archive_endpoint",
+      "detail": "https://api.github.com/repos/jsflax/LatticeCore/tarball/2.5.1",
+      "passed": true
+    },
+    {
+      "check": "published_source_all_bytes_and_git_modes_match",
+      "detail": {
+        "changed": [],
+        "extra": [],
+        "fileCount": 911,
+        "missing": []
+      },
+      "passed": true
+    }
+  ],
+  "facts": {
+    "archiveHelperSHA256": "085fd8ed23ee87e9f5787a09a054ca4b699c9ecd03baae5e0c978a319c843484",
+    "assetDigestMatches": true,
+    "expectedSourceFileCount": 911,
+    "nonRequiredJobs": [
+      {
+        "conclusion": "success",
+        "html_url": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073/job/125094458874",
+        "name": "notify-slack / announce",
+        "status": "completed"
+      }
+    ],
+    "receiptPath": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-2.5.1-verification/run-41387813073-20261102T042702.244896Z/release-receipt.json",
+    "receiptSHA256": "98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde",
+    "recordedMainCIEvidence": {
+      "path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-2.5.1-main-ci.json",
+      "sha256": "bbf7aa9c883cca951636ced888fd843fd61db9cab3dc947e4a8d6b3751bee4a9"
+    },
+    "release": {
+      "draft": false,
+      "html_url": "https://github.com/jsflax/LatticeCore/releases/tag/2.5.1",
+      "id": 431070828,
+      "prerelease": false,
+      "published_at": "2026-11-02T04:26:27Z",
+      "tag_name": "2.5.1",
+      "tarball_url": "https://api.github.com/repos/jsflax/LatticeCore/tarball/2.5.1"
+    },
+    "sourceArchiveSHA256": "6b75d329e9de251c53f2e55596ccfc4231a7ec62da74ca77af8e59b86305339d",
+    "sourceContentSHA256": "ece759e842ffa2499ba2b788f4f9bc8cef9dd0c0f77fa22a183e1e7a84c0e8d9",
+    "tagMatchesSource": true,
+    "workflow": {
+      "conclusion": "success",
+      "event": "workflow_dispatch",
+      "head_branch": "main",
+      "head_sha": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+      "html_url": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073",
+      "id": 41387813073,
+      "path": ".github/workflows/release.yml",
+      "run_attempt": 1,
+      "status": "completed"
+    },
+    "workflowRunAttempt": 1,
+    "workflowSucceeded": true
+  },
+  "failedChecks": [],
+  "outputDirectory": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-2.5.1-verification/run-41387813073-20261102T042702.244896Z",
+  "receiptSHA256": "98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde",
+  "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.5.1",
+  "sourceSha": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+  "status": "verified-published",
+  "tagMatchesSource": true,
+  "verificationPassed": true,
+  "verifiedAt": "2026-11-02T04:27:05.053065+00:00",
+  "version": "2.5.1",
+  "workflowRun": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073",
+  "workflowSucceeded": true
+}

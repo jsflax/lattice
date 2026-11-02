@@ -1,0 +1,30 @@
+{
+  "observedAt": "2026-11-02T04:38:46.447326+00:00",
+  "coreVersion": "2.5.1",
+  "coreCommit": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+  "full": {
+    "exitCode": 0,
+    "xctest": 14,
+    "swiftTesting": 830,
+    "swiftSuites": 125,
+    "swiftSeconds": 72.437,
+    "buildSeconds": 162.11
+  },
+  "strict": {
+    "exitCode": 0,
+    "xctest": 12,
+    "swiftTesting": 13,
+    "swiftSuites": 1,
+    "swiftSeconds": 0.162,
+    "LIBDISPATCH_COOPERATIVE_POOL_STRICT": "1"
+  },
+  "compiledTestBinaryContainsWalBootstrapFix": true,
+  "lockUnchangedAfterTests": true,
+  "receipts": {
+    "sdk-published-core-2.5.1-full.log": "dcf5b40b89cd44292539f62645e81e73cbb02fa96b5731ac1f488a299ef0eeda",
+    "sdk-published-core-2.5.1-strict.log": "7f20e5713c345f5deead5addf246ce3b5efcf4d0cabac882f6f294ac904b2259",
+    "sdk-core-2.5.1-Package.resolved": "d9dd37f97458dc72edab88c5006f7dafd66facd846744570797615e01cb4f313"
+  },
+  "testBinarySHA256": "40890bd716c5056966dc3a72350a18ccf0f0e36f148e2b84db2fa4c04488acb5",
+  "scope": "Actual published Core2.5.1 pin, local native SwiftPM build backend. Hosted default-backend CI and publication still pending."
+}

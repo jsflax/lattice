@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.6.1] - 2026-11-02
+
+### Added
+- Publish configuration-based iOS background refresh, independent finite
+  `syncOnce`, and the lifecycle and sync correctness changes described in 2.6.0
+  below. See the Background Sync on iOS guide for setup and ownership examples.
+
+### Fixed
+- Require LatticeCore 2.5.1 so concurrent first opens can finish enabling WAL
+  within their configured busy timeout instead of failing immediately.
+- Preserve native error details in relay test failures and isolate remaining
+  bounded binding tests from unrelated parallel SQL workloads without changing
+  their deadlines or assertions.
+
+The 2.6.0 source tag is retained, but its GitHub Release was not published after
+the required macOS check exposed the existing concurrent-open defect. Upgrade
+to 2.6.1 with Core 2.5.1 and follow the coordinated restart guidance below.
+
 ## [2.6.0] - 2026-11-01
 
 ### Added

@@ -68,7 +68,7 @@ let package = Package(
         // validates their transport metadata against physical field nullability.
         // Released checked dynamic-open errors, reverse-link indexes/storage epoch 7,
         // and native NACK/decode diagnostics.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.5.0"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.5.1"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",

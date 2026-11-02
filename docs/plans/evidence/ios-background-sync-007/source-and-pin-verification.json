@@ -1,0 +1,179 @@
+{
+  "record_status": "Core 2.5.1 published/verified and actual SDK new-pin full and strict suites passed. Candidate CI, SDK publication, and notices pending.",
+  "Core": {
+    "version": "2.5.1",
+    "source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+    "release_url": "https://github.com/jsflax/LatticeCore/releases/tag/2.5.1",
+    "published_at": "2026-11-02T04:26:27Z",
+    "workflow": "https://github.com/jsflax/LatticeCore/actions/runs/41387813073",
+    "workflow_succeeded": true,
+    "receipt_SHA256": "98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde",
+    "source_archive_SHA256": "6b75d329e9de251c53f2e55596ccfc4231a7ec62da74ca77af8e59b86305339d",
+    "archive_files_matched": 911,
+    "archive_bytes_and_modes_match": true,
+    "tag_matches_source": true,
+    "verification_file": "core-2.5.1-verification.json",
+    "verification_raw_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/core-2.5.1-verification.144c2304d15b.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-2.5.1-verification.json",
+      "sha256": "144c2304d15bac4a5c5ca859a91753456eb7ac2f4099ab20d25db039312b2bf0",
+      "bytes": 9388
+    },
+    "release_asset_raw_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/core-2.5.1-verification/run-41387813073-20261102T042702.244896Z/release-receipt.98387165dccb.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-2.5.1-verification/run-41387813073-20261102T042702.244896Z/release-receipt.json",
+      "sha256": "98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde",
+      "bytes": 384
+    },
+    "main_CI": {
+      "all_runs_succeeded": true,
+      "runs": [
+        {
+          "source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+          "url": "https://github.com/jsflax/LatticeCore/actions/runs/41387262294",
+          "conclusion": "success",
+          "jobs": [
+            {
+              "name": "build-and-test",
+              "conclusion": "success",
+              "url": "https://github.com/jsflax/LatticeCore/actions/runs/41387262294/job/125090751855"
+            }
+          ]
+        },
+        {
+          "source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+          "url": "https://github.com/jsflax/LatticeCore/actions/runs/41387262403",
+          "conclusion": "success",
+          "jobs": [
+            {
+              "name": "build-and-test",
+              "conclusion": "success",
+              "url": "https://github.com/jsflax/LatticeCore/actions/runs/41387262403/job/125090752412"
+            }
+          ]
+        },
+        {
+          "source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+          "url": "https://github.com/jsflax/LatticeCore/actions/runs/41387262321",
+          "conclusion": "success",
+          "jobs": [
+            {
+              "name": "capi-macos",
+              "conclusion": "success",
+              "url": "https://github.com/jsflax/LatticeCore/actions/runs/41387262321/job/125090752317"
+            },
+            {
+              "name": "capi-linux",
+              "conclusion": "success",
+              "url": "https://github.com/jsflax/LatticeCore/actions/runs/41387262321/job/125090752671"
+            }
+          ]
+        }
+      ],
+      "receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/core-2.5.1-main-ci.bbf7aa9c883c.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-2.5.1-main-ci.json",
+        "sha256": "bbf7aa9c883cca951636ced888fd843fd61db9cab3dc947e4a8d6b3751bee4a9",
+        "bytes": 11385
+      }
+    }
+  },
+  "SDK_published_dependency_resolution": {
+    "version": "2.5.1",
+    "revision": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+    "manifest_minimum": "2.5.1",
+    "pin_count": 34,
+    "other_pins_unchanged": true,
+    "edit_override": false,
+    "lock_SHA256": "d9dd37f97458dc72edab88c5006f7dafd66facd846744570797615e01cb4f313",
+    "actual_checkout_db_cpp_SHA256": "6b8210ce90e0112d8ad85d5ced0d40bb2c9c60fc8e73abe6c08c5af5ee1c4970",
+    "local_files_rechecked_at_record_update": true,
+    "resolution_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-core-2.5.1-resolution-verification.ac2fb954efc0.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-core-2.5.1-resolution-verification.json",
+      "sha256": "ac2fb954efc0c781710ab4363fc8ea918f16bf9a5f71dedd008bc74e16e2c230",
+      "bytes": 452
+    },
+    "frozen_lock_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-core-2.5.1-Package.d9dd37f97458.resolved",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-core-2.5.1-Package.resolved",
+      "sha256": "d9dd37f97458dc72edab88c5006f7dafd66facd846744570797615e01cb4f313",
+      "bytes": 9511
+    },
+    "coordinator_linked_binary_check": {
+      "binary": "LatticePackageTests",
+      "defined_text_symbol": "__ZN7lattice8database15enable_wal_modeEv",
+      "compiled_binary_contains_fix": true,
+      "binary_SHA256": "40890bd716c5056966dc3a72350a18ccf0f0e36f148e2b84db2fa4c04488acb5",
+      "receipt_file": "sdk-published-core-2.5.1-tests-verification.json",
+      "raw_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-published-core-2.5.1-tests-verification.7144a004ddd4.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-published-core-2.5.1-tests-verification.json",
+        "sha256": "7144a004ddd494d3a8bb44ae18fc81c330710332610cfd4ce342c100656ca1c3",
+        "bytes": 1139
+      }
+    }
+  },
+  "new_pin_validation": {
+    "full_suite": {
+      "status": "PASSED",
+      "coordinator_reported_exit": 0,
+      "build_seconds": 162.11,
+      "XCTest": {
+        "tests": 14,
+        "failures": 0,
+        "reported_test_seconds": 6.225,
+        "outer_suite_elapsed_seconds": 6.228
+      },
+      "Swift_Testing": {
+        "tests": 830,
+        "suites": 125,
+        "issues": 0,
+        "seconds": 72.437
+      },
+      "Core_version": "2.5.1",
+      "Core_source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+      "lock_SHA256": "d9dd37f97458dc72edab88c5006f7dafd66facd846744570797615e01cb4f313",
+      "actual_checkout_db_cpp_SHA256": "6b8210ce90e0112d8ad85d5ced0d40bb2c9c60fc8e73abe6c08c5af5ee1c4970",
+      "provenance_scope": "Actual published Core 2.5.1 resolved pin and checkout rechecked after run, without an edit override. This is distinct from the corrected older Core 2.5.0 desktop run.",
+      "receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-published-core-2.5.1-full.dcf5b40b89cd.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-published-core-2.5.1-full.log",
+        "sha256": "dcf5b40b89cd44292539f62645e81e73cbb02fa96b5731ac1f488a299ef0eeda",
+        "bytes": 3330041
+      }
+    },
+    "strict_suite": {
+      "status": "PASSED",
+      "coordinator_reported_exit": 0,
+      "XCTest": {
+        "tests": 12,
+        "failures": 0,
+        "reported_test_seconds": 6.078,
+        "outer_suite_elapsed_seconds": 6.08
+      },
+      "Swift_Testing": {
+        "tests": 13,
+        "suites": 1,
+        "issues": 0,
+        "seconds": 0.162
+      },
+      "Core_version": "2.5.1",
+      "Core_source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+      "lock_SHA256": "d9dd37f97458dc72edab88c5006f7dafd66facd846744570797615e01cb4f313",
+      "receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-published-core-2.5.1-strict.7f20e5713c34.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-published-core-2.5.1-strict.log",
+        "sha256": "7f20e5713c345f5deead5addf246ce3b5efcf4d0cabac882f6f294ac904b2259",
+        "bytes": 9081
+      }
+    },
+    "candidate_CI": "PENDING",
+    "SDK_version": "2.6.1 intended; not yet published",
+    "SDK_release_receipt": null,
+    "consumer_notices": "UNSENT",
+    "structured_provenance_receipt": "sdk-published-core-2.5.1-tests-verification.json",
+    "build_backend_scope": "Actual published Core2.5.1 pin, local native SwiftPM build backend. Hosted default-backend CI and publication still pending."
+  },
+  "scope_correction": "desktop-provenance-correction.json preserves that an earlier optional desktop run used Core 2.5.0. Its passes are not qualification of Core 2.5.1."
+}

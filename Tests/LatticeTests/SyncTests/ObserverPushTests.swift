@@ -1,4 +1,5 @@
 import Foundation
+import CxxStdlib
 import Testing
 import Vapor
 import NIOCore
@@ -143,6 +144,26 @@ private extension NSLock {
     return SyncChannel(id: "group-\(gid)", userId: uid)
 }
 
+/// Swift Testing's structural rendering of cxx_error hides std::string contents.
+/// Preserve the native open failure without retrying or changing admission order.
+private struct PushCoWriterOpenFailure: Error, CustomStringConvertible {
+    let nativeName: String
+    let nativeMessage: String
+    let elapsed: Duration
+    let requestedBusyTimeoutMs: Int
+    let fileExistedBeforeOpen: Bool
+    let fileExistsAfterFailure: Bool
+    let walExistsAfterFailure: Bool
+    let shmExistsAfterFailure: Bool
+
+    var description: String {
+        "PushHarness phase=coWriter.native-open nativeName=\(nativeName) nativeMessage=\(nativeMessage) " +
+        "elapsed=\(elapsed) requestedBusyTimeoutMs=\(requestedBusyTimeoutMs) " +
+        "fileExistedBeforeOpen=\(fileExistedBeforeOpen) fileExistsAfterFailure=\(fileExistsAfterFailure) " +
+        "walExistsAfterFailure=\(walExistsAfterFailure) shmExistsAfterFailure=\(shmExistsAfterFailure)"
+    }
+}
+
 /// One app, two mounts, one storage dir — the rooms topology in miniature.
 final class PushHarness: @unchecked Sendable {
     let app: Application
@@ -259,7 +280,22 @@ final class PushHarness: @unchecked Sendable {
     /// tee. Creates the storage dir when the relay hasn't yet.
     func coWriter(_ gid: String) throws -> Lattice {
         try FileManager.default.createDirectory(at: storageURL, withIntermediateDirectories: true)
-        return try Lattice(SimpleSyncObject.self, configuration: .init(fileURL: channelFile(gid)))
+        let file = channelFile(gid)
+        let configuration = Lattice.Configuration(fileURL: file)
+        let existedBeforeOpen = FileManager.default.fileExists(atPath: file.path)
+        let started = ContinuousClock.now
+        do {
+            return try Lattice(SimpleSyncObject.self, configuration: configuration)
+        } catch let error as lattice.cxx_error {
+            throw PushCoWriterOpenFailure(
+                nativeName: String(error.name), nativeMessage: String(error.msg),
+                elapsed: started.duration(to: ContinuousClock.now),
+                requestedBusyTimeoutMs: configuration.busyTimeoutMs,
+                fileExistedBeforeOpen: existedBeforeOpen,
+                fileExistsAfterFailure: FileManager.default.fileExists(atPath: file.path),
+                walExistsAfterFailure: FileManager.default.fileExists(atPath: file.path + "-wal"),
+                shmExistsAfterFailure: FileManager.default.fileExists(atPath: file.path + "-shm"))
+        }
     }
 
     func diagnosticResult(_ result: Bool, site: UInt = #line) -> Bool {

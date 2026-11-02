@@ -1,0 +1,44 @@
+{
+  "record_status": "Release required macOS job failed; SDK 2.6.0 remains unpublished",
+  "tag": "2.6.0",
+  "tag_source": "d0ca27e4c1b98501dec4215f11403f281962691a",
+  "tag_policy": "Immutable; do not retarget or replace it.",
+  "workflow": "https://github.com/jsflax/lattice/actions/runs/41383687634",
+  "required_failed_job": "https://github.com/jsflax/lattice/actions/runs/41383687634/job/125079754321",
+  "other_release_legs": "Still running at coordinator update; no successful publication inferred.",
+  "macOS_test_result": {
+    "XCTest": {
+      "tests": 12,
+      "failures": 0,
+      "seconds": 8.404
+    },
+    "Swift_Testing": {
+      "tests": 832,
+      "suites": 125,
+      "issues": 1,
+      "seconds": 92.388
+    },
+    "failing_test": "ObserverPushTests.pushAndCatchupComposeExactlyOnceAcrossRedial",
+    "failing_test_seconds": 28.418,
+    "recorded_error_type": "lattice::cxx_error",
+    "recorded_error_rendering": "Opaque imported C++ string fields; readable name/msg contents were not provided by the log.",
+    "exact_cause": "Unproven. Test-entry location does not identify the throwing operation."
+  },
+  "source_receipt": {
+    "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-2.6.0-release-macos.30578c634af0.log",
+    "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-2.6.0-release-macos.log",
+    "sha256": "30578c634af0770eebec62654ea3b3a3048f8d66e7474c6006ed85607c9b5035",
+    "bytes": 2980173
+  },
+  "followup": {
+    "branch": "codex/bg-release-followup-20261101",
+    "work": "Test-only open-error diagnostics and two additional binding-test isolation changes pass local full and strict runs. A native baseline/current probe reproduces the WAL bootstrap lock failure in both versions. The narrow bootstrap candidate passes all 800 probe opens and 23 focused native tests.",
+    "status": "Original opaque CI error attribution remains unproven. Core correction passed focused/probe, PR/main/release checks and candidate phone qualification; it is published/verified as Core 2.5.1. Actual SDK pin and full/strict suites passed; candidate CI and SDK 2.6.1 publication remain pending.",
+    "retagging": false,
+    "evidence": "fresh-open-investigation.json",
+    "candidate_device_evidence": "phone-candidate-success.json",
+    "publication_and_pin_evidence": "source-and-pin-verification.json"
+  },
+  "publication": "NOT PUBLISHED",
+  "consumer_notices": "UNSENT"
+}

@@ -1,0 +1,541 @@
+{
+  "record_status": "Candidate physical-device qualification: manual finite sync and debugger-triggered Apple BGAppRefreshTask success, independent settlement, and durable reopen",
+  "source_and_build": {
+    "Core_PR_source": "820f0ba022d23531f9b4525f623e514f3e4c50b0",
+    "Core_merged_source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+    "merge_tree_identical": true,
+    "tree_identity_evidence": "Coordinator comparison; PR and merge receipts below.",
+    "SDK_production_source": "edb48f3702675b55143a51fe30856590e28d8a54",
+    "Core_binding": "Physical run used a local candidate workspace alias; its identical merged source is now published and verified as Core 2.5.1. The test remains a candidate-build receipt, not a rebuilt published-pin SDK test.",
+    "iOS_host_build": "TEST BUILD SUCCEEDED",
+    "built_file_hashes": [
+      {
+        "name": "BackgroundSyncLab",
+        "sha256": "d1910a498d80b86d5ed3a51066867ef078b6e743e6cedb25fc28f7199ba980fb",
+        "bytes": 92352,
+        "matched_local_build_file_at_staging": true
+      },
+      {
+        "name": "BackgroundSyncLab.debug.dylib",
+        "sha256": "c5d761515acf557e474f14a504ce3578f660dd3c941889b1dc454be10cd955a7",
+        "bytes": 24009856,
+        "matched_local_build_file_at_staging": true
+      },
+      {
+        "name": "Info.plist",
+        "sha256": "d4b4bf0d720ccbc34da53e7efcf70c73d88324a136546545334883dbd6494ff7",
+        "bytes": 1484,
+        "matched_local_build_file_at_staging": true
+      }
+    ],
+    "build_log_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/build-wal-fix-managed.36233cf4ebeb.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/build-wal-fix-managed.log",
+      "sha256": "36233cf4ebebe810e84a7d4045f6eb795d60e7f7b0712fe2e330d2b930a0a5fb",
+      "bytes": 451003
+    },
+    "binary_manifest_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/wal-fix-binary-manifest.d6ef249f4d58.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/wal-fix-binary-manifest.json",
+      "sha256": "d6ef249f4d582c949612c663b25bf056f2affbbe66378922c68d6c5579c3e5a3",
+      "bytes": 924
+    }
+  },
+  "Core_PR_CI": {
+    "head_source": "820f0ba022d23531f9b4525f623e514f3e4c50b0",
+    "pull_request": "https://github.com/jsflax/LatticeCore/pull/79",
+    "status": "All four PR checks passed; merged. Subsequent exact-main and release workflows passed; Core 2.5.1 published and verified.",
+    "checks": [
+      {
+        "name": "capi-linux",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/jsflax/LatticeCore/actions/runs/41386525509/job/125088467309"
+      },
+      {
+        "name": "build-and-test",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/jsflax/LatticeCore/actions/runs/41386525490/job/125088467157"
+      },
+      {
+        "name": "build-and-test",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/jsflax/LatticeCore/actions/runs/41386525508/job/125088467411"
+      },
+      {
+        "name": "capi-macos",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/jsflax/LatticeCore/actions/runs/41386525509/job/125088467183"
+      }
+    ],
+    "merge_source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+    "merged_at": "2026-11-02T04:13:32Z",
+    "tree_identity": "Coordinator compared PR source and merged source trees: identical; diff empty.",
+    "receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/core-pr79-green.9ca84c7d392c.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-pr79-green.json",
+        "sha256": "9ca84c7d392c495f025348f10e192ebc5784e2c926c7b733944bed035faf9c58",
+        "bytes": 1208
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/core-pr79-merged.990b6150fae0.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-pr79-merged.json",
+        "sha256": "990b6150fae0e34c86777683782f77624c131f8d0e6b92c545300f993c6ab2d9",
+        "bytes": 174
+      }
+    ]
+  },
+  "manual_sync": {
+    "scope": "Fresh fixture in managed bundle manual mode; background identifier declared but unbound.",
+    "result": "completed",
+    "rows_inserted": 25,
+    "uploads_acknowledged": 25,
+    "pending_after_ack": 0,
+    "received_progress_rows": 2051,
+    "observed_elapsed_seconds": 1.738470416632481,
+    "elapsed_basis": "Host monotonic started-to-returned log difference; one observation, not a timing guarantee.",
+    "start_UTC": "2026-11-02T04:09:46Z",
+    "return_UTC": "2026-11-02T04:09:48Z",
+    "independent_checkpoint": {
+      "checkpointed": "0",
+      "code": "0",
+      "frames": "0",
+      "journalFinalizeCode": "0",
+      "journalMode": "wal",
+      "journalPrepareCode": "0",
+      "journalReadCode": "100",
+      "qualification": "wal-truncate-completed",
+      "qualified": "true"
+    },
+    "rows_before_and_after_callback_close_reopen": 2076,
+    "fixture_rows_preserved": 25,
+    "safe_events": [
+      {
+        "event": "manual-mode-unbound-registration",
+        "timestamp": "2026-11-02T04:08:51Z",
+        "fields": {
+          "reason": "managed host plist declaration"
+        }
+      },
+      {
+        "event": "open-returned",
+        "timestamp": "2026-11-02T04:08:52Z",
+        "fields": {
+          "mode": "manual",
+          "rows": "0"
+        }
+      },
+      {
+        "event": "scene-connected",
+        "timestamp": "2026-11-02T04:08:52Z",
+        "fields": {}
+      },
+      {
+        "event": "scene-foreground",
+        "timestamp": "2026-11-02T04:08:52Z",
+        "fields": {}
+      },
+      {
+        "event": "scene-active",
+        "timestamp": "2026-11-02T04:08:52Z",
+        "fields": {}
+      },
+      {
+        "event": "foreground-snapshot",
+        "timestamp": "2026-11-02T04:09:46Z",
+        "fields": {
+          "fixtureRows": "25",
+          "pending": "0",
+          "rows": "25"
+        }
+      },
+      {
+        "event": "write-returned",
+        "timestamp": "2026-11-02T04:09:46Z",
+        "fields": {
+          "inserted": "25"
+        }
+      },
+      {
+        "event": "manual-sync-started",
+        "timestamp": "2026-11-02T04:09:46Z",
+        "fields": {}
+      },
+      {
+        "event": "sync-progress",
+        "timestamp": "2026-11-02T04:09:46Z",
+        "fields": {
+          "acked": "0",
+          "pending": "0",
+          "received": "0",
+          "total": "0"
+        }
+      },
+      {
+        "event": "sync-state",
+        "timestamp": "2026-11-02T04:09:46Z",
+        "fields": {
+          "connected": "true"
+        }
+      },
+      {
+        "event": "sync-progress",
+        "timestamp": "2026-11-02T04:09:46Z",
+        "fields": {
+          "acked": "0",
+          "pending": "25",
+          "received": "0",
+          "total": "25"
+        }
+      },
+      {
+        "event": "sync-progress",
+        "timestamp": "2026-11-02T04:09:47Z",
+        "fields": {
+          "acked": "25",
+          "pending": "0",
+          "received": "0",
+          "total": "25"
+        }
+      },
+      {
+        "event": "sync-progress",
+        "timestamp": "2026-11-02T04:09:47Z",
+        "fields": {
+          "acked": "25",
+          "pending": "0",
+          "received": "1000",
+          "total": "25"
+        }
+      },
+      {
+        "event": "sync-progress",
+        "timestamp": "2026-11-02T04:09:48Z",
+        "fields": {
+          "acked": "25",
+          "pending": "0",
+          "received": "2000",
+          "total": "25"
+        }
+      },
+      {
+        "event": "sync-progress",
+        "timestamp": "2026-11-02T04:09:48Z",
+        "fields": {
+          "acked": "25",
+          "pending": "0",
+          "received": "2051",
+          "total": "25"
+        }
+      },
+      {
+        "event": "manual-sync-returned",
+        "timestamp": "2026-11-02T04:09:48Z",
+        "fields": {
+          "result": "completed"
+        }
+      },
+      {
+        "event": "independent-checkpoint",
+        "timestamp": "2026-11-02T04:10:46Z",
+        "fields": {
+          "checkpointed": "0",
+          "code": "0",
+          "frames": "0",
+          "journalFinalizeCode": "0",
+          "journalMode": "wal",
+          "journalPrepareCode": "0",
+          "journalReadCode": "100",
+          "qualification": "wal-truncate-completed",
+          "qualified": "true"
+        }
+      },
+      {
+        "event": "foreground-snapshot",
+        "timestamp": "2026-11-02T04:10:46Z",
+        "fields": {
+          "fixtureRows": "25",
+          "pending": "0",
+          "rows": "2076"
+        }
+      },
+      {
+        "event": "close-returned",
+        "timestamp": "2026-11-02T04:10:46Z",
+        "fields": {}
+      },
+      {
+        "event": "open-returned",
+        "timestamp": "2026-11-02T04:10:46Z",
+        "fields": {
+          "mode": "manual",
+          "rows": "2076"
+        }
+      },
+      {
+        "event": "foreground-snapshot",
+        "timestamp": "2026-11-02T04:10:46Z",
+        "fields": {
+          "fixtureRows": "25",
+          "pending": "0",
+          "rows": "2076"
+        }
+      },
+      {
+        "event": "progress-stream-ended",
+        "timestamp": "2026-11-02T04:10:46Z",
+        "fields": {}
+      },
+      {
+        "event": "sync-progress",
+        "timestamp": "2026-11-02T04:10:46Z",
+        "fields": {
+          "acked": "0",
+          "pending": "0",
+          "received": "0",
+          "total": "0"
+        }
+      }
+    ]
+  },
+  "debugger_triggered_BGAppRefreshTask": {
+    "trigger": "Apple debugger simulation; host was in actual background state. This was not naturally scheduled delivery.",
+    "actual_scene_background_UTC": "2026-11-02T04:12:19Z",
+    "debugger_observed_application_state_during_delivery": 2,
+    "completion": {
+      "selector": "BGAppRefreshTask.setTaskCompletedWithSuccess:",
+      "success": true,
+      "argument_evidence": "ARM64 x2 = 0x0000000000000001 at the actual completion selector.",
+      "SDK_stack_evidence": [
+        "AppleBackgroundTaskDelivery.complete(success=true), BackgroundTaskScheduler.swift:615",
+        "BackgroundTaskSession.finish(success=true), BackgroundTaskScheduler.swift:398"
+      ],
+      "breakpoint_total_hits_after_foreground_reopen": 1,
+      "completion_observation_scope": "One observed selector hit for this delivered task; separate from a general exactly-once guarantee."
+    },
+    "independent_checkpoint": {
+      "timestamp": "2026-11-02T04:12:51Z",
+      "fields": {
+        "checkpointed": "0",
+        "code": "0",
+        "frames": "0",
+        "journalFinalizeCode": "0",
+        "journalMode": "wal",
+        "journalPrepareCode": "0",
+        "journalReadCode": "100",
+        "qualification": "wal-truncate-completed",
+        "qualified": "true"
+      },
+      "occurred_after_completion_before_foreground_restore": true,
+      "basis": "Completion/continuation/checkpoint order in frozen debugger transcript, plus checkpoint timestamp before scene-foreground in host log."
+    },
+    "debug_host_extra_UIKit_assertion": {
+      "present": true,
+      "identifier": 3,
+      "explicitly_ended": true,
+      "scope": "Additional host-only runtime allowance used for debugger setup; not production SDK behavior or natural scheduling evidence."
+    },
+    "foreground_restore_UTC": "2026-11-02T04:13:09Z",
+    "foreground_application_state_observed": 0,
+    "foreground_active_and_connected_callbacks": true,
+    "rows_before_and_after_callback_close_reopen": 2076,
+    "fixture_rows_preserved": 25,
+    "safe_events": [
+      {
+        "event": "open-returned",
+        "timestamp": "2026-11-02T04:11:52Z",
+        "fields": {
+          "mode": "eager",
+          "rows": "2051"
+        }
+      },
+      {
+        "event": "scene-connected",
+        "timestamp": "2026-11-02T04:11:52Z",
+        "fields": {}
+      },
+      {
+        "event": "scene-foreground",
+        "timestamp": "2026-11-02T04:11:52Z",
+        "fields": {}
+      },
+      {
+        "event": "scene-active",
+        "timestamp": "2026-11-02T04:11:52Z",
+        "fields": {}
+      },
+      {
+        "event": "sync-state",
+        "timestamp": "2026-11-02T04:11:52Z",
+        "fields": {
+          "connected": "true"
+        }
+      },
+      {
+        "event": "sync-progress",
+        "timestamp": "2026-11-02T04:11:52Z",
+        "fields": {
+          "acked": "0",
+          "pending": "0",
+          "received": "25",
+          "total": "0"
+        }
+      },
+      {
+        "event": "scene-inactive",
+        "timestamp": "2026-11-02T04:12:19Z",
+        "fields": {}
+      },
+      {
+        "event": "scene-background",
+        "timestamp": "2026-11-02T04:12:19Z",
+        "fields": {}
+      },
+      {
+        "event": "sync-state",
+        "timestamp": "2026-11-02T04:12:41Z",
+        "fields": {
+          "connected": "true"
+        }
+      },
+      {
+        "event": "independent-checkpoint",
+        "timestamp": "2026-11-02T04:12:51Z",
+        "fields": {
+          "checkpointed": "0",
+          "code": "0",
+          "frames": "0",
+          "journalFinalizeCode": "0",
+          "journalMode": "wal",
+          "journalPrepareCode": "0",
+          "journalReadCode": "100",
+          "qualification": "wal-truncate-completed",
+          "qualified": "true"
+        }
+      },
+      {
+        "event": "scene-foreground",
+        "timestamp": "2026-11-02T04:13:09Z",
+        "fields": {}
+      },
+      {
+        "event": "scene-active",
+        "timestamp": "2026-11-02T04:13:09Z",
+        "fields": {}
+      },
+      {
+        "event": "sync-state",
+        "timestamp": "2026-11-02T04:13:09Z",
+        "fields": {
+          "connected": "true"
+        }
+      },
+      {
+        "event": "foreground-snapshot",
+        "timestamp": "2026-11-02T04:13:46Z",
+        "fields": {
+          "fixtureRows": "25",
+          "pending": "0",
+          "rows": "2076"
+        }
+      },
+      {
+        "event": "close-returned",
+        "timestamp": "2026-11-02T04:13:46Z",
+        "fields": {}
+      },
+      {
+        "event": "open-returned",
+        "timestamp": "2026-11-02T04:13:46Z",
+        "fields": {
+          "mode": "eager",
+          "rows": "2076"
+        }
+      },
+      {
+        "event": "foreground-snapshot",
+        "timestamp": "2026-11-02T04:13:46Z",
+        "fields": {
+          "fixtureRows": "25",
+          "pending": "0",
+          "rows": "2076"
+        }
+      },
+      {
+        "event": "progress-stream-ended",
+        "timestamp": "2026-11-02T04:13:46Z",
+        "fields": {}
+      },
+      {
+        "event": "sync-state",
+        "timestamp": "2026-11-02T04:13:46Z",
+        "fields": {
+          "connected": "true"
+        }
+      }
+    ]
+  },
+  "postrun_state": "Coordinator reports all debuggers closed; managed eager host active after restore.",
+  "limits": [
+    "Natural OS task scheduling remains unqualified.",
+    "True OS cold launch, locked-phone protected-data behavior, expiration during an active transfer, and foreground takeover during active work remain unqualified.",
+    "The candidate manual run uses the managed plist with an unbound declared identifier; it does not add successful network qualification for the separate no-background-plist binary.",
+    "Successful debug completion and settlement are observed; this run is not a transfer-throughput benchmark or a claim that new payloads arrived during the BGTask.",
+    "Published Core 2.5.1, actual SDK resolution, and full/strict SDK tests are now verified; candidate CI, SDK publication, artifacts, and consumer notices remain pending."
+  ],
+  "private_raw_receipts": [
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/wal-fix-binary-manifest.d6ef249f4d58.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/wal-fix-binary-manifest.json",
+      "sha256": "d6ef249f4d582c949612c663b25bf056f2affbbe66378922c68d6c5579c3e5a3",
+      "bytes": 924
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/wal-fix-manual-start.b6f0c2d36360.jsonl",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/wal-fix-manual-start.jsonl",
+      "sha256": "b6f0c2d363600e4bfb8934359609b7842165120a4f6ba5ba81cd0fe67e398f98",
+      "bytes": 30286
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/wal-fix-manual-result.e3fa79dff71f.jsonl",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/wal-fix-manual-result.jsonl",
+      "sha256": "e3fa79dff71fab1d281b7ea5158d8a3c77ad5f2f0f879b181dab024fce54939b",
+      "bytes": 32363
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/wal-fix-manual-complete-reopen.50a402baaab3.jsonl",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/wal-fix-manual-complete-reopen.jsonl",
+      "sha256": "50a402baaab36037ce1a8a1cdeb1b860739396c1197d65750ce995aaf22e319e",
+      "bytes": 33804
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/lldb-wal-fix-manual-completed-reopen.87c3af3d79f7.txt",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lldb-wal-fix-manual-completed-reopen.txt",
+      "sha256": "87c3af3d79f7a39c56c1b240d30a0cf444100f618f2b02df578550c2d84530ba",
+      "bytes": 1046
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/wal-fix-bg-completed-checkpoint.e9017afce026.jsonl",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/wal-fix-bg-completed-checkpoint.jsonl",
+      "sha256": "e9017afce026036653847813cdb0efe96514cfa548a25c146d1d43abbfc47e7d",
+      "bytes": 36047
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/wal-fix-bg-completed-reopen.ec6aa84793f8.jsonl",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/wal-fix-bg-completed-reopen.jsonl",
+      "sha256": "ec6aa84793f8439523fa465f723c7ba16f22e92fedadd0cff5c92f5860049ea8",
+      "bytes": 37561
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/ios-host/device-receipts/lldb-wal-fix-bg-completed-reopen.cea58d3be40b.txt",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lldb-wal-fix-bg-completed-reopen.txt",
+      "sha256": "cea58d3be40bd382d8f8ab8254a28ca21520cf159b9b2b12bf8c4a0be09a9f76",
+      "bytes": 5983
+    }
+  ],
+  "subsequent_publication_evidence": "source-and-pin-verification.json"
+}
