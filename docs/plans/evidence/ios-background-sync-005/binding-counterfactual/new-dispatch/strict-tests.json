@@ -1,0 +1,8 @@
+{
+  "command": [
+    "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/binding-tests"
+  ],
+  "exit": 0,
+  "seconds": 0.26369995903223753,
+  "LIBDISPATCH_COOPERATIVE_POOL_STRICT": "1"
+}

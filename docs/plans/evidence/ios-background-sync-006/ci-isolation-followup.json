@@ -1,0 +1,177 @@
+{
+  "checkpoint_date": "2026-11-01",
+  "SDK_version": "2.6.0 NOT YET PUBLISHED",
+  "Core_version": "2.5.0 published and verified",
+  "PR": "https://github.com/jsflax/lattice/pull/38",
+  "failed_commit": "edb48f3702675b55143a51fe30856590e28d8a54",
+  "failed_CI_run": "https://github.com/jsflax/lattice/actions/runs/41377435800",
+  "iOS_build": "passed",
+  "full_test_legs": [
+    {
+      "platform": "stable Linux",
+      "Swift_Testing_tests": 818,
+      "suites": 123,
+      "elapsed_seconds": 101.962,
+      "reported_issues": 1,
+      "sanitized_failure_lines": [
+        "2026-11-02T02:34:22.8509566Z \u2718 Test invalidationCancelsBeforeAQueuedActorHopCanStartNativeWork() recorded an issue at BackgroundSyncBindingTests.swift:323:13: Expectation failed: didEnter",
+        "2026-11-02T02:34:30.0381951Z \u2718 Test invalidationCancelsBeforeAQueuedActorHopCanStartNativeWork() failed after 22.514 seconds with 1 issue."
+      ],
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint006-receipts/sdk-pr38-dispatch-linux-stable-ci.ae6a652b0419.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr38-dispatch-linux-stable-ci.log",
+        "sha256": "ae6a652b04199089b297dd2590a7eefe50a8e8de17f30d923f05335ce14c6e97",
+        "bytes": 2667324
+      },
+      "source_NUL_bytes": 0
+    },
+    {
+      "platform": "nightly",
+      "Swift_Testing_tests": 811,
+      "suites": 120,
+      "elapsed_seconds": 102.272,
+      "reported_issues": 1,
+      "sanitized_failure_lines": [
+        "2026-11-02T02:36:25.4838117Z \u2718 Test invalidationCancelsBeforeAQueuedActorHopCanStartNativeWork() recorded an issue at BackgroundSyncBindingTests.swift:323:13: Expectation failed: didEnter",
+        "2026-11-02T02:36:26.6520765Z \u2718 Test invalidationCancelsBeforeAQueuedActorHopCanStartNativeWork() failed after 21.890 seconds with 1 issue."
+      ],
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint006-receipts/sdk-pr38-dispatch-nightly-ci.e2411e4d0b45.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr38-dispatch-nightly-ci.log",
+        "sha256": "e2411e4d0b454e84c5f254dbde1b7d6cfdc4e2ec64358dc0ae3eafc0a294305c",
+        "bytes": 1310568
+      },
+      "source_NUL_bytes": 1
+    },
+    {
+      "platform": "macOS",
+      "Swift_Testing_tests": 840,
+      "suites": 126,
+      "elapsed_seconds": 99.717,
+      "reported_issues": 1,
+      "sanitized_failure_lines": [
+        "2026-11-02T02:35:58.8949130Z \u2718 Test emptyStoreCompletesAndSettlesItsPrivateSession() recorded an issue at FiniteSyncIntegrationTests.swift:206:13: Expectation failed: try await client.syncOnce(maximumDuration: 10) == .completed",
+        "2026-11-02T02:35:58.9251320Z \u2718 Test emptyStoreCompletesAndSettlesItsPrivateSession() failed after 35.553 seconds with 1 issue."
+      ],
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint006-receipts/sdk-pr38-dispatch-macos-ci.41dcac187465.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr38-dispatch-macos-ci.log",
+        "sha256": "41dcac187465451983ddf098a0d7da2a04d7d0e2d63c8af6361f16fb5e7864d9",
+        "bytes": 2929220
+      },
+      "source_NUL_bytes": 0
+    }
+  ],
+  "observations": {
+    "Linux_and_nightly": "invalidationCancelsBeforeAQueuedActorHopCanStartNativeWork failed its didEnter fixture-entry assertion.",
+    "macOS": "emptyStoreCompletesAndSettlesItsPrivateSession observed a result unequal to completed for syncOnce(maximumDuration: 10).",
+    "macOS_actual_enum_value_logged": false,
+    "macOS_cause": "Unproven from this log; do not infer budgetExhausted, a relay regression, or a production fault from the assertion alone."
+  },
+  "followup": {
+    "production_changes_after_failed_commit": false,
+    "third_binding_case": "Moved into serial XCTest while preserving its two-second entry deadline.",
+    "finite_conformance_cases": "All seven finite conformance cases moved into default serial XCTest with the same actor, shipping-relay harness, budgets, and per-test limits.",
+    "validation": "Complete local suite and actual-SDK strict run pass. Fresh exact-commit CI remains required; prior CI failure cause is not retroactively proven.",
+    "test_exclusions": false,
+    "budget_or_timeout_increases": false
+  },
+  "history": "Checkpoint 005 retains the earlier complete-local-suite pass and strict counterfactual unchanged. This later CI failure supersedes its pending-CI state for current release readiness.",
+  "privacy": "CI log copies are frozen locally. The nightly source includes one NUL byte; raw hashing preserves it, while displayed excerpts omit NUL characters.",
+  "source_validation": {
+    "production_manifest_lock_diff": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint006-receipts/sdk-isolated-production-diff.ee4afd8132c7.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-isolated-production-diff.json",
+      "sha256": "ee4afd8132c7f36d21e9f0eb9625cc4dedaf1ee12ae04c4d3d36ba190320cf3e",
+      "bytes": 374
+    },
+    "test_and_workflow_sources": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint006-receipts/sdk-source/Tests/LatticeTests/BackgroundSyncBindingTests.26496f49ac59.swift",
+        "original_path": "/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/Tests/LatticeTests/BackgroundSyncBindingTests.swift",
+        "sha256": "26496f49ac5962e0fa8947dd1e6d1fd0232f8869da767017964cd598a1ceec55",
+        "bytes": 22186
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint006-receipts/sdk-source/Tests/LatticeTests/SyncTests/FiniteSyncIntegrationTests.f7a533e64df9.swift",
+        "original_path": "/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/Tests/LatticeTests/SyncTests/FiniteSyncIntegrationTests.swift",
+        "sha256": "f7a533e64df9393b57ff6f4ab480c5d9e1f9b7f6a111c0fd84fa734d0e4be123",
+        "bytes": 22888
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint006-receipts/sdk-source/.github/workflows/ci.c5391b3f114a.yml",
+        "original_path": "/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/.github/workflows/ci.yml",
+        "sha256": "c5391b3f114aab8f5f2a413e349703704c23d4460cd80970d950d13f4f818fc5",
+        "bytes": 15302
+      }
+    ],
+    "actionlint": "Passed for the expanded strict filter, per coordinator; no build run by documentation agent."
+  },
+  "final_complete_local_run": {
+    "exit_code": 0,
+    "exit_code_source": "Coordinator process receipt",
+    "build_seconds": 39.37,
+    "XCTest": {
+      "tests": 12,
+      "failures": 0,
+      "total_seconds": 6.308,
+      "binding_ordering_tests": 3,
+      "binding_ordering_seconds": 0.002,
+      "finite_tests": 7,
+      "finite_seconds": 6.305,
+      "existing_child_entry_tests": 2
+    },
+    "Swift_Testing": {
+      "tests": 832,
+      "suites": 125,
+      "seconds": 75.473,
+      "issues": 0
+    },
+    "per_case_finite_seconds": {
+      "testCancellationDuringRelaySetupSettlesAndSameHandleCanSyncAgain": 0.577,
+      "testCompletedUploadsHaveDurableRelayRowsAndNoPendingAuditWork": 0.355,
+      "testCompletionWaitsForEveryInitialReplayPage": 0.915,
+      "testEmptyStoreCompletesAndSettlesItsPrivateSession": 0.171,
+      "testOlderServerWithoutMarkerReturnsBudgetExhaustedAfterDurableProgress": 3.141,
+      "testOrdinaryManualCycleLeavesResultsAbleToPinNewReadGenerations": 0.459,
+      "testPreOwnershipProgressSubscriberSurvivesFiniteCyclesAndForegroundConnect": 0.687
+    },
+    "timing_limit": "Individual local observations, not benchmark guarantees.",
+    "no_test_exclusions": true,
+    "source_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint006-receipts/sdk-isolated-full-native-tests.34c72f21e75e.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-isolated-full-native-tests.log",
+      "sha256": "34c72f21e75e395f48ab6ebd0b46d93f99b92403c6f89ff71de53bf5149e9314",
+      "bytes": 837083
+    }
+  },
+  "final_actual_SDK_strict_run": {
+    "exit_code": 0,
+    "exit_code_source": "Coordinator process receipt",
+    "environment": "LIBDISPATCH_COOPERATIVE_POOL_STRICT=1",
+    "filter": "BackgroundSyncBindingTests|FiniteSyncIntegrationTests",
+    "XCTest": {
+      "tests": 10,
+      "failures": 0,
+      "total_seconds": 5.963,
+      "binding_ordering_tests": 3,
+      "binding_ordering_seconds": 0.002,
+      "finite_tests": 7,
+      "finite_seconds": 5.961
+    },
+    "Swift_Testing": {
+      "tests": 15,
+      "suites": 1,
+      "seconds": 0.157,
+      "issues": 0
+    },
+    "source_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint006-receipts/sdk-isolated-strict-native-tests.3a8ab83dbf68.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-isolated-strict-native-tests.log",
+      "sha256": "3a8ab83dbf68ca952c820a6cbce87243fde1991f22722da30a4ba704469c8dc6",
+      "bytes": 8865
+    },
+    "role": "Supplemental strict run after the unchanged full invocation; all 25 selected cases pass."
+  },
+  "release_gate": "Local full and strict runs pass. SDK 2.6.0 remains unreleased; fresh exact-commit CI and publication verification are still required."
+}

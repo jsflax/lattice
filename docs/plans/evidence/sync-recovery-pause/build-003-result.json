@@ -1,0 +1,69 @@
+{
+  "scope": "Full affected-object correctness build and exact inventory only; no runtime/performance/release acceptance.",
+  "plan": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/PLAN.json",
+    "bytes": 15553156,
+    "sha256": "7c126d7426a5403da4393729c717a7ae55ba1e983a3f643ba8ecef5c9239303f",
+    "mode": "0o444"
+  },
+  "stages": [
+    {
+      "stage": "COMPILE",
+      "command": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/compile.py",
+        "7c126d7426a5403da4393729c717a7ae55ba1e983a3f643ba8ecef5c9239303f"
+      ],
+      "cwd": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/execution-001",
+      "capSeconds": 5400,
+      "signals": [
+        15
+      ],
+      "signalErrors": [],
+      "stopReason": "KeyboardInterrupt()",
+      "globalDescendantEndingNotClaimed": true,
+      "minimumFreeBytes": 135175282688,
+      "pid": 53663,
+      "pgid": 53663,
+      "exitCode": -15,
+      "leaderReaped": true,
+      "processGroupAbsent": null,
+      "groupQueryError": {
+        "errno": 1,
+        "message": "[Errno 1] Operation not permitted"
+      },
+      "elapsedSeconds": 1948.7785598339979,
+      "knownEnding": false
+    }
+  ],
+  "errors": [
+    {
+      "stage": "COMPILE",
+      "error": "RuntimeError('COMPILE failed; see retained stage ending/logs')"
+    },
+    {
+      "failure": "AssertionError('unknown process group ending')"
+    }
+  ],
+  "allIssuedEndingsKnown": false,
+  "sourceAndDonorsUnchanged": false,
+  "ownerStartMonotonic": 72815.811457125,
+  "ownerDeadlineMonotonic": 80015.811457125,
+  "buildAccepted": false,
+  "runtimeAccepted": false,
+  "performanceAccepted": false,
+  "releaseAccepted": false,
+  "successfulPartialObjects": [],
+  "preflight": {
+    "load": [
+      554.97607421875,
+      376.5537109375,
+      310.84716796875
+    ],
+    "cpus": 16,
+    "availableBytes": 135182696448,
+    "loadIsRecordedNotAdmissionGate": true
+  },
+  "ownerEndMonotonic": 74929.151551416,
+  "ownerBudgetSatisfied": true
+}

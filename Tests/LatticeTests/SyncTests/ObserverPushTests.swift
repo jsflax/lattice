@@ -52,6 +52,7 @@ private final class PushHarnessDiagnostics: @unchecked Sendable {
 final class PushFrameCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var binaryKinds: [String] = []
+    private var auditEntryCounts: [Int] = []
     private var entryGlobalIds: [String] = []
     private var arrival: [String: DispatchTime] = [:]
     private var texts: [String] = []
@@ -82,6 +83,7 @@ final class PushFrameCollector: @unchecked Sendable {
             self.recordedFirstBinary = true
             self.binaryKinds.append(kind)
             if kind == "auditLog", let entries = root?["auditLog"] as? [[String: Any]] {
+                self.auditEntryCounts.append(entries.count)
                 for entry in entries {
                     if let gid = entry["globalId"] as? String {
                         self.entryGlobalIds.append(gid.lowercased())
@@ -103,6 +105,7 @@ final class PushFrameCollector: @unchecked Sendable {
     }
 
     var kinds: [String] { lock.withLock { binaryKinds } }
+    var auditFrameEntryCounts: [Int] { lock.withLock { auditEntryCounts } }
     /// Every auditLog entry received, in arrival order, as lowercase
     /// globalId strings — the ordering/exactly-once assertion surface.
     var receivedGlobalIds: [String] { lock.withLock { entryGlobalIds } }
@@ -303,6 +306,16 @@ func withPushHarness(
 /// relay's test-only catch-up fault hook.
 private enum InjectedCatchUpFault: Error { case injected }
 
+/// Counts the relay's actual post-catch-up activation events, so tests of
+/// absent optional frames can wait for a causal boundary rather than sleep.
+private final class CatchUpActivationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func increment() { lock.withLock { count += 1 } }
+    var value: Int { lock.withLock { count } }
+}
+
 /// Wire-true upload frame (what a syncing client sends on a writer socket).
 private func makePushFrame(entries: [AuditLog]) throws -> [UInt8] {
     Array(try JSONEncoder().encode(ServerSentEvent.auditLog(entries)))
@@ -319,6 +332,80 @@ final class ObserverPushTests: BaseTest {
 
     private func gids(_ entries: [AuditLog]) -> [String] {
         entries.compactMap { $0.globalId?.uuidString.lowercased() }
+    }
+
+    // MARK: negotiated initial catch-up completion
+
+    @Test func emptyCatchUpMarkerRequiresExplicitNegotiation() async throws {
+        let activations = CatchUpActivationCounter()
+        let pipeline = ObserverSendBoundaryProbe.Pipeline { event, _ in
+            if event.stage == .activated { activations.increment() }
+            return nil
+        }
+        let probe = ObserverSendBoundaryProbe(channelID: "group-gcompletion-empty", pipeline: pipeline) {
+            _, _, _ in
+        }
+        let push = SyncObserverPush(
+            copying: SyncObserverPush(reconcileInterval: nil), sendBoundaryProbe: probe)
+
+        try await withPushHarness(push: push) { harness in
+            let co = try harness.coWriter("gcompletion-empty")
+            let negotiated = try await harness.connect(
+                pathSuffix: "watch/group/gcompletion-empty?lattice-catch-up-complete=1", user: UUID())
+            let legacy = try await harness.connect(
+                pathSuffix: "watch/group/gcompletion-empty", user: UUID())
+            let optedOut = try await harness.connect(
+                pathSuffix: "watch/group/gcompletion-empty?lattice-catch-up-complete=0", user: UUID())
+
+            try #require(await negotiated.wait {
+                $0.count(of: "catchUpComplete") == 1 && activations.value == 3
+            })
+            #expect(negotiated.kinds == ["catchUpComplete"])
+            #expect(negotiated.receivedGlobalIds.isEmpty)
+
+            // Every connection has finished its initial pass. Receipt of this
+            // subsequent live row proves that any initial marker would already
+            // have arrived on that same ordered socket, including legacy peers.
+            try co.add(SimpleSyncObject(value: 1, floatValue: 1))
+            let expected = gids(Array(co.eventsAfter(globalId: nil)))
+            try #require(expected.count == 1)
+            for client in [negotiated, legacy, optedOut] {
+                try #require(await client.wait { $0.receivedGlobalIds.count >= 1 })
+                #expect(client.receivedGlobalIds == expected)
+            }
+            #expect(negotiated.kinds == ["catchUpComplete", "auditLog"])
+            #expect(legacy.kinds == ["auditLog"])
+            #expect(optedOut.kinds == ["auditLog"])
+        }
+    }
+
+    @Test func catchUpMarkerFollowsAllPagesAndPrecedesLivePush() async throws {
+        try await withPushHarness { harness in
+            let co = try harness.coWriter("gcompletion-pages")
+            try co.transaction {
+                for i in 0..<2001 {
+                    try co.add(SimpleSyncObject(value: i, floatValue: Float(i)))
+                }
+            }
+            let initial = gids(Array(co.eventsAfter(globalId: nil)))
+            try #require(initial.count == 2001)
+            let watcher = try await harness.connect(
+                pathSuffix: "watch/group/gcompletion-pages?lattice-catch-up-complete=1", user: UUID())
+
+            try #require(await watcher.wait(timeout: 30) { $0.count(of: "catchUpComplete") == 1 })
+            #expect(watcher.kinds == ["auditLog", "auditLog", "auditLog", "catchUpComplete"])
+            #expect(watcher.auditFrameEntryCounts == [1000, 1000, 1])
+            #expect(watcher.receivedGlobalIds == initial)
+
+            try co.add(SimpleSyncObject(value: 2001, floatValue: 2001))
+            let complete = gids(Array(co.eventsAfter(globalId: nil)))
+            try #require(complete.count == 2002)
+            try #require(await watcher.wait(timeout: 30) { $0.receivedGlobalIds.count >= 2002 })
+            #expect(watcher.kinds == ["auditLog", "auditLog", "auditLog", "catchUpComplete", "auditLog"])
+            #expect(watcher.auditFrameEntryCounts == [1000, 1000, 1, 1])
+            #expect(watcher.receivedGlobalIds == complete)
+            #expect(Set(watcher.receivedGlobalIds).count == 2002)
+        }
     }
 
     // MARK: (a) writer-socket frame → watch socket, live, no redial
@@ -838,9 +925,12 @@ final class ObserverPushTests: BaseTest {
             // unsubscribes BEFORE closing, so observing the close means the
             // release already happened) — and the client can redial, which
             // it never could while the socket stayed open.
-            let doomed = try await harness.connect(pathSuffix: "watch/group/gfail", user: UUID())
+            let doomed = try await harness.connect(
+                pathSuffix: "watch/group/gfail?lattice-catch-up-complete=1", user: UUID())
             #expect(await doomed.wait { $0.isClosed })
             #expect(doomed.receivedGlobalIds.isEmpty)
+            #expect(doomed.count(of: "catchUpComplete") == 0,
+                    "a failed initial pass cannot certify catch-up completion")
             #expect(harness.diagnosticResult(await pollSubscriberCount(manager, file: file, equals: 1)))
 
             // The decisive one: with the failed connection's subscription

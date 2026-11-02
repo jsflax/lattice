@@ -1,0 +1,465 @@
+{
+  "checkpoint_date": "2026-11-01",
+  "derivation": "Selected fields from build logs, devicectl JSON, exported app logs, debugger transcripts, and xcresulttool summaries. Raw files are frozen by content hash in the local checkpoint004-receipts directory; raw device metadata is not copied into this repository.",
+  "host": "Private disposable BackgroundSyncLab; physical iPhone 13 Pro, iOS 26.0.1",
+  "builds": [
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/build-eager-1.f1d8d23a9479.log",
+        "sha256": "f1d8d23a9479a491ed771f63701c8feb6f7c925598ce1360c49a3261188d2968",
+        "bytes": 913024,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/build-eager-1.log"
+      },
+      "result_markers": [
+        {
+          "line": 5633,
+          "text": "** TEST BUILD FAILED **"
+        }
+      ],
+      "ios15_arm64_target_mentions": 58
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/build-eager-16_4.fd44debc87d0.log",
+        "sha256": "fd44debc87d0af8eb94774fe556d30099f8106c244f5bcc172d282886826bb61",
+        "bytes": 925166,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/build-eager-16_4.log"
+      },
+      "result_markers": [
+        {
+          "line": 5546,
+          "text": "** TEST BUILD SUCCEEDED **"
+        }
+      ],
+      "ios15_arm64_target_mentions": 0
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/build-eager-ios15-fixed.85118f81e0a0.log",
+        "sha256": "85118f81e0a030d0a5525a71685a628f6dc576b8c6448012adee2f33a91e0d48",
+        "bytes": 925739,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/build-eager-ios15-fixed.log"
+      },
+      "result_markers": [
+        {
+          "line": 5701,
+          "text": "** TEST BUILD SUCCEEDED **"
+        }
+      ],
+      "ios15_arm64_target_mentions": 70
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/build-eager-debugbridge.b87ff87dba59.log",
+        "sha256": "b87ff87dba59d8651c615a63416a4f330bf8b5c4df9658fa76f5257110125c11",
+        "bytes": 277312,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/build-eager-debugbridge.log"
+      },
+      "result_markers": [
+        {
+          "line": 2499,
+          "text": "** TEST BUILD SUCCEEDED **"
+        }
+      ],
+      "ios15_arm64_target_mentions": 14
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/build-manual-ios15.440400f8c648.log",
+        "sha256": "440400f8c648dda32a26273fff00a36a822933abcc52c053f6aec01d6049c8e8",
+        "bytes": 919856,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/build-manual-ios15.log"
+      },
+      "result_markers": [
+        {
+          "line": 4217,
+          "text": "** TEST BUILD SUCCEEDED **"
+        }
+      ],
+      "ios15_arm64_target_mentions": 70,
+      "scope": "Manual host build only; runtime test not claimed"
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/build-eager-walprobe.bb1fd92a948e.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/build-eager-walprobe.log",
+        "sha256": "bb1fd92a948eb833257151eac3e9704a64947a0581c1dd2a74558eafbc228d8a",
+        "bytes": 224855
+      },
+      "result_markers": [
+        {
+          "line": 428,
+          "text": "** TEST BUILD SUCCEEDED **"
+        }
+      ],
+      "ios15_arm64_target_mentions": 35,
+      "scope": "Signed host build with corrected WAL checkpoint probe"
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/build-manual-walprobe.0e744ec06d4e.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/build-manual-walprobe.log",
+        "sha256": "0e744ec06d4e16f33cb68a32b5cf74ae5bce41e5c57b9564f158e38b9ef25d84",
+        "bytes": 402781
+      },
+      "result_markers": [
+        {
+          "line": 1138,
+          "text": "** TEST BUILD SUCCEEDED **"
+        }
+      ],
+      "ios15_arm64_target_mentions": 35,
+      "scope": "Signed host build with corrected WAL checkpoint probe"
+    }
+  ],
+  "install_and_launch": [
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-ios15-install.f4f529249647.json",
+        "sha256": "f4f52924964730366d78c8cd7c2e006053f378993c38b801584040b83d1612e4",
+        "bytes": 1134,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-ios15-install.json"
+      },
+      "command_type": "devicectl.device.install.app",
+      "outcome": "success",
+      "bundle_identifier": "io.jsflax.lattice.backgroundlab.20261101"
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-ios15-direct-launch.e918c52fea3b.json",
+        "sha256": "e918c52fea3bf87da9a27ea17b1500ace51c36a33be9e4a0b2d06f52df2dd3da",
+        "bytes": 1666,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-ios15-direct-launch.json"
+      },
+      "command_type": "devicectl.device.process.launch",
+      "outcome": "success",
+      "bundle_identifier": "io.jsflax.lattice.backgroundlab.20261101"
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-debugbridge-install.e68ed9ea3c09.json",
+        "sha256": "e68ed9ea3c09c8c75240e7b439a1258055255906e580d247d099ca84c3d3619b",
+        "bytes": 1140,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-debugbridge-install.json"
+      },
+      "command_type": "devicectl.device.install.app",
+      "outcome": "success",
+      "bundle_identifier": "io.jsflax.lattice.backgroundlab.20261101"
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-debugbridge-launch.6ff7a1aa24b1.json",
+        "sha256": "6ff7a1aa24b118cc0e0ca120fa50f255288a4b59858c5b4c4eeed7746490dc6f",
+        "bytes": 1665,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-debugbridge-launch.json"
+      },
+      "command_type": "devicectl.device.process.launch",
+      "outcome": "success",
+      "bundle_identifier": "io.jsflax.lattice.backgroundlab.20261101"
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-walprobe-install.4b0143b06d38.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-walprobe-install.json",
+        "sha256": "4b0143b06d3830b3a0e33dc4f684cd8d09f4b450fd75b924aa267f40d2425f2b",
+        "bytes": 1137
+      },
+      "command_type": "devicectl.device.install.app",
+      "outcome": "success",
+      "bundle_identifier": "io.jsflax.lattice.backgroundlab.20261101"
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-walprobe-launch.5106c90e1253.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-walprobe-launch.json",
+        "sha256": "5106c90e1253a77e3ffecf4617660b4ef371809fc0bf491af5aed1399c6e2bc5",
+        "bytes": 1662
+      },
+      "command_type": "devicectl.device.process.launch",
+      "outcome": "success",
+      "bundle_identifier": "io.jsflax.lattice.backgroundlab.20261101"
+    },
+    {
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-manual-install.da8f2a569dc1.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-manual-install.json",
+        "sha256": "da8f2a569dc19b0430021616943c857bddad417e70c5ab5a844138a4ba2997d1",
+        "bytes": 1143
+      },
+      "command_type": "devicectl.device.install.app",
+      "outcome": "success",
+      "bundle_identifier": "io.jsflax.lattice.backgroundlab.20261101.manual"
+    }
+  ],
+  "UI_automation_attempt": {
+    "result": "Failed",
+    "reported_total": 1,
+    "passed": 0,
+    "failed": 1,
+    "skipped": 0,
+    "failure_kind": "Runner initialization, not a test-body assertion",
+    "failure_text": "The test runner failed to initialize for UI testing. (Underlying Error: Timed out while enabling automation mode.)",
+    "product_test_bodies_executed": 0,
+    "xcodebuild_exit_code": 65,
+    "exit_code_source": "Coordinator command receipt",
+    "elapsed_seconds": 62.541,
+    "result_bundle_local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-eager-16_4.xcresult",
+    "source_log": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-eager-16_4.344926e851bb.log",
+      "sha256": "344926e851bbcac576b1efd2470906d701061947fb864e40003347c29fda947d",
+      "bytes": 4386,
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-eager-16_4.log"
+    },
+    "summary_command": [
+      "xcrun",
+      "xcresulttool",
+      "get",
+      "test-results",
+      "summary",
+      "--path",
+      "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-eager-16_4.xcresult"
+    ],
+    "frozen_summary_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/original-ui-runner-summary.json",
+      "sha256": "1f2988f663d3c19bc7ed92b59923ced6afa03a13d1f887dc981c8d3091f32e3d",
+      "bytes": 1171
+    }
+  },
+  "coordinator_live_observations": {
+    "source": "Coordinator device/debugger observations; initial open and subsequent 25-row write are also present in the exported host event log.",
+    "store_opened": true,
+    "rows": 0,
+    "scene_connected_and_foreground_observed": true,
+    "active_state_not_yet_observed": false,
+    "standard_local_network_permission_prompt_visible": true,
+    "prompt_user_response_pending_at_checkpoint": true,
+    "note": "The prompt was observed during a later direct launch; it is not established as the cause of the earlier XCTest automation-mode timeout.",
+    "active_state_detail": "The first session records scene-active then scene-inactive; the later debugger-bridge launch has scene-foreground but no scene-active in this exported log."
+  },
+  "not_qualified": [
+    "Full eager/lazy/manual UI test bodies",
+    "Normal background/foreground store survival beyond recorded debugger and callback paths",
+    "Successful network BGTask sync",
+    "Late expiration during active upload/download",
+    "Protected-data behavior",
+    "Manual runtime outcomes (manual app installed, not yet run)",
+    "Lazy unbound runtime path",
+    "Natural system delivery",
+    "True OS cold launch"
+  ],
+  "privacy": "No screenshot, device identifier, LAN address, private app-container path, or signing metadata copied into this checkpoint.",
+  "exported_latest_session_events": [
+    {
+      "timestamp": "2026-11-02T01:27:25Z",
+      "event": "open-returned",
+      "fields": {
+        "mode": "eager",
+        "rows": "0"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T01:27:25Z",
+      "event": "scene-connected",
+      "fields": {}
+    },
+    {
+      "timestamp": "2026-11-02T01:27:25Z",
+      "event": "scene-foreground",
+      "fields": {}
+    },
+    {
+      "timestamp": "2026-11-02T01:27:46Z",
+      "event": "foreground-snapshot",
+      "fields": {
+        "fixtureRows": "25",
+        "pending": "0",
+        "rows": "25"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T01:27:46Z",
+      "event": "write-returned",
+      "fields": {
+        "inserted": "25"
+      }
+    },
+    {
+      "timestamp": "2026-11-02T01:29:18Z",
+      "event": "sync-error",
+      "fields": {
+        "message": "The Internet connection appears to be offline."
+      }
+    },
+    {
+      "timestamp": "2026-11-02T01:29:43Z",
+      "event": "independent-checkpoint",
+      "fields": {
+        "checkpointed": "-1",
+        "code": "0",
+        "frames": "-1"
+      }
+    }
+  ],
+  "debugger_triggered_task": {
+    "delivery": "Debugger _simulateLaunchForTaskWithIdentifier, already-running app; not natural delivery or OS cold launch",
+    "observed_completion": "BGAppRefreshTask setTaskCompletedWithSuccess: false",
+    "register_x2": "0x0000000000000000",
+    "observed_SDK_frames": [
+      "AppleBackgroundTaskDelivery.complete(success=false)",
+      "BackgroundTaskSession.finish(success=false)",
+      "BackgroundTaskDriver.run"
+    ],
+    "connection_result": "Host reported the Internet connection appears to be offline; no successful relay communication established.",
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-receipts/lldb-ios15-eager.faf46a2b5286.txt",
+        "sha256": "faf46a2b5286e5d58761d4700745439335f1945c31839a6a130de8a253f8b02e",
+        "bytes": 42449,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lldb-ios15-eager.txt"
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-receipts/eager-debug-unavailable.b1664968c824.jsonl",
+        "sha256": "b1664968c824a52382a76b7f08c2e153a311589b54b312f903069606f2603765",
+        "bytes": 9746,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/eager-debug-unavailable.jsonl"
+      }
+    ],
+    "limits": [
+      "The observed false completion is not a successful sync.",
+      "The initial uninitialized checkpoint returned -1/-1 and remains unqualified; its later initialized direct SQLite follow-up verifies WAL and zero frame counts.",
+      "The separate early-expiration path has a one-hit completion receipt; complete lifecycle race coverage is not claimed."
+    ],
+    "independent_SQLite_followup": {
+      "source": "Frozen lldb-ios15-eager transcript, lines257\u2013276",
+      "journal_mode": "wal",
+      "prepare_code": 0,
+      "step_code": 100,
+      "finalize_code": 0,
+      "checkpoint_code": 0,
+      "frames": 0,
+      "checkpointed": 0,
+      "close_code": 0,
+      "scope": "Independent truncate checkpoint after the offline task completion."
+    }
+  },
+  "UI_automation_retry": {
+    "result": "Failed",
+    "reported_total": 1,
+    "passed": 0,
+    "failed": 1,
+    "skipped": 0,
+    "failure_kind": "Runner initialization; no product test bodies",
+    "failure_text": "The test runner failed to initialize for UI testing. (Underlying Error: Timed out while enabling automation mode.)",
+    "product_test_bodies_executed": 0,
+    "xcodebuild_exit_code": 65,
+    "exit_code_source": "Coordinator command receipt",
+    "source_log": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-eager-ios15-retry.515ba47108b8.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-eager-ios15-retry.log",
+      "sha256": "515ba47108b843591a81dfe7f69516b1825937c8923a75e31204abcf3fbf9ce9",
+      "bytes": 4428
+    },
+    "summary_command": [
+      "xcrun",
+      "xcresulttool",
+      "get",
+      "test-results",
+      "summary",
+      "--path",
+      "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-eager-ios15-retry.xcresult"
+    ],
+    "retry_policy": "No further retry until the initialization cause changes.",
+    "frozen_summary_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/retry-ui-runner-summary.json",
+      "sha256": "54736b58a734b1f25d9bd9f14e1718d7c0ba4025b48b443c5136efc1c8dc3801",
+      "bytes": 1113
+    }
+  },
+  "fresh_process_reopen_and_early_expiration": {
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-receipts/eager-fresh-reopen.0d1e556326cb.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/eager-fresh-reopen.jsonl",
+        "sha256": "0d1e556326cb1ecfa56e002fe4cc5be52a1687bb6a85fd10688f61bf552cc6d0",
+        "bytes": 11639
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-receipts/eager-early-expiration.fce282baec8c.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/eager-early-expiration.jsonl",
+        "sha256": "fce282baec8c4d5150525240038ae637780b0d7118f490168fb01156044aa1c6",
+        "bytes": 11994
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/ios-host/device-receipts/lldb-ios15-early-expiration.2a0834509d82.txt",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lldb-ios15-early-expiration.txt",
+        "sha256": "2a0834509d82b739e35da58af3fe846d514f5f82fc0132d523a2ba55737dd1ea",
+        "bytes": 46911
+      }
+    ],
+    "events": [
+      {
+        "timestamp": "2026-11-02T01:39:00Z",
+        "event": "open-returned",
+        "fields": {
+          "mode": "eager",
+          "rows": "25"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:39:38Z",
+        "event": "close-returned",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T01:39:38Z",
+        "event": "open-returned",
+        "fields": {
+          "mode": "eager",
+          "rows": "25"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:39:38Z",
+        "event": "foreground-snapshot",
+        "fields": {
+          "fixtureRows": "25",
+          "pending": "0",
+          "rows": "25"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:41:20Z",
+        "event": "independent-checkpoint",
+        "fields": {
+          "checkpointed": "0",
+          "code": "0",
+          "frames": "0",
+          "journalFinalizeCode": "0",
+          "journalMode": "wal",
+          "journalPrepareCode": "0",
+          "journalReadCode": "100",
+          "qualification": "wal-truncate-completed",
+          "qualified": "true"
+        }
+      }
+    ],
+    "reopen": "Fresh process reopens 25 durable rows; ordinary NSOperationQueue callback closes, opens, and snapshots 25 rows.",
+    "early_expiration": "Debugger stops SDK receive at line446, after installing expiration handling and before work; Apple debug expiration selector then invokes expiration.",
+    "completion": {
+      "success": false,
+      "BGAppRefreshTask_completion_breakpoint_hit_count": 1,
+      "base_BGTask_completion_breakpoint_hit_count": 0
+    },
+    "settlement": "After completion, independent WAL truncate probe records qualified=true, journalMode=wal, code=0, frames=0, checkpointed=0.",
+    "limits": [
+      "One tested early-expiration path; not a general proof of every cancellation race.",
+      "Debugger-triggered delivery and expiration, not natural delivery or OS cold launch.",
+      "Successful network sync remains unqualified."
+    ]
+  },
+  "discarded_debugger_reopen_attempt": {
+    "reason": "Synchronous LLDB expression evaluation interrupted a normally caught C++ ALTER exception; its process was discarded before fresh-process qualification.",
+    "interpretation": "Debugger expression interruption does not establish a production reopen defect.",
+    "replacement_evidence": "Fresh-process ordinary NSOperationQueue close/open/snapshot retained 25 rows."
+  }
+}

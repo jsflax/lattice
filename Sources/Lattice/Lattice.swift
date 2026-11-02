@@ -573,6 +573,14 @@ public struct Lattice {
         /// after reading it. Same-configuration cached opens share the existing lifecycle.
         public enum SyncStartup: Sendable, Hashable { case automatic, deferred }
         public var syncStartup: SyncStartup = .automatic
+        /// Optional app background-refresh policy. `nil` leaves background
+        /// scheduling disabled. This value does not itself register a task.
+        public var backgroundSync: BackgroundSync?
+        // Derived handles share a lifecycle lineage while remaining local-only.
+        // The runtime token is intentionally excluded from configuration value
+        // equality/hash; native identity conflicts are checked at attachment.
+        internal var backgroundSyncManaged = false
+        internal var backgroundSyncLineage: BackgroundSyncLineage?
         private var scheduler: Scheduler
 
         /// Schema migration definitions keyed by version number.
@@ -710,6 +718,8 @@ public struct Lattice {
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
             lhs.syncStartup == rhs.syncStartup &&
+            lhs.backgroundSync == rhs.backgroundSync &&
+            lhs.backgroundSyncManaged == rhs.backgroundSyncManaged &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
             lhs.syncFilter == rhs.syncFilter &&
@@ -724,6 +734,8 @@ public struct Lattice {
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
             hasher.combine(syncStartup)
+            hasher.combine(backgroundSync)
+            hasher.combine(backgroundSyncManaged)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
             hasher.combine(syncFilter)
@@ -756,7 +768,8 @@ public struct Lattice {
                     syncFilter: SyncFilter? = nil,
                     busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs,
                     syncTuning: SyncTuning? = nil,
-                    syncStartup: SyncStartup = .automatic) {
+                    syncStartup: SyncStartup = .automatic,
+                    backgroundSync: BackgroundSync? = nil) {
             // storage wins; fileURL is the long-standing convenience spelling;
             // neither → the default documents-directory database.
             self.storage = storage ?? .file(fileURL ?? Self.defaultDatabaseDirectory()
@@ -764,6 +777,7 @@ public struct Lattice {
             self.authorizationToken = authorizationToken
             self.wssEndpoint = wssEndpoint
             self.syncStartup = syncStartup
+            self.backgroundSync = backgroundSync
             self.scheduler = Scheduler()
             self.isReadOnly = isReadOnly
             self.migration = migration
@@ -784,7 +798,8 @@ public struct Lattice {
                 authorizationToken.map { std.string($0) } ?? std.string(),
                 currentScheduler.scheduler)
             config.read_only = isReadOnly
-            config.sync_autostart = syncStartup == .automatic
+            config.background_sync_managed = backgroundSync != nil || backgroundSyncManaged
+            config.sync_autostart = syncStartup == .automatic && !config.background_sync_managed
             config.busy_timeout_ms = Int32(busyTimeoutMs)
             if let auditRetention, auditRetention > 0 {
                 config.audit_retention_seconds = Int64(auditRetention.rounded(.up))
@@ -998,6 +1013,14 @@ public struct Lattice {
                   configuration: Configuration = defaultConfiguration,
                   isSynchronizing: Bool,
                   independentConnection: Bool = false) throws {
+        var configuration = configuration
+        let ownsBackgroundLifecycle = configuration.backgroundSync != nil ||
+            (configuration.backgroundSyncManaged && configuration.backgroundSyncLineage == nil)
+        if ownsBackgroundLifecycle && configuration.backgroundSyncLineage == nil {
+            configuration.backgroundSyncLineage = BackgroundSyncLineage()
+        }
+        try configuration.validateBackgroundSyncStore()
+        try Self.registerBackgroundTasks(configuration: configuration)
         // Register Swift network factory on first use
         Self.registerNetworkFactoryIfNeeded()
 
@@ -1119,6 +1142,14 @@ public struct Lattice {
         let resultsTuning = configuration.resultsTuning
         self.backend.setReadGenerationTTLMs(Int64((resultsTuning.generationTTLSeconds * 1000).rounded()))
         self.backend.setWALKeeperEvictionThresholdBytes(Int64(resultsTuning.walKeeperEvictionThresholdBytes))
+        // Reject lineage conflicts before publishing a trampoline cache entry.
+        if let lineage = configuration.backgroundSyncLineage {
+            let group = try BackgroundSyncBindings.attachManaged(backend: backend, owner: isolation,
+                lineage: lineage, ownsLifecycle: ownsBackgroundLifecycle)
+            if let policy = configuration.backgroundSync {
+                try BackgroundTaskScheduler.shared.bind(identifier: policy.identifier, binding: group.binding)
+            }
+        }
         let key = CacheKey(self.backend)
         let entry = WeakCacheEntry(self)
         let retired = Self.cacheLock.withLockUnchecked {
@@ -1269,6 +1300,7 @@ public struct Lattice {
             for item in retired {
                 if let backend = item.backend {
                     let identityHash = backend.identityHash
+                    BackgroundSyncBindings.invalidate(identity: identityHash)
                     closeBackend(backend)
                     // A read can remint this identity after the path-wide
                     // eviction but before native close finishes.
@@ -1647,6 +1679,7 @@ public struct Lattice {
             throw Lattice.Error.databaseError("Sync lifecycle is unsupported by this backend")
         }
         try lifecycle.connectSync()
+        if backend.isSyncAgent() { resumeGenerations() }
     }
 
     /// Pause WSS and its pending retries, retaining local storage and ownership.
@@ -1664,6 +1697,7 @@ public struct Lattice {
             throw Lattice.Error.databaseError("Sync lifecycle is unsupported by this backend")
         }
         try lifecycle.reconnectSync()
+        if backend.isSyncAgent() { resumeGenerations() }
     }
 
     /// Explicitly close all database connections and tear down the synchronizer.
@@ -1675,6 +1709,7 @@ public struct Lattice {
     /// Internal seam for the eviction-to-native-close interleaving, matching
     /// the deletion seam without adding a production callback or lock.
     internal func _close(closeBackend: (any LatticeBackend) -> Void) {
+        BackgroundSyncBindings.invalidate(identity: backend.identityHash)
         // Retire trampoline lookup before native close. Release the entry outside the cache lock:
         // configuration closures or actor teardown can reenter Lattice during their final release.
         let retired = Self.cacheLock.withLockUnchecked {
@@ -1693,6 +1728,19 @@ public struct Lattice {
         // still pending. Facades reacquire their coordinator on every access;
         // remove this last pre-close cache before close() returns.
         GenerationCoordinatorRegistry.evict(identityHash: identityHash)
+    }
+
+    /// Owner-lineage retirement closes derived identities without recursively
+    /// invalidating the owner again. No cache lock crosses native teardown.
+    internal static func _closeBackgroundMember(backend: any LatticeBackend) {
+        let retired = cacheLock.withLockUnchecked {
+            cache.removeValue(forKey: CacheKey(backend))
+        }
+        defer { withExtendedLifetime(retired) {} }
+        let identity = backend.identityHash
+        GenerationCoordinatorRegistry.evict(identityHash: identity)
+        backend.close()
+        GenerationCoordinatorRegistry.evict(identityHash: identity)
     }
 
     /// Retire every open read generation now (item A §3.6): force-COMMIT
@@ -1834,57 +1882,39 @@ public struct Lattice {
     /// pile-ups that caused).
     public var syncProgressStream: AsyncStream<SyncProgress> {
         let backend = self.backend
-        let isSyncAgent = backend.isSyncAgent()
         return AsyncStream { continuation in
             let token = _SyncProgressSlot.register(backend)
-            if isSyncAgent {
-                // In-process path
-                backend.setOnSyncProgress { pending, total, acked, received, syncId in
-                    continuation.yield(SyncProgress(
-                        pendingUpload: Int(pending),
-                        totalUpload: Int(total),
-                        acked: Int(acked),
-                        received: Int(received),
-                        syncId: syncId
-                    ))
-                }
+            // Deferred and background-managed stores are not agents at open.
+            // Keep the native subscription ready for later ownership changes.
+            backend.setOnSyncProgress { pending, total, acked, received, syncId in
+                continuation.yield(SyncProgress(
+                    pendingUpload: Int(pending), totalUpload: Int(total),
+                    acked: Int(acked), received: Int(received), syncId: syncId
+                ))
+            }
 
-                continuation.onTermination = { _ in
-                    if _SyncProgressSlot.clearIfCurrent(backend, token: token) {
-                        backend.setOnSyncProgress(nil)
-                    }
-                }
-            } else {
-                // Cross-process path. nonisolated(unsafe): mutated only from
-                // the serial xproc callback (no concurrent access), captured
-                // by the @Sendable callback closure.
-                nonisolated(unsafe) var previousPending = 0
-                // The pending count is an unindexed COUNT with a correlated
-                // EXISTS over the audit log, and idle hints arrive per commit
-                // burst — rate-limit the probe to once a second so a busy
-                // writer does not pay it on every hint.
-                nonisolated(unsafe) var lastProbe = Date.distantPast
+            // The serial cross-process hint remains the fallback while another
+            // process owns sync. Check ownership at delivery, not subscription.
+            nonisolated(unsafe) var previousPending = 0
+            nonisolated(unsafe) var lastProbe = Date.distantPast
+            backend.setOnXprocIdle {
+                guard !backend.isSyncAgent() else { return }
+                let now = Date()
+                guard now.timeIntervalSince(lastProbe) >= 1 else { return }
+                lastProbe = now
+                let pending = Int(backend.pendingSyncEntryCount())
+                let acked = max(0, previousPending - pending)
+                previousPending = pending
+                continuation.yield(SyncProgress(
+                    pendingUpload: pending, totalUpload: pending + acked,
+                    acked: acked, received: 0
+                ))
+            }
 
-                backend.setOnXprocIdle {
-                    let now = Date()
-                    guard now.timeIntervalSince(lastProbe) >= 1 else { return }
-                    lastProbe = now
-                    let pending = Int(backend.pendingSyncEntryCount())
-                    let diff = previousPending - pending
-                    let acked = max(0, diff)
-                    previousPending = pending
-                    continuation.yield(SyncProgress(
-                        pendingUpload: pending,
-                        totalUpload: pending + acked,
-                        acked: acked,
-                        received: 0
-                    ))
-                }
-
-                continuation.onTermination = { _ in
-                    if _SyncProgressSlot.clearIfCurrent(backend, token: token) {
-                        backend.setOnXprocIdle(nil)
-                    }
+            continuation.onTermination = { _ in
+                if _SyncProgressSlot.clearIfCurrent(backend, token: token) {
+                    backend.setOnSyncProgress(nil)
+                    backend.setOnXprocIdle(nil)
                 }
             }
         }
@@ -2281,7 +2311,7 @@ public struct Lattice {
                 // Keeping ipcTargets/wssEndpoint would join sync channels, receive a
                 // catchup of existing data, and generate spurious AuditLog entries that
                 // fire observers before the real change arrives.
-                var queryConfig = configuration
+                var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
                 queryConfig.authorizationToken = nil
@@ -2371,7 +2401,7 @@ public struct Lattice {
 
             Task.detached {
                 diagnostic?.record("query_open_started")
-                var queryConfig = configuration
+                var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
                 queryConfig.authorizationToken = nil
@@ -2819,11 +2849,12 @@ public struct Lattice {
     public func attaching(lattice: Lattice) throws -> Lattice {
         // Build a query-only config: strip IPC/WSS to avoid duplicate socket
         // bind and unnecessary sync on a connection used only for UNION ALL reads.
-        var queryConfig = configuration
+        var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
         queryConfig.ipcTargets = nil
         queryConfig.wssEndpoint = nil
         queryConfig.authorizationToken = nil
         queryConfig.syncFilter = nil
+        try queryConfig.validateBackgroundSyncStore()
         let cxxConfig = queryConfig.cxxConfiguration()
         // UNCACHED construction is load-bearing: when the parent has no
         // sync/IPC, the stripped config's cache key is IDENTICAL to the
@@ -2843,6 +2874,10 @@ public struct Lattice {
                                  schema: schema,
                                  isolation: isolation,
                                  observerActorDelivery: observerActorDelivery)
+        if let lineage = queryConfig.backgroundSyncLineage {
+            _ = try BackgroundSyncBindings.attachManaged(backend: newLattice.backend, owner: isolation,
+                lineage: lineage, ownsLifecycle: false)
+        }
         // Item A §4.2: the clone unions rows from the attached store — writes
         // on either store must invalidate its shapes (see attach(lattice:)).
         // Mint the attached store's coordinator so its core hook relays

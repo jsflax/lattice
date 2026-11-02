@@ -1,0 +1,10 @@
+{
+  "status": "verified-published",
+  "version": "2.5.0",
+  "sourceSha": "c3fcb7dd24f75740b6559ec84fe0d5086f4569f1",
+  "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.5.0",
+  "workflowRun": "https://github.com/jsflax/LatticeCore/actions/runs/41373486648",
+  "receiptSHA256": "33ba8806e25f225478c273b82e766738f249d3e0b17e778392d5e89085797667",
+  "assetDigestMatches": true,
+  "tagMatchesSource": true
+}

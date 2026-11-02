@@ -1401,6 +1401,10 @@ extension Lattice {
                         }
 
                         let lastEventId = try? req.query.get(UUID?.self, at: "last-event-id")
+                        // Opt in per connection: older strict decoders reject
+                        // unknown wire kinds, so never broadcast this marker.
+                        let wantsCatchUpComplete =
+                            (try? req.query.get(String.self, at: "lattice-catch-up-complete")) == "1"
 
                         // §1.7.2 FLOOR HONESTY: a claimed floor the durable history cannot back was
                         // previously swallowed (the probe returned nil, the filter dropped, and a
@@ -1426,7 +1430,9 @@ extension Lattice {
                                     """)
                                 if let encoded = try? JSONEncoder().encode(
                                     ServerSentEvent.floorReset(durableHead: head?.globalId, reason: reason)) {
-                                    await ws.send(ByteBuffer(data: encoded))
+                                    let sent = ws.eventLoop.makePromise(of: Void.self)
+                                    ws.send(encoded, promise: sent)
+                                    try await sent.futureResult.get()
                                 }
                             }
                         }
@@ -1453,7 +1459,11 @@ extension Lattice {
                                 let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
                                 sendBoundaryProbe?.capture(page: page, route: .catchup)
                                 ackPath?.record(.catchUpSendBegin, bytes: encoded.count, count: page.count)
-                                await ws.send(ByteBuffer(data: encoded))
+                                // Await the write result; a failed page cannot
+                                // be followed by a successful completion marker.
+                                let sent = ws.eventLoop.makePromise(of: Void.self)
+                                ws.send(encoded, promise: sent)
+                                try await sent.futureResult.get()
                                 ackPath?.record(.catchUpSendReturn)
                                 boundary = page.last?.primaryKey ?? boundary
                             }
@@ -1466,6 +1476,12 @@ extension Lattice {
                                 .where { $0.globalId == lastEventId }
                                 .snapshot(limit: 1)
                                 .first?.primaryKey ?? 0
+                        }
+                        if wantsCatchUpComplete && !state.revocation.isRevoked && !ws.isClosed {
+                            let encoded = try JSONEncoder().encode(ServerSentEvent.catchUpComplete)
+                            let sent = ws.eventLoop.makePromise(of: Void.self)
+                            ws.send(encoded, promise: sent)
+                            try await sent.futureResult.get()
                         }
                         // Activate push (cursor = catch-up boundary) — or drop
                         // the parked subscription if this socket died/was

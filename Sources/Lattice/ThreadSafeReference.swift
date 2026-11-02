@@ -204,7 +204,7 @@ public struct LatticeThreadSafeReference: Sendable {
 
     init(modelTypes: [any Model.Type], configuration: Lattice.Configuration) {
         self.modelTypes = modelTypes
-        self.configuration = configuration
+        self.configuration = configuration.withoutBackgroundTaskOwnership()
     }
     
     public func resolve(isolation: isolated (any Actor)? = #isolation) -> Lattice? {
@@ -218,7 +218,9 @@ public struct LatticeThreadSafeReference: Sendable {
     }
 
     /// Open a distinct connection without joining the path/scheduler cache.
-    /// Uses the complete original configuration, schemas and row migrations.
+    /// Preserves storage, schemas and row migrations. A managed store's
+    /// reference inherits its owner's lifecycle as a local-only connection;
+    /// it does not copy account credentials or start a second transport.
     /// A removed file returns nil; other open failures are thrown.
     ///
     /// The connection has no actor scheduler and does not retain the caller's

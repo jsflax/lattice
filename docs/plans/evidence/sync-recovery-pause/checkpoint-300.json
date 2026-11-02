@@ -1,0 +1,108 @@
+{
+  "number": 300,
+  "atUTC": "2026-10-24T18:23:31.971503+00:00",
+  "previousGoalTurn": "PROGRESS",
+  "currentGoalTurn": "PROGRESS",
+  "goalActiveAndIncomplete": true,
+  "previousBuildTerminal": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-002/ROOT-RESULT-REVIEW.json",
+    "bytes": 2867,
+    "sha256": "825f767f4fcccc981aa3090633fdec69451ab042b87a861cd9b7b4dba550f35f",
+    "mode": "0o444"
+  },
+  "previousBuildCounts": {
+    "issued": 49,
+    "success": 48,
+    "failed": 1,
+    "unissued": 221
+  },
+  "repair": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-export-ending-access-independent-review-20261024-001/REVIEW.json",
+    "bytes": 10992,
+    "sha256": "206c0164f842cbb74deecc6f736dc01aeb74be3152739fd01ad669ede7aeb906",
+    "mode": "0o444"
+  },
+  "source": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-fulltail-composition-20261024-003/SOURCE-REFERENCE.json",
+    "bytes": 817021,
+    "sha256": "df8f7ebd9f38d0af86f2905057898076be63528cc8bd645e68e0d9ca219c2d60",
+    "mode": "0o444"
+  },
+  "sourceCounts": {
+    "files": 2021,
+    "changed": 1,
+    "unchanged": 2020
+  },
+  "reuseProof": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-comp3-reuse-binding-review-20261024-001/REVIEW.json",
+    "bytes": 3500,
+    "sha256": "fed983f8a6e4c013bf372949339c40b698b7197c43eee5bc522a1e9a1b615274",
+    "mode": "0o444"
+  },
+  "buildPlan": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/PLAN.json",
+    "bytes": 15553156,
+    "sha256": "7c126d7426a5403da4393729c717a7ae55ba1e983a3f643ba8ecef5c9239303f",
+    "mode": "0o444"
+  },
+  "buildDispatchReview": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/ROOT-DISPATCH-REVIEW.json",
+    "bytes": 1951,
+    "sha256": "ee59cd08fc1302eed2ea8ed4d69866d47895fbd960275327c8f8c66115f86726",
+    "mode": "0o444"
+  },
+  "buildIndependentReview": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-build003-independent-review-20261024-001/REVIEW.json",
+    "bytes": 4215,
+    "sha256": "b5c211a08513c62b187014d44ac4291b56783092798dbe0a1a7158235a81b1ba",
+    "mode": "0o444"
+  },
+  "counts": {
+    "compiles": 228,
+    "reuse": 77,
+    "objects": 305,
+    "freshArchives": 4,
+    "directTestObjects": 176,
+    "expectedInventory": 3468,
+    "focused": 225,
+    "cache": 131
+  },
+  "liveBuild": {
+    "toolSession": 69132,
+    "kind": "build-only owner",
+    "phase": "preflight; no compiler stage observed yet",
+    "outputRoot": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/execution-001",
+    "originalHandleMustBePolled": true,
+    "terminalObserved": false
+  },
+  "liveObservation": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/checkpoint300-build-live-observation.json",
+    "bytes": 226,
+    "sha256": "159cba49ae496eb09afcff595a7762e902990b9cb5de36b06c75285c9f2c0fd4",
+    "mode": "0o444"
+  },
+  "runtimeRecipe": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/ROOT-RUNTIME-RECIPE-REVIEW.json",
+    "bytes": 1153,
+    "sha256": "f22940a48937aff1fedae73007bc6d3d4897842e96cfab117545087e028d1f28",
+    "mode": "0o444"
+  },
+  "source1Unselected": true,
+  "runtimeAccepted": false,
+  "performanceAccepted": false,
+  "newRelease": false,
+  "latestVerifiedRelease": "SDK2.2.5/Core2.2.8",
+  "shockTrooperContactRevoked": true,
+  "downstream": [
+    "engram-integration-hardening",
+    "orbital"
+  ],
+  "parentRemainsHumanPaused": true,
+  "nextAction": "Poll original69132 owner to a known ending; review actual compile/archive/link/inventory evidence. Prepare and run separate focused225/cache131 only after accepted build. Preserve failures.",
+  "priorPlan": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/PLAN.md",
+    "bytes": 2315044,
+    "sha256": "d88fd836186963af423c757925cdff6f98ae2aa010972f1ec3f97ccbd40300cc",
+    "mode": "0o644"
+  }
+}

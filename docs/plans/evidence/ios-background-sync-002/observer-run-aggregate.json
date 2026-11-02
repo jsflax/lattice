@@ -1,0 +1,9 @@
+{
+  "exit": -14,
+  "timedOut": false,
+  "command": [
+    "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/config-actor/destruction/repro-aggregate",
+    "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/config-actor/destruction/tmp/baseline-aggregate.sqlite"
+  ],
+  "seconds": 7.144467375008389
+}

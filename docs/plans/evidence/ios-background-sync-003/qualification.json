@@ -1,0 +1,23 @@
+{
+  "status": "integration_passed_device_and_release_pending",
+  "core_commit": "39eec87ebad987b6ece6069c04f7927de9e405a9",
+  "core_merge_commit": "62fc557a9543218904b3043c542565ce9dbe9e1a",
+  "core_pr": "https://github.com/jsflax/LatticeCore/pull/77",
+  "core_branch_ci": {
+    "macOS": "success",
+    "Linux": "success",
+    "C ABI": "success"
+  },
+  "native_affected_tests": 185,
+  "native_lifecycle_followup_tests": 24,
+  "distinct_native_tests_covered": 186,
+  "sdk_selected_tests": 87,
+  "sdk_suites": 10,
+  "sdk_elapsed_seconds": 8.323,
+  "seven_row_upload_seconds_before": 10.049,
+  "seven_row_upload_seconds_after": 0.359,
+  "measurement_scope": "Single local integration-test runs, not a general performance benchmark",
+  "sdk_full_log_sha256": "4243f053b6f804621e1dba7253326c52a6a5a1d6dfd023db7c7fae3c718f0cfe",
+  "phone_state": "Xcode build-for-testing running; not installed or executed yet",
+  "published": false
+}

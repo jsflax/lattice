@@ -1,0 +1,43 @@
+{
+  "checkpoint": 301,
+  "atUTC": "2026-10-24T18:57:34.180936+00:00",
+  "goalState": "paused",
+  "userPause": true,
+  "previousCheckpoint": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/CHECKPOINT300.json",
+    "bytes": 4283,
+    "sha256": "cd82a0effe9d8cb2b8fa681f8dd0e931869e1dd14d895ef5312525f937bb1ec8",
+    "mode": "0o444"
+  },
+  "pauseEnding": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/checkpoint301-pause-ending.json",
+    "bytes": 1607,
+    "sha256": "b53ec4a809c4557df0fc78004cc6db50dee72cdfe841dcfe2808864eb56d0dbb"
+  },
+  "lastSession": {
+    "toolSession": 69132,
+    "kind": "build-only owner",
+    "phase": "COMPILE",
+    "outputRoot": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/execution-001",
+    "originalHandleMustBePolled": true,
+    "terminalObserved": false,
+    "pid": 53663,
+    "pgid": 53663,
+    "observation": {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/checkpoint300-build003-live-wait-001.json",
+      "bytes": 1547,
+      "sha256": "2dd0a30d8ca948113efa29b168f8f323755e11015a3aed3708409d95de10dc44"
+    }
+  },
+  "preparedHostedDiagnostic": {
+    "sourceComposition": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-source1-hosted-composition-20261024-001",
+    "controls": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-source1-hosted-controls-source-20261024-001",
+    "checkout": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-source1-hosted-checkout-20261024-001",
+    "branch": "codex/query-source1-installed-20261024",
+    "published": false,
+    "finalBindingsPending": true
+  },
+  "resumeAction": "Wait for explicit user resume. Then reconcile cancelled build endings before validating any partial outputs or dispatching a successor; finish exact hosted bindings and reviews before any CI push.",
+  "noNewAcceptance": true,
+  "shockTrooperContactRevoked": true
+}
