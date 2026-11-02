@@ -1,0 +1,108 @@
+{
+  "checkpoint_date": "2026-11-01",
+  "derivation": "Summarized from local GoogleTest JSON/XML and the value-build manifest. Original receipts remain at their hashed local paths.",
+  "core_commit": "8d0c86d7d5b21fab741547e644e2ef2c4c18cc3a",
+  "core_pull_request": "https://github.com/jsflax/LatticeCore/pull/78",
+  "native_macOS_FRT": {
+    "tests": 37,
+    "failures": 0,
+    "errors": 0,
+    "disabled": 0,
+    "elapsed": "1.481s",
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/capi-platform-native.b95e3cd7eecd.json",
+        "sha256": "b95e3cd7eecd37fb7aa9f20b5cb798f821c83464ebd002873f54c178e0dd64f8",
+        "bytes": 18971,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/capi-platform-native.json"
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/capi-platform-native-run.0b725ebab3d5.log",
+        "sha256": "0b725ebab3d5371642d8b0b9a3f11ba7e57938f6e238f9baaf88a340814dc7ae",
+        "bytes": 23952,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/capi-platform-native-run.log"
+      }
+    ]
+  },
+  "forced_consistent_value_on_macOS": {
+    "tests": 37,
+    "failures": 0,
+    "errors": 0,
+    "disabled": 0,
+    "elapsed_seconds": 1.547,
+    "rebuilt_ABI_sensitive_translation_units": 7,
+    "reused_unchanged_core_and_support_objects": 14,
+    "override": "LATTICE_HAS_FRT=0 on every rebuilt translation unit",
+    "target": "arm64-apple-macosx14.0",
+    "fresh_sources": [
+      {
+        "path": "/Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCAPI/src/lattice.cpp",
+        "sha256": "fff5fcb4fcc5e711f0cda1a08b1431061d21a575db81b802d835c1c350f17ab7"
+      },
+      {
+        "path": "/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCAPITests/CAPIBehaviorTests.cpp",
+        "sha256": "b887a2428487486b4691b9dfcee81edc135dc2140888b64adbc24700185407b0"
+      },
+      {
+        "path": "/Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/src/dynamic_object.cpp",
+        "sha256": "ca0e7db8d44d6c38a458dbd2cf69ffd8ebc9c8350c8492e97ab11ab1a6651ea9"
+      },
+      {
+        "path": "/Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/src/lattice.cpp",
+        "sha256": "adc553cfb4bf527eebd941f3dc6e8e8f457924b764ecbc53d577c459b96c7042"
+      },
+      {
+        "path": "/Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/src/list.cpp",
+        "sha256": "fd11a9c4647ddc50bda03a1dab5b44f1b9b4e5c7d9d5ca2527f69ec866b00343"
+      },
+      {
+        "path": "/Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/src/managed_object.cpp",
+        "sha256": "476fffd6aeb630ade936e660bc0f79c2dd5a391c79799c288d3eb62136b24401"
+      },
+      {
+        "path": "/Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/src/unmanaged_object.cpp",
+        "sha256": "54931af41796bf6cbd75b4e9c1bd3964ce450709e60454f536d13a6622e295a7"
+      }
+    ],
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/probes/suspension/capi-layout-runtime/builds/value/tests.57e087ee9a0d.xml",
+        "sha256": "57e087ee9a0d15c54f9d83ec22df957ff9da8de40839d02fcd86679ba8610353",
+        "bytes": 13603,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/suspension/capi-layout-runtime/builds/value/tests.xml"
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/probes/suspension/capi-layout-runtime/builds/value/tests.df8fa18ecf58.log",
+        "sha256": "df8fa18ecf58c3b479a723314762bf59e70624f4fc6bdc3c9d6c0b8820500dcf",
+        "bytes": 7205,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/suspension/capi-layout-runtime/builds/value/tests.log"
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/probes/suspension/capi-layout-runtime/builds/value/manifest.7462a148d453.json",
+        "sha256": "7462a148d453e6bbdc65a934cfa107995b06e6f315866213fc6e8e687c1ff7d0",
+        "bytes": 24438,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/suspension/capi-layout-runtime/builds/value/manifest.json"
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint004-receipts/capi-platform-value-run.15983ff39cc0.log",
+        "sha256": "15983ff39cc0acb8f5da77ebc031a021d6f450d309e961cb0dc0ddf4cfab4ea8",
+        "bytes": 194,
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/capi-platform-value-run.log"
+      }
+    ]
+  },
+  "limits": [
+    "The forced value run exercises ownership behavior on macOS; it is not an iOS-device C API runtime test.",
+    "The two runs cover the same 37 cases under different layouts, not 74 distinct cases.",
+    "Passing these runs does not qualify Apple background-task delivery or completion."
+  ],
+  "core_merge_commit": "c3fcb7dd24f75740b6559ec84fe0d5086f4569f1",
+  "release_status": {
+    "source": "Coordinator verified GitHub receipts",
+    "exact_main_commit_CI": "All required main CI green",
+    "core_version": "2.5.0",
+    "workflow_run": 41373486648,
+    "workflow_url": "https://github.com/jsflax/LatticeCore/actions/runs/41373486648",
+    "state_at_checkpoint": "Release workflow underway; publication not yet verified"
+  }
+}

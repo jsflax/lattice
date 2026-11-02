@@ -1,7 +1,7 @@
 <module-includes>:1:9: note: in file included from <module-includes>:1:
 1 | #import "swift_module_umbrella.hpp"
   |         `- note: in file included from <module-includes>:1:
-2 | 
+2 |
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:
 21 | // LatticeBridge.hpp → lattice.hpp having textually pulled in their
@@ -13,15 +13,15 @@
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
   4 | #ifdef __cplusplus
-  5 | 
+  5 |
   6 | #include <lattice.hpp>
     |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
-  7 | 
+  7 |
   8 | namespace lattice {
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    3 | #ifdef __cplusplus
-   4 | 
+   4 |
    5 | #include <LatticeCore.hpp>
      |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    6 | #include <bridging.hpp>
@@ -32,7 +32,7 @@
 37 | #include "lattice/sync.hpp"
 38 | #include "lattice/lattice.hpp"
    |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:38:
-39 | 
+39 |
 40 | #endif // __cplusplus
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/lattice/lattice.hpp:2215:46: warning: captured structured bindings are a C++20 extension
@@ -48,7 +48,7 @@
 <module-includes>:1:9: note: in file included from <module-includes>:1:
 1 | #import "swift_module_umbrella.hpp"
   |         `- note: in file included from <module-includes>:1:
-2 | 
+2 |
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:
 21 | // LatticeBridge.hpp → lattice.hpp having textually pulled in their
@@ -60,15 +60,15 @@
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
   4 | #ifdef __cplusplus
-  5 | 
+  5 |
   6 | #include <lattice.hpp>
     |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
-  7 | 
+  7 |
   8 | namespace lattice {
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    3 | #ifdef __cplusplus
-   4 | 
+   4 |
    5 | #include <LatticeCore.hpp>
      |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    6 | #include <bridging.hpp>
@@ -79,7 +79,7 @@
 37 | #include "lattice/sync.hpp"
 38 | #include "lattice/lattice.hpp"
    |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:38:
-39 | 
+39 |
 40 | #endif // __cplusplus
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/lattice/lattice.hpp:2215:50: warning: captured structured bindings are a C++20 extension
@@ -98,7 +98,7 @@
 <module-includes>:1:9: note: in file included from <module-includes>:1:
 1 | #import "swift_module_umbrella.hpp"
   |         `- note: in file included from <module-includes>:1:
-2 | 
+2 |
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:
 21 | // LatticeBridge.hpp → lattice.hpp having textually pulled in their
@@ -110,15 +110,15 @@
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
   4 | #ifdef __cplusplus
-  5 | 
+  5 |
   6 | #include <lattice.hpp>
     |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
-  7 | 
+  7 |
   8 | namespace lattice {
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    3 | #ifdef __cplusplus
-   4 | 
+   4 |
    5 | #include <LatticeCore.hpp>
      |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    6 | #include <bridging.hpp>
@@ -129,7 +129,7 @@
 37 | #include "lattice/sync.hpp"
 38 | #include "lattice/lattice.hpp"
    |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:38:
-39 | 
+39 |
 40 | #endif // __cplusplus
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/lattice/lattice.hpp:2237:54: warning: captured structured bindings are a C++20 extension
@@ -145,7 +145,7 @@
 <module-includes>:1:9: note: in file included from <module-includes>:1:
 1 | #import "swift_module_umbrella.hpp"
   |         `- note: in file included from <module-includes>:1:
-2 | 
+2 |
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:
 21 | // LatticeBridge.hpp → lattice.hpp having textually pulled in their
@@ -157,15 +157,15 @@
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
   4 | #ifdef __cplusplus
-  5 | 
+  5 |
   6 | #include <lattice.hpp>
     |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
-  7 | 
+  7 |
   8 | namespace lattice {
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    3 | #ifdef __cplusplus
-   4 | 
+   4 |
    5 | #include <LatticeCore.hpp>
      |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    6 | #include <bridging.hpp>
@@ -176,7 +176,7 @@
 37 | #include "lattice/sync.hpp"
 38 | #include "lattice/lattice.hpp"
    |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:38:
-39 | 
+39 |
 40 | #endif // __cplusplus
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/lattice/lattice.hpp:2237:64: warning: captured structured bindings are a C++20 extension
@@ -197,7 +197,7 @@
 <module-includes>:1:9: note: in file included from <module-includes>:1:
 1 | #import "swift_module_umbrella.hpp"
   |         `- note: in file included from <module-includes>:1:
-2 | 
+2 |
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:
 21 | // LatticeBridge.hpp → lattice.hpp having textually pulled in their
@@ -209,15 +209,15 @@
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
   4 | #ifdef __cplusplus
-  5 | 
+  5 |
   6 | #include <lattice.hpp>
     |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
-  7 | 
+  7 |
   8 | namespace lattice {
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    3 | #ifdef __cplusplus
-   4 | 
+   4 |
    5 | #include <LatticeCore.hpp>
      |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    6 | #include <bridging.hpp>
@@ -228,7 +228,7 @@
 37 | #include "lattice/sync.hpp"
 38 | #include "lattice/lattice.hpp"
    |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:38:
-39 | 
+39 |
 40 | #endif // __cplusplus
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/lattice/lattice.hpp:2246:50: warning: captured structured bindings are a C++20 extension
@@ -244,7 +244,7 @@
 <module-includes>:1:9: note: in file included from <module-includes>:1:
 1 | #import "swift_module_umbrella.hpp"
   |         `- note: in file included from <module-includes>:1:
-2 | 
+2 |
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:
 21 | // LatticeBridge.hpp → lattice.hpp having textually pulled in their
@@ -256,15 +256,15 @@
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
   4 | #ifdef __cplusplus
-  5 | 
+  5 |
   6 | #include <lattice.hpp>
     |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
-  7 | 
+  7 |
   8 | namespace lattice {
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    3 | #ifdef __cplusplus
-   4 | 
+   4 |
    5 | #include <LatticeCore.hpp>
      |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    6 | #include <bridging.hpp>
@@ -275,7 +275,7 @@
 37 | #include "lattice/sync.hpp"
 38 | #include "lattice/lattice.hpp"
    |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:38:
-39 | 
+39 |
 40 | #endif // __cplusplus
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/lattice/lattice.hpp:2246:60: warning: captured structured bindings are a C++20 extension
@@ -296,7 +296,7 @@
 <module-includes>:1:9: note: in file included from <module-includes>:1:
 1 | #import "swift_module_umbrella.hpp"
   |         `- note: in file included from <module-includes>:1:
-2 | 
+2 |
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:
 21 | // LatticeBridge.hpp → lattice.hpp having textually pulled in their
@@ -308,15 +308,15 @@
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
   4 | #ifdef __cplusplus
-  5 | 
+  5 |
   6 | #include <lattice.hpp>
     |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
-  7 | 
+  7 |
   8 | namespace lattice {
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:3097:31: warning: captured structured bindings are a C++20 extension
    3 | #ifdef __cplusplus
-   4 | 
+   4 |
    5 | #include <LatticeCore.hpp>
      |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    6 | #include <bridging.hpp>
@@ -330,7 +330,7 @@
 3091 |                 int64_t row_id = 0;
      :
 3095 |                 }
-3096 | 
+3096 |
 3097 |                 auto row_it = rows.find(row_id);
      |                               `- warning: captured structured bindings are a C++20 extension
 3098 |                 if (row_it != rows.end()) {
@@ -339,7 +339,7 @@
 <module-includes>:1:9: note: in file included from <module-includes>:1:
 1 | #import "swift_module_umbrella.hpp"
   |         `- note: in file included from <module-includes>:1:
-2 | 
+2 |
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:
 21 | // LatticeBridge.hpp → lattice.hpp having textually pulled in their
@@ -351,15 +351,15 @@
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
   4 | #ifdef __cplusplus
-  5 | 
+  5 |
   6 | #include <lattice.hpp>
     |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
-  7 | 
+  7 |
   8 | namespace lattice {
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:30:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:30:
 28 | //   }
-29 | 
+29 |
 30 | #include "lattice/log.hpp"
    |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:30:
 31 | #include "lattice/types.hpp"
@@ -382,7 +382,7 @@
 60 |     } else {
    :
 64 | }
-65 | 
+65 |
 66 | #define LOG_ERROR(tag, fmt, ...) LATTICE_LOG(lattice::log_level::error, tag, fmt, ##__VA_ARGS__)
    |                                  `- note: expanded from macro 'LOG_ERROR'
 67 | #define LOG_WARN(tag, fmt, ...)  LATTICE_LOG(lattice::log_level::warn, tag, fmt, ##__VA_ARGS__)
@@ -399,7 +399,7 @@
 <module-includes>:1:9: note: in file included from <module-includes>:1:
 1 | #import "swift_module_umbrella.hpp"
   |         `- note: in file included from <module-includes>:1:
-2 | 
+2 |
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/swift_module_umbrella.hpp:23:
 21 | // LatticeBridge.hpp → lattice.hpp having textually pulled in their
@@ -411,15 +411,15 @@
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
   4 | #ifdef __cplusplus
-  5 | 
+  5 |
   6 | #include <lattice.hpp>
     |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/LatticeBridge.hpp:6:
-  7 | 
+  7 |
   8 | namespace lattice {
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    3 | #ifdef __cplusplus
-   4 | 
+   4 |
    5 | #include <LatticeCore.hpp>
      |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeSwiftCppBridge/include/lattice.hpp:5:
    6 | #include <bridging.hpp>
@@ -427,7 +427,7 @@
 
 /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:30:10: note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:30:
 28 | //   }
-29 | 
+29 |
 30 | #include "lattice/log.hpp"
    |          `- note: in file included from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/LatticeCore/include/LatticeCore.hpp:30:
 31 | #include "lattice/types.hpp"

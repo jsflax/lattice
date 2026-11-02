@@ -25,11 +25,15 @@
   preserve ordinary manual callers' existing reader behavior.
 - Pair with Core's UUID acknowledgement case fix, durable filtered outbox,
   callback lifetime corrections, and cancellable owned SQLite waits.
+- Build iOS 15 targets consistently with Xcode explicit modules through Core's
+  shared-pointer-backed iOS handle layout.
 
 ### Compatibility
 - Requires LatticeCore 2.5.0. Upgrade and restart every process owning a store's
   sync channels together; older Core owners do not replay pending durable
   outbox rows. Downgrading with pending outbox data is unsupported.
+- Rebuild iOS native bridge objects and Swift consumers together. Previously
+  compiled iOS foreign-reference bridge objects must not be mixed with Core 2.5.0.
 - Background scheduling requires an iOS host app, Background fetch capability,
   the matching `BGTaskSchedulerPermittedIdentifiers` entry, and a writable
   file-backed WSS store with a nonempty authorization token. It is off by default.
