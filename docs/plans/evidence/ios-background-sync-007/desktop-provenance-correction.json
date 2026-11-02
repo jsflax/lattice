@@ -1,0 +1,36 @@
+{
+  "status": "passed SDK regressions against Core 2.5.0; NOT WAL-fix integration qualification",
+  "intended_core": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+  "actual_core": "c3fcb7dd24f75740b6559ec84fe0d5086f4569f1",
+  "actual_version": "2.5.0",
+  "evidence": [
+    "sdk-wal-core-integration-full.log lines 1-2 and compile paths",
+    "sdk-build/debug.yaml database compile command",
+    "sdk-build/workspace-state.json sourceControlCheckout"
+  ],
+  "full_result": "14 XCTest passed in 5.582s; 830 Swift Testing /125 suites passed in85.975s; build312.35s",
+  "strict_result": "12 XCTest5.545s +13Swift0.065s passed",
+  "follow_up": "Resolve published Core2.5.1, verify actual checkout and compiled-source paths, then run full and strict suites; no source override.",
+  "record_status": "Historical provenance correction; earlier extra desktop passes are scoped to Core 2.5.0.",
+  "raw_receipts": [
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-wal-core-integration-provenance-correction.7149013507cb.json",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-wal-core-integration-provenance-correction.json",
+      "sha256": "7149013507cbb0610e249413445485b8cd10a1e5778ab81ba729c9014cb78bc6",
+      "bytes": 773
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-wal-core-integration-full.5934ea86da7f.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-wal-core-integration-full.log",
+      "sha256": "5934ea86da7f08ef9d97fecd6cffeaa1e644802cb1d6ce87fe157e2c7ea48bf0",
+      "bytes": 3332750
+    },
+    {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-release-record-staging/raw/sdk-wal-core-integration-strict.f21f00d38e9d.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-wal-core-integration-strict.log",
+      "sha256": "f21f00d38e9d5d1692cd74cb30fdaea48ee39d77a6533085f0bdde575894cf2f",
+      "bytes": 9081
+    }
+  ],
+  "current_followup": "Published Core 2.5.1 actual pin and checkout verified; real new-pin full and strict suites passed. source-and-pin-verification.json contains the distinct results and frozen receipts."
+}

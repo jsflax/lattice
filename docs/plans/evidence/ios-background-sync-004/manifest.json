@@ -1,0 +1,21 @@
+{
+  "checkpoint_date": "2026-11-01",
+  "scope": "Repository-safe summaries; raw phone receipts are frozen under local checkpoint004-receipts and not published.",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "e670facd54c8ba9e95296b8af5866a00eeffa08ca6e37bfcd6f3a47f33f161a9",
+      "bytes": 7688
+    },
+    {
+      "path": "capi-runtime-summary.json",
+      "sha256": "69377c4cefa32e0e521e7577375d43321c82aca2c045092fbacb2df8ea38a3c3",
+      "bytes": 5738
+    },
+    {
+      "path": "phone-qualification-summary.json",
+      "sha256": "5184db3fc54390b5d3291693eddf71105d8767f379029a2e980472ce45e55402",
+      "bytes": 20514
+    }
+  ]
+}

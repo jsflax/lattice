@@ -1,0 +1,458 @@
+{
+  "checkpoint_date": "2026-11-01",
+  "failed_CI_run": "https://github.com/jsflax/lattice/actions/runs/41374530832",
+  "failed_commit": "ffebdbb9697163966bb1e65699db68c165dd98c5",
+  "iOS_build": "passed",
+  "full_test_legs": [
+    {
+      "platform": "macOS",
+      "tests": 841,
+      "suites": 126,
+      "elapsed_seconds": 104.947,
+      "reported_issues": 39,
+      "named_failing_cases": [
+        "cancelledCallerWaitsForNativeSettlement()",
+        "foregroundSettlesAnActiveManualPassBeforeResuming()",
+        "alreadyRunningOwnerLeavesBorrowedForegroundWorkAlone()"
+      ],
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-pr38-macos-ci.55fd4fb3c740.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr38-macos-ci.log",
+        "sha256": "55fd4fb3c7402b718a182706b5675a269df24793aa7e82f11727884b967642d8",
+        "bytes": 3865549
+      }
+    },
+    {
+      "platform": "stable Linux",
+      "tests": 819,
+      "suites": 123,
+      "elapsed_seconds": 104.267,
+      "reported_issues": 37,
+      "named_failing_cases": [
+        "cancelledCallerWaitsForNativeSettlement()",
+        "foregroundSettlesAnActiveManualPassBeforeResuming()"
+      ],
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-pr38-linux-stable-ci.173bdf22658e.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr38-linux-stable-ci.log",
+        "sha256": "173bdf22658e5592cf4f19554f0b495d921b9dffe7bec15d251aa645686185e4",
+        "bytes": 2559115
+      }
+    },
+    {
+      "platform": "nightly",
+      "tests": 812,
+      "suites": 120,
+      "elapsed_seconds": 87.56,
+      "reported_issues": 39,
+      "named_failing_cases": [
+        "cancelledCallerWaitsForNativeSettlement()",
+        "foregroundSettlesAnActiveManualPassBeforeResuming()",
+        "alreadyRunningOwnerLeavesBorrowedForegroundWorkAlone()"
+      ],
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-pr38-nightly-ci.8ed3ca0a5ada.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-pr38-nightly-ci.log",
+        "sha256": "8ed3ca0a5adade1f161c2b348923355917c1c66b68f296efda729ec87b33e416",
+        "bytes": 1382520
+      }
+    }
+  ],
+  "diagnosis": "Full-suite load exposed cooperative-thread starvation: detached native work blocks the Swift executor, while test-side blocking waits impede scheduling. Named failing cases are BackgroundSyncBindingTests.",
+  "candidate_fix": "Move blocking native operations to a dedicated concurrent utility DispatchQueue; observe native entry asynchronously in tests and preserve two-second deadlines.",
+  "production_compile": {
+    "target": "Lattice",
+    "elapsed_seconds": 58.97,
+    "result": "passed",
+    "source_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-dispatch-native-build.6b06b0180311.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-dispatch-native-build.log",
+      "sha256": "6b06b01803114aae8ad837c81c1bd7ceecefbf6a935602b5ea153f40cf5d6adc",
+      "bytes": 1971760
+    },
+    "limit": "Compilation only; does not establish full-suite correctness."
+  },
+  "strict_counterfactual": {
+    "environment": "LIBDISPATCH_COOPERATIVE_POOL_STRICT=1",
+    "modes": {
+      "old-detached": {
+        "compile": {
+          "command": [
+            "xcrun",
+            "swiftc",
+            "-load-plugin-library",
+            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib",
+            "-swift-version",
+            "6",
+            "-strict-concurrency=complete",
+            "-parse-as-library",
+            "-whole-module-optimization",
+            "-target",
+            "arm64-apple-macosx14.0",
+            "-module-cache-path",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/cache",
+            "-F",
+            "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+            "-Xlinker",
+            "-rpath",
+            "-Xlinker",
+            "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/BindingLatticeStub.swift",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/TestMain.swift",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/BackgroundSyncPolicy.swift",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/BackgroundTaskScheduler.swift",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/BackgroundSyncBindingTests.swift",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/BackgroundSyncBinding.swift",
+            "-o",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/binding-tests"
+          ],
+          "exit": 0,
+          "seconds": 4.902721249964088,
+          "LIBDISPATCH_COOPERATIVE_POOL_STRICT": "1"
+        },
+        "run": {
+          "command": [
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/binding-tests"
+          ],
+          "exit": 1,
+          "seconds": 4.292457250063308,
+          "LIBDISPATCH_COOPERATIVE_POOL_STRICT": "1"
+        },
+        "test_summary": "\u2718 Test run with 18 tests in 1 suite failed after 4.058 seconds with 2 issues.",
+        "source_hashes": {
+          "BindingLatticeStub.swift": "d1371bf43bbb71e53c8da4dca226ca4c03a06ed367c4e712bbc52b0fadedaab8",
+          "TestMain.swift": "06084367ca1e2d00aec9f26089a8508ffe41179a926ae4b65d361d31169f7023",
+          "BackgroundSyncPolicy.swift": "505986a0e6ae0233f9163c2789520ae00c7569b0a94e1d0b4b3b556ea27e3501",
+          "BackgroundTaskScheduler.swift": "eacd1876ee59b28a3f72f12eac5b4739ff62ae8793f94f5029af710412597ed0",
+          "BackgroundSyncBindingTests.swift": "b22ad8d5edbf0b36d20d31fbdf25213c775be231d8ffe574c4af6ed8447f12d4",
+          "BackgroundSyncBinding.swift": "30ac7c38ab9e1a490459165c65bf09114376a5a495695048af05e4b7de15c22c"
+        }
+      },
+      "new-dispatch": {
+        "compile": {
+          "command": [
+            "xcrun",
+            "swiftc",
+            "-load-plugin-library",
+            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib",
+            "-swift-version",
+            "6",
+            "-strict-concurrency=complete",
+            "-parse-as-library",
+            "-whole-module-optimization",
+            "-target",
+            "arm64-apple-macosx14.0",
+            "-module-cache-path",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/cache",
+            "-F",
+            "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+            "-Xlinker",
+            "-rpath",
+            "-Xlinker",
+            "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/BindingLatticeStub.swift",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/TestMain.swift",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/BackgroundSyncPolicy.swift",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/BackgroundTaskScheduler.swift",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/BackgroundSyncBindingTests.swift",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/BackgroundSyncBinding.swift",
+            "-o",
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/binding-tests"
+          ],
+          "exit": 0,
+          "seconds": 1.8751232089707628,
+          "LIBDISPATCH_COOPERATIVE_POOL_STRICT": "1"
+        },
+        "run": {
+          "command": [
+            "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/binding-tests"
+          ],
+          "exit": 0,
+          "seconds": 0.26369995903223753,
+          "LIBDISPATCH_COOPERATIVE_POOL_STRICT": "1"
+        },
+        "test_summary": "\u2714 Test run with 18 tests in 1 suite passed after 0.190 seconds.",
+        "source_hashes": {
+          "BindingLatticeStub.swift": "d1371bf43bbb71e53c8da4dca226ca4c03a06ed367c4e712bbc52b0fadedaab8",
+          "TestMain.swift": "06084367ca1e2d00aec9f26089a8508ffe41179a926ae4b65d361d31169f7023",
+          "BackgroundSyncPolicy.swift": "505986a0e6ae0233f9163c2789520ae00c7569b0a94e1d0b4b3b556ea27e3501",
+          "BackgroundTaskScheduler.swift": "eacd1876ee59b28a3f72f12eac5b4739ff62ae8793f94f5029af710412597ed0",
+          "BackgroundSyncBindingTests.swift": "b22ad8d5edbf0b36d20d31fbdf25213c775be231d8ffe574c4af6ed8447f12d4",
+          "BackgroundSyncBinding.swift": "96fb46904a20aa970ca340a460b43edd5bfa302c8c8e1db313c308f1806d9218"
+        }
+      }
+    },
+    "only_changed_source": [
+      "BackgroundSyncBinding.swift"
+    ],
+    "expected_outcomes": {
+      "old-detached": true,
+      "new-dispatch": true
+    },
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/run.80d95d383896.py",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/run.py",
+        "sha256": "80d95d383896c3e08874988f20f6d4a5efcbd027646cb1e714e942b8f1efc21f",
+        "bytes": 5064
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/result.9e0f0f8f79e1.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/result.json",
+        "sha256": "9e0f0f8f79e1dd90ffd7963b9dcedc85f10b0a90fdd341680a0a8b8755533d59",
+        "bytes": 51
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/old-detached/BackgroundSyncBinding.30ac7c38ab9e.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/BackgroundSyncBinding.swift",
+        "sha256": "30ac7c38ab9e1a490459165c65bf09114376a5a495695048af05e4b7de15c22c",
+        "bytes": 25536
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/old-detached/BackgroundSyncBindingTests.b22ad8d5edbf.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/BackgroundSyncBindingTests.swift",
+        "sha256": "b22ad8d5edbf0b36d20d31fbdf25213c775be231d8ffe574c4af6ed8447f12d4",
+        "bytes": 21363
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/old-detached/BackgroundSyncPolicy.505986a0e6ae.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/BackgroundSyncPolicy.swift",
+        "sha256": "505986a0e6ae0233f9163c2789520ae00c7569b0a94e1d0b4b3b556ea27e3501",
+        "bytes": 4814
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/old-detached/BackgroundTaskScheduler.eacd1876ee59.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/BackgroundTaskScheduler.swift",
+        "sha256": "eacd1876ee59b28a3f72f12eac5b4739ff62ae8793f94f5029af710412597ed0",
+        "bytes": 31992
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/old-detached/BindingLatticeStub.d1371bf43bbb.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/BindingLatticeStub.swift",
+        "sha256": "d1371bf43bbb71e53c8da4dca226ca4c03a06ed367c4e712bbc52b0fadedaab8",
+        "bytes": 706
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/old-detached/TestMain.06084367ca1e.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/TestMain.swift",
+        "sha256": "06084367ca1e2d00aec9f26089a8508ffe41179a926ae4b65d361d31169f7023",
+        "bytes": 151
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/old-detached/compile.64a47d1c5326.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/compile.json",
+        "sha256": "64a47d1c53269be772f2600a4b85e100c7bc625da55e9bc0c92295985302b851",
+        "bytes": 1862
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/old-detached/compile.e3b0c44298fc.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/compile.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/old-detached/source-hashes.0de8fe3a1ace.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/source-hashes.json",
+        "sha256": "0de8fe3a1ace7722e4462c15b1f844da7b5426be6a1c2cea78d8d7f22451b51a",
+        "bytes": 599
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/old-detached/strict-tests.c6dff5496a26.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/strict-tests.json",
+        "sha256": "c6dff5496a262470ed37676ae447dd1538785da31b6ed12930561694da10b4da",
+        "bytes": 241
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/old-detached/strict-tests.a6f390ca7b97.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/old-detached/strict-tests.log",
+        "sha256": "a6f390ca7b97bf7ff5ca82334deed3ba500069e55c63d34025b2ae8f6ffadda3",
+        "bytes": 3530
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/new-dispatch/BackgroundSyncBinding.96fb46904a20.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/BackgroundSyncBinding.swift",
+        "sha256": "96fb46904a20aa970ca340a460b43edd5bfa302c8c8e1db313c308f1806d9218",
+        "bytes": 26765
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/new-dispatch/BackgroundSyncBindingTests.b22ad8d5edbf.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/BackgroundSyncBindingTests.swift",
+        "sha256": "b22ad8d5edbf0b36d20d31fbdf25213c775be231d8ffe574c4af6ed8447f12d4",
+        "bytes": 21363
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/new-dispatch/BackgroundSyncPolicy.505986a0e6ae.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/BackgroundSyncPolicy.swift",
+        "sha256": "505986a0e6ae0233f9163c2789520ae00c7569b0a94e1d0b4b3b556ea27e3501",
+        "bytes": 4814
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/new-dispatch/BackgroundTaskScheduler.eacd1876ee59.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/BackgroundTaskScheduler.swift",
+        "sha256": "eacd1876ee59b28a3f72f12eac5b4739ff62ae8793f94f5029af710412597ed0",
+        "bytes": 31992
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/new-dispatch/BindingLatticeStub.d1371bf43bbb.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/BindingLatticeStub.swift",
+        "sha256": "d1371bf43bbb71e53c8da4dca226ca4c03a06ed367c4e712bbc52b0fadedaab8",
+        "bytes": 706
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/new-dispatch/TestMain.06084367ca1e.swift",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/TestMain.swift",
+        "sha256": "06084367ca1e2d00aec9f26089a8508ffe41179a926ae4b65d361d31169f7023",
+        "bytes": 151
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/new-dispatch/compile.df02670e0e7c.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/compile.json",
+        "sha256": "df02670e0e7c0b52e586c123b628e0c47e1ee4690f0715a6e7c3e1126fab3306",
+        "bytes": 1863
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/new-dispatch/compile.e3b0c44298fc.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/compile.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/new-dispatch/source-hashes.7602cae77a86.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/source-hashes.json",
+        "sha256": "7602cae77a8627321a814c61526371f993a3c22aba98fd996c18268bfb4a3805",
+        "bytes": 599
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/new-dispatch/strict-tests.cd9b81dac8b7.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/strict-tests.json",
+        "sha256": "cd9b81dac8b79d867291c5ff0321e1ea9ed71f116e88d90d34fb5ba1f665446d",
+        "bytes": 243
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/probes/completion/binding-cooperative/new-dispatch/strict-tests.7a7801751a35.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/probes/completion/binding-cooperative/new-dispatch/strict-tests.log",
+        "sha256": "7a7801751a3566f86db29711c800edb2a119f6a10b6fab8203dc24fb82992843",
+        "bytes": 3093
+      }
+    ],
+    "scope": "Actual policy/scheduler/binding and updated binding tests with an enclosing-Lattice stub; no Core or package build. Both variants use identical asynchronous fixtures. The old variant is expected to fail, not pass.",
+    "harness_note": "Archived run.py used HEAD for old binding at execution time (ffebdbb). Frozen source snapshots and hashes identify the tested versions; do not rerun against a later HEAD without pinning that source."
+  },
+  "remaining": "Local complete suite and actual-SDK strict regression pass. PR38 has not yet been updated to this final source; fresh exact-commit CI and SDK publication/artifact verification remain required. Phone network success remains unqualified.",
+  "intermediate_full_SDK_run": {
+    "build_seconds": 173.22,
+    "XCTest_tests": 2,
+    "XCTest_failures": 0,
+    "Swift_Testing_tests": 841,
+    "Swift_Testing_suites": 126,
+    "Swift_Testing_seconds": 73.959,
+    "Swift_Testing_issues": 2,
+    "result": "failed",
+    "failure": "didEnter fixture setup failed in the two ordering tests under full parallel SQL-test load.",
+    "source_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-dispatch-full-native-tests.b0dde8221455.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-dispatch-full-native-tests.log",
+      "sha256": "b0dde8221455e7ab0406fe3683ccbe67ae29e3f815471063bd88188826ca2321",
+      "bytes": 1296644
+    }
+  },
+  "final_test_organization": {
+    "change": "Move the two ordering cases into BackgroundSyncBindingTestsOrdering, a serial XCTest phase that runs in the default complete suite before Swift Testing; add a protected-data scheduler regression.",
+    "exclusions": false,
+    "timeout_increases": false,
+    "ordering_deadline_seconds": 2,
+    "reason": "Keep assertions about native cancellation/settlement ordering independent of parallel fixture-start latency.",
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-source/Tests/LatticeTests/BackgroundSyncBindingTests.3086bac79b6d.swift",
+        "original_path": "/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/Tests/LatticeTests/BackgroundSyncBindingTests.swift",
+        "sha256": "3086bac79b6db1b7a9f6f9a4e9a854cdd1c1ba5d6aeedca381e53efa9a25eb34",
+        "bytes": 22145
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-source/Tests/LatticeTests/BackgroundTaskSchedulerTests.f9e82ab2fa42.swift",
+        "original_path": "/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/Tests/LatticeTests/BackgroundTaskSchedulerTests.swift",
+        "sha256": "f9e82ab2fa422de0f7b7559a7a0ed5e59f60bfb7742446de9e8e21ef48fcafeb",
+        "bytes": 29409
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-source/Sources/Lattice/BackgroundSyncBinding.96fb46904a20.swift",
+        "original_path": "/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/Sources/Lattice/BackgroundSyncBinding.swift",
+        "sha256": "96fb46904a20aa970ca340a460b43edd5bfa302c8c8e1db313c308f1806d9218",
+        "bytes": 26765
+      }
+    ]
+  },
+  "final_complete_SDK_run": {
+    "exit_code": 0,
+    "exit_code_source": "Coordinator process receipt",
+    "build_seconds": 61.31,
+    "XCTest": {
+      "tests": 4,
+      "failures": 0,
+      "composition": "Two ordering tests plus two existing child-runner entry tests",
+      "ordering_test_seconds": [
+        0.003,
+        0.001
+      ],
+      "ordering_suite_seconds": 0.004
+    },
+    "Swift_Testing": {
+      "tests": 840,
+      "suites": 126,
+      "seconds": 78.449,
+      "issues": 0,
+      "binding_suite_seconds": 13.851,
+      "protected_data_regression_seconds": 11.785
+    },
+    "test_exclusions": false,
+    "source_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-dispatch-full-native-tests-2.8091ba26ff8e.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-dispatch-full-native-tests-2.log",
+      "sha256": "8091ba26ff8e319ccd68cef2ee079fff17e48c377b2d6ed6b9ac6dc683ed87bb",
+      "bytes": 798282
+    }
+  },
+  "final_actual_SDK_strict_run": {
+    "exit_code": 0,
+    "exit_code_source": "Coordinator process receipt",
+    "environment": "LIBDISPATCH_COOPERATIVE_POOL_STRICT=1",
+    "filter": "BackgroundSyncBindingTests",
+    "XCTest": {
+      "tests": 2,
+      "failures": 0,
+      "suite_seconds": 0.002
+    },
+    "Swift_Testing": {
+      "tests": 16,
+      "suites": 1,
+      "seconds": 0.19,
+      "issues": 0
+    },
+    "source_receipt": {
+      "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-dispatch-strict-native-tests.abaa6ef43fc2.log",
+      "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-dispatch-strict-native-tests.log",
+      "sha256": "abaa6ef43fc2c7b09ed0a1d27fcb32ea7c3ee826e8d7b293c4a52198f59d3dda",
+      "bytes": 4234
+    },
+    "relationship": "Supplemental actual-SDK regression; does not replace the unfiltered complete suite or overwrite the earlier portable 18-test counterfactual."
+  },
+  "CI_workflow_followup": {
+    "change": "macOS CI runs strict binding regression after the unchanged complete swift test invocation",
+    "actionlint": "passed; empty output and exit 0 reported by coordinator",
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-dispatch-ci-actionlint.e3b0c44298fc.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/sdk-dispatch-ci-actionlint.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/sdk-source/.github/workflows/ci.2a30b728e1c3.yml",
+        "original_path": "/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/.github/workflows/ci.yml",
+        "sha256": "2a30b728e1c3b54fe23e40452b82f7dce2551534aeab0a1e8b0c59b564e85370",
+        "bytes": 15277
+      }
+    ]
+  }
+}

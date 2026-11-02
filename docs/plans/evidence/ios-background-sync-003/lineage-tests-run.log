@@ -1,0 +1,97 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Background task scheduler" started.
+◇ Suite "Background sync weak bindings" started.
+◇ Test concurrentRegistrationOccursOnceAndConflictsAreSynchronous() started.
+◇ Test anotherFacadeOfTheSameStoreDoesNotCancelItsAttempt() started.
+◇ Test coldBackgroundNotificationDoesNotCancelItsDeliveredTask() started.
+◇ Test protectedDataAvailabilityAloneNeverClaimsForeground() started.
+◇ Test concurrentSubmissionDecisionsKeepTheEarliestRequest() started.
+◇ Test invalidationRetiresBindingBeforeOldWorkCompletes() started.
+◇ Test unboundColdDeliveryRetriesWithoutOpeningAStore() started.
+◇ Test expirationBeforeTaskCreationDoesNotStartWork() started.
+◇ Test cleanupAssertionEndsOnlyAfterSuspensionSettles() started.
+◇ Test newMembersDuringResumeReceiveTheForegroundState() started.
+◇ Test expirationWaitsForSettlementAndCompletesExactlyOnce() started.
+◇ Test reschedulingPreservesEarlierOtherAndFailedRequests() started.
+◇ Test latestForegroundDesireRetriesACancelledResume() started.
+◇ Test bindingConflictsInvalidateAndReleasedGroupsAreCheckedSynchronously() started.
+◇ Test invalidHostAndPolicyNeverReachNativeRegistration() started.
+◇ Test failedLifecycleWorkCanRetryWithoutSpinning(command:) started.
+◇ Test rejectedRegistrationCanRetryWithoutAFalseRegisteredRecord() started.
+◇ Test membershipChangesDoNotExpireADeliveredTask() started.
+◇ Test refreshBudgetIncludesBorrowerSettlement() started.
+◇ Test cancellationCaptureMayReenterWhenRetired(replace:) started.
+◇ Test onlyActualCompletionReportsSuccess(outcome:) started.
+◇ Test foregroundSettlesAnActiveManualPassBeforeResuming() started.
+◇ Test releasingNewestFacadePreservesTheEarlierOne() started.
+◇ Test foregroundTakeoverWaitsForRefreshCleanupThenResumes() started.
+◇ Test idleRegistrationDoesNotRetainItsActorOrStore() started.
+◇ Test commandsHopToTheOwningActorBeforeNativeWork() started.
+◇ Test oneLiveStoreCannotAcquireTwoTaskDrivers() started.
+◇ Test expiredNativeAliasDoesNotBlockLaterAddressReuse() started.
+◇ Test submissionFailureIsObservable() started.
+◇ Test deadOriginalOwnerCannotBeReplacedByABorrowerAtItsAddress() started.
+◇ Test cancellationBeforeNativeTokenInstallationIsNotLost() started.
+◇ Test nativeIdentityCannotJoinDifferentLiveLineages() started.
+◇ Test unconfirmedMemberSuspensionCannotBecomeCompleted() started.
+◇ Test lineageResumesDistinctNativeMembersButOnlyOwnerRefreshes() started.
+◇ Test invalidationCancelsBeforeAQueuedActorHopCanStartNativeWork() started.
+◇ Test ownerCloseRetiresBorrowersAndRejectsStaleReferences() started.
+◇ Test case passing 1 argument command → .resume to failedLifecycleWorkCanRetryWithoutSpinning(command:) started.
+◇ Test case passing 1 argument command → .suspend to failedLifecycleWorkCanRetryWithoutSpinning(command:) started.
+◇ Test foregroundTransferDisarmsObsoleteCommandCancellation() started.
+◇ Test case passing 1 argument replace → false to cancellationCaptureMayReenterWhenRetired(replace:) started.
+◇ Test case passing 1 argument replace → true to cancellationCaptureMayReenterWhenRetired(replace:) started.
+◇ Test cancelledCallerWaitsForNativeSettlement() started.
+◇ Test case passing 1 argument outcome → .completed to onlyActualCompletionReportsSuccess(outcome:) started.
+◇ Test case passing 1 argument outcome → .incomplete to onlyActualCompletionReportsSuccess(outcome:) started.
+◇ Test case passing 1 argument outcome → .notNeeded to onlyActualCompletionReportsSuccess(outcome:) started.
+◇ Test invalidationRejectsRetainedCapabilities() started.
+◇ Test alreadyRunningOwnerLeavesBorrowedForegroundWorkAlone() started.
+✔ Test cancellationCaptureMayReenterWhenRetired(replace:) with 2 test cases passed after 0.001 seconds.
+✔ Test invalidHostAndPolicyNeverReachNativeRegistration() passed after 0.001 seconds.
+◇ Test derivedCloseDoesNotInvalidateOwnerOrSibling() started.
+✔ Test rejectedRegistrationCanRetryWithoutAFalseRegisteredRecord() passed after 0.001 seconds.
+✔ Test oneLiveStoreCannotAcquireTwoTaskDrivers() passed after 0.001 seconds.
+✔ Test bindingConflictsInvalidateAndReleasedGroupsAreCheckedSynchronously() passed after 0.001 seconds.
+✔ Test cancellationBeforeNativeTokenInstallationIsNotLost() passed after 0.001 seconds.
+✔ Test foregroundTransferDisarmsObsoleteCommandCancellation() passed after 0.001 seconds.
+✔ Test concurrentRegistrationOccursOnceAndConflictsAreSynchronous() passed after 0.002 seconds.
+✔ Test submissionFailureIsObservable() passed after 0.002 seconds.
+✔ Test idleRegistrationDoesNotRetainItsActorOrStore() passed after 0.001 seconds.
+✔ Test expirationBeforeTaskCreationDoesNotStartWork() passed after 0.002 seconds.
+✔ Test onlyActualCompletionReportsSuccess(outcome:) with 3 test cases passed after 0.002 seconds.
+✔ Test concurrentSubmissionDecisionsKeepTheEarliestRequest() passed after 0.002 seconds.
+✔ Test reschedulingPreservesEarlierOtherAndFailedRequests() passed after 0.002 seconds.
+✔ Test nativeIdentityCannotJoinDifferentLiveLineages() passed after 0.002 seconds.
+✔ Test invalidationRetiresBindingBeforeOldWorkCompletes() passed after 0.002 seconds.
+✔ Test invalidationCancelsBeforeAQueuedActorHopCanStartNativeWork() passed after 0.002 seconds.
+✔ Test anotherFacadeOfTheSameStoreDoesNotCancelItsAttempt() passed after 0.002 seconds.
+✔ Test membershipChangesDoNotExpireADeliveredTask() passed after 0.002 seconds.
+✔ Test foregroundSettlesAnActiveManualPassBeforeResuming() passed after 0.002 seconds.
+✔ Test protectedDataAvailabilityAloneNeverClaimsForeground() passed after 0.002 seconds.
+✔ Test coldBackgroundNotificationDoesNotCancelItsDeliveredTask() passed after 0.002 seconds.
+✔ Test expirationWaitsForSettlementAndCompletesExactlyOnce() passed after 0.002 seconds.
+✔ Test latestForegroundDesireRetriesACancelledResume() passed after 0.002 seconds.
+✔ Test lineageResumesDistinctNativeMembersButOnlyOwnerRefreshes() passed after 0.002 seconds.
+✔ Test unboundColdDeliveryRetriesWithoutOpeningAStore() passed after 0.003 seconds.
+✔ Test alreadyRunningOwnerLeavesBorrowedForegroundWorkAlone() passed after 0.002 seconds.
+✔ Test failedLifecycleWorkCanRetryWithoutSpinning(command:) with 2 test cases passed after 0.002 seconds.
+✔ Test cleanupAssertionEndsOnlyAfterSuspensionSettles() passed after 0.003 seconds.
+✔ Test unconfirmedMemberSuspensionCannotBecomeCompleted() passed after 0.002 seconds.
+✔ Test expiredNativeAliasDoesNotBlockLaterAddressReuse() passed after 0.002 seconds.
+✔ Test cancelledCallerWaitsForNativeSettlement() passed after 0.002 seconds.
+✔ Test invalidationRejectsRetainedCapabilities() passed after 0.003 seconds.
+✔ Test deadOriginalOwnerCannotBeReplacedByABorrowerAtItsAddress() passed after 0.003 seconds.
+✔ Test newMembersDuringResumeReceiveTheForegroundState() passed after 0.003 seconds.
+✔ Test releasingNewestFacadePreservesTheEarlierOne() passed after 0.003 seconds.
+✔ Test foregroundTakeoverWaitsForRefreshCleanupThenResumes() passed after 0.003 seconds.
+✔ Suite "Background task scheduler" passed after 0.004 seconds.
+✔ Test ownerCloseRetiresBorrowersAndRejectsStaleReferences() passed after 0.003 seconds.
+✔ Test derivedCloseDoesNotInvalidateOwnerOrSibling() passed after 0.001 seconds.
+✔ Test commandsHopToTheOwningActorBeforeNativeWork() passed after 0.003 seconds.
+✔ Test refreshBudgetIncludesBorrowerSettlement() passed after 0.050 seconds.
+✔ Suite "Background sync weak bindings" passed after 0.051 seconds.
+✔ Test run with 41 tests in 2 suites passed after 0.051 seconds.

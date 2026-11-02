@@ -10,6 +10,14 @@ import NIOPosix
 internal final class NIOWebsocketClient: @unchecked Sendable {
     private var ws: WebSocket?
     private var currentState: lattice.transport_state = .closed
+    private let stateLock = NSRecursiveLock()
+    private var generation: UInt64 = 0
+    private func withState<T>(_ body: () -> T) -> T {
+        stateLock.lock(); defer { stateLock.unlock() }; return body()
+    }
+    private func withCurrent(_ attempt: UInt64, _ body: () -> Void) {
+        withState { if generation == attempt && cxxClientPtr != nil { body() } }
+    }
     private let eventLoopGroup: MultiThreadedEventLoopGroup
 
     // Pointer to the C++ generic_websocket_client for triggering callbacks
@@ -42,7 +50,7 @@ internal final class NIOWebsocketClient: @unchecked Sendable {
             { ptr in
                 guard let ptr = ptr else { return .closed }
                 let client = Unmanaged<NIOWebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
-                return client.currentState
+                return client.withState { client.currentState }
             },
             // send_fn
             { ptr, messagePtr in
@@ -56,11 +64,24 @@ internal final class NIOWebsocketClient: @unchecked Sendable {
         let cxxPtr = UnsafeMutablePointer<lattice.generic_sync_transport>.allocate(capacity: 1)
         cxxPtr.initialize(to: cxxClient)
         self.cxxClientPtr = UnsafeMutableRawPointer(cxxPtr)
+        cxxPtr.pointee.set_destroy_callback { ptr in
+            guard let ptr else { return }
+            let client = Unmanaged<NIOWebsocketClient>.fromOpaque(ptr).takeRetainedValue()
+            client.withState {
+                client.performDisconnect()
+                client.cxxClientPtr = nil
+            }
+        }
 
         return UnsafeMutableRawPointer(cxxPtr)
     }
 
     private func performConnect(url urlString: String, headers: lattice.HeadersMap) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        generation &+= 1
+        let attempt = generation
+        _ = ws?.close(code: .normalClosure)
+        ws = nil
         currentState = .connecting
 
         // WebSocketKit asserts ws:// or wss:// schemes; convert http(s) URLs
@@ -80,52 +101,56 @@ internal final class NIOWebsocketClient: @unchecked Sendable {
 
         let wsConfig = WebSocketClient.Configuration(maxFrameSize: 1 << 28) // 256 MB
         WebSocket.connect(to: wsURL, headers: httpHeaders, configuration: wsConfig, on: eventLoopGroup) { [weak self] ws in
-            guard let self = self else { return }
-            self.ws = ws
-            self.currentState = .open
-            self.triggerOpen()
-
-            ws.onText { [weak self] _, text in
-                guard let self = self else { return }
-                let msg = lattice.transport_message.from_string(std.string(text))
-                self.triggerMessage(msg)
-            }
-
-            ws.onBinary { [weak self] _, buffer in
-                guard let self = self else { return }
-                var buf = buffer
-                let data = buf.readBytes(length: buf.readableBytes) ?? []
-                var vec = lattice.ByteVector()
-                for byte in data {
-                    vec.push_back(byte)
+            guard let self else { _ = ws.close(code: .normalClosure); return }
+            self.withState {
+                guard self.generation == attempt, self.cxxClientPtr != nil else {
+                    _ = ws.close(code: .normalClosure); return
                 }
-                let msg = lattice.transport_message.from_binary(vec)
-                self.triggerMessage(msg)
-            }
+                self.ws = ws
+                self.currentState = .open
+                self.triggerOpen()
 
-            ws.onClose.whenComplete { [weak self] _ in
-                guard let self = self else { return }
-                self.currentState = .closed
-                self.triggerClose(code: Int(ws.closeCode.map { UInt16(webSocketErrorCode: $0) } ?? 1000),
-                                  reason: "")
+                ws.onText { [weak self] _, text in
+                    self?.withCurrent(attempt) {
+                        self?.triggerMessage(lattice.transport_message.from_string(std.string(text)))
+                    }
+                }
+                ws.onBinary { [weak self] _, buffer in
+                    self?.withCurrent(attempt) {
+                        var buf = buffer
+                        let data = buf.readBytes(length: buf.readableBytes) ?? []
+                        var vec = lattice.ByteVector()
+                        for byte in data { vec.push_back(byte) }
+                        self?.triggerMessage(lattice.transport_message.from_binary(vec))
+                    }
+                }
+                ws.onClose.whenComplete { [weak self] _ in
+                    self?.withCurrent(attempt) {
+                        self?.currentState = .closed
+                        self?.ws = nil
+                        self?.triggerClose(code: Int(ws.closeCode.map { UInt16(webSocketErrorCode: $0) } ?? 1000), reason: "")
+                    }
+                }
             }
         }.whenFailure { [weak self] error in
-            guard let self = self else { return }
-            self.currentState = .closed
-            self.triggerError(error.localizedDescription)
+            self?.withCurrent(attempt) {
+                self?.currentState = .closed
+                self?.triggerError(error.localizedDescription)
+            }
         }
     }
 
     private func performDisconnect() {
-        currentState = .closing
-        // Nil out cxxClientPtr BEFORE the async close so that any NIO event
-        // loop callbacks (onClose, onError) that fire after the C++ synchronizer
-        // is destroyed become no-ops instead of use-after-free.
-        cxxClientPtr = nil
+        stateLock.lock(); defer { stateLock.unlock() }
+        generation &+= 1
+        currentState = .closed
         _ = ws?.close(code: .normalClosure)
+        ws = nil
+        // Keep the bridge through pause/resume; destruction retires it.
     }
 
     private func performSend(_ message: lattice.transport_message) {
+        stateLock.lock(); defer { stateLock.unlock() }
         guard let ws = ws else { return }
 
         if message.msg_type == .text {
@@ -169,7 +194,9 @@ internal final class NIOWebsocketClient: @unchecked Sendable {
     }
 
     deinit {
-        try? eventLoopGroup.syncShutdownGracefully()
+        // The final callback may release this object on its own event loop.
+        // Asynchronous shutdown avoids joining that same thread.
+        eventLoopGroup.shutdownGracefully(queue: .global()) { _ in }
     }
 }
 #endif

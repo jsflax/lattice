@@ -103,7 +103,7 @@ public extension TableResults {
     /// query already hydrated each row, so subsequent property access on the
     /// returned objects issues no SQL.
     func materializedSnapshot(limit: Int64? = nil, offset: Int64? = nil) -> [Element] {
-        snapshot(limit: limit, offset: offset).map { $0.materialize() }
+        _snapshot(limit: limit, offset: offset, materialized: true)
     }
 }
 

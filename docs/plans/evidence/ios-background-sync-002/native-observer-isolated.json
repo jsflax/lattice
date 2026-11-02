@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-build/arm64-apple-macosx/debug/LatticeCoreTests",
+    "--gtest_filter=Sync.DestroyFromObserverCallbackDoesNotHang",
+    "--gtest_output=xml:/Users/jason/localdev/lattice-bg-sync-evidence-20261101/native-observer-isolated.xml"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 0.28692308301106095
+}

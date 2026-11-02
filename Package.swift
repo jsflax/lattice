@@ -19,11 +19,9 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
-        // Consumer receipt qualification: atomic unsynced local metadata and
-        // explicit audited-writer preparation, pinned together. This branch
-        // must be consumed by revision until the extension has a versioned
-        // release (SwiftPM forbids revision deps in version-required packages).
-        // For the two-repo dev loop use an UNCOMMITTED override:
+        // Versioned so lattice tags are consumable via `from:` (SwiftPM forbids
+        // unversioned deps inside version-required packages). For the two-repo
+        // dev loop use an UNCOMMITTED override:
         //   swift package edit LatticeCore --path ../LatticeCore
         // (or drag the local LatticeCore package into the Xcode workspace).
         // 0.10.4 floor is required: materialized reads consume the row-cache
@@ -63,7 +61,16 @@ let package = Package(
         // include synced rows without reopening the store.
         // 2.2.8 also requires the vector contention/readiness fixes and rejects
         // malformed sync changes before apply, acknowledgement or cursor advance.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f"),
+        // 2.3.0 supplies strict schema metadata and shared scheduler context
+        // ownership required by this wrapper's actor-context destructor.
+        // 2.4.0 adds deferred same-handle sync and fetched-row hydration.
+        // 2.4.1 preserves observed nullable NoHistory clears through sync and
+        // validates their transport metadata against physical field nullability.
+        // Released checked dynamic-open errors, reverse-link indexes/storage epoch 7,
+        // and native NACK/decode diagnostics.
+        // Exact integration keeps those released APIs plus checked audit fences,
+        // local receipt metadata and owned audited-writer preparation.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "64abee4637a4e774b5a5c5d778146ddc9777797c"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -135,6 +142,12 @@ let package = Package(
         .testTarget(
             name: "LatticeConformanceTests",
             dependencies: ["Lattice", "LatticeTestSupport"],
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
+        // Keep macro consumers independent of imports in the broader SDK test suite.
+        .testTarget(
+            name: "LatticeUnionConsumerTests",
+            dependencies: ["Lattice"],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         .target(

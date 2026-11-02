@@ -366,6 +366,27 @@ class LiveResultsGenerationReadTests: BaseTest {
         endRenderBatch()
         #expect(results.snapshot().count == 20)
     }
+    @Test @MainActor func materializedSnapshotKeepsPinnedScalarValues() throws {
+        let lattice = try testLattice(Gen5Item.self)
+        try seed(lattice, count: 3)
+        let results = lattice.objects(Gen5Item.self).sortedBy(\.rank)
+        #expect(results.count == 3) // Pin the pre-write generation.
+        let box = SendBox5(lattice)
+        let done = DispatchSemaphore(value: 0)
+        Thread.detachNewThread {
+            if let row = box.value.objects(Gen5Item.self).where({ $0.rank == 0 }).first {
+                row.name = "changed"; row.rank = 100
+            }
+            done.signal()
+        }
+        done.wait()
+        let old = results.materializedSnapshot()
+        #expect(old.map(\.rank) == [0, 1, 2])
+        #expect(old.map(\.name) == ["row_0", "row_1", "row_2"])
+        endRenderBatch()
+        #expect(results.materializedSnapshot().map(\.rank) == [1, 2, 100])
+        #expect(old.map(\.rank) == [0, 1, 2], "previous materialized rows stay snapshots")
+    }
     #endif  // canImport(Darwin)
 
     // MARK: Close / delete while generations live (§4.6)

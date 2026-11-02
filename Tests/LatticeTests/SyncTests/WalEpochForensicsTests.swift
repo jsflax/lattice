@@ -1,4 +1,7 @@
 import Foundation
+#if os(Linux)
+import Glibc
+#endif
 #if canImport(Combine)
 import Combine
 #endif
@@ -82,11 +85,14 @@ import Testing
 private func sqlite3Run(_ dbPath: String, _ sql: String,
                         readonly: Bool = false,
                         timeout: TimeInterval = 30) -> (out: String, err: String) {
-    let proc = Process()
-    proc.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
     var args: [String] = []
     if readonly { args.append("-readonly") }
     args += ["-cmd", ".timeout 2000", dbPath, sql]
+#if os(Linux)
+    return linuxSQLite3Run(args, timeout: timeout)
+#else
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
     proc.arguments = args
     let outPipe = Pipe(), errPipe = Pipe()
     proc.standardOutput = outPipe
@@ -101,7 +107,102 @@ private func sqlite3Run(_ dbPath: String, _ sql: String,
     let err = String(decoding: errPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
     return (out.trimmingCharacters(in: .whitespacesAndNewlines),
             err.trimmingCharacters(in: .whitespacesAndNewlines))
+#endif
 }
+
+#if os(Linux)
+/// Avoid Foundation's Linux directory-entry over-read in Process.run() while
+/// preserving an external sqlite3 process and its independent SQLite locks.
+/// https://github.com/swiftlang/swift-corelibs-foundation/pull/5472
+private func linuxSQLite3Run(_ arguments: [String], timeout: TimeInterval) -> (out: String, err: String) {
+    let executable = "/usr/bin/sqlite3"
+    let outPipe = Pipe(), errPipe = Pipe()
+    defer {
+        try? outPipe.fileHandleForReading.close()
+        try? outPipe.fileHandleForWriting.close()
+        try? errPipe.fileHandleForReading.close()
+        try? errPipe.fileHandleForWriting.close()
+    }
+    func checked(_ code: Int32) throws {
+        if code != 0 { throw NSError(domain: NSPOSIXErrorDomain, code: Int(code)) }
+    }
+    do {
+        var actions = posix_spawn_file_actions_t()
+        try checked(posix_spawn_file_actions_init(&actions))
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        try checked(posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0))
+        try checked(posix_spawn_file_actions_adddup2(&actions, outPipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO))
+        try checked(posix_spawn_file_actions_adddup2(&actions, errPipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO))
+        // Ubuntu 24.04's glibc supports this action. Close inherited handles in
+        // the child without enumerating /proc/self/fd or touching parent locks.
+        try checked(posix_spawn_file_actions_addclosefrom_np(&actions, 3))
+        var attributes = posix_spawnattr_t()
+        try checked(posix_spawnattr_init(&attributes))
+        defer { posix_spawnattr_destroy(&attributes) }
+        try checked(posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP)))
+        try checked(posix_spawnattr_setpgroup(&attributes, 0))
+
+        let argumentStrings = [executable] + arguments
+        let environmentStrings = ProcessInfo.processInfo.environment.sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
+        guard !(argumentStrings + environmentStrings).contains(where: { $0.utf8.contains(0) }) else {
+            return ("", "spawn-failed: embedded NUL in argv/environment")
+        }
+        var argv = argumentStrings.map { strdup($0) } + [nil]
+        var envp = environmentStrings.map { strdup($0) } + [nil]
+        defer { argv.forEach { free($0) }; envp.forEach { free($0) } }
+        guard argv.dropLast().allSatisfy({ $0 != nil }), envp.dropLast().allSatisfy({ $0 != nil }) else {
+            return ("", "spawn-failed: could not allocate argv/environment")
+        }
+        var pid: pid_t = 0
+        try checked(argv.withUnsafeMutableBufferPointer { argvBuffer in
+            envp.withUnsafeMutableBufferPointer { environmentBuffer in
+                posix_spawn(&pid, executable, &actions, &attributes,
+                            argvBuffer.baseAddress!, environmentBuffer.baseAddress!)
+            }
+        })
+        try? outPipe.fileHandleForWriting.close()
+        try? errPipe.fileHandleForWriting.close()
+        // Only this helper waits on this PID. Reap on both normal exit and
+        // timeout; do not hand the child to Foundation's process manager.
+        var status: Int32 = 0
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        var diagnostic = ""
+        while true {
+            let waited = waitpid(pid, &status, WNOHANG)
+            if waited == pid { break }
+            if waited == -1 && errno != EINTR {
+                let waitError = errno
+                // ECHILD means no owned child remains: do not signal a PID
+                // that could have been reused. Otherwise terminate and reap
+                // before returning; never block reading an unjoined child's pipe.
+                if waitError != ECHILD {
+                    _ = kill(pid, SIGKILL)
+                    var joined: pid_t
+                    repeat { joined = waitpid(pid, &status, 0) } while joined == -1 && errno == EINTR
+                }
+                return ("", "waitpid-failed: \(waitError)")
+            }
+            if ProcessInfo.processInfo.systemUptime >= deadline {
+                _ = kill(pid, SIGKILL)
+                var joined: pid_t
+                repeat { joined = waitpid(pid, &status, 0) } while joined == -1 && errno == EINTR
+                diagnostic = joined == pid ? "sqlite3 timed out after \(timeout)s" : "waitpid-after-timeout-failed: \(errno)"
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        let out = String(decoding: outPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        var err = String(decoding: errPipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        if diagnostic.isEmpty && status != 0 { diagnostic = "sqlite3 failed with wait status \(status)" }
+        if !diagnostic.isEmpty { err += (err.isEmpty ? "" : "\n") + diagnostic }
+        return (out.trimmingCharacters(in: .whitespacesAndNewlines),
+                err.trimmingCharacters(in: .whitespacesAndNewlines))
+    } catch {
+        return ("", "spawn-failed: \(error)")
+    }
+}
+#endif
 
 private func fileBytes(_ path: String) -> Int64 {
     (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64 ?? -1) ?? -1

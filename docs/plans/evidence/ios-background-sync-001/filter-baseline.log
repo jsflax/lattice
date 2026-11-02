@@ -1,0 +1,57 @@
+Running main() from /Users/jason/localdev/lattice-core-background-sync-20261101/Sources/GoogleTest/src/gtest_main.cc
+Note: Google Test filter = FilteredSyncWindowDurability.*
+[==========] Running 3 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 3 tests from FilteredSyncWindowDurability
+[ RUN      ] FilteredSyncWindowDurability.OrdinaryUpdateSurvivesFullSendWindow
+[       OK ] FilteredSyncWindowDurability.OrdinaryUpdateSurvivesFullSendWindow (52 ms)
+[ RUN      ] FilteredSyncWindowDurability.LeavingFilterSurvivesFullSendWindowAndReconnect
+/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:145: Failure
+Value of: fixture.target_pending()
+  Actual: false
+Expected: true
+The unsent synthetic DELETE needs a durable retry source
+
+/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:148: Failure
+Value of: fixture.peer_has_target()
+  Actual: true
+Expected: false
+ACKing the blockers must allow the target removal to reach the peer
+
+/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:152: Failure
+Value of: fixture.peer_has_target()
+  Actual: true
+Expected: false
+Reconnect must not leave a permanently stale filtered peer
+
+[  FAILED  ] FilteredSyncWindowDurability.LeavingFilterSurvivesFullSendWindowAndReconnect (42 ms)
+[ RUN      ] FilteredSyncWindowDurability.ReenteringFilterSurvivesFullSendWindowAndReconnect
+/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:169: Failure
+Value of: fixture.target_pending()
+  Actual: false
+Expected: true
+The unsent synthetic INSERT needs a durable retry source
+
+/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:172: Failure
+Value of: fixture.peer_has_target()
+  Actual: false
+Expected: true
+ACKing the blockers must allow the target INSERT to reach the peer
+
+/Users/jason/localdev/lattice-core-background-sync-20261101/Tests/LatticeCoreTests/FilteredSyncWindowDurabilityTests.cpp:176: Failure
+Value of: fixture.peer_has_target()
+  Actual: false
+Expected: true
+Reconnect must recover the target rather than trust unsent membership
+
+[  FAILED  ] FilteredSyncWindowDurability.ReenteringFilterSurvivesFullSendWindowAndReconnect (46 ms)
+[----------] 3 tests from FilteredSyncWindowDurability (140 ms total)
+
+[----------] Global test environment tear-down
+[==========] 3 tests from 1 test suite ran. (141 ms total)
+[  PASSED  ] 1 test.
+[  FAILED  ] 2 tests, listed below:
+[  FAILED  ] FilteredSyncWindowDurability.LeavingFilterSurvivesFullSendWindowAndReconnect
+[  FAILED  ] FilteredSyncWindowDurability.ReenteringFilterSurvivesFullSendWindowAndReconnect
+
+ 2 FAILED TESTS

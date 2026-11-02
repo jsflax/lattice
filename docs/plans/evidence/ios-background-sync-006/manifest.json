@@ -1,0 +1,20 @@
+{
+  "scope": "Second CI failure preserved; test-only isolation passes complete local and strict SDK runs. No production/manifest/lock changes after edb48f3. Fresh exact-commit CI and SDK publication pending.",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "0b272d5110de5a1dd9f037942c4707a844dc97f7c0430b4dea763f5311e7e21a",
+      "bytes": 5423
+    },
+    {
+      "path": "ci-isolation-followup.json",
+      "sha256": "cbc4161460eb7d4ffa33a5f77b71e5018bcfabd6fbc7461146ca60738491fd57",
+      "bytes": 9620
+    },
+    {
+      "path": "manual-dispatch-device-summary.json",
+      "sha256": "a8acf7e3c3c9694f6979be0b5e9848521e91f839790011656a496fbf0b456142",
+      "bytes": 9676
+    }
+  ]
+}

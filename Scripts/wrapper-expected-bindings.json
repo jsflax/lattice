@@ -4,7 +4,7 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
+      "revision": "64abee4637a4e774b5a5c5d778146ddc9777797c",
       "selection": "revision"
     },
     {
@@ -22,6 +22,42 @@
   "status": "EXACT_REVISION_AND_VERSION_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",
   "wrapperGraphAccepted": false,
   "previousReleaseEvidence": {
+    "receiptSHA256": "98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde",
+    "releases": [
+      {
+        "commit": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+        "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.5.1",
+        "repository": "https://github.com/jsflax/LatticeCore",
+        "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.5.1"
+      },
+      {
+        "commit": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
+        "releaseURL": "https://github.com/jsflax/swift-sdk/releases/tag/0.13.0",
+        "repository": "https://github.com/jsflax/swift-sdk",
+        "tagURL": "https://github.com/jsflax/swift-sdk/tree/0.13.0"
+      }
+    ],
+    "scope": "Observed published Core 2.5.1 tag/source/release receipt and complete source archive from managed release 41387813073, with unchanged Swift SDK 0.13.0 release/source binding. This records upstream releases only; wrapper graph and runtime qualification remain separate.",
+    "previousReceiptSHA256": "33ba8806e25f225478c273b82e766738f249d3e0b17e778392d5e89085797667"
+  },
+  "sourceEvidence": {
+    "latticecore": {
+      "revision": "64abee4637a4e774b5a5c5d778146ddc9777797c",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/64abee4637a4e774b5a5c5d778146ddc9777797c",
+      "selection": "revision",
+      "parents": [
+        "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
+        "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c"
+      ],
+      "scope": "Source-reviewed integration of existing connector audit/receipt APIs with released Core 2.5.1; upstream CI and this wrapper graph remain unqualified."
+    },
+    "swift-sdk": {
+      "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
+      "version": "0.13.0",
+      "scope": "Unchanged original released SDK source binding."
+    }
+  },
+  "earlierReleaseEvidence": {
     "receiptSHA256": "7172df170950d1fe3601e9e9e7f608ad2f4fdd974fdbb4b7b2320f3d9d9e21a9",
     "releases": [
       {
@@ -40,17 +76,10 @@
     "scope": "Observed upstream tag/source joins for Core 2.2.8 and Swift SDK 0.13.0. Receipts are evidence, not runtime dependencies.",
     "previousReceiptSHA256": "ee009a1169b3e4bdbc276930fa1f611fa838cd8e55820c492d5121b7303d2f65"
   },
-  "sourceEvidence": {
-    "latticecore": {
-      "revision": "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
-      "selection": "revision",
-      "scope": "Reviewed exact audit-fence Core source revision; not a fabricated versioned release."
-    },
-    "swift-sdk": {
-      "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
-      "version": "0.13.0",
-      "scope": "Unchanged original released SDK source binding."
-    }
+  "previousConnectorSourceEvidence": {
+    "revision": "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
+    "selection": "revision",
+    "scope": "Reviewed exact audit-fence Core source revision; not a fabricated versioned release."
   }
 }

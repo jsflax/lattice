@@ -1,0 +1,65 @@
+{
+  "scope": "Sanitized candidate checkpoint 007. Core 2.5.1 published/verified; actual SDK pin plus full/strict suites passed. Candidate CI, SDK publication, and notices remain pending. Historical provenance corrections and bounded phone qualification preserved; raw private receipts remain outside repository.",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "f445645a5bbd3361f6f39157b48ff63ddec2b579f27dee2324d1b31ad22ec19e",
+      "bytes": 18668
+    },
+    {
+      "path": "ci-and-docs-verification.json",
+      "sha256": "933303e586ea9e2880ad80fe4e43bf3279189c4408b201c8a4a1214917453e5f",
+      "bytes": 11165
+    },
+    {
+      "path": "core-2.5.1-verification.json",
+      "sha256": "144c2304d15bac4a5c5ca859a91753456eb7ac2f4099ab20d25db039312b2bf0",
+      "bytes": 9388
+    },
+    {
+      "path": "desktop-provenance-correction.json",
+      "sha256": "d30f241da3f7fd4c2b60bc7e58b8df9e0aa1d03806fc7ef5f7d3454c03f2006b",
+      "bytes": 2328
+    },
+    {
+      "path": "fresh-open-investigation.json",
+      "sha256": "f5d484b8e072b99b103e1707d03de2ecaeb00c0c5180f58d26b1a2c0f3342b93",
+      "bytes": 44277
+    },
+    {
+      "path": "phone-candidate-success.json",
+      "sha256": "6a72fe155bde33c91df2f2bd12be4d7dc5ac5b3bcbf4fb24129aa28109631917",
+      "bytes": 19615
+    },
+    {
+      "path": "phone-manual-success.json",
+      "sha256": "57d50f15e32e368764317f2ad692607a5f5c3858e349e423858880ce5b8a9700",
+      "bytes": 9392
+    },
+    {
+      "path": "phone-network-followup.json",
+      "sha256": "20ca64ba345286b1cb42b13a0162f4205c69501fd1fadd1a112a69463a76c304",
+      "bytes": 9550
+    },
+    {
+      "path": "release-and-delivery-status.json",
+      "sha256": "55f386e3ad0d0f9c7e1ae9bbae7265e0b71aa98adfad8840e26914594a63b716",
+      "bytes": 4596
+    },
+    {
+      "path": "release-failure-summary.json",
+      "sha256": "ed94b80659e35f49ee780b8e55e110f368fe9e50fd3f17ffe6516de515fb89bb",
+      "bytes": 2484
+    },
+    {
+      "path": "sdk-published-core-2.5.1-tests-verification.json",
+      "sha256": "7144a004ddd494d3a8bb44ae18fc81c330710332610cfd4ce342c100656ca1c3",
+      "bytes": 1139
+    },
+    {
+      "path": "source-and-pin-verification.json",
+      "sha256": "ff7bfb25b4e2623c2cd6a124147e5a1a54d736e2cda1659b58028eebe5d9c21a",
+      "bytes": 8814
+    }
+  ]
+}

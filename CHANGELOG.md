@@ -1,5 +1,157 @@
 # Changelog
 
+## [2.6.1] - 2026-11-02
+
+### Added
+- Publish configuration-based iOS background refresh, independent finite
+  `syncOnce`, and the lifecycle and sync correctness changes described in 2.6.0
+  below. See the Background Sync on iOS guide for setup and ownership examples.
+
+### Fixed
+- Require LatticeCore 2.5.1 so concurrent first opens can finish enabling WAL
+  within their configured busy timeout instead of failing immediately.
+- Preserve native error details in relay test failures and isolate remaining
+  bounded binding tests from unrelated parallel SQL workloads without changing
+  their deadlines or assertions.
+
+The 2.6.0 source tag is retained, but its GitHub Release was not published after
+the required macOS check exposed the existing concurrent-open defect. Upgrade
+to 2.6.1 with Core 2.5.1 and follow the coordinated restart guidance below.
+
+## [2.6.0] - 2026-11-01
+
+### Added
+- Opt into iOS background refresh through `Lattice.Configuration.backgroundSync`.
+  Lattice registers the configured task, observes application lifecycle, and
+  binds work to the retained store. Lazy stores can call
+  `Lattice.registerBackgroundTasks(configuration:)` before launch finishes.
+- Add `syncOnce(maximumDuration:)` for a finite sync opportunity independent of
+  Apple task registration. Completion confirms the starting upload horizon,
+  negotiated initial replay, and owned cleanup; cancellation waits for cleanup.
+- Send an ordered catch-up completion marker from `LatticeServerKit` only when
+  a client requests it. Older servers remain usable but cannot confirm finite
+  completion, so a finite caller receives an unconfirmed/budget outcome.
+- Coordinate background suspension and foreground resumption across the
+  original store, references resolved on other actors, and internal query
+  connections. Derived handles stay local; the original owner syncs the file.
+
+### Fixed
+- Preserve public sync progress subscriptions across deferred ownership,
+  repeated finite sessions, and foreground reconnection.
+- Fence expired tasks and closed account bindings from successors. Settle
+  owned work and retire managed readers before reporting task completion;
+  preserve ordinary manual callers' existing reader behavior.
+- Pair with Core's UUID acknowledgement case fix, durable filtered outbox,
+  callback lifetime corrections, and cancellable owned SQLite waits.
+- Build iOS 15 targets consistently with Xcode explicit modules through Core's
+  shared-pointer-backed iOS handle layout.
+- Keep blocking native sync and settlement off Swift's cooperative workers so
+  cancellation and other actor work can advance under load.
+
+### Compatibility
+- Requires LatticeCore 2.5.0. Upgrade and restart every process owning a store's
+  sync channels together; older Core owners do not replay pending durable
+  outbox rows. Downgrading with pending outbox data is unsupported.
+- Rebuild iOS native bridge objects and Swift consumers together. Previously
+  compiled iOS foreign-reference bridge objects must not be mixed with Core 2.5.0.
+- Background scheduling requires an iOS host app, Background fetch capability,
+  the matching `BGTaskSchedulerPermittedIdentifiers` entry, and a writable
+  file-backed WSS store with a nonempty authorization token. It is off by default.
+- Register before app launch finishes. Intervals are scheduling hints; iOS
+  controls delivery. No scene-state forwarding or swizzling is required.
+- Close the retained original store at logout. Closing it also retires its
+  managed derived connections; stale references cannot reopen that lineage.
+  Reopen with new configuration and references for another account.
+
+## [2.5.0] - 2026-10-30
+
+### Added
+- Add the optional `reauthorizeChannel` callback to `Lattice.configureSyncRelay`
+  for a second grant check after revocation registration and before store access
+  or initial delivery.
+- Expose publicly readable, transient `AuditLog.noHistoryNulls` and
+  `AuditLog.synthesized` metadata for observed nullable clears and snapshot
+  provenance; neither adds a model column.
+
+### Fixed
+- When `reauthorizeChannel` is configured, recheck relay authorization after
+  registering the connection for revocation and before opening its store or
+  sending data. Pending connections cannot receive fan-out, and buffer-limit
+  refusals revoke the connection.
+- Preserve intentional NULL clears on nullable `@NoHistory` fields through
+  Swift sync upload and replay. Keep the null provenance and synthesized-snapshot
+  metadata intact, and reject malformed metadata instead of treating it as a
+  valid change.
+- Encode Swift `Int` values outside the signed 32-bit range using the existing
+  Int64 wire representation, preserving wide values during native sync replay.
+- Convert native dynamic-open failures into Swift `databaseError` values with
+  the original error message instead of letting C++ exceptions escape the bridge.
+- Keep `@Union` string conversion inside the SDK so consumer modules can use the
+  generated code with `import Lattice`, without an additional `CxxStdlib` import.
+- Surface native sync decode failures and server upload rejections through the
+  paired Core diagnostics. Rejected uploads remain pending under the existing
+  retry policy.
+- Serialize test-relay compaction with its receive queue and report native
+  maintenance errors, preserving snapshot and fresh-client catch-up assertions.
+
+### Compatibility
+- Requires LatticeCore 2.4.2 for the checked dynamic-open bridge, NACK/decode
+  diagnostics, and indexed reverse-link lookups that distinguish link tables
+  from union side tables. Core's storage-epoch 7 migration installs the indexes
+  when an existing writable store opens.
+- Rebuild native and Swift bridge consumers together. The owned MCP SDK remains
+  pinned to 0.13.0.
+- Upgrade peers and relays together to retain nullable-clear metadata. Older
+  implementations may discard it; this release does not repair previously
+  acknowledged missed clears.
+
+## [2.4.0] - 2026-10-24
+
+### Added
+- Add `Configuration.syncStartup = .deferred` to open local storage before
+  acquiring WebSocket sync ownership, repairing sync state or creating a
+  transport. Start sync after the first local read with `connectSync()`.
+- Add throwing `connectSync()`, `disconnectSync()` and `reconnectSync()` methods
+  that retain the same local database handle, rows and observers. Custom
+  backends can opt into the additive `SyncLifecycleBackend` capability.
+
+### Fixed
+- Retain the native callback bridge across transport disconnect/reconnect and
+  retire it only when the transport is destroyed. Fence callbacks from retired
+  URLSession and Linux NIO connection attempts.
+- Prime explicit materialized snapshots from the scalars already fetched by
+  Core, avoiding per-row refetches and retaining the captured scalar values.
+  Relationship reads keep their existing live behavior.
+- Join asynchronous test-server shutdown before releasing fixture resources.
+
+### Compatibility
+- Requires the new Core 2.4.0 lifecycle and row-hydration support. Automatic
+  startup remains the default, and IPC startup behavior is unchanged.
+- `disconnectSync()` pauses WebSocket sync while retaining local storage and
+  ownership. Call `close()` to release native locks before app suspension.
+
+## [2.3.0] - 2026-10-23
+
+### Added
+- Add throwing `Lattice.storedSchemaVersion()` to read the actual persisted
+  schema version without migration or writes. Missing, malformed, nonpositive,
+  out-of-range and closed-store metadata fails explicitly. Third-party backends
+  can opt into the additive `StoredSchemaVersionBackend` capability.
+
+### Fixed
+- Release scheduler actor context and cached actor delivery metadata on explicit
+  close. Core scheduler copies share one context owner, so temporary Swift bridge
+  values cannot release a context still used by a native scheduler.
+- Preserve callback lookup for surviving facades when a newer facade sharing the
+  same native store is released. Query-error collectors remain separate for each
+  facade. This does not change the requirement to explicitly close short-lived
+  handles.
+
+### Changed
+- Require LatticeCore 2.3.0 and update the complete dependency lock and upstream
+  release bindings together. Rebuild native and Swift bridge consumers together;
+  store schemas, wire protocols and the owned MCP SDK requirement are unchanged.
+
 ## [2.2.5] - 2026-10-23
 
 ### Fixed

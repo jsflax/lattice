@@ -329,6 +329,20 @@ public struct GroupedCount: Sendable, Equatable {
     }
 }
 
+/// Optional metadata capability. Unsupported backends must fail explicitly,
+/// never substitute the configured migration target for persisted metadata.
+public protocol StoredSchemaVersionBackend: LatticeBackend {
+    /// Actual persisted positive schema version, independent of configuration's target.
+    func storedSchemaVersion() throws -> Int
+}
+
+/// Optional same-handle WSS lifecycle capability. Local storage remains open.
+public protocol SyncLifecycleBackend: LatticeBackend {
+    func connectSync() throws
+    func disconnectSync() throws
+    func reconnectSync() throws
+}
+
 /// Optional scalar-query capability; other backends must explicitly support
 /// it rather than silently falling back to hydrating complete model rows.
 public protocol GroupedCountBackend: LatticeBackend {

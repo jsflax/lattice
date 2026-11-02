@@ -1,0 +1,110 @@
+139 |         let target = try Lattice(IPCNote.self, configuration: targetConfig)
+    |             `- warning: initialization of immutable value 'target' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+140 | 
+141 |         // Write and sync some entries
+
+/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/Tests/LatticeTests/SyncTests/ReplicationSlotTests.swift:196:13: warning: initialization of immutable value 'target' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+194 | 
+195 |         targetConfig.ipcTargets = [.init(channel: channel)]
+196 |         let target = try Lattice(IPCNote.self, configuration: targetConfig)
+    |             `- warning: initialization of immutable value 'target' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+197 | 
+198 |         // Write + sync
+
+/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/Tests/LatticeTests/SyncTests/ReplicationSlotTests.swift:234:13: warning: initialization of immutable value 'target' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+232 | 
+233 |         targetConfig.ipcTargets = [.init(channel: channel)]
+234 |         let target = try Lattice(IPCNote.self, configuration: targetConfig)
+    |             `- warning: initialization of immutable value 'target' was never used; consider replacing with assignment to '_' or removing it [#NoUsage]
+235 | 
+236 |         // Establish connection and sync
+
+/Users/jason/localdev/lattice-sync-handoff-bgtasks-20261101/Tests/LatticeTests/SyncTests/VirtualListJunctionTableTests.swift:108:19: warning: expression implicitly coerced from '[String?]?' to 'Any'
+106 |         for junctionEvent in junctionEvents {
+107 |             print(junctionEvent.changedFields)
+108 |             print(junctionEvent.changedFieldsNames)
+    |                   |             |- note: provide a default value to avoid this warning
+    |                   |             |- note: force-unwrap the value to avoid this warning
+    |                   |             `- note: explicitly cast to 'Any' with 'as Any' to silence this warning
+    |                   `- warning: expression implicitly coerced from '[String?]?' to 'Any'
+109 |         }
+110 |         #expect(!junctionEvents.isEmpty, "Should have junction table events for VirtualList append")
+
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+[2757/2760] Compiling LatticePackageTests runner.swift
+[2758/2760] Emitting module LatticePackageTests
+[2758/2760] Write Objects.LinkFileList
+[2759/2760] Linking LatticePackageTests
+Build complete! (496.80s)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Initial replay completion codec" started.
+◇ Test completionCannotBeMistakenForAnUploadAcknowledgement() started.
+◇ Test invalidCompletionDoesNotCertifyAReplay(_:) started.
+◇ Suite "Background sync policy" started.
+◇ Test case passing 1 argument frame → "{"kind":"catchUpComplete","catchUpComplete":false}" to invalidCompletionDoesNotCertifyAReplay(_:) started.
+◇ Test case passing 1 argument frame → "{"kind":"catchUpComplete","catchUpComplete":"true"}" to invalidCompletionDoesNotCertifyAReplay(_:) started.
+✔ Test completionCannotBeMistakenForAnUploadAcknowledgement() passed after 0.001 seconds.
+◇ Test case passing 1 argument frame → "{"kind":"catchUpComplete","catchUpComplete":true,"replayRequest":[]}" to invalidCompletionDoesNotCertifyAReplay(_:) started.
+◇ Test case passing 1 argument frame → "{"kind":"catchUpComplete","catchUpComplete":true,"rejected":"no"}" to invalidCompletionDoesNotCertifyAReplay(_:) started.
+◇ Test case passing 1 argument frame → "{"kind":"catchUpComplete","catchUpComplete":true,"nack":[]}" to invalidCompletionDoesNotCertifyAReplay(_:) started.
+◇ Test validatesDeclaredIdentifierWithoutInventingDNSRules() started.
+◇ Test case passing 1 argument frame → "{"kind":"catchUpComplete","catchUpComplete":true,"ack":[]}" to invalidCompletionDoesNotCertifyAReplay(_:) started.
+◇ Test configurationCopiesPreservePolicyAndIncludeItInIdentity() started.
+◇ Test validShortIntervalIsAHintWithoutAnInventedMinimum() started.
+◇ Test differentTaskIdentifiersRemainDifferentPolicies() started.
+◇ Test backgroundSyncIsOptIn() started.
+◇ Test identifierMustAppearExactlyInPermittedIdentifiers() started.
+◇ Test rejectsNonpositiveAndNonfiniteIntervals(interval:) started.
+◇ Suite "Observer Push" started.
+◇ Test rejectsEmptyWhitespaceAndControlCharacters(identifier:) started.
+✔ Test validatesDeclaredIdentifierWithoutInventingDNSRules() passed after 0.001 seconds.
+◇ Test case passing 1 argument interval → 0.0 to rejectsNonpositiveAndNonfiniteIntervals(interval:) started.
+◇ Test case passing 1 argument interval → -1.0 to rejectsNonpositiveAndNonfiniteIntervals(interval:) started.
+◇ Test case passing 1 argument interval → inf to rejectsNonpositiveAndNonfiniteIntervals(interval:) started.
+◇ Test case passing 1 argument interval → -inf to rejectsNonpositiveAndNonfiniteIntervals(interval:) started.
+◇ Test case passing 1 argument interval → nan to rejectsNonpositiveAndNonfiniteIntervals(interval:) started.
+◇ Test case passing 1 argument frame → "{"kind":"catchUpComplete","catchUpComplete":true,"floorReset":null}" to invalidCompletionDoesNotCertifyAReplay(_:) started.
+✔ Test differentTaskIdentifiersRemainDifferentPolicies() passed after 0.001 seconds.
+◇ Test case passing 1 argument identifier → "" to rejectsEmptyWhitespaceAndControlCharacters(identifier:) started.
+✔ Test validShortIntervalIsAHintWithoutAnInventedMinimum() passed after 0.001 seconds.
+◇ Test catchupFailureReleasesParkedSubscription() started.
+◇ Test case passing 1 argument identifier → " " to rejectsEmptyWhitespaceAndControlCharacters(identifier:) started.
+◇ Test catchUpMarkerFollowsAllPagesAndPrecedesLivePush() started.
+◇ Test case passing 1 argument identifier → " com.example.app.sync" to rejectsEmptyWhitespaceAndControlCharacters(identifier:) started.
+◇ Test emptyCatchUpMarkerRequiresExplicitNegotiation() started.
+◇ Test case passing 1 argument identifier → "com.example.
+app.sync" to rejectsEmptyWhitespaceAndControlCharacters(identifier:) started.
+◇ Test case passing 1 argument identifier → "com.example.app.sync " to rejectsEmptyWhitespaceAndControlCharacters(identifier:) started.
+◇ Test case passing 1 argument identifier → "com.example.◇ Test case passing 1 argument identifier → "com.example.	app.sync" to rejectsEmptyWhitespaceAndControlCharacters(identifier:) started.
+✔ Test backgroundSyncIsOptIn() passed after 0.001 seconds.
+✔ Test configurationwarning: '--build-system native' has been deprecated and will be removed in a future release; please report an issue at https://github.com/swiftlang/swift-package-manager/issues if you are unable to adopt the default build system.
+CopiesPreservePolicyAndIncludeItInIdentity() passed after 0.001 seconds.
+✔ Test identifierMustAppearExactlyInPermittedIdentifiers() passed after 0.001 seconds.
+✔ Test rejectsEmptyWhitespaceAndControlCharacters(identifier:) with 7 test cases passed after 0.001 seconds.
+✔ Test rejectsNonpositiveAndNonfiniteIntervals(interval:) with 5 test cases passed after 0.001 seconds.
+✔ Suite "Background sync policy" passed after 0.002 seconds.
+◇ Test case passing 1 argument frame → "{"kind":"catchUpComplete"}" to invalidCompletionDoesNotCertifyAReplay(_:) started.
+◇ Test case passing 1 argument frame → "{"kind":"catchUpComplete","catchUpComplete":true,"auditLog":[]}" to invalidCompletionDoesNotCertifyAReplay(_:) started.
+✔ Test invalidCompletionDoesNotCertifyAReplay(_:) with 9 test cases passed after 0.005 seconds.
+✔ Suite "Initial replay completion codec" passed after 0.005 seconds.
+2026-11-01T18:24:34-0500 notice codes.vapor.application: [Vapor] Server started on http://127.0.0.1:53312
+2026-11-01T18:24:34-0500 notice codes.vapor.application: [Vapor] Server started on http://127.0.0.1:53311
+2026-11-01T18:24:34-0500 notice codes.vapor.application: [Vapor] Server started on http://127.0.0.1:53313
+2026-11-01T18:24:34-0500 info codes.vapor.application: request-id=CEB629AF-B9F7-4574-8F8D-C8F8E4BBD858 [Vapor] GET /watch/group/gfail
+2026-11-01T18:24:34-0500 info codes.vapor.application: request-id=B9D92738-8815-4338-B108-474E9FFD1555 [Vapor] GET /watch/group/gcompletion-empty
+2026-11-01T18:24:34-0500 info codes.vapor.application: request-id=5F892FF7-6162-461D-928B-0B394BCAA65B [Vapor] GET /watch/group/gcompletion-empty
+2026-11-01T18:24:34-0500 info codes.vapor.application: request-id=67F608C9-24DF-4424-9A58-4C868CBBCC3E [Vapor] GET /watch/group/gcompletion-empty
+>>> Bringing channel group-gfail connection up to date with 1 events
+2026-11-01T18:24:34-0500 info codes.vapor.application: request-id=58FC1A67-CB24-46AD-BEDD-31F6CCC95C71 [Vapor] GET /watch/group/gfail
+Error bringing channel connection up to date: The operation couldn’t be completed. (LatticeTests.(unknown context at $11193cd10).InjectedCatchUpFault error 0.)
+✔ Test catchupFailureReleasesParkedSubscription() passed after 0.227 seconds.
+2026-11-01T18:24:35-0500 error codes.vapor.application: [Vapor] Could not stop HTTP server: Abort.500: Server stop took too long.
+✔ Test emptyCatchUpMarkerRequiresExplicitNegotiation() passed after 0.674 seconds.
+2026-11-01T18:24:35-0500 info codes.vapor.application: request-id=BB6641E6-13BD-461E-9540-7849F4D542DD [Vapor] GET /watch/group/gcompletion-pages
+>>> Bringing channel group-gcompletion-pages connection up to date with 2001 events
+2026-11-01T18:24:36-0500 error codes.vapor.application: [Vapor] Could not stop HTTP server: Abort.500: Server stop took too long.
+✔ Test catchUpMarkerFollowsAllPagesAndPrecedesLivePush() passed after 2.566 seconds.
+✔ Suite "Observer Push" passed after 2.568 seconds.
+✔ Test run with 13 tests in 3 suites passed after 2.569 seconds.

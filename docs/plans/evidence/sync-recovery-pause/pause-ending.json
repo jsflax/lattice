@@ -1,0 +1,35 @@
+{
+  "atUTC": "2026-10-24T18:57:34.180936+00:00",
+  "goalState": "paused",
+  "reason": "User set goal status paused",
+  "newDispatchAllowed": false,
+  "ownerToolSession": 69132,
+  "ownerTerminalExitCode": 1,
+  "cancellationRequest": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/checkpoint301-user-pause-cancel-request.json",
+    "bytes": 627,
+    "sha256": "0cc6adb2ce6ccd71d28ddc03aa03d4d601719c83487bcae242fa0ea094ccedf7"
+  },
+  "buildResult": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/execution-001/RESULT.json",
+    "bytes": 2204,
+    "sha256": "cfe21f7c713a8f2b40cef8a3a364db9951b32dbe34fd400cf74542c054ec01d7"
+  },
+  "compileEnding": {
+    "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/execution-001/COMPILE.json",
+    "bytes": 877,
+    "sha256": "ea6374629d6c41ce89ddc9a37703a9ac4acbea61e81f28f9383b29ea193c51df"
+  },
+  "processObservation": {
+    "command": [
+      "ps",
+      "-axo",
+      "pid,ppid,pgid,stat,etime,comm"
+    ],
+    "matchingOwnedProcesses": []
+  },
+  "endingQualification": "Supervisor reaped compiler leader after SIGTERM but its group query returned EPERM; retain unknown-ending result. Later process inventory showed no owned process rows. No build or donor acceptance.",
+  "retainedOutputs": "All source, partial objects, terminal receipts and diagnostic preparation retained unchanged.",
+  "noRuntimeOrCIOrReleaseDispatched": true,
+  "shockTrooperContactRevoked": true
+}

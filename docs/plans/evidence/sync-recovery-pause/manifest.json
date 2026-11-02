@@ -1,0 +1,133 @@
+{
+  "recordedDate": "2026-11-01",
+  "goalStatus": "paused",
+  "authoritativeCheckpoint": 301,
+  "pausedAtUTC": "2026-10-24T18:57:34.180936+00:00",
+  "scope": "Repository handoff only. Copied historical evidence does not resume any work or establish new acceptance. Checkpoint301 supersedes earlier live/active instructions.",
+  "copiedReceipts": [
+    {
+      "repositoryFile": "checkpoint-293.json",
+      "source": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/CHECKPOINT293.json",
+        "bytes": 14994,
+        "sha256": "6c2225c3ac5627241c5768eaa11d1aaed864c7df1186f516085cb9f9353cd640"
+      }
+    },
+    {
+      "repositoryFile": "checkpoint-300.json",
+      "source": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/CHECKPOINT300.json",
+        "bytes": 4283,
+        "sha256": "cd82a0effe9d8cb2b8fa681f8dd0e931869e1dd14d895ef5312525f937bb1ec8"
+      }
+    },
+    {
+      "repositoryFile": "checkpoint-301.json",
+      "source": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/CHECKPOINT301.json",
+        "bytes": 2124,
+        "sha256": "a8c9ff2d650b8ccc57fddde169bb060aabd0e63ca313e3187a1b3ae1051f485a"
+      }
+    },
+    {
+      "repositoryFile": "pause-ending.json",
+      "source": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/checkpoint301-pause-ending.json",
+        "bytes": 1607,
+        "sha256": "b53ec4a809c4557df0fc78004cc6db50dee72cdfe841dcfe2808864eb56d0dbb"
+      }
+    },
+    {
+      "repositoryFile": "build-003-result.json",
+      "source": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/execution-001/RESULT.json",
+        "bytes": 2204,
+        "sha256": "cfe21f7c713a8f2b40cef8a3a364db9951b32dbe34fd400cf74542c054ec01d7"
+      }
+    },
+    {
+      "repositoryFile": "build-003-compile-ending.json",
+      "source": {
+        "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/execution-001/COMPILE.json",
+        "bytes": 877,
+        "sha256": "ea6374629d6c41ce89ddc9a37703a9ac4acbea61e81f28f9383b29ea193c51df"
+      }
+    }
+  ],
+  "localArchiveReferences": [
+    {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/PLAN.md",
+      "bytes": 2318075,
+      "sha256": "8168e56df361333a026deaf868fbe968c8634d2f2faa776cc813535da2957292"
+    },
+    {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-resume-20261022-001/STATE.json",
+      "bytes": 281485,
+      "sha256": "1cda03b21b2cb6ff7a90a48a964c5079895e3b5410c394771a342b905465a6b3"
+    },
+    {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-fulltail-composition-20261024-003/SOURCE-REFERENCE.json",
+      "bytes": 817021,
+      "sha256": "df8f7ebd9f38d0af86f2905057898076be63528cc8bd645e68e0d9ca219c2d60"
+    },
+    {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-full-object-build-20261024-003/PLAN.json",
+      "bytes": 15553156,
+      "sha256": "7c126d7426a5403da4393729c717a7ae55ba1e983a3f643ba8ecef5c9239303f"
+    },
+    {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-source1-hosted-composition-20261024-001/READY.json",
+      "bytes": 1521,
+      "sha256": "20e2898df3fc4153fb11313bace6ba0c217fdfdb8cf1f9603b1dd1e3dc2aaa22"
+    },
+    {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/recovery-query-source1-hosted-controls-source-20261024-001/REVIEW-READY.json",
+      "bytes": 12051,
+      "sha256": "85c25f7b53c7516ef24dfa33441a11a6968b8ce166351ed5f8005eb28941f63f"
+    },
+    {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/publication-attempt2-001/PUBLICATION-VERIFIED.json",
+      "bytes": 268004,
+      "sha256": "3c3572c30d04614d5a3215f8859a7bee26993851595b8757474f02a0bb0daeae"
+    },
+    {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/release-ci-40022303458-attempt2/VERIFIED.json",
+      "bytes": 584151,
+      "sha256": "30361277274dc280a14636afbef971dee472afd396773875fd837c3711067c70"
+    },
+    {
+      "path": "/Users/jason/localdev/lattice-sync-perf-stability-20260919/sdk-core-228-coherence-release-20261023-001/DOWNSTREAM-NOTICES.json",
+      "bytes": 4892,
+      "sha256": "bf0e2278f0e64497d7f8f771f35148fbea7188e32fa87d414a08d59d1e3423de"
+    }
+  ],
+  "latestReleaseVerifiedByThisWorkstream": {
+    "sdk": "2.2.5",
+    "core": "2.2.8",
+    "publishedAt": "2026-10-23T21:46:48Z",
+    "releaseURL": "https://github.com/jsflax/lattice/releases/tag/2.2.5",
+    "pullRequest": "https://github.com/jsflax/lattice/pull/24",
+    "runURL": "https://github.com/jsflax/lattice/actions/runs/40022303458",
+    "originalTimeoutCauseResolved": false,
+    "downstreamAdoptionVerified": false
+  },
+  "currentCandidateAcceptance": {
+    "completeBuild": false,
+    "runtime": false,
+    "performance": false,
+    "release": false
+  },
+  "newBackgroundSyncPlan": {
+    "status": "proposed; implementation not started",
+    "sdkSource": "751950358f49b934dfa8af1dcfd493b683cd9d0a",
+    "coreSource": "6afbe41b6ea4de63b27bb40e042ad9e455ba72ed"
+  },
+  "routing": {
+    "permittedReleaseRecipients": [
+      "engram-integration-hardening",
+      "orbital"
+    ],
+    "shockTrooperDirectAndIndirectContact": "revoked",
+    "humanPausedParent": "do not wake"
+  }
+}

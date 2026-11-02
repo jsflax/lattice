@@ -31,13 +31,19 @@ final class RelayIngressTestHooks: Sendable {
     let beforeAsyncSetup: @Sendable () async -> Void
     let didBufferFrame: @Sendable (Int) -> Void
     let didFinishAsyncSetup: @Sendable () -> Void
+    let maxBufferedFrameBytes: Int?
 
     init(beforeAsyncSetup: @escaping @Sendable () async -> Void,
          didBufferFrame: @escaping @Sendable (Int) -> Void,
-         didFinishAsyncSetup: @escaping @Sendable () -> Void) {
+         didFinishAsyncSetup: @escaping @Sendable () -> Void,
+         maxBufferedFrameBytes: Int? = nil) {
+        if let maxBufferedFrameBytes {
+            precondition(maxBufferedFrameBytes > 0 && maxBufferedFrameBytes <= 64 * 1024 * 1024)
+        }
         self.beforeAsyncSetup = beforeAsyncSetup
         self.didBufferFrame = didBufferFrame
         self.didFinishAsyncSetup = didFinishAsyncSetup
+        self.maxBufferedFrameBytes = maxBufferedFrameBytes
     }
 }
 
@@ -645,6 +651,7 @@ actor SocketManager {
         let socket: WebSocket
         let userId: UUID
         let revocation: RevocationFlag
+        var admitted: Bool
     }
 
     private var channels: [String: [Entry]] = [:]
@@ -653,7 +660,7 @@ actor SocketManager {
         // Revoked entries are excluded from fan-out immediately, even while
         // their transport lingers.
         channels[channelId, default: []]
-            .filter { !$0.revocation.isRevoked }
+            .filter { $0.admitted && !$0.revocation.isRevoked }
             .map(\.socket)
     }
 
@@ -673,10 +680,19 @@ actor SocketManager {
         }
     }
 
-    func add(socket: WebSocket, channelId: String, userId: UUID, revocation: RevocationFlag) {
+    func add(socket: WebSocket, channelId: String, userId: UUID, revocation: RevocationFlag, admitted: Bool = true) {
         reap(channelId: channelId)
         channels[channelId, default: []].append(
-            Entry(socket: socket, userId: userId, revocation: revocation))
+            Entry(socket: socket, userId: userId, revocation: revocation, admitted: admitted))
+    }
+
+    /// A pending connection is visible to revocation but cannot receive fan-out.
+    /// Admission never resurrects a connection kicked during reauthorization.
+    func admit(socket: WebSocket, channelId: String) -> Bool {
+        guard let index = channels[channelId]?.firstIndex(where: { $0.socket === socket }),
+              !socket.isClosed, channels[channelId]?[index].revocation.isRevoked == false else { return false }
+        channels[channelId]?[index].admitted = true
+        return true
     }
 
     func remove(socket: WebSocket, channelId: String) {
@@ -815,6 +831,12 @@ extension Lattice {
     ///     the only client frames are acks, and echoing every observer's ack
     ///     to every other observer is N² frames per commit).
     ///   - channelExtractor: Maps the request to its `SyncChannel`
+    ///   - reauthorizeChannel: Optional second authorization after the socket is
+    ///     registered for revocation, before opening its store or sending data.
+    ///     Use with expiring/revocable grants: an asynchronous extractor alone
+    ///     leaves a gap where a kick can miss an unregistered connection. Pending
+    ///     connections cannot receive fan-out. Throw to refuse; no error details
+    ///     are sent to the peer or logged. Later revocation still uses the handle.
     @discardableResult
     public static func configureSyncRelay(
         on routes: any RoutesBuilder,
@@ -825,11 +847,13 @@ extension Lattice {
         handshake: SyncSchemaHandshake? = nil,
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
         observerPush: SyncObserverPush? = nil,
+        reauthorizeChannel: (@Sendable (Request, SyncChannel) async throws -> Void)? = nil,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) -> SyncRelayHandle {
         let sockets = SocketManager()
         let ackPathRecorder = ACKPathDiagnostics.recorder(for: storageURL)
         let ingressHooks = RelayIngressTesting.hooks(for: storageURL)
+        let frameBufferLimit = ingressHooks?.maxBufferedFrameBytes ?? maxBufferedFrameBytes
         nonisolated(unsafe) let schema = schema
         // ONE watch manager per PROCESS: push-enabled mounts share
         // `FileWatchManager.shared`, so two push mounts over the same
@@ -901,9 +925,10 @@ extension Lattice {
                     // serial applier. The queued-bytes cap bounds server
                     // memory against a client that outruns apply — same
                     // policy (and same cap) as the pre-open buffer.
-                    if state.queuedApplyBytes + bb.readableBytes > maxBufferedFrameBytes {
+                    if state.queuedApplyBytes + bb.readableBytes > frameBufferLimit {
                         ackPath?.record(.ingressRefused, bytes: bb.readableBytes, count: state.queuedApplyBytes)
                         print(">>> Apply queue cap exceeded; closing connection")
+                        state.revocation.revoke()
                         state.isRefused = true
                         cont.finish()
                         ws.pingInterval = .seconds(5)
@@ -913,7 +938,7 @@ extension Lattice {
                         cont.yield(bb)
                         ackPath?.record(.ingressYielded, bytes: bb.readableBytes, count: state.queuedApplyBytes)
                     }
-                } else if state.bufferedBytes + bb.readableBytes <= maxBufferedFrameBytes {
+                } else if state.bufferedBytes + bb.readableBytes <= frameBufferLimit {
                     state.bufferedBytes += bb.readableBytes
                     state.buffered.append(bb)
                     ackPath?.record(.ingressBuffered, bytes: bb.readableBytes, count: state.bufferedBytes)
@@ -921,6 +946,7 @@ extension Lattice {
                 } else {
                     ackPath?.record(.ingressRefused, bytes: bb.readableBytes, count: state.bufferedBytes)
                     print(">>> Pre-open buffer cap exceeded; closing connection")
+                    state.revocation.revoke()
                     state.isRefused = true
                     state.buffered.removeAll()
                     state.bufferedBytes = 0
@@ -1204,7 +1230,8 @@ extension Lattice {
                 state.channelId = channel.id
                 ackPath?.record(.registryAddBegin)
                 await sockets.add(socket: ws, channelId: channel.id,
-                                  userId: channel.userId, revocation: state.revocation)
+                                  userId: channel.userId, revocation: state.revocation,
+                                  admitted: reauthorizeChannel == nil)
                 ackPath?.record(.registryAddEnd)
                 // A socket that closed while the extractor was awaiting ran its
                 // onClose with channelId still nil and deregistered nothing —
@@ -1214,6 +1241,22 @@ extension Lattice {
                     ackPath?.record(.closedDuringSetup)
                     await sockets.remove(socket: ws, channelId: channel.id)
                     return
+                }
+
+                if let reauthorizeChannel {
+                    do {
+                        try await reauthorizeChannel(req, channel)
+                        guard await sockets.admit(socket: ws, channelId: channel.id) else {
+                            throw CancellationError()
+                        }
+                    } catch {
+                        state.revocation.revoke()
+                        state.isRefused = true
+                        await sockets.remove(socket: ws, channelId: channel.id)
+                        ws.pingInterval = .seconds(5)
+                        try? await ws.close(code: .policyViolation)
+                        return
+                    }
                 }
 
                 // The ONLY per-connection open. `storeConfiguration` lets the
@@ -1353,6 +1396,10 @@ extension Lattice {
                         }
 
                         let lastEventId = try? req.query.get(UUID?.self, at: "last-event-id")
+                        // Opt in per connection: older strict decoders reject
+                        // unknown wire kinds, so never broadcast this marker.
+                        let wantsCatchUpComplete =
+                            (try? req.query.get(String.self, at: "lattice-catch-up-complete")) == "1"
 
                         // §1.7.2 FLOOR HONESTY: a claimed floor the durable history cannot back was
                         // previously swallowed (the probe returned nil, the filter dropped, and a
@@ -1378,7 +1425,9 @@ extension Lattice {
                                     """)
                                 if let encoded = try? JSONEncoder().encode(
                                     ServerSentEvent.floorReset(durableHead: head?.globalId, reason: reason)) {
-                                    await ws.send(ByteBuffer(data: encoded))
+                                    let sent = ws.eventLoop.makePromise(of: Void.self)
+                                    ws.send(encoded, promise: sent)
+                                    try await sent.futureResult.get()
                                 }
                             }
                         }
@@ -1405,7 +1454,11 @@ extension Lattice {
                                 let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
                                 sendBoundaryProbe?.capture(page: page, route: .catchup)
                                 ackPath?.record(.catchUpSendBegin, bytes: encoded.count, count: page.count)
-                                await ws.send(ByteBuffer(data: encoded))
+                                // Await the write result; a failed page cannot
+                                // be followed by a successful completion marker.
+                                let sent = ws.eventLoop.makePromise(of: Void.self)
+                                ws.send(encoded, promise: sent)
+                                try await sent.futureResult.get()
                                 ackPath?.record(.catchUpSendReturn)
                                 boundary = page.last?.primaryKey ?? boundary
                             }
@@ -1418,6 +1471,12 @@ extension Lattice {
                                 .where { $0.globalId == lastEventId }
                                 .snapshot(limit: 1)
                                 .first?.primaryKey ?? 0
+                        }
+                        if wantsCatchUpComplete && !state.revocation.isRevoked && !ws.isClosed {
+                            let encoded = try JSONEncoder().encode(ServerSentEvent.catchUpComplete)
+                            let sent = ws.eventLoop.makePromise(of: Void.self)
+                            ws.send(encoded, promise: sent)
+                            try await sent.futureResult.get()
                         }
                         // Activate push (cursor = catch-up boundary) — or drop
                         // the parked subscription if this socket died/was

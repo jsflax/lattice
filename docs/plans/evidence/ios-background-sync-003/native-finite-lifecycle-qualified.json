@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-build/arm64-apple-macosx/debug/LatticeCoreTests",
+    "--gtest_filter=ManagedBackgroundSync.*:DatabaseCancellation.*:BackgroundSyncCharacterization.*:FiniteSyncCycle.*:FilteredSyncWindowDurability.*:Sync.*:MultiChannelSyncSet.*:AuditMaintenanceOwnership.*:AuditPayloadQualification.*:DeferredDelivery.*",
+    "--gtest_output=xml:/Users/jason/localdev/lattice-bg-sync-evidence-20261101/native-finite-lifecycle-qualified.xml"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 13.129736082977615
+}

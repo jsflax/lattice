@@ -267,7 +267,7 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
 
 // MARK: - CxxBackend (wraps swift_lattice_ref)
 
-final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditReadFenceBackend, LocalMetadataBackend, AuditedWritesBackend, @unchecked Sendable {
+final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditReadFenceBackend, LocalMetadataBackend, AuditedWritesBackend, StoredSchemaVersionBackend, SyncLifecycleBackend, @unchecked Sendable {
     // The db ops are const forwarders on swift_lattice_ref, so they import
     // non-mutating on both paths and the handle can be a `let`.
     let ref: lattice.swift_lattice_ref
@@ -376,6 +376,17 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditReadFenceBacke
         reportQueryFailureIfAny()
         return n
     }
+    func storedSchemaVersion() throws -> Int {
+        let value = Int(ref.storedSchemaVersion())
+        if let error = reportQueryFailureIfAny() {
+            throw Lattice.Error.databaseError(error)
+        }
+        guard value > 0 else {
+            throw Lattice.Error.databaseError("Invalid stored schema version")
+        }
+        return value
+    }
+
     func groupedCounts(table: String, groupBy: String, where whereClause: String?,
                        distinctBy: String?, params: [QueryParameter]) throws -> [GroupedCount] {
         let rows = ref.grouped_counts(std.string(table), std.string(groupBy),
@@ -530,10 +541,28 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditReadFenceBacke
     }
     func close() { ref.close() }
 
+    func connectSync() throws {
+        ref.connect_sync()
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+        try resumeReadGenerationsAfterSyncConnect()
+    }
+    func disconnectSync() throws {
+        ref.disconnect_sync()
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+    }
+    func reconnectSync() throws {
+        ref.reconnect_sync()
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+        try resumeReadGenerationsAfterSyncConnect()
+    }
+
     // Sync status
     func isSyncAgent() -> Bool { ref.is_sync_agent() }
     func isSyncConnected() -> Bool { ref.is_sync_connected() }
-    func clearSyncFilter() { ref.clear_sync_filter() }
+    func clearSyncFilter() {
+        ref.clear_sync_filter()
+        reportQueryFailureIfAny()
+    }
 
     // Spatial (R*Tree)
     func objectsWithinBBox(table: String, geoColumn: String, minLat: Double, maxLat: Double, minLon: Double, maxLon: Double, where whereClause: String?, orderBy: String?, limit: Int64?, offset: Int64?, groupBy: String?) -> [any ObjectBackend] {
@@ -675,20 +704,24 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditReadFenceBacke
     // Sync filter — translate the neutral [SyncFilterParam] to the C++ vector.
     func updateSyncFilter(_ filter: [SyncFilterParam]) {
         ref.update_sync_filter(_makeCxxSyncFilter(filter.map { ($0.tableName, $0.whereClause) }))
+        reportQueryFailureIfAny()
     }
 
     func updateSyncFilter(_ filter: [SyncFilterParam], forChannel channel: String) {
         ref.update_sync_filter_for_channel(
             std.string(channel),
             _makeCxxSyncFilter(filter.map { ($0.tableName, $0.whereClause) }))
+        reportQueryFailureIfAny()
     }
 
     func clearSyncFilter(forChannel channel: String) {
         ref.clear_sync_filter_for_channel(std.string(channel))
+        reportQueryFailureIfAny()
     }
 
     func removeSyncChannelState(syncId: String) {
         ref.remove_sync_channel_state(std.string(syncId))
+        reportQueryFailureIfAny()
     }
 
     func deleteRowsNoRelay(table: String, globalRowIds: [String]) -> Int64 {

@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/core-build/arm64-apple-macosx/debug/LatticeCoreTests",
+    "--gtest_filter=ManagedBackgroundSync.*",
+    "--gtest_output=xml:/Users/jason/localdev/lattice-bg-sync-evidence-20261101/native-managed-retention-qualified.xml"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 1.6522278749616817
+}

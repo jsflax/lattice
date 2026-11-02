@@ -1,0 +1,2 @@
+PASS actor isolation: 2,000 concurrent calls across two owning actors; exact 1,000 calls each
+PASS weak binding: one call before release, rejected after release; no facade transfer or unchecked Sendable

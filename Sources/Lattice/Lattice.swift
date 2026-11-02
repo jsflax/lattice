@@ -107,6 +107,14 @@ public struct Lattice {
     internal final class WebsocketClient: @unchecked Sendable {
         private var webSocketTask: URLSessionWebSocketTask?
         private var currentState: lattice.transport_state = .closed
+        private let stateLock = NSRecursiveLock()
+        private var acceptsCallbacks = false
+        private func withState<T>(_ body: () -> T) -> T {
+            stateLock.lock(); defer { stateLock.unlock() }; return body()
+        }
+        private func withCurrent(_ candidate: URLSession, _ body: () -> Void) {
+            withState { if acceptsCallbacks && session === candidate { body() } }
+        }
         // Recreated per connect attempt — see performConnect.
         private var session: URLSession
         private let delegateHandler: WebSocketDelegateHandler
@@ -122,29 +130,23 @@ public struct Lattice {
             // its task's cancellation fires didComplete(NSURLErrorCancelled)
             // — must not tear down the CURRENT attempt: without this guard the
             // cancel of attempt N-1 error-looped attempt N forever.
-            private func isCurrent(_ session: URLSession) -> Bool {
-                client?.session === session
-            }
-
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didOpenWithProtocol protocol: String?) {
-                guard isCurrent(session) else { return }
-                client?.handleOpen()
+                client?.withCurrent(session) { client?.handleOpen() }
             }
 
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-                guard isCurrent(session) else { return }
-                let reasonString = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-                client?.handleClose(code: Int(closeCode.rawValue), reason: reasonString)
+                client?.withCurrent(session) {
+                    let text = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                    client?.handleClose(code: Int(closeCode.rawValue), reason: text)
+                }
             }
 
-            func urlSession(_ session: URLSession,
-                            task: URLSessionTask,
+            func urlSession(_ session: URLSession, task: URLSessionTask,
                             didCompleteWithError error: (any Swift.Error)?) {
-                guard isCurrent(session) else { return }
-                if let error = error {
-                    client?.handleError(error.localizedDescription)
+                client?.withCurrent(session) {
+                    if let error { client?.handleError(error.localizedDescription) }
                 }
             }
         }
@@ -180,7 +182,7 @@ public struct Lattice {
                 { ptr in
                     guard let ptr = ptr else { return .closed }
                     let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
-                    return client.currentState
+                    return client.withState { client.currentState }
                 },
                 // send_fn
                 { ptr, messagePtr in
@@ -195,12 +197,21 @@ public struct Lattice {
             let cxxPtr = UnsafeMutablePointer<lattice.generic_sync_transport>.allocate(capacity: 1)
             cxxPtr.initialize(to: cxxClient)
             self.cxxClientPtr = UnsafeMutableRawPointer(cxxPtr)
+            cxxPtr.pointee.set_destroy_callback { ptr in
+                guard let ptr else { return }
+                let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeRetainedValue()
+                client.withState {
+                    client.performDisconnect()
+                    client.cxxClientPtr = nil
+                }
+            }
 
             // Return as websocket_client* for unique_ptr
             return UnsafeMutableRawPointer(cxxPtr)
         }
 
         private func performConnect(url urlString: String, headers: lattice.HeadersMap) {
+            stateLock.lock(); defer { stateLock.unlock() }
             guard let url = URL(string: urlString) else {
                 triggerError("Invalid URL: \(urlString)")
                 return
@@ -214,7 +225,9 @@ public struct Lattice {
             // ever saw a 401 reconnected anonymously FOREVER (production:
             // hours of 60s-cadence 401s while the same token passed via curl).
             // An ephemeral config also drops cookies/credential caches.
-            session.finishTasksAndInvalidate()
+            acceptsCallbacks = false
+            webSocketTask?.cancel(with: .normalClosure, reason: nil)
+            session.invalidateAndCancel()
             session = URLSession(configuration: .ephemeral, delegate: delegateHandler, delegateQueue: nil)
 
             var request = URLRequest(url: url)
@@ -224,31 +237,31 @@ public struct Lattice {
                 request.setValue(String(value), forHTTPHeaderField: String(key))
             }
 
+            acceptsCallbacks = true
             currentState = .connecting
             webSocketTask = session.webSocketTask(with: request)
             webSocketTask?.maximumMessageSize = 128 * 1024 * 1024  // 128 MB (default is 1 MB)
             webSocketTask?.resume()
-            // Try receiving immediately AND after open
-//            startReceiving()
         }
 
         private func performDisconnect() {
-            currentState = .closing
-            // Nil out cxxClientPtr BEFORE the async cancel so that any delegate
-            // callbacks (didCloseWith, didCompleteWithError) that fire after the
-            // C++ synchronizer is destroyed become no-ops instead of use-after-free.
-            cxxClientPtr = nil
+            stateLock.lock(); defer { stateLock.unlock() }
+            acceptsCallbacks = false
+            currentState = .closed
             webSocketTask?.cancel(with: .normalClosure, reason: nil)
+            webSocketTask = nil
+            session.invalidateAndCancel()
+            // The C++ callback pointer belongs to the transport lifetime, not
+            // this connection attempt. Destruction retires it under this lock.
         }
 
         private func performSend(_ message: lattice.transport_message) {
-            guard let task = webSocketTask else { return }
-
-            let wsMessage = Self.webSocketMessage(message)
-
-            task.send(wsMessage) { [weak self] error in
-                if let error = error {
-                    self?.triggerError(error.localizedDescription)
+            stateLock.lock(); defer { stateLock.unlock() }
+            guard acceptsCallbacks, let task = webSocketTask else { return }
+            let sendingSession = session
+            task.send(Self.webSocketMessage(message)) { [weak self] error in
+                self?.withCurrent(sendingSession) {
+                    if let error { self?.handleError(error.localizedDescription) }
                 }
             }
         }
@@ -270,30 +283,31 @@ public struct Lattice {
         }
 
         private func startReceiving() {
+            let receivingSession = session
             webSocketTask?.receive { [weak self] result in
-                guard let self = self else {
-                    return
-                }
-                switch result {
-                case .success(let message):
-                    var cxxMessage = lattice.transport_message()
-                    switch message {
-                    case .string(let text):
-                        cxxMessage = lattice.transport_message.from_string(std.string(text))
-                    case .data(let data):
-                        var vec = lattice.ByteVector()
-                        for byte in data {
-                            vec.push_back(byte)
+                guard let self else { return }
+                self.withCurrent(receivingSession) {
+                    switch result {
+                    case .success(let message):
+                        var cxxMessage = lattice.transport_message()
+                        switch message {
+                        case .string(let text):
+                            cxxMessage = lattice.transport_message.from_string(std.string(text))
+                        case .data(let data):
+                            var vec = lattice.ByteVector()
+                            for byte in data {
+                                vec.push_back(byte)
+                            }
+                            cxxMessage = lattice.transport_message.from_binary(vec)
+                        @unknown default:
+                            break
                         }
-                        cxxMessage = lattice.transport_message.from_binary(vec)
-                    @unknown default:
-                        break
-                    }
-                    self.triggerMessage(cxxMessage)
-                    self.startReceiving()
+                        self.triggerMessage(cxxMessage)
+                        self.startReceiving()
 
-                case .failure(let error):
-                    self.triggerError(error.localizedDescription)
+                    case .failure(let error):
+                        self.handleError(error.localizedDescription)
+                    }
                 }
             }
         }
@@ -305,12 +319,15 @@ public struct Lattice {
         }
 
         private func handleClose(code: Int, reason: String) {
+            acceptsCallbacks = false
             currentState = .closed
             webSocketTask = nil
             triggerClose(code: code, reason: reason)
         }
 
         private func handleError(_ error: String) {
+            acceptsCallbacks = false
+            currentState = .closed
             triggerError(error)
         }
 
@@ -336,11 +353,7 @@ public struct Lattice {
             ptr.assumingMemoryBound(to: lattice.generic_sync_transport.self).pointee.trigger_on_close(Int32(code), std.string(reason))
         }
 
-        deinit {
-            // Note: Don't deallocate cxxClientPtr - C++ owns it via unique_ptr
-            // The Swift WebsocketClient is kept alive by passRetained() and should be
-            // released when C++ destroys the websocket_client (not implemented yet)
-        }
+        deinit { session.invalidateAndCancel() }
     }
 
     /// Registers the Swift network factory with C++ layer. Called once on first Lattice init.
@@ -422,7 +435,10 @@ public struct Lattice {
             }, { ptr in
                 return true
             }, { ptr in
-                
+                guard let ptr else { return }
+                let isolation = ptr.assumingMemoryBound(to: (any Actor)?.self)
+                isolation.deinitialize(count: 1)
+                isolation.deallocate()
             }).make_shared()
         }
     }
@@ -551,6 +567,20 @@ public struct Lattice {
         }
         public var authorizationToken: String?
         public var wssEndpoint: URL?
+        /// WSS startup only; IPC targets retain their existing startup behavior.
+        /// On initial handle creation, deferred mode opens/migrates local storage
+        /// without WSS ownership, sync-only repair or a transport. Call connectSync()
+        /// after reading it. Same-configuration cached opens share the existing lifecycle.
+        public enum SyncStartup: Sendable, Hashable { case automatic, deferred }
+        public var syncStartup: SyncStartup = .automatic
+        /// Optional app background-refresh policy. `nil` leaves background
+        /// scheduling disabled. This value does not itself register a task.
+        public var backgroundSync: BackgroundSync?
+        // Derived handles share a lifecycle lineage while remaining local-only.
+        // The runtime token is intentionally excluded from configuration value
+        // equality/hash; native identity conflicts are checked at attachment.
+        internal var backgroundSyncManaged = false
+        internal var backgroundSyncLineage: BackgroundSyncLineage?
         private var scheduler: Scheduler
 
         /// Schema migration definitions keyed by version number.
@@ -687,6 +717,9 @@ public struct Lattice {
             lhs.storage == rhs.storage &&
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
+            lhs.syncStartup == rhs.syncStartup &&
+            lhs.backgroundSync == rhs.backgroundSync &&
+            lhs.backgroundSyncManaged == rhs.backgroundSyncManaged &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
             lhs.syncFilter == rhs.syncFilter &&
@@ -700,6 +733,9 @@ public struct Lattice {
             hasher.combine(storage)
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
+            hasher.combine(syncStartup)
+            hasher.combine(backgroundSync)
+            hasher.combine(backgroundSyncManaged)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
             hasher.combine(syncFilter)
@@ -731,13 +767,17 @@ public struct Lattice {
                     isReadOnly: Bool = false, migration: [Int: Migration]? = nil,
                     syncFilter: SyncFilter? = nil,
                     busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs,
-                    syncTuning: SyncTuning? = nil) {
+                    syncTuning: SyncTuning? = nil,
+                    syncStartup: SyncStartup = .automatic,
+                    backgroundSync: BackgroundSync? = nil) {
             // storage wins; fileURL is the long-standing convenience spelling;
             // neither → the default documents-directory database.
             self.storage = storage ?? .file(fileURL ?? Self.defaultDatabaseDirectory()
                 .appendingPathComponent("lattice\(wssEndpoint != nil ? "_ws" : "").sqlite"))
             self.authorizationToken = authorizationToken
             self.wssEndpoint = wssEndpoint
+            self.syncStartup = syncStartup
+            self.backgroundSync = backgroundSync
             self.scheduler = Scheduler()
             self.isReadOnly = isReadOnly
             self.migration = migration
@@ -758,6 +798,8 @@ public struct Lattice {
                 authorizationToken.map { std.string($0) } ?? std.string(),
                 currentScheduler.scheduler)
             config.read_only = isReadOnly
+            config.background_sync_managed = backgroundSync != nil || backgroundSyncManaged
+            config.sync_autostart = syncStartup == .automatic && !config.background_sync_managed
             config.busy_timeout_ms = Int32(busyTimeoutMs)
             if let auditRetention, auditRetention > 0 {
                 config.audit_retention_seconds = Int64(auditRetention.rounded(.up))
@@ -918,7 +960,18 @@ public struct Lattice {
     /// (sockets, scheduler threads) and the entry expires — the old strong
     /// cache kept every instance alive for the life of the process.
     private final class WeakCacheEntry {
-        weak var backend: (any LatticeBackend)?
+        private final class WeakBackend {
+            weak var value: (any LatticeBackend)?
+            init(_ value: any LatticeBackend) { self.value = value }
+        }
+        private var backends: [WeakBackend]
+        var backend: (any LatticeBackend)? {
+            for candidate in backends.reversed() {
+                if let backend = candidate.value { return backend }
+            }
+            return nil
+        }
+        var liveBackends: [any LatticeBackend] { backends.compactMap { $0.value } }
         let configuration: Configuration
         let modelTypes: [any Model.Type]
         let schema: _Schema?
@@ -926,12 +979,16 @@ public struct Lattice {
         let observerActorDelivery: ObserverActorDelivery?
 
         init(_ lattice: Lattice) {
-            self.backend = lattice.backend
+            self.backends = [WeakBackend(lattice.backend)]
             self.configuration = lattice.configuration
             self.modelTypes = lattice.modelTypes
             self.schema = lattice.schema
             self.isolation = lattice.isolation
             self.observerActorDelivery = lattice.observerActorDelivery
+        }
+
+        func preserveBackends(_ previous: [any LatticeBackend]) {
+            backends = previous.map(WeakBackend.init) + backends
         }
 
         func resurrect() -> Lattice? {
@@ -956,6 +1013,14 @@ public struct Lattice {
                   configuration: Configuration = defaultConfiguration,
                   isSynchronizing: Bool,
                   independentConnection: Bool = false) throws {
+        var configuration = configuration
+        let ownsBackgroundLifecycle = configuration.backgroundSync != nil ||
+            (configuration.backgroundSyncManaged && configuration.backgroundSyncLineage == nil)
+        if ownsBackgroundLifecycle && configuration.backgroundSyncLineage == nil {
+            configuration.backgroundSyncLineage = BackgroundSyncLineage()
+        }
+        try configuration.validateBackgroundSyncStore()
+        try Self.registerBackgroundTasks(configuration: configuration)
         // Register Swift network factory on first use
         Self.registerNetworkFactoryIfNeeded()
 
@@ -1077,9 +1142,28 @@ public struct Lattice {
         let resultsTuning = configuration.resultsTuning
         self.backend.setReadGenerationTTLMs(Int64((resultsTuning.generationTTLSeconds * 1000).rounded()))
         self.backend.setWALKeeperEvictionThresholdBytes(Int64(resultsTuning.walKeeperEvictionThresholdBytes))
+        // Reject lineage conflicts before publishing a trampoline cache entry.
+        if let lineage = configuration.backgroundSyncLineage {
+            let group = try BackgroundSyncBindings.attachManaged(backend: backend, owner: isolation,
+                lineage: lineage, ownsLifecycle: ownsBackgroundLifecycle)
+            if let policy = configuration.backgroundSync {
+                try BackgroundTaskScheduler.shared.bind(identifier: policy.identifier, binding: group.binding)
+            }
+        }
         let key = CacheKey(self.backend)
         let entry = WeakCacheEntry(self)
-        Self.cacheLock.withLockUnchecked { Self.cache[key] = entry }
+        let retired = Self.cacheLock.withLockUnchecked {
+            let previous = Self.cache[key]
+            // Native cache hits have separate Swift backends (and query-error handlers). Keep weak
+            // candidates for every live facade, so releasing the newest cannot hide a surviving one.
+            let live = previous?.liveBackends ?? []
+            entry.preserveBackends(live)
+            Self.cache[key] = entry
+            // Weak loads temporarily retain backends. Neither their final release nor the retired
+            // metadata's actor/configuration releases may run under this process-global lock.
+            return (previous, live)
+        }
+        withExtendedLifetime(retired) {}
     }
 
     // MARK: Public Inits
@@ -1216,6 +1300,7 @@ public struct Lattice {
             for item in retired {
                 if let backend = item.backend {
                     let identityHash = backend.identityHash
+                    BackgroundSyncBindings.invalidate(identity: identityHash)
                     closeBackend(backend)
                     // A read can remint this identity after the path-wide
                     // eviction but before native close finishes.
@@ -1586,6 +1671,35 @@ public struct Lattice {
         backend.isSyncConnected()
     }
 
+    /// Start/resume configured WSS without replacing this handle or its local rows.
+    /// Already-open/connecting transport is left alone. Endpoint/token come from
+    /// the original configuration; a different delivery scope needs a new handle.
+    public func connectSync() throws {
+        guard let lifecycle = backend as? any SyncLifecycleBackend else {
+            throw Lattice.Error.databaseError("Sync lifecycle is unsupported by this backend")
+        }
+        try lifecycle.connectSync()
+        if backend.isSyncAgent() { resumeGenerations() }
+    }
+
+    /// Pause WSS and its pending retries, retaining local storage and ownership.
+    /// This is not a suspension boundary: use close() to release database locks.
+    public func disconnectSync() throws {
+        guard let lifecycle = backend as? any SyncLifecycleBackend else {
+            throw Lattice.Error.databaseError("Sync lifecycle is unsupported by this backend")
+        }
+        try lifecycle.disconnectSync()
+    }
+
+    /// Replace only the transport attempt on this same database handle.
+    public func reconnectSync() throws {
+        guard let lifecycle = backend as? any SyncLifecycleBackend else {
+            throw Lattice.Error.databaseError("Sync lifecycle is unsupported by this backend")
+        }
+        try lifecycle.reconnectSync()
+        if backend.isSyncAgent() { resumeGenerations() }
+    }
+
     /// Explicitly close all database connections and tear down the synchronizer.
     /// If a sibling instance exists for the same database, it will inherit sync responsibility.
     public func close() {
@@ -1595,6 +1709,13 @@ public struct Lattice {
     /// Internal seam for the eviction-to-native-close interleaving, matching
     /// the deletion seam without adding a production callback or lock.
     internal func _close(closeBackend: (any LatticeBackend) -> Void) {
+        BackgroundSyncBindings.invalidate(identity: backend.identityHash)
+        // Retire trampoline lookup before native close. Release the entry outside the cache lock:
+        // configuration closures or actor teardown can reenter Lattice during their final release.
+        let retired = Self.cacheLock.withLockUnchecked {
+            Self.cache.removeValue(forKey: CacheKey(backend))
+        }
+        defer { withExtendedLifetime(retired) {} }
         // Item A §4.6: tear down this identity's generation coordinator
         // (invalidation hook, keeper holds, shape caches) before the backend
         // closes — the core close additionally retires its whole read pool
@@ -1607,6 +1728,19 @@ public struct Lattice {
         // still pending. Facades reacquire their coordinator on every access;
         // remove this last pre-close cache before close() returns.
         GenerationCoordinatorRegistry.evict(identityHash: identityHash)
+    }
+
+    /// Owner-lineage retirement closes derived identities without recursively
+    /// invalidating the owner again. No cache lock crosses native teardown.
+    internal static func _closeBackgroundMember(backend: any LatticeBackend) {
+        let retired = cacheLock.withLockUnchecked {
+            cache.removeValue(forKey: CacheKey(backend))
+        }
+        defer { withExtendedLifetime(retired) {} }
+        let identity = backend.identityHash
+        GenerationCoordinatorRegistry.evict(identityHash: identity)
+        backend.close()
+        GenerationCoordinatorRegistry.evict(identityHash: identity)
     }
 
     /// Retire every open read generation now (item A §3.6): force-COMMIT
@@ -1714,6 +1848,17 @@ public struct Lattice {
         backend.lastQueryError()
     }
 
+    /// Read the store's actual persisted schema version on the current read/transaction
+    /// route, independent of this handle's configured migration target. This scalar
+    /// query does not migrate or write the store. Missing, malformed, nonpositive,
+    /// out-of-range (greater than Int32.max), closed-store, and query failures throw.
+    public func storedSchemaVersion() throws -> Int {
+        guard let reader = backend as? any StoredSchemaVersionBackend else {
+            throw Lattice.Error.databaseError("Stored schema version is unsupported by this backend")
+        }
+        return try reader.storedSchemaVersion()
+    }
+
     /// Register a callback for sync connection state changes.
     public func onSyncStateChange(_ handler: @escaping @Sendable (Bool) -> Void) {
         backend.setOnSyncStateChange(handler)
@@ -1737,57 +1882,39 @@ public struct Lattice {
     /// pile-ups that caused).
     public var syncProgressStream: AsyncStream<SyncProgress> {
         let backend = self.backend
-        let isSyncAgent = backend.isSyncAgent()
         return AsyncStream { continuation in
             let token = _SyncProgressSlot.register(backend)
-            if isSyncAgent {
-                // In-process path
-                backend.setOnSyncProgress { pending, total, acked, received, syncId in
-                    continuation.yield(SyncProgress(
-                        pendingUpload: Int(pending),
-                        totalUpload: Int(total),
-                        acked: Int(acked),
-                        received: Int(received),
-                        syncId: syncId
-                    ))
-                }
+            // Deferred and background-managed stores are not agents at open.
+            // Keep the native subscription ready for later ownership changes.
+            backend.setOnSyncProgress { pending, total, acked, received, syncId in
+                continuation.yield(SyncProgress(
+                    pendingUpload: Int(pending), totalUpload: Int(total),
+                    acked: Int(acked), received: Int(received), syncId: syncId
+                ))
+            }
 
-                continuation.onTermination = { _ in
-                    if _SyncProgressSlot.clearIfCurrent(backend, token: token) {
-                        backend.setOnSyncProgress(nil)
-                    }
-                }
-            } else {
-                // Cross-process path. nonisolated(unsafe): mutated only from
-                // the serial xproc callback (no concurrent access), captured
-                // by the @Sendable callback closure.
-                nonisolated(unsafe) var previousPending = 0
-                // The pending count is an unindexed COUNT with a correlated
-                // EXISTS over the audit log, and idle hints arrive per commit
-                // burst — rate-limit the probe to once a second so a busy
-                // writer does not pay it on every hint.
-                nonisolated(unsafe) var lastProbe = Date.distantPast
+            // The serial cross-process hint remains the fallback while another
+            // process owns sync. Check ownership at delivery, not subscription.
+            nonisolated(unsafe) var previousPending = 0
+            nonisolated(unsafe) var lastProbe = Date.distantPast
+            backend.setOnXprocIdle {
+                guard !backend.isSyncAgent() else { return }
+                let now = Date()
+                guard now.timeIntervalSince(lastProbe) >= 1 else { return }
+                lastProbe = now
+                let pending = Int(backend.pendingSyncEntryCount())
+                let acked = max(0, previousPending - pending)
+                previousPending = pending
+                continuation.yield(SyncProgress(
+                    pendingUpload: pending, totalUpload: pending + acked,
+                    acked: acked, received: 0
+                ))
+            }
 
-                backend.setOnXprocIdle {
-                    let now = Date()
-                    guard now.timeIntervalSince(lastProbe) >= 1 else { return }
-                    lastProbe = now
-                    let pending = Int(backend.pendingSyncEntryCount())
-                    let diff = previousPending - pending
-                    let acked = max(0, diff)
-                    previousPending = pending
-                    continuation.yield(SyncProgress(
-                        pendingUpload: pending,
-                        totalUpload: pending + acked,
-                        acked: acked,
-                        received: 0
-                    ))
-                }
-
-                continuation.onTermination = { _ in
-                    if _SyncProgressSlot.clearIfCurrent(backend, token: token) {
-                        backend.setOnXprocIdle(nil)
-                    }
+            continuation.onTermination = { _ in
+                if _SyncProgressSlot.clearIfCurrent(backend, token: token) {
+                    backend.setOnSyncProgress(nil)
+                    backend.setOnXprocIdle(nil)
                 }
             }
         }
@@ -2184,7 +2311,7 @@ public struct Lattice {
                 // Keeping ipcTargets/wssEndpoint would join sync channels, receive a
                 // catchup of existing data, and generate spurious AuditLog entries that
                 // fire observers before the real change arrives.
-                var queryConfig = configuration
+                var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
                 queryConfig.authorizationToken = nil
@@ -2274,7 +2401,7 @@ public struct Lattice {
 
             Task.detached {
                 diagnostic?.record("query_open_started")
-                var queryConfig = configuration
+                var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
                 queryConfig.authorizationToken = nil
@@ -2722,11 +2849,12 @@ public struct Lattice {
     public func attaching(lattice: Lattice) throws -> Lattice {
         // Build a query-only config: strip IPC/WSS to avoid duplicate socket
         // bind and unnecessary sync on a connection used only for UNION ALL reads.
-        var queryConfig = configuration
+        var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
         queryConfig.ipcTargets = nil
         queryConfig.wssEndpoint = nil
         queryConfig.authorizationToken = nil
         queryConfig.syncFilter = nil
+        try queryConfig.validateBackgroundSyncStore()
         let cxxConfig = queryConfig.cxxConfiguration()
         // UNCACHED construction is load-bearing: when the parent has no
         // sync/IPC, the stripped config's cache key is IDENTICAL to the
@@ -2746,6 +2874,10 @@ public struct Lattice {
                                  schema: schema,
                                  isolation: isolation,
                                  observerActorDelivery: observerActorDelivery)
+        if let lineage = queryConfig.backgroundSyncLineage {
+            _ = try BackgroundSyncBindings.attachManaged(backend: newLattice.backend, owner: isolation,
+                lineage: lineage, ownsLifecycle: false)
+        }
         // Item A §4.2: the clone unions rows from the attached store — writes
         // on either store must invalidate its shapes (see attach(lattice:)).
         // Mint the attached store's coordinator so its core hook relays

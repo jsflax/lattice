@@ -1,0 +1,88 @@
+{
+  "record_status": "Candidate record: Core 2.5.1 published/verified; actual SDK new-pin full and strict suites passed. Candidate CI, SDK 2.6.1 publication, and notices pending.",
+  "main_source": "d0ca27e4c1b98501dec4215f11403f281962691a",
+  "merged_at": "2026-11-02T03:11:46Z",
+  "Core": {
+    "version": "2.5.1",
+    "status": "published and verified",
+    "source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+    "release_url": "https://github.com/jsflax/LatticeCore/releases/tag/2.5.1",
+    "receipt": "core-2.5.1-verification.json",
+    "receipt_SHA256": "98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde",
+    "source_and_pin_proof": "source-and-pin-verification.json"
+  },
+  "SDK": {
+    "intended_version": "2.6.1",
+    "publication_status": "NOT YET PUBLISHED",
+    "tag_status": "NOT YET TAGGED",
+    "Core_dependency": {
+      "minimum": "2.5.1",
+      "resolved_version": "2.5.1",
+      "resolved_source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c"
+    },
+    "full_new_pin_test": "PASSED: 14 XCTest, 6.225s (outer suite 6.228s); 830 Swift Testing / 125 suites, 72.437s; build 162.11s",
+    "strict_new_pin_test": "PASSED: 12 XCTest, 6.078s (outer suite 6.080s); 13 Swift Testing / 1 suite, 0.162s",
+    "candidate_CI": "PENDING",
+    "tag_source": null,
+    "release_workflow": null,
+    "release_url": null,
+    "artifact_receipt": null,
+    "downloaded_receipt_digest_verified": false
+  },
+  "exact_main_CI": {
+    "status": "completed \u2014 overall success; required macOS/stable Linux/iOS passed, optional nightly failed",
+    "run": "https://github.com/jsflax/lattice/actions/runs/41381739897",
+    "all_legs_green": false,
+    "final_evidence": "ci-and-docs-verification.json: main_CI_final and optional_main_nightly_failure"
+  },
+  "consumer_notices": {
+    "engram-integration-hardening": {
+      "delivery": "UNSENT \u2014 SDK publication has not occurred",
+      "safe_receipt_file": null,
+      "adoption": "not verified by this release record"
+    },
+    "Orbital": {
+      "delivery": "UNSENT \u2014 SDK publication has not occurred",
+      "safe_receipt_file": null,
+      "adoption": "not verified by this release record"
+    },
+    "HUD": {
+      "delivery": "UNSENT \u2014 SDK publication has not occurred",
+      "safe_receipt_file": null,
+      "adoption": "not verified by this release record"
+    }
+  },
+  "notice_constraints": "No direct or indirect shock-trooper contact. Keep private chat identifiers out of repository-facing receipts. Coordinator owns all delivery.",
+  "goal_status": "active; Core 2.5.1 released, SDK 2.6.1 qualification/publication and authorized consumer delivery remain",
+  "next_candidate": {
+    "Core": "2.5.1 published and verified",
+    "SDK": "2.6.1 intended, not yet published",
+    "Core_merged_source": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+    "status": "Actual published Core pin and full/strict SDK test passes verified. Candidate CI, SDK publication/artifacts/delivery pending.",
+    "Core_PR_and_main_CI": "All checks/runs passed",
+    "phone_qualification": "Candidate manual finite sync and debugger-triggered BGTask success/settlement/reopen verified; natural scheduling and other explicit device gaps remain."
+  },
+  "investigation_evidence": "fresh-open-investigation.json",
+  "candidate_device_evidence": "phone-candidate-success.json",
+  "historical_Core_2_5_0": {
+    "version": "2.5.0",
+    "status": "published and verified",
+    "source": "c3fcb7dd24f75740b6559ec84fe0d5086f4569f1",
+    "release_url": "https://github.com/jsflax/LatticeCore/releases/tag/2.5.0",
+    "receipt": "../ios-background-sync-005/core-verification.json"
+  },
+  "failed_SDK_2_6_0_attempt": {
+    "intended_version": "2.6.0",
+    "tag_status": "Pushed and immutable: 2.6.0 at qualified main source; no retag",
+    "publication_status": "NOT PUBLISHED \u2014 required macOS job 125079754321 failed; other release legs were still running at coordinator update",
+    "tag_source": "d0ca27e4c1b98501dec4215f11403f281962691a",
+    "release_workflow": "https://github.com/jsflax/lattice/actions/runs/41383687634",
+    "release_url": null,
+    "artifact_receipt": null,
+    "downloaded_receipt_digest_verified": false,
+    "tag_evidence_source": "Coordinator tag push receipt",
+    "release_failure_evidence": "release-failure-summary.json",
+    "next_release_decision": "Intended successor SDK 2.6.1 with Core 2.5.1. Core fix merged after PR CI passed; exact-main CI, SDK pin/qualification, and coherent publication/artifact verification pending."
+  },
+  "source_and_pin_evidence": "source-and-pin-verification.json"
+}

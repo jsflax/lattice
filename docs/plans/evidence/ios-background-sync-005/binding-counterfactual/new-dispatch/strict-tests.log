@@ -1,0 +1,42 @@
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite "Background sync weak bindings" started.
+◇ Test foregroundSettlesAnActiveManualPassBeforeResuming() started.
+◇ Test nativeIdentityCannotJoinDifferentLiveLineages() started.
+◇ Test unconfirmedMemberSuspensionCannotBecomeCompleted() started.
+◇ Test invalidationCancelsBeforeAQueuedActorHopCanStartNativeWork() started.
+◇ Test deadOriginalOwnerCannotBeReplacedByABorrowerAtItsAddress() started.
+◇ Test idleRegistrationDoesNotRetainItsActorOrStore() started.
+◇ Test foregroundTransferDisarmsObsoleteCommandCancellation() started.
+◇ Test invalidationRejectsRetainedCapabilities() started.
+◇ Test lineageResumesDistinctNativeMembersButOnlyOwnerRefreshes() started.
+◇ Test cancellationBeforeNativeTokenInstallationIsNotLost() started.
+◇ Test refreshBudgetIncludesBorrowerSettlement() started.
+◇ Test ownerCloseRetiresBorrowersAndRejectsStaleReferences() started.
+◇ Test commandsHopToTheOwningActorBeforeNativeWork() started.
+◇ Test alreadyRunningOwnerLeavesBorrowedForegroundWorkAlone() started.
+◇ Test cancelledCallerWaitsForNativeSettlement() started.
+◇ Test releasingNewestFacadePreservesTheEarlierOne() started.
+◇ Test derivedCloseDoesNotInvalidateOwnerOrSibling() started.
+◇ Test expiredNativeAliasDoesNotBlockLaterAddressReuse() started.
+✔ Test nativeIdentityCannotJoinDifferentLiveLineages() passed after 0.003 seconds.
+✔ Test deadOriginalOwnerCannotBeReplacedByABorrowerAtItsAddress() passed after 0.003 seconds.
+✔ Test foregroundTransferDisarmsObsoleteCommandCancellation() passed after 0.003 seconds.
+✔ Test cancellationBeforeNativeTokenInstallationIsNotLost() passed after 0.003 seconds.
+✔ Test expiredNativeAliasDoesNotBlockLaterAddressReuse() passed after 0.003 seconds.
+✔ Test invalidationRejectsRetainedCapabilities() passed after 0.004 seconds.
+✔ Test ownerCloseRetiresBorrowersAndRejectsStaleReferences() passed after 0.003 seconds.
+✔ Test idleRegistrationDoesNotRetainItsActorOrStore() passed after 0.004 seconds.
+✔ Test releasingNewestFacadePreservesTheEarlierOne() passed after 0.004 seconds.
+✔ Test derivedCloseDoesNotInvalidateOwnerOrSibling() passed after 0.004 seconds.
+✔ Test alreadyRunningOwnerLeavesBorrowedForegroundWorkAlone() passed after 0.004 seconds.
+✔ Test cancelledCallerWaitsForNativeSettlement() passed after 0.004 seconds.
+✔ Test foregroundSettlesAnActiveManualPassBeforeResuming() passed after 0.005 seconds.
+✔ Test invalidationCancelsBeforeAQueuedActorHopCanStartNativeWork() passed after 0.005 seconds.
+✔ Test unconfirmedMemberSuspensionCannotBecomeCompleted() passed after 0.005 seconds.
+✔ Test lineageResumesDistinctNativeMembersButOnlyOwnerRefreshes() passed after 0.005 seconds.
+✔ Test commandsHopToTheOwningActorBeforeNativeWork() passed after 0.008 seconds.
+✔ Test refreshBudgetIncludesBorrowerSettlement() passed after 0.189 seconds.
+✔ Suite "Background sync weak bindings" passed after 0.190 seconds.
+✔ Test run with 18 tests in 1 suite passed after 0.190 seconds.

@@ -75,3 +75,14 @@ jobs:
           name: ${{ steps.version.outputs.version }}
           body_path: ${{ steps.changelog.outputs.has_notes == 'true' && format('{0}/release_notes.md', env.WRAPPER_RELEASE_ROOT) || '' }}
           generate_release_notes: ${{ steps.changelog.outputs.has_notes != 'true' }}
+
+  notify-slack:
+    needs: release
+    permissions:
+      contents: read
+      statuses: write
+    uses: ./.github/workflows/slack-release.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
