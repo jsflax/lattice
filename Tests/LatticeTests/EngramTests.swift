@@ -447,6 +447,7 @@ actor EngramSyncRealismTests {
             // --- 1. Create local Lattice with IPC target but NO sync filter ---
             localConfig.ipcTargets = [.init(channel: channel)]
             let local = try Lattice(EngramMemory.self, EngramEdge.self, configuration: localConfig)
+            defer { withExtendedLifetime(local) {} }
             print("[TEST] Local Lattice created (no sync filter yet)")
 
             // --- 2. Insert 500 memories + 250 edges into local BEFORE any sync ---
@@ -577,6 +578,7 @@ actor EngramSyncRealismTests {
             filter.include(EngramMemory.self, where: { $0.project == syncedProject })
             localConfig.ipcTargets = [.init(channel: channel, syncFilter: filter)]
             let local = try Lattice(EngramMemory.self, configuration: localConfig)
+            defer { withExtendedLifetime(local) {} }
             try await Task.sleep(for: .milliseconds(200))
 
             // Synced with IPC + WSS
