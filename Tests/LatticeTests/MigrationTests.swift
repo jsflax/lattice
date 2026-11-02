@@ -1279,6 +1279,7 @@ class MigrationTests: BaseTest {
                           userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db)!)])
         }
         defer { sqlite3_close(db) }
+        try registerCurrentWriterForFixtureMutation(db)
 
         for sql in statements {
             var errMsg: UnsafeMutablePointer<CChar>?
