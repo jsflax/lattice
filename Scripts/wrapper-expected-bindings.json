@@ -4,7 +4,7 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "64abee4637a4e774b5a5c5d778146ddc9777797c",
+      "revision": "c55942e2eb7b5f2123b8e21faf215e39ddd0f163",
       "selection": "revision"
     },
     {
@@ -42,14 +42,13 @@
   },
   "sourceEvidence": {
     "latticecore": {
-      "revision": "64abee4637a4e774b5a5c5d778146ddc9777797c",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/64abee4637a4e774b5a5c5d778146ddc9777797c",
+      "revision": "c55942e2eb7b5f2123b8e21faf215e39ddd0f163",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/c55942e2eb7b5f2123b8e21faf215e39ddd0f163",
       "selection": "revision",
       "parents": [
-        "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
-        "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c"
+        "27bdef11c818ab87d56fb93fe31d30d561ccc219"
       ],
-      "scope": "Source-reviewed integration of existing connector audit/receipt APIs with released Core 2.5.1; upstream CI and this wrapper graph remain unqualified."
+      "scope": "Source-reviewed shared Core9 successor preserving finite background sync, durable outbox migration and currentness; upstream Linux, macOS and both C ABI CI passed at this exact revision. This wrapper graph, compilation, tests and products remain unqualified."
     },
     "swift-sdk": {
       "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
@@ -81,5 +80,15 @@
     "sourceURL": "https://github.com/jsflax/LatticeCore/tree/0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
     "selection": "revision",
     "scope": "Reviewed exact audit-fence Core source revision; not a fabricated versioned release."
+  },
+  "previousConnectorMergeSourceEvidence": {
+    "revision": "64abee4637a4e774b5a5c5d778146ddc9777797c",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/64abee4637a4e774b5a5c5d778146ddc9777797c",
+    "selection": "revision",
+    "parents": [
+      "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
+      "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c"
+    ],
+    "scope": "Source-reviewed integration of existing connector audit/receipt APIs with released Core 2.5.1; upstream CI and this wrapper graph remain unqualified."
   }
 }

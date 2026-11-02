@@ -267,7 +267,7 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
 
 // MARK: - CxxBackend (wraps swift_lattice_ref)
 
-final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditReadFenceBackend, LocalMetadataBackend, AuditedWritesBackend, StoredSchemaVersionBackend, SyncLifecycleBackend, @unchecked Sendable {
+final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditCursorBackend, MainFileCurrentnessBackend, SyncChannelRetirementBackend, AuditReadFenceBackend, LocalMetadataBackend, AuditedWritesBackend, StoredSchemaVersionBackend, SyncLifecycleBackend, @unchecked Sendable {
     // The db ops are const forwarders on swift_lattice_ref, so they import
     // non-mutating on both paths and the handle can be a `let`.
     let ref: lattice.swift_lattice_ref
@@ -404,6 +404,26 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditReadFenceBacke
         let ok = ref.delete_where(std.string(table), optStr(whereClause), columnValues(params))
         reportQueryFailureIfAny()
         return ok
+    }
+
+    func auditCursor() throws -> AuditCursor {
+        let value = ref.auditCursor()
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+        if value.head == 0 && value.floor == 0 {
+            return AuditCursor(head: 0, headID: nil, floor: 0)
+        }
+        guard value.head > 0, value.floor > 0, value.floor <= value.head,
+              let id = UUID(uuidString: String(value.head_global_id)) else {
+            throw Lattice.Error.databaseError("Invalid audit cursor")
+        }
+        return AuditCursor(head: Int64(value.head), headID: id, floor: Int64(value.floor))
+    }
+
+    func requireMainFileUnmoved(expectedPath: String) throws {
+        let admitted = ref.requireMainFileUnmoved(std.string(expectedPath))
+        // Consume the exact bridge seal before another call can overwrite it.
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+        guard admitted else { throw Lattice.Error.databaseError("Main file currentness failed") }
     }
 
     func auditReadFence() throws -> AuditReadFence {
@@ -722,6 +742,16 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditReadFenceBacke
     func removeSyncChannelState(syncId: String) {
         ref.remove_sync_channel_state(std.string(syncId))
         reportQueryFailureIfAny()
+    }
+
+    func removeSyncChannelStateChecked(syncId: String) throws {
+        let retired = ref.remove_sync_channel_state_checked(std.string(syncId))
+        if let error = reportQueryFailureIfAny() {
+            throw Lattice.Error.databaseError(error)
+        }
+        guard retired else {
+            throw Lattice.Error.databaseError("Sync channel retirement did not complete")
+        }
     }
 
     func deleteRowsNoRelay(table: String, globalRowIds: [String]) -> Int64 {

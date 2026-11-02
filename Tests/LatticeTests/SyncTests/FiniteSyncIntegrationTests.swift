@@ -6,6 +6,11 @@ import LatticeTestSupport
 @testable import Lattice
 @testable import LatticeServerKit
 
+@Model private final class FiniteAssetPayload {
+    var ordinal: Int = 0
+    var payload: Data = Data()
+}
+
 private enum FiniteIntegrationFailure: Error {
     case timedOut(String)
     case invalidPremise(String)
@@ -56,7 +61,8 @@ final class FiniteRelayHarness: @unchecked Sendable {
     private let counts: NIOLockedValueBox<Counts>
     private let hooks: RelayIngressTestHooks
 
-    init(pausedSetup: Bool = false) async throws {
+    init(pausedSetup: Bool = false,
+         schema: [any Lattice.Model.Type] = [SimpleSyncObject.self]) async throws {
         let directory = LatticeTestScratch.directory.appendingPathComponent("finite-relay-\(UUID().uuidString)")
         let storage = directory.appendingPathComponent("relay")
         try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: true)
@@ -89,7 +95,7 @@ final class FiniteRelayHarness: @unchecked Sendable {
         let user = UUID()
         let channel = channelID
         self.handle = Lattice.configureSyncRelay(
-            on: app.routes, path: ["sync"], for: [SimpleSyncObject.self], storageURL: storage,
+            on: app.routes, path: ["sync"], for: schema, storageURL: storage,
             channelExtractor: { request in
                 guard request.headers.first(name: "Authorization") == "Bearer finite-test-token" else {
                     throw Abort(.unauthorized)
@@ -170,8 +176,9 @@ private final class FiniteProgressLog: Sendable {
 /// owns test discovery and ordering.
 private actor FiniteSyncIntegrationDriver {
     private func withRelay(pausedSetup: Bool = false,
+                           schema: [any Lattice.Model.Type] = [SimpleSyncObject.self],
                            _ body: (FiniteRelayHarness) async throws -> Void) async throws {
-        let harness = try await FiniteRelayHarness(pausedSetup: pausedSetup)
+        let harness = try await FiniteRelayHarness(pausedSetup: pausedSetup, schema: schema)
         do { try await body(harness) }
         catch {
             try await harness.shutdown()
@@ -255,6 +262,39 @@ private actor FiniteSyncIntegrationDriver {
             let values = client.objects(SimpleSyncObject.self).map(\.value)
             XCTAssertEqual(values.count, count)
             XCTAssertEqual(Set(values), Set(0..<count))
+            XCTAssertFalse(client.isSyncConnected)
+        }
+    }
+
+    func completionWaitsForEveryBoundedBinaryReplayFrame() async throws {
+        try await withRelay(schema: [FiniteAssetPayload.self]) { harness in
+            let payload = Data(repeating: 0x6d, count: 512 * 1024)
+            let count = 9
+            XCTAssertGreaterThan(count * payload.count, Lattice.maximumEncodedSyncMessageBytes,
+                                 "Even raw payloads require more than one encoded frame")
+            do {
+                let donor = try Lattice(FiniteAssetPayload.self,
+                    configuration: .init(fileURL: harness.channelFile))
+                defer { donor.close() }
+                try donor.withTransaction {
+                    for ordinal in 0..<count {
+                        let row = FiniteAssetPayload()
+                        row.ordinal = ordinal; row.payload = payload
+                        try donor.add(row)
+                    }
+                }
+            }
+            let client = try Lattice(FiniteAssetPayload.self, configuration: harness.clientConfiguration())
+            defer { client.close() }
+            let outcome = try await client.syncOnce(maximumDuration: 30)
+            XCTAssertEqual(outcome, .completed)
+            // No eventual-read loop: the negotiated marker follows every admitted byte-bounded
+            // frame, including the last short page; binary values retain their exact bytes.
+            let rows = client.objects(FiniteAssetPayload.self).materializedSnapshot(limit: Int64(count + 1))
+            XCTAssertEqual(rows.count, count)
+            XCTAssertEqual(Set(rows.map(\.ordinal)), Set(0..<count))
+            XCTAssertTrue(rows.allSatisfy { $0.payload == payload })
+            XCTAssertFalse(client.backend.isSyncAgent())
             XCTAssertFalse(client.isSyncConnected)
         }
     }
@@ -455,6 +495,13 @@ final class FiniteSyncIntegrationTests: XCTestCase {
         let driver = FiniteSyncIntegrationDriver()
         try await withFiniteIntegrationDeadline(seconds: 120) {
             try await driver.completionWaitsForEveryInitialReplayPage()
+        }
+    }
+
+    func testCompletionWaitsForEveryBoundedBinaryReplayFrame() async throws {
+        let driver = FiniteSyncIntegrationDriver()
+        try await withFiniteIntegrationDeadline(seconds: 120) {
+            try await driver.completionWaitsForEveryBoundedBinaryReplayFrame()
         }
     }
 

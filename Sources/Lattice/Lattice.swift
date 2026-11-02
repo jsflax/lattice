@@ -588,6 +588,13 @@ public struct Lattice {
         /// a `Lattice` with the correct target schema version.
         public var migration: [Int: Migration]?
 
+        /// Open an already activated file at exactly this positive Int32 version, with no create,
+        /// migration, schema repair or automatic maintenance. The complete typed schema must have
+        /// a current persisted fingerprint. These local handles use the admitted connection for
+        /// reads, cannot attach databases or own WSS/IPC, and require full close/open to reconnect.
+        /// nil preserves normal open behavior. Invalid or conflicting values throw at open.
+        public var requiredExistingSchemaVersion: Int?
+
         /// Read-only mode. When true:
         /// - Database is opened with SQLITE_OPEN_READONLY
         /// - No WAL mode (uses existing journal mode)
@@ -722,6 +729,7 @@ public struct Lattice {
             lhs.backgroundSyncManaged == rhs.backgroundSyncManaged &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
+            lhs.requiredExistingSchemaVersion == rhs.requiredExistingSchemaVersion &&
             lhs.syncFilter == rhs.syncFilter &&
             lhs.ipcTargets == rhs.ipcTargets &&
             lhs.busyTimeoutMs == rhs.busyTimeoutMs &&
@@ -738,6 +746,7 @@ public struct Lattice {
             hasher.combine(backgroundSyncManaged)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
+            hasher.combine(requiredExistingSchemaVersion)
             hasher.combine(syncFilter)
             hasher.combine(ipcTargets)
             hasher.combine(busyTimeoutMs)
@@ -769,7 +778,8 @@ public struct Lattice {
                     busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs,
                     syncTuning: SyncTuning? = nil,
                     syncStartup: SyncStartup = .automatic,
-                    backgroundSync: BackgroundSync? = nil) {
+                    backgroundSync: BackgroundSync? = nil,
+                    requiredExistingSchemaVersion: Int? = nil) {
             // storage wins; fileURL is the long-standing convenience spelling;
             // neither → the default documents-directory database.
             self.storage = storage ?? .file(fileURL ?? Self.defaultDatabaseDirectory()
@@ -781,6 +791,7 @@ public struct Lattice {
             self.scheduler = Scheduler()
             self.isReadOnly = isReadOnly
             self.migration = migration
+            self.requiredExistingSchemaVersion = requiredExistingSchemaVersion
             self.syncFilter = syncFilter
             self.busyTimeoutMs = busyTimeoutMs
             self.busyTimeoutMsWasCustomized = (busyTimeoutMs != Configuration.defaultBusyTimeoutMs)
@@ -842,6 +853,12 @@ public struct Lattice {
             // higher schema version than the default of 1.
             if let migration, let maxVersion = migration.keys.max() {
                 config.target_schema_version = Int32(maxVersion)
+            }
+            if let requiredExistingSchemaVersion {
+                // Throwing typed opens validate range before reaching this conversion. Auxiliary
+                // internal callers get a rejecting sentinel instead of a trapping Int32 conversion.
+                config.required_existing_schema_version = Int32(exactly: requiredExistingSchemaVersion) ?? -1
+                config.target_schema_version = config.required_existing_schema_version
             }
             return config
         }
@@ -1013,6 +1030,19 @@ public struct Lattice {
                   configuration: Configuration = defaultConfiguration,
                   isSynchronizing: Bool,
                   independentConnection: Bool = false) throws {
+        if let required = configuration.requiredExistingSchemaVersion {
+            guard required > 0, Int32(exactly: required) != nil else {
+                throw Lattice.Error.databaseError("Required existing schema version must be a positive Int32")
+            }
+            if let target = configuration.migration?.keys.max(), target != required {
+                throw Lattice.Error.databaseError("Required existing schema version conflicts with migration target")
+            }
+            guard configuration.wssEndpoint == nil, configuration.ipcTargets?.isEmpty ?? true,
+                  configuration.backgroundSync == nil, !configuration.backgroundSyncManaged,
+                  configuration.backgroundSyncLineage == nil else {
+                throw Lattice.Error.databaseError("Existing schema handles do not own sync transports or background lifecycle")
+            }
+        }
         var configuration = configuration
         let ownsBackgroundLifecycle = configuration.backgroundSync != nil ||
             (configuration.backgroundSyncManaged && configuration.backgroundSyncLineage == nil)
@@ -1077,7 +1107,7 @@ public struct Lattice {
 
         if let migration = configuration.migration {
             // Find the target version from migration dict (highest key)
-            let targetVersion = migration.keys.max() ?? 1
+            let targetVersion = migration.keys.max() ?? configuration.requiredExistingSchemaVersion ?? 1
 
             // Create swift_configuration with row migration callback
             swiftConfig.target_schema_version = Int32(targetVersion)
@@ -2800,6 +2830,10 @@ public struct Lattice {
     }
     
     public mutating func attach(lattice: Lattice) throws {
+        guard configuration.requiredExistingSchemaVersion == nil,
+              lattice.configuration.requiredExistingSchemaVersion == nil else {
+            throw LatticeError.attachFailed("Existing schema handles cannot participate in attachments")
+        }
         try backend.attach(lattice.backend)
         // Item A §4.2: attaching changes what this handle's tables mean
         // (union views over both stores) — every cached shape is stale. Link
@@ -2851,6 +2885,10 @@ public struct Lattice {
     }
 
     public func attaching(lattice: Lattice) throws -> Lattice {
+        guard configuration.requiredExistingSchemaVersion == nil,
+              lattice.configuration.requiredExistingSchemaVersion == nil else {
+            throw LatticeError.attachFailed("Existing schema handles cannot participate in attachments")
+        }
         // Build a query-only config: strip IPC/WSS to avoid duplicate socket
         // bind and unnecessary sync on a connection used only for UNION ALL reads.
         var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
