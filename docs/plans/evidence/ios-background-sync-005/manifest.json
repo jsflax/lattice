@@ -1,0 +1,96 @@
+{
+  "checkpoint_date": "2026-11-01",
+  "scope": "Published Core; original CI and intermediate failure preserved; final complete and strict actual-SDK runs pass; corrected iOS host expiration/cleanup/reopen verified. Final exact-commit CI and SDK publication pending. Raw receipts/artifacts are frozen locally.",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "5050eca5ab9983227eaef7b9f477be185e0f580ba5f3a13c41bcc0b5ccf246d3",
+      "bytes": 9647
+    },
+    {
+      "path": "binding-counterfactual/new-dispatch/compile.json",
+      "sha256": "df02670e0e7c0b52e586c123b628e0c47e1ee4690f0715a6e7c3e1126fab3306",
+      "bytes": 1863
+    },
+    {
+      "path": "binding-counterfactual/new-dispatch/compile.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "binding-counterfactual/new-dispatch/source-hashes.json",
+      "sha256": "7602cae77a8627321a814c61526371f993a3c22aba98fd996c18268bfb4a3805",
+      "bytes": 599
+    },
+    {
+      "path": "binding-counterfactual/new-dispatch/strict-tests.json",
+      "sha256": "cd9b81dac8b79d867291c5ff0321e1ea9ed71f116e88d90d34fb5ba1f665446d",
+      "bytes": 243
+    },
+    {
+      "path": "binding-counterfactual/new-dispatch/strict-tests.log",
+      "sha256": "7a7801751a3566f86db29711c800edb2a119f6a10b6fab8203dc24fb82992843",
+      "bytes": 3093
+    },
+    {
+      "path": "binding-counterfactual/old-detached/compile.json",
+      "sha256": "64a47d1c53269be772f2600a4b85e100c7bc625da55e9bc0c92295985302b851",
+      "bytes": 1862
+    },
+    {
+      "path": "binding-counterfactual/old-detached/compile.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "binding-counterfactual/old-detached/source-hashes.json",
+      "sha256": "0de8fe3a1ace7722e4462c15b1f844da7b5426be6a1c2cea78d8d7f22451b51a",
+      "bytes": 599
+    },
+    {
+      "path": "binding-counterfactual/old-detached/strict-tests.json",
+      "sha256": "c6dff5496a262470ed37676ae447dd1538785da31b6ed12930561694da10b4da",
+      "bytes": 241
+    },
+    {
+      "path": "binding-counterfactual/old-detached/strict-tests.log",
+      "sha256": "a6f390ca7b97bf7ff5ca82334deed3ba500069e55c63d34025b2ae8f6ffadda3",
+      "bytes": 3530
+    },
+    {
+      "path": "binding-counterfactual/result.json",
+      "sha256": "9e0f0f8f79e1dd90ffd7963b9dcedc85f10b0a90fdd341680a0a8b8755533d59",
+      "bytes": 51
+    },
+    {
+      "path": "binding-counterfactual/run.py",
+      "sha256": "80d95d383896c3e08874988f20f6d4a5efcbd027646cb1e714e942b8f1efc21f",
+      "bytes": 5064
+    },
+    {
+      "path": "ci-validation-summary.json",
+      "sha256": "cbf437d7bb3cae05c971819fd24e3d0c21f5c5e501f520e401106b6891793d83",
+      "bytes": 27864
+    },
+    {
+      "path": "core-release-receipt.json",
+      "sha256": "33ba8806e25f225478c273b82e766738f249d3e0b17e778392d5e89085797667",
+      "bytes": 384
+    },
+    {
+      "path": "core-verification.json",
+      "sha256": "60c755f5f726ab097f7e4151df876f82686de010fee287169de213d4d01b81a5",
+      "bytes": 422
+    },
+    {
+      "path": "device-follow-up-summary.json",
+      "sha256": "78b5923f53027812d69fa0478474bd353445e5a55d2312a3f56fbbcbc2a60068",
+      "bytes": 23974
+    },
+    {
+      "path": "qualification-matrix.md",
+      "sha256": "d5b6e7af550a3a5888372e01bf8550136698159802371dbb1ba627e8d30cbd47",
+      "bytes": 4804
+    }
+  ]
+}

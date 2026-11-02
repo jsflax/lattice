@@ -363,6 +363,52 @@ struct BackgroundTaskSchedulerTests {
         #expect(await history.commands == [.suspend])
     }
 
+    @Test @MainActor func protectedDataLossCancelsRefreshAndAvailabilityWaitsForForeground() async throws {
+        let fake = SchedulerFake()
+        let scheduler = BackgroundTaskScheduler(hooks: fake.hooks())
+        try scheduler.register(policy: policy)
+        let started = SchedulerLatch(), release = SchedulerLatch(), history = SchedulerHistory()
+        try scheduler.bind(identifier: "app.sync", binding: BackgroundTaskBinding(identity: 1,
+            isAvailable: { true }, operation: { command in
+                await history.append(command)
+                if case .refresh = command {
+                    await started.open()
+                    // Cancellation requests cleanup; it cannot manufacture a
+                    // settled receipt while this native-work stand-in waits.
+                    await release.wait()
+                    await history.recordCancellation(Task.isCancelled)
+                }
+                return .completed
+            }))
+        scheduler.observe(.background)
+        await scheduler.settleForTesting()
+        let delivery = SchedulerDelivery()
+        scheduler.receive(delivery)
+        await started.wait()
+        let staleExpiration = try #require(delivery.expirationHandler)
+
+        scheduler.observe(.protectedDataUnavailable)
+        #expect(delivery.completions.isEmpty)
+        scheduler.observe(.protectedDataAvailable)
+        #expect(delivery.completions.isEmpty)
+        #expect(await history.commands == [.suspend, .refresh(duration: 20)])
+
+        await release.open()
+        await scheduler.settleForTesting()
+        #expect(await history.cancelled)
+        #expect(delivery.completions == [false])
+        #expect(delivery.expirationHandler == nil)
+        #expect(await history.commands == [.suspend, .refresh(duration: 20)])
+
+        scheduler.observe(.active)
+        await scheduler.settleForTesting()
+        #expect(await history.commands == [.suspend, .refresh(duration: 20), .resume])
+        staleExpiration()
+        await scheduler.settleForTesting()
+        #expect(delivery.completions == [false])
+        #expect(await history.commands == [.suspend, .refresh(duration: 20), .resume])
+    }
+
     @Test @MainActor func coldBackgroundNotificationDoesNotCancelItsDeliveredTask() async throws {
         let fake = SchedulerFake(), history = SchedulerHistory()
         let scheduler = BackgroundTaskScheduler(hooks: fake.hooks())

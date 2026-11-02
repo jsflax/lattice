@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import XCTest
 @testable import Lattice
 
 private final class BindingBackend: BackgroundSyncBackend, @unchecked Sendable {
@@ -26,7 +27,19 @@ private final class BindingBackend: BackgroundSyncBackend, @unchecked Sendable {
     var count: Int { lock.lock(); defer { lock.unlock() }; return commands.count }
 }
 
+/// This fixture deliberately occupies an actor to test a queued admission.
+/// Its blocked job must not consume a Swift cooperative executor thread.
+private final class BindingOwnerExecutor: SerialExecutor, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "lattice.binding-owner-test")
+    func enqueue(_ job: consuming ExecutorJob) {
+        let unowned = UnownedJob(job)
+        queue.async { unowned.runSynchronously(on: self.asUnownedSerialExecutor()) }
+    }
+}
+
 private actor BindingOwner {
+    nonisolated let executor = BindingOwnerExecutor()
+    nonisolated var unownedExecutor: UnownedSerialExecutor { executor.asUnownedSerialExecutor() }
     let backend: BindingBackend
     init(_ backend: BindingBackend) { self.backend = backend }
     func group() throws -> BackgroundSyncBindingGroup {
@@ -34,7 +47,7 @@ private actor BindingOwner {
     }
     func hold(entered: BindingSignal, release: BindingSignal) {
         entered.set()
-        _ = release.wait()
+        _ = release.waitBlocking()
     }
 }
 
@@ -46,14 +59,48 @@ private final class WeakBindingOwner: @unchecked Sendable {
 private final class BindingSignal: @unchecked Sendable {
     private let condition = NSCondition()
     private var value = false
-    func set() { condition.lock(); value = true; condition.broadcast(); condition.unlock() }
-    func wait() -> Bool {
+    private var waiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
+    var isSet: Bool { condition.lock(); defer { condition.unlock() }; return value }
+
+    func set() {
+        condition.lock()
+        value = true
+        let pending = Array(waiters.values)
+        waiters.removeAll()
+        condition.broadcast()
+        condition.unlock()
+        for waiter in pending { waiter.resume(returning: true) }
+    }
+
+    /// Only the synchronous native fake or dedicated actor queue may block.
+    /// An async test awaiting a receipt must use waitAsync instead.
+    func waitBlocking() -> Bool {
         condition.lock(); defer { condition.unlock() }
         let deadline = Date().addingTimeInterval(2)
         while !value {
             if !condition.wait(until: deadline) { return value }
         }
         return true
+    }
+
+    func waitAsync() async -> Bool {
+        await withCheckedContinuation { continuation in
+            let id = UUID()
+            condition.lock()
+            if value {
+                condition.unlock()
+                continuation.resume(returning: true)
+                return
+            }
+            waiters[id] = continuation
+            condition.unlock()
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [self] in
+                condition.lock()
+                let waiter = waiters.removeValue(forKey: id)
+                condition.unlock()
+                waiter?.resume(returning: false)
+            }
+        }
     }
 }
 
@@ -121,7 +168,7 @@ struct BackgroundSyncBindingTests {
         let token = SyncWorkCancellation(), called = BindingSignal()
         token.cancel()
         token.install { called.set() }
-        #expect(called.wait())
+        #expect(called.isSet)
         #expect(token.isCancelled)
         token.clearHandler()
     }
@@ -139,52 +186,6 @@ struct BackgroundSyncBindingTests {
         cancelledCommand.cancel()
         #expect(!cancelledCommand.disarmIfNotCancelled())
         #expect(native.isCancelled)
-    }
-
-    @Test func cancelledCallerWaitsForNativeSettlement() async throws {
-        let entered = BindingSignal(), stopped = BindingSignal(), settled = BindingSignal()
-        let backend = BindingBackend(identity: 91006) { _, token in
-            token.install { stopped.set() }
-            entered.set()
-            guard stopped.wait() else { throw Lattice.Error.databaseError("Cancellation did not reach native work") }
-            settled.set()
-            return .budgetExhausted
-        }
-        let group = try BackgroundSyncBindings.attach(capability: backend, isolation: nil)
-        let work = Task { try await group.perform(.refresh(duration: 10)) }
-        #expect(await Task.detached { entered.wait() }.value)
-        work.cancel()
-        do {
-            _ = try await work.value
-            Issue.record("Cancelled work returned success")
-        } catch is CancellationError {
-            #expect(settled.wait())
-        }
-    }
-
-    @Test func foregroundSettlesAnActiveManualPassBeforeResuming() async throws {
-        let entered = BindingSignal(), stopped = BindingSignal(), settled = BindingSignal()
-        let backend = BindingBackend(identity: 91007) { command, token in
-            if case .refresh = command {
-                token.install { stopped.set() }
-                entered.set()
-                guard stopped.wait() else { throw Lattice.Error.databaseError("Manual work was not cancelled") }
-                settled.set()
-                return .budgetExhausted
-            }
-            #expect(settled.wait(), "Foreground startup must follow manual settlement")
-            return .completed
-        }
-        let group = try BackgroundSyncBindings.attach(capability: backend, isolation: nil)
-        let manual = Task { try await group.perform(.refresh(duration: 10)) }
-        #expect(await Task.detached { entered.wait() }.value)
-        #expect(try await group.perform(.refresh(duration: 10)) == .alreadyRunning)
-        #expect(try await group.perform(.resume) == .completed)
-        do {
-            _ = try await manual.value
-            Issue.record("Foreground takeover should cancel the manual pass")
-        } catch is CancellationError {}
-        #expect(backend.count == 2)
     }
 
     @Test func lineageResumesDistinctNativeMembersButOnlyOwnerRefreshes() async throws {
@@ -316,7 +317,10 @@ struct BackgroundSyncBindingTests {
             lineage: lineage, ownsLifecycle: true)
         let entered = BindingSignal(), release = BindingSignal()
         let occupied = Task { await owner.hold(entered: entered, release: release) }
-        #expect(await Task.detached { entered.wait() }.value)
+        defer { release.set() }
+        let didEnter = await entered.waitAsync()
+        if !didEnter { release.set(); await occupied.value }
+        try #require(didEnter, "The owner actor must be occupied before queueing native admission")
         let work = Task { try await group.perform(.resume) }
         let deadline = ContinuousClock.now.advanced(by: .seconds(2))
         while group.activeOperationCount == 0 && ContinuousClock.now < deadline { await Task.yield() }
@@ -384,6 +388,77 @@ struct BackgroundSyncBindingTests {
             lineage: lineage, ownsLifecycle: false)
         #expect(try await group.perform(.refresh(duration: 0.02)) == .budgetExhausted)
         #expect(borrowed.recordedCommands == [.suspend])
+    }
+
+}
+
+/// These two tests deliberately park synchronous native work until the caller
+/// cancels or preempts it. SwiftPM's XCTest phase runs before its parallel Swift
+/// Testing phase, so their two-second admission prerequisite measures this
+/// scenario instead of competing with every SQL benchmark in the package.
+/// Keeping the suite-name prefix also includes them in the strict cooperative
+/// executor CI pass; no timeout or cancellation contract is relaxed.
+final class BackgroundSyncBindingTestsOrdering: XCTestCase {
+    func testCancelledCallerWaitsForNativeSettlement() async throws {
+        let entered = BindingSignal(), stopped = BindingSignal(), settled = BindingSignal()
+        let backend = BindingBackend(identity: 91006) { _, token in
+            token.install { stopped.set() }
+            entered.set()
+            guard stopped.waitBlocking() else { throw Lattice.Error.databaseError("Cancellation did not reach native work") }
+            settled.set()
+            return .budgetExhausted
+        }
+        let group = try BackgroundSyncBindings.attach(capability: backend, isolation: nil)
+        let work = Task { try await group.perform(.refresh(duration: 10)) }
+        defer { work.cancel(); stopped.set() }
+        let didEnter = await entered.waitAsync()
+        guard didEnter else {
+            work.cancel(); stopped.set(); _ = await work.result
+            XCTFail("The native fake must start before testing cancellation")
+            return
+        }
+        work.cancel()
+        do {
+            _ = try await work.value
+            XCTFail("Cancelled work returned success")
+        } catch is CancellationError {
+            XCTAssertTrue(settled.isSet, "Cancellation must return only after native settlement")
+        }
+    }
+
+    func testForegroundSettlesAnActiveManualPassBeforeResuming() async throws {
+        let entered = BindingSignal(), stopped = BindingSignal(), settled = BindingSignal()
+        let backend = BindingBackend(identity: 91007) { command, token in
+            if case .refresh = command {
+                token.install { stopped.set() }
+                entered.set()
+                guard stopped.waitBlocking() else { throw Lattice.Error.databaseError("Manual work was not cancelled") }
+                settled.set()
+                return .budgetExhausted
+            }
+            guard settled.isSet else {
+                throw Lattice.Error.databaseError("Foreground startup preceded manual settlement")
+            }
+            return .completed
+        }
+        let group = try BackgroundSyncBindings.attach(capability: backend, isolation: nil)
+        let manual = Task { try await group.perform(.refresh(duration: 10)) }
+        defer { manual.cancel(); stopped.set() }
+        let didEnter = await entered.waitAsync()
+        guard didEnter else {
+            manual.cancel(); stopped.set(); _ = await manual.result
+            XCTFail("The native fake must start before testing foreground takeover")
+            return
+        }
+        let competingRefresh = try await group.perform(.refresh(duration: 10))
+        XCTAssertEqual(competingRefresh, .alreadyRunning)
+        let foreground = try await group.perform(.resume)
+        XCTAssertEqual(foreground, .completed)
+        do {
+            _ = try await manual.value
+            XCTFail("Foreground takeover should cancel the manual pass")
+        } catch is CancellationError {}
+        XCTAssertEqual(backend.count, 2)
     }
 
 }

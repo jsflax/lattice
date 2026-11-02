@@ -1,0 +1,545 @@
+{
+  "checkpoint_date": "2026-11-01",
+  "scope": "Physical-device follow-up using the private lab host; debugger-triggered delivery is distinct from natural scheduling and true OS cold launch.",
+  "SDK_review": {
+    "pull_request": "https://github.com/jsflax/lattice/pull/38",
+    "commit": "ffebdbb9697163966bb1e65699db68c165dd98c5",
+    "core_dependency": "Published Core 2.5.0, no edit override; no other dependency pin changed.",
+    "CI_run": "https://github.com/jsflax/lattice/actions/runs/41374530832",
+    "CI_state_source": "Coordinator verified GitHub receipts",
+    "CI_state_at_checkpoint": "Original ffebdbb CI failed despite iOS build pass. Final local source now passes the full actual SDK suite and actual-SDK strict binding regression; fresh exact-commit CI is pending.",
+    "publication": "SDK 2.6.0 NOT YET PUBLISHED",
+    "followup": "Dedicated utility dispatch queue plus async entry receipts; two ordering cases run in default serial XCTest phase with original two-second deadlines. No complete-suite exclusions."
+  },
+  "lazy_unbound": {
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/lazy-before-delivery.ec6e2e438942.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lazy-before-delivery.jsonl",
+        "sha256": "ec6e2e438942cae6f4163dda028622ce075c126c107307dc9ce6efbd51978838",
+        "bytes": 12905
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/lazy-after-delivery.58733edac94c.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lazy-after-delivery.jsonl",
+        "sha256": "58733edac94cb5ffc651c2fca1520f07e3a40af5a06aa32836577e9bf8abfde3",
+        "bytes": 13075
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/lazy-files-before.6b1aff708fbe.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lazy-files-before.json",
+        "sha256": "6b1aff708fbe9dd1fe0d371c9e059c70e4b8097075121af55cfa8867b1592c9c",
+        "bytes": 889
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/lazy-files-after.de7d8c65932e.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lazy-files-after.json",
+        "sha256": "de7d8c65932e952575783b035f02b0c9655377a1c3e6a5dbcbc3264799cc756c",
+        "bytes": 888
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/lldb-ios15-lazy-unbound.d214ba268768.txt",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lldb-ios15-lazy-unbound.txt",
+        "sha256": "d214ba2687685e984cc0d4f7fcfa64898c2b8097c4fb01ac0c8588ddbd9f888e",
+        "bytes": 50621
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/lazy-bound.344b54e46a0c.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lazy-bound.jsonl",
+        "sha256": "344b54e46a0cd43386c177cd7c3573d6bc9f2ef1f47ef03552b510b0d8d82795",
+        "bytes": 13612
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/lazy-pending-settled.bd2733db1e3f.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lazy-pending-settled.jsonl",
+        "sha256": "bd2733db1e3f90056fe4a6225b98a123a2430131bebbd0c7033845ceb300f728",
+        "bytes": 13858
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/lldb-ios15-lazy-bound.ab891dcda57c.txt",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lldb-ios15-lazy-bound.txt",
+        "sha256": "ab891dcda57c46099f129f54cef79c5cccedd6971926bdf95739d8314808829b",
+        "bytes": 51474
+      }
+    ],
+    "fixture_directory_file_count_before": 0,
+    "fixture_directory_file_count_after": 0,
+    "before_events": [
+      {
+        "timestamp": "2026-11-02T01:43:19Z",
+        "event": "early-registration-returned",
+        "fields": {
+          "storeOpened": "false"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:43:19Z",
+        "event": "scene-connected",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T01:43:19Z",
+        "event": "scene-foreground",
+        "fields": {}
+      }
+    ],
+    "after_events": [
+      {
+        "timestamp": "2026-11-02T01:43:19Z",
+        "event": "early-registration-returned",
+        "fields": {
+          "storeOpened": "false"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:44:16Z",
+        "event": "pending-task-requests",
+        "fields": {
+          "requests": ""
+        }
+      }
+    ],
+    "completion": {
+      "success": false,
+      "BGAppRefreshTask_breakpoint_hit_count": 1,
+      "base_BGTask_breakpoint_hit_count": 0,
+      "SDK_unbound_branch": "BackgroundTaskScheduler.swift:526",
+      "bound_store_opened_during_delivery": false
+    },
+    "later_bound_events": [
+      {
+        "timestamp": "2026-11-02T01:45:03Z",
+        "event": "open-returned",
+        "fields": {
+          "mode": "lazy",
+          "rows": "0"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:45:03Z",
+        "event": "foreground-snapshot",
+        "fields": {
+          "fixtureRows": "25",
+          "pending": "0",
+          "rows": "25"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:45:03Z",
+        "event": "write-returned",
+        "fields": {
+          "inserted": "25"
+        }
+      }
+    ],
+    "settled_pending_request_events": [
+      {
+        "timestamp": "2026-11-02T01:44:16Z",
+        "event": "pending-task-requests",
+        "fields": {
+          "requests": ""
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:46:15Z",
+        "event": "pending-task-requests",
+        "fields": {
+          "requests": "io.jsflax.lattice.backgroundlab.20261101.refresh @ 2026-11-02 01:44:49 +0000"
+        }
+      }
+    ],
+    "pending_interpretation": "The earlier empty pending-request read occurred before the completion path had settled. The later read confirms a future request; it does not prove future delivery or successful sync.",
+    "launch_state_limit": "Actual UIApplication state was 1 (inactive), despite a no-activate launch request. This is not a background cold-launch receipt."
+  },
+  "manual": {
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/manual-initial.4fc12643d795.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/manual-initial.jsonl",
+        "sha256": "4fc12643d79577dc13fc2aebcf703b34bb3440ab1f353faa410a7cc3381b7ab8",
+        "bytes": 916
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/manual-unavailable-result.4f74b2d57dee.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/manual-unavailable-result.jsonl",
+        "sha256": "4f74b2d57dee712b69c1e237886ff937671698f109a396625191b7a3e3ba942a",
+        "bytes": 2444
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/manual-cancel-result.0f34e9861d66.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/manual-cancel-result.jsonl",
+        "sha256": "0f34e9861d6626c79c25e7b15d50111e6bc48a10ac89f8b85eea6e3ff28e280e",
+        "bytes": 2938
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/manual-settled-reopen.de1a7a439430.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/manual-settled-reopen.jsonl",
+        "sha256": "de1a7a439430b37680d239c27c6740b4e469307489f96b5896d4b622ae0ba1b7",
+        "bytes": 4176
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/lldb-ios15-manual-unavailable-cancel.2b22ba27995a.txt",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lldb-ios15-manual-unavailable-cancel.txt",
+        "sha256": "2b22ba27995a14f8061734ab1ab7c33110122a3db9cb376be4aaea2e1baf9105",
+        "bytes": 52881
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/Configuration/Manual-Info.dd061ced44b6.plist",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/Configuration/Manual-Info.plist",
+        "sha256": "dd061ced44b66994f818558712800e52ffa5c29a58c8b70d6724c76a57003450",
+        "bytes": 1481
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/derived/Build/Products/Manual-iphoneos/BackgroundSyncLab.app/Info.bfe26a92048a.plist",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/derived/Build/Products/Manual-iphoneos/BackgroundSyncLab.app/Info.plist",
+        "sha256": "bfe26a92048a22f6cc46e9d6c9464f1cfee1562a244c8249711074a87a9239af",
+        "bytes": 1361
+      }
+    ],
+    "built_application_configuration": {
+      "bundle_identifier": "io.jsflax.lattice.backgroundlab.20261101.manual",
+      "minimum_iOS": "15.0",
+      "has_BGTaskSchedulerPermittedIdentifiers": false,
+      "has_UIBackgroundModes": false
+    },
+    "unavailable_relay_events": [
+      {
+        "timestamp": "2026-11-02T01:52:38Z",
+        "event": "open-returned",
+        "fields": {
+          "mode": "manual",
+          "rows": "0"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:53:21Z",
+        "event": "foreground-snapshot",
+        "fields": {
+          "fixtureRows": "25",
+          "pending": "0",
+          "rows": "25"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:53:21Z",
+        "event": "write-returned",
+        "fields": {
+          "inserted": "25"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:53:21Z",
+        "event": "manual-sync-started",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T01:53:21Z",
+        "event": "sync-error",
+        "fields": {
+          "message": "Could not connect to the server."
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:53:21Z",
+        "event": "manual-sync-failed",
+        "fields": {
+          "error": "databaseError(\"The finite sync attempt failed before confirming its upload and replay work.\")"
+        }
+      }
+    ],
+    "cancellation_events": [
+      {
+        "timestamp": "2026-11-02T01:53:21Z",
+        "event": "manual-sync-started",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T01:54:18Z",
+        "event": "manual-sync-started",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T01:54:18Z",
+        "event": "manual-cancellation-requested",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T01:54:18Z",
+        "event": "manual-sync-cancelled-after-settlement",
+        "fields": {}
+      }
+    ],
+    "settlement_reopen_events": [
+      {
+        "timestamp": "2026-11-02T01:52:38Z",
+        "event": "open-returned",
+        "fields": {
+          "mode": "manual",
+          "rows": "0"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:53:21Z",
+        "event": "foreground-snapshot",
+        "fields": {
+          "fixtureRows": "25",
+          "pending": "0",
+          "rows": "25"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:56:14Z",
+        "event": "independent-checkpoint",
+        "fields": {
+          "checkpointed": "0",
+          "code": "0",
+          "frames": "0",
+          "journalFinalizeCode": "0",
+          "journalMode": "wal",
+          "journalPrepareCode": "0",
+          "journalReadCode": "100",
+          "qualification": "wal-truncate-completed",
+          "qualified": "true"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:56:14Z",
+        "event": "close-returned",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T01:56:14Z",
+        "event": "open-returned",
+        "fields": {
+          "mode": "manual",
+          "rows": "25"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T01:56:14Z",
+        "event": "foreground-snapshot",
+        "fields": {
+          "fixtureRows": "25",
+          "pending": "0",
+          "rows": "25"
+        }
+      }
+    ],
+    "interpretation": [
+      "The separate app has no permitted background-task identifiers or fetch declaration.",
+      "An unreachable loopback relay causes syncOnce to throw databaseError after cleanup; it does not return the unavailable enum case.",
+      "Cancellation was requested before admission and returned CancellationError after settlement; active-transfer cancellation is not covered by this case.",
+      "The independent WAL probe after these attempts qualifies with mode wal, return code 0, frames 0/0. An ordinary callback then closes, reopens, and reads all 25 rows.",
+      "These rows are durable local writes; no successful network sync is claimed."
+    ]
+  },
+  "device_end_state": {
+    "source": "Final dispatch-worker host receipts and coordinator report",
+    "managed_app": "Rebuilt managed eager app reopens existing 25-row fixture; ordinary callback cleanup/close/reopen/snapshot preserves 25 rows.",
+    "network": "Local-network permission remains pending; no successful phone network sync."
+  },
+  "tooling_limits": [
+    "Two XCTest runner initialization failures prevented product test bodies from executing; no new retry without a changed cause.",
+    "Debugger expression interruption and unavailable UI automation are not classified as production Lattice bugs."
+  ],
+  "remaining_device_coverage": [
+    "Successful network empty/upload/paged completion",
+    "Late expiration during active network work",
+    "Foreground resumption/takeover and complete ordinary roundtrip",
+    "Protected-data lock/unlock behavior",
+    "Natural OS scheduling",
+    "True OS-initiated cold launch"
+  ],
+  "privacy": "Only selected safe fields appear here. Raw snapshots can contain device/network metadata and remain local; screenshots are not copied.",
+  "system_background_followup": {
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/managed-system-background.0a117c4b3fab.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/managed-system-background.jsonl",
+        "sha256": "0a117c4b3fab896b7267275314610f42b944826d12ffd9ace6d70c4c523b71e0",
+        "bytes": 15804
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/lldb-ios15-system-background.b53114f93835.txt",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lldb-ios15-system-background.txt",
+        "sha256": "b53114f93835325bb970257c34fe2742b735944c502bf526b7fb5f7d25257b6f",
+        "bytes": 53584
+      }
+    ],
+    "observed_application_state": 2,
+    "meaning": "Actual UIApplication background state, with system scene-background event; no synthetic lifecycle notification.",
+    "events": [
+      {
+        "timestamp": "2026-11-02T01:43:19Z",
+        "event": "scene-foreground",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T01:52:39Z",
+        "event": "scene-background",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T01:57:35Z",
+        "event": "scene-foreground",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T01:59:42Z",
+        "event": "scene-background",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T02:00:26Z",
+        "event": "independent-checkpoint",
+        "fields": {
+          "checkpointed": "0",
+          "code": "0",
+          "frames": "0",
+          "journalFinalizeCode": "0",
+          "journalMode": "wal",
+          "journalPrepareCode": "0",
+          "journalReadCode": "100",
+          "qualification": "wal-truncate-completed",
+          "qualified": "true"
+        }
+      }
+    ],
+    "cached_rows": 25,
+    "checkpoint": "Independent WAL probe qualified=true, mode wal, return code 0, frame counts 0/0 after the system background transition.",
+    "limits": [
+      "This adds actual background-entry and independent WAL cleanup evidence.",
+      "It does not establish successful network sync, foreground takeover, multi-scene handling, natural BGTask scheduling, or true OS cold launch."
+    ]
+  },
+  "final_dispatch_managed_binary": {
+    "build": {
+      "result": "TEST BUILD SUCCEEDED",
+      "iOS_minimum": "15.0",
+      "source_receipt": {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/build-dispatch-managed.58bf29b8d7c1.log",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/build-dispatch-managed.log",
+        "sha256": "58bf29b8d7c1f6167b187c8804f02eee9866da760126f6348c09c82bfafb06dc",
+        "bytes": 248888
+      },
+      "artifacts": [
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/derived/Build/Products/Debug-iphoneos/BackgroundSyncLab.app/BackgroundSyncLab.50366ff4f29c",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/derived/Build/Products/Debug-iphoneos/BackgroundSyncLab.app/BackgroundSyncLab",
+          "sha256": "50366ff4f29cf2a9b80f3c717ad2b1ef7ff620fc70edb2a28c957ffcc2769a32",
+          "bytes": 92352
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/derived/Build/Products/Debug-iphoneos/BackgroundSyncLab.app/BackgroundSyncLab.debug.681e958803ab.dylib",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/derived/Build/Products/Debug-iphoneos/BackgroundSyncLab.app/BackgroundSyncLab.debug.dylib",
+          "sha256": "681e958803abd711ba390193b4b5f5263cda491bbfd9871b8c0808139dd727d1",
+          "bytes": 24008912
+        },
+        {
+          "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/derived/Build/Products/Debug-iphoneos/BackgroundSyncLab.app/Info.d4b4bf0d720c.plist",
+          "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/derived/Build/Products/Debug-iphoneos/BackgroundSyncLab.app/Info.plist",
+          "sha256": "d4b4bf0d720ccbc34da53e7efcf70c73d88324a136546545334883dbd6494ff7",
+          "bytes": 1484
+        }
+      ]
+    },
+    "installation_launch_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-dispatch-managed-install.6900884b46ba.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-dispatch-managed-install.json",
+        "sha256": "6900884b46ba8be4726ccc215734c32fbb49f2b452b37de578431235c4e8a60e",
+        "bytes": 1145
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-dispatch-managed-launch.73dfc9da04c7.json",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-dispatch-managed-launch.json",
+        "sha256": "73dfc9da04c7f55c46cb13f4d15eb84ad335bf93ff082cfc67735a76d7e88d21",
+        "bytes": 1658
+      }
+    ],
+    "source_receipts": [
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/managed-dispatch-expiration-reopen.7f214b8260e5.jsonl",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/managed-dispatch-expiration-reopen.jsonl",
+        "sha256": "7f214b8260e5a5de28e1cd2292e22320b8e101787439161659bf02c32feb1f41",
+        "bytes": 17890
+      },
+      {
+        "local_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/checkpoint005-receipts/ios-host/device-receipts/lldb-dispatch-expiration-reopen.80d50368e009.txt",
+        "original_path": "/Users/jason/localdev/lattice-bg-sync-evidence-20261101/ios-host/device-receipts/lldb-dispatch-expiration-reopen.txt",
+        "sha256": "80d50368e009e6f07531f0cb992e351dfdbfba982b7d9a70570fa4c1ff7c93c5",
+        "bytes": 4884
+      }
+    ],
+    "events": [
+      {
+        "timestamp": "2026-11-02T02:17:15Z",
+        "event": "open-returned",
+        "fields": {
+          "mode": "eager",
+          "rows": "25"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T02:17:15Z",
+        "event": "scene-connected",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T02:17:15Z",
+        "event": "scene-foreground",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T02:18:19Z",
+        "event": "independent-checkpoint",
+        "fields": {
+          "checkpointed": "0",
+          "code": "0",
+          "frames": "0",
+          "journalFinalizeCode": "0",
+          "journalMode": "wal",
+          "journalPrepareCode": "0",
+          "journalReadCode": "100",
+          "qualification": "wal-truncate-completed",
+          "qualified": "true"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T02:18:19Z",
+        "event": "close-returned",
+        "fields": {}
+      },
+      {
+        "timestamp": "2026-11-02T02:18:19Z",
+        "event": "open-returned",
+        "fields": {
+          "mode": "eager",
+          "rows": "25"
+        }
+      },
+      {
+        "timestamp": "2026-11-02T02:18:19Z",
+        "event": "foreground-snapshot",
+        "fields": {
+          "fixtureRows": "25",
+          "pending": "0",
+          "rows": "25"
+        }
+      }
+    ],
+    "early_expiration": {
+      "actual_Apple_completion_success": false,
+      "BGAppRefreshTask_completion_hits_initial": 1,
+      "BGAppRefreshTask_completion_hits_final_after_cleanup_reopen": 1,
+      "base_BGTask_completion_hits": 0
+    },
+    "cleanup": "Independent WAL probe qualified=true, mode wal, return code 0, frames 0/0; ordinary callback close/open/snapshot retains 25 rows.",
+    "limit": "Verifies the rebuilt dispatch-worker binary for early expiration, WAL cleanup, and local persistence. Network success, natural scheduling, and cold launch remain unclaimed."
+  },
+  "prior_device_end_state": {
+    "source": "Coordinator report",
+    "managed_app_restored": "System launch restored managed lazy mode with 25 existing rows, without synthetic lifecycle notifications.",
+    "network": "Original local-network permission response still pending; successful phone network sync not established."
+  }
+}

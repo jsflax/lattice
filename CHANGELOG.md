@@ -27,6 +27,8 @@
   callback lifetime corrections, and cancellable owned SQLite waits.
 - Build iOS 15 targets consistently with Xcode explicit modules through Core's
   shared-pointer-backed iOS handle layout.
+- Keep blocking native sync and settlement off Swift's cooperative workers so
+  cancellation and other actor work can advance under load.
 
 ### Compatibility
 - Requires LatticeCore 2.5.0. Upgrade and restart every process owning a store's

@@ -128,6 +128,13 @@ internal final class BackgroundSyncLineage: @unchecked Sendable {
 /// owner alone may upload; borrowed handles have local-only configurations.
 /// Candidates keep both the actor and native backend weak outside a command.
 internal final class BackgroundSyncBindingGroup: @unchecked Sendable {
+    // Native setup, polling, and settlement can block. Keep them off Swift's
+    // cooperative executor so other actors and cancellation work can advance.
+    // Each group's command queue still serializes its own native operations;
+    // separate stores may progress concurrently on this blocking-capable queue.
+    private static let nativeWorkerQueue = DispatchQueue(
+        label: "io.lattice.background-sync.native", qos: .utility, attributes: .concurrent)
+
     private final class Candidate: @unchecked Sendable {
         let identity: ObjectIdentifier
         let nativeIdentity: Int64
@@ -403,17 +410,28 @@ internal final class BackgroundSyncBindingGroup: @unchecked Sendable {
     ) async throws -> Lattice.SyncOnceResult {
         isolation?.preconditionIsolated()
         return try await withTaskCancellationHandler {
-            let result = try await Task.detached {
-                defer { cancellation.clearHandler() }
-                if case .suspend = command {} else if cancellation.isCancelled { throw CancellationError() }
-                var admittedCommand = command
-                if case .refresh = command, let deadline {
-                    let now = DispatchTime.now()
-                    guard now < deadline else { return Lattice.SyncOnceResult.budgetExhausted }
-                    admittedCommand = .refresh(duration: TimeInterval(deadline.uptimeNanoseconds - now.uptimeNanoseconds) / 1_000_000_000)
+            let result = try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<Lattice.SyncOnceResult, any Swift.Error>) in
+                nativeWorkerQueue.async {
+                    let result = Result<Lattice.SyncOnceResult, any Swift.Error> {
+                        defer { cancellation.clearHandler() }
+                        // A dispatch worker has no Swift Task context. The
+                        // shared token handles cancellation before admission
+                        // and forwards it to already-running native work.
+                        if case .suspend = command {} else if cancellation.isCancelled { throw CancellationError() }
+                        var admittedCommand = command
+                        if case .refresh = command, let deadline {
+                            let now = DispatchTime.now()
+                            guard now < deadline else { return .budgetExhausted }
+                            admittedCommand = .refresh(duration: TimeInterval(deadline.uptimeNanoseconds - now.uptimeNanoseconds) / 1_000_000_000)
+                        }
+                        return try backend.performBackgroundSync(admittedCommand, cancellation: cancellation)
+                    }
+                    // Native cleanup and handler retirement finish before the
+                    // caller can observe success, failure, or cancellation.
+                    continuation.resume(with: result)
                 }
-                return try backend.performBackgroundSync(admittedCommand, cancellation: cancellation)
-            }.value
+            }
             try Task.checkCancellation()
             return result
         } onCancel: {
