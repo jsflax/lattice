@@ -107,11 +107,10 @@ public enum SyncRelayApplyPolicy: Sendable {
     /// deliberately sets 30_000 (matching a slow-volume foreign writer) is
     /// respected verbatim rather than silently clobbered to the relay budget.
     ///
-    /// Note on aliasing: LatticeCore's instance cache keys on
-    /// (path, scheduler, wss url, schema, target version, ipc, sync tuning) —
-    /// NOT on the busy timeout. Whichever open wins the race for a given file
-    /// installs its busy timeout for every later aliased handle, so the relay
-    /// applies the same budget in `FileWatchManager.openWatcher`.
+    /// LatticeCore includes the busy timeout in its connection cache key.
+    /// Opens with different budgets therefore do not alias the same native
+    /// instance. `FileWatchManager.openWatcher` uses this policy too so both
+    /// relay reads and applies have the same bounded default wait.
     static func configuration(
         fileURL: URL?,
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)?
@@ -321,19 +320,16 @@ func applyWithRetry(
         outcome.errorClass = RelayApplyErrorClass.classify(thrown)
         outcome.elapsedMs = elapsedMs()
 
-        // FIRST-OPENER-WINS DETECTOR: the core's instance cache does not key
-        // on busyTimeoutMs, so whichever open of this file happened first
-        // installed ITS budget for every aliased handle. A single contended
-        // attempt parking far beyond the relay's own budget is that exact
-        // signature — the incident's 30s park sneaking back in through a
-        // co-writer's default-budget open. Detection is the best a library
-        // can do here; the fix is aligning every co-writer's
-        // `Configuration.busyTimeoutMs` (as orbital-server does).
+        // Flag contention attempts that outlast the relay's default budget.
+        // A mount may explicitly select a larger timeout, and one apply can
+        // include multiple SQLite operations. The core cache keys on the
+        // timeout, so elapsed time alone does not prove a different opener
+        // replaced this connection's setting.
         let attemptMs = Double(DispatchTime.now().uptimeNanoseconds &- attemptStarted.uptimeNanoseconds) / 1e6
         if outcome.errorClass.isContention,
            attemptMs > Double(SyncRelayApplyPolicy.busyTimeoutMs) * 2 + 500 {
             relayLog.error("""
-                relay apply parked \(Int(attemptMs))ms against a \(SyncRelayApplyPolicy.busyTimeoutMs)ms                 budget: channel=\(channelId) — another open of this channel file installed a larger                 busyTimeoutMs (the instance cache does not key on it); align every co-writer's                 Configuration.busyTimeoutMs with the relay's
+                relay apply parked \(Int(attemptMs))ms against a \(SyncRelayApplyPolicy.busyTimeoutMs)ms                 default budget: channel=\(channelId) — inspect the mount's configured busyTimeoutMs                 and the SQLite operations within this apply
                 """)
         }
 

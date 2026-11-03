@@ -7,6 +7,14 @@ import os
 #endif
 import LatticeSwiftCppBridge
 
+extension Lattice {
+    /// Maximum encoded audit JSON bytes per sync message. The same Core value
+    /// governs client upload and relay ingress/catch-up/observer publication.
+    public static var maximumEncodedSyncMessageBytes: Int {
+        Int(lattice.sync_max_encoded_message_bytes_value())
+    }
+}
+
 // ============================================================================
 // C++ to Swift Type Conversions via JSON
 // ============================================================================
@@ -386,6 +394,89 @@ extension Lattice {
             row.changedFields = fields
             row.changedFieldsNames = keptNames
             row.noHistoryNulls.sort()
+            out[index] = row
+        }
+        return out
+    }
+
+    /// Failures in the checked, outbound `@NoHistory` binding path. The legacy
+    /// nonthrowing API above keeps its existing behavior for existing callers.
+    public enum NoHistoryBindingError: Swift.Error {
+        case queryFailed(String)
+        case missingRowIdentity
+    }
+
+    /// Late-bind current no-history values without turning a failed read into a
+    /// successful omission. Query errors are captured immediately, before another
+    /// model getter/setter can clear the bridge's thread-local error slot. Codable
+    /// failures also propagate; callers must not advance their cursor on failure.
+    public func lateBindNoHistoryChecked(_ rows: [AuditLog]) throws -> [AuditLog] {
+        try _lateBindNoHistoryChecked(rows) { table, id, columns in
+            let json = backend.noHistoryLiveValuesJSON(tableName: table,
+                globalRowId: id.uuidString.lowercased(), columns: columns)
+            if let error = lastQueryError() { throw NoHistoryBindingError.queryFailed(error) }
+            // A closed native connection can return an empty result without a sealed
+            // error. Check it before interpreting `{}` as a legitimately deleted row.
+            _ = try auditCursor()
+            return json
+        }
+    }
+
+    /// Internal synchronous seam: the production closure performs the checked native
+    /// read above; tests can supply malformed bridge output without corrupting a store.
+    func _lateBindNoHistoryChecked(_ rows: [AuditLog],
+        liveValuesJSON: (String, UUID, [String]) throws -> String) throws -> [AuditLog] {
+        var noHistoryByTable: [String: Set<String>] = [:]
+        for type in modelTypes where !type.noHistoryProperties.isEmpty {
+            noHistoryByTable[type.entityName] = type.noHistoryProperties
+        }
+        guard !noHistoryByTable.isEmpty else { return rows }
+        var out = rows
+        for (index, stored) in rows.enumerated() where stored.operation != .delete {
+            guard let flagged = noHistoryByTable[stored.tableName],
+                  let names = stored.changedFieldsNames else { continue }
+            let data = try JSONEncoder().encode(stored)
+            let row = try JSONDecoder().decode(AuditLog.self, from: data)
+            row.primaryKey = stored.primaryKey
+            row.noHistoryNulls = []
+            let listed = names.compactMap { $0 }
+            if row.operation == .insert {
+                row.noHistoryNulls = listed.filter { col in
+                    guard flagged.contains(col), let value = row.changedFields[col] else { return false }
+                    if case .null = value { return true }
+                    return false
+                }.sorted()
+                out[index] = row
+                continue
+            }
+            let need = listed.filter { col in
+                guard flagged.contains(col) else { return false }
+                guard let value = row.changedFields[col] else { return true }
+                if case .null = value { return true }
+                return false
+            }
+            guard !need.isEmpty else {
+                out[index] = row
+                continue
+            }
+            guard let globalRowId = row.globalRowId else { throw NoHistoryBindingError.missingRowIdentity }
+            let json = try liveValuesJSON(row.tableName, globalRowId, need)
+            let live = try JSONDecoder().decode([String: AnyProperty].self, from: Data(json.utf8))
+            var fields = row.changedFields
+            var keptNames = names
+            for col in need {
+                if let value = live[col] {
+                    fields[col] = value
+                    if case .null = value { row.noHistoryNulls.append(col) }
+                } else {
+                    fields.removeValue(forKey: col)
+                    keptNames.removeAll { $0 == col }
+                }
+            }
+            row.changedFields = fields
+            row.changedFieldsNames = keptNames
+            row.noHistoryNulls.sort()
+            try row.validateNoHistoryNulls()
             out[index] = row
         }
         return out

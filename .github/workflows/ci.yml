@@ -147,6 +147,7 @@ jobs:
         shell: bash
         working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
         run: |
+          python3 -B Scripts/test-wrapper-bindings.py
           python3 Scripts/verify-wrapper-bindings.py \
             --expected Scripts/wrapper-expected-bindings.json \
             --resolved "$WRAPPER_JOB_ROOT/consumer/baseline/files/Package.resolved"
