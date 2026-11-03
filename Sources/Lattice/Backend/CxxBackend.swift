@@ -81,6 +81,16 @@ extension LatticeBackend {
         (self as? CxxBackend)?.lastQueryError()
     }
 
+    /// Release an internal read gate while preserving the completed query's
+    /// error. A cleanup failure is still reported and takes precedence.
+    func commitReadGate() {
+        if let backend = self as? CxxBackend {
+            backend.commitReadGate()
+        } else {
+            commit()
+        }
+    }
+
     /// Register a handler for sealed-query failures (nil clears). No-op on
     /// non-C++ backends.
     func setOnQueryError(_ handler: (@Sendable (String) -> Void)?) {
@@ -542,6 +552,11 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditCursorBackend,
     func commit() {
         ref.commit()
         reportQueryFailureIfAny()
+    }
+    func commitReadGate() {
+        // The query already reported its own failure. Report only a new
+        // cleanup failure, without firing the query callback twice.
+        if !ref.commit_read_gate() { reportQueryFailureIfAny() }
     }
     func beginTransactionChecked() throws {
         ref.begin_transaction()

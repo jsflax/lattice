@@ -4,7 +4,7 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "9a0616d6a130c3d20513674b9660cc5072f6cd43",
+      "revision": "648d2093a6840cdf813a27b262003e624982ca45",
       "selection": "revision"
     },
     {
@@ -42,14 +42,13 @@
   },
   "sourceEvidence": {
     "latticecore": {
-      "revision": "9a0616d6a130c3d20513674b9660cc5072f6cd43",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/9a0616d6a130c3d20513674b9660cc5072f6cd43",
+      "revision": "648d2093a6840cdf813a27b262003e624982ca45",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/648d2093a6840cdf813a27b262003e624982ca45",
       "selection": "revision",
       "parents": [
-        "846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
-        "db81e0ced019803ffa5fd5c7fc5ee80d17b8aac9"
+        "9a0616d6a130c3d20513674b9660cc5072f6cd43"
       ],
-      "scope": "Reviewed shared Core9 browser/native convergence preserves the native epoch9 durable-outbox, finite background, currentness and filtered-reconciliation behavior; adds dynamic descriptors/migrations, pending-import savepoint isolation with selected audit export, and transport-managed authentication. Original upstream macOS, Linux and two C ABI jobs passed at this exact revision. SDK wrapper graph, Swift tests, iOS package and HUD/native-JS interop qualification remain separate."
+      "scope": "Source-reviewed closed Swift query and memory read-gate error preservation successor. Existing generic Core query tolerance and prior browser/native work remain. The five new C++ tests and this SDK graph are not yet accepted; original automatic upstream CI is in progress."
     },
     "swift-sdk": {
       "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
@@ -118,5 +117,15 @@
     "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
     "version": "0.13.0",
     "scope": "Unchanged original released SDK source binding."
+  },
+  "previousClosedQuerySourceEvidence": {
+    "revision": "9a0616d6a130c3d20513674b9660cc5072f6cd43",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/9a0616d6a130c3d20513674b9660cc5072f6cd43",
+    "selection": "revision",
+    "parents": [
+      "846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
+      "db81e0ced019803ffa5fd5c7fc5ee80d17b8aac9"
+    ],
+    "scope": "Reviewed shared Core9 browser/native convergence preserves the native epoch9 durable-outbox, finite background, currentness and filtered-reconciliation behavior; adds dynamic descriptors/migrations, pending-import savepoint isolation with selected audit export, and transport-managed authentication. Original upstream macOS, Linux and two C ABI jobs passed at this exact revision. SDK wrapper graph, Swift tests, iOS package and HUD/native-JS interop qualification remain separate."
   }
 }

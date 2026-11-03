@@ -1,0 +1,153 @@
+name: Resolve HUD closed-query Core dependency
+
+on:
+  push:
+    branches: [codex/hud-closed-query-resolution-20261103]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hud-closed-query-resolution-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: github.repository == 'jsflax/lattice' && github.ref == 'refs/heads/codex/hud-closed-query-resolution-20261103'
+    runs-on: macos-26
+    timeout-minutes: 18
+    env:
+      GIT_TERMINAL_PROMPT: '0'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Prepare actual localdev paths
+        run: |
+          set -euo pipefail
+          python3 - <<'PYSETUP'
+          import os, pathlib, pwd
+          home = pathlib.Path(pwd.getpwuid(os.geteuid()).pw_dir)
+          assert home.is_absolute() and home == pathlib.Path(os.environ['HOME'])
+          root = home / 'localdev' / ('hud-sdk-resolve-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
+          root.parent.mkdir(mode=0o700, exist_ok=True)
+          root.mkdir(mode=0o700, exist_ok=False)
+          for name in ('source', 'build', 'cache', 'config', 'security', 'swift-sdks', 'module-cache', 'tmp', 'evidence'):
+              (root / name).mkdir(mode=0o700)
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              for key, value in {'HUD_RESOLVE_ROOT': root, 'TMPDIR': root / 'tmp', 'TMP': root / 'tmp', 'TEMP': root / 'tmp',
+                                 'CLANG_MODULE_CACHE_PATH': root / 'module-cache', 'SWIFTPM_MODULECACHE_OVERRIDE': root / 'module-cache'}.items():
+                  output.write(str(key) + '=' + str(value) + '\n')
+          PYSETUP
+
+      - name: Fetch exact reviewed source and published base
+        timeout-minutes: 3
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          cd "$HUD_RESOLVE_ROOT/source"
+          git init
+          git -c credential.helper= -c 'credential.helper=!f() { test "$1" = get || return 0; printf "username=x-access-token\npassword=%s\n" "$GITHUB_TOKEN"; }; f' \
+            fetch --no-tags --depth=1 https://github.com/jsflax/lattice.git "$SOURCE_SHA" defc2c1aebc54d606ec752211c20ad1d5bbc0e87
+          git checkout --detach "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          git rev-parse HEAD > "$HUD_RESOLVE_ROOT/evidence/source-sha.txt"
+          swift --version > "$HUD_RESOLVE_ROOT/evidence/swift-version.txt"
+          xcodebuild -version > "$HUD_RESOLVE_ROOT/evidence/xcode-version.txt"
+
+      - name: Verify six reviewed source rows and genuine seed
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCHECK'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['HUD_RESOLVE_ROOT']); source = root / 'source'; evidence = root / 'evidence'
+          expected = {"Package.swift": {"bytes": 10627, "sha256": "f6279243f206eafa04a1bfdd287dc5ed655da8f04f6d82b97ad7a06fa72802f7"}, "Scripts/test-wrapper-bindings.py": {"bytes": 3841, "sha256": "2f437cf73976f31e39789707f27c1cf3edfcacbb0ed3ba6789cf42413d2b55ee"}, "Scripts/wrapper-expected-bindings.json": {"bytes": 7805, "sha256": "dd993bd0373267dcd7d400a343afb22b9f4e10db8cfa6674d3f128553549633f"}, "Sources/Lattice/Backend/CxxBackend.swift": {"bytes": 53292, "sha256": "253d9ab23d9dfc02c4aac23e9ce1e9d0882d02d0db8a24d117b648fffd2f24ec"}, "Sources/Lattice/Results/TableResults.swift": {"bytes": 74893, "sha256": "73f3fd611ecf638c4baf2c6cb2987bf1fede10174839f5081b9ce2e79937af47"}, "Tests/LatticeTests/QueryErrorSurfaceTests.swift": {"bytes": 5084, "sha256": "46b243cc0faef9653b7254c58bac7335645a9281fd5c6f033bf25aeebd5fbfc2"}}
+          for name, row in expected.items():
+              path = source / name
+              assert path.is_file() and not path.is_symlink(), name
+              raw = path.read_bytes()
+              assert len(raw) == row['bytes'] and hashlib.sha256(raw).hexdigest() == row['sha256'], name
+          base = 'defc2c1aebc54d606ec752211c20ad1d5bbc0e87'
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], cwd=source, text=True).splitlines())
+          assert changed == set(expected) | {'.github/workflows/resolve-published-core.yml'}, changed
+          seed = (source / 'Package.resolved').read_bytes()
+          assert len(seed) == 9452 and hashlib.sha256(seed).hexdigest() == '97ab6df6ee55dff5ea6a1fa728cff4b4a8958ad1e870003ee6aad80541e08a41'
+          assert seed == subprocess.check_output(['git', 'show', base + ':Package.resolved'], cwd=source)
+          (evidence / 'Package.resolved.seed').write_bytes(seed)
+          (evidence / 'source-inputs.json').write_text(json.dumps(expected, indent=2) + '\n')
+          (evidence / 'source-delta.txt').write_text('\n'.join(sorted(changed)) + '\n')
+          PYCHECK
+
+      - name: Generate the real lock with ordinary SwiftPM
+        id: resolve
+        timeout-minutes: 11
+        run: |
+          set -euo pipefail
+          swift package --package-path "$HUD_RESOLVE_ROOT/source" \
+            --scratch-path "$HUD_RESOLVE_ROOT/build" --cache-path "$HUD_RESOLVE_ROOT/cache" \
+            --config-path "$HUD_RESOLVE_ROOT/config" --security-path "$HUD_RESOLVE_ROOT/security" \
+            --swift-sdks-path "$HUD_RESOLVE_ROOT/swift-sdks" --manifest-cache local \
+            --disable-index-store --jobs 2 resolve 2>&1 | tee "$HUD_RESOLVE_ROOT/evidence/resolve.log"
+
+      - name: Retain verbatim lock and source status on every outcome
+        if: always() && env.HUD_RESOLVE_ROOT != ''
+        run: |
+          set -euo pipefail
+          if test -f "$HUD_RESOLVE_ROOT/source/Package.resolved"; then
+            cp "$HUD_RESOLVE_ROOT/source/Package.resolved" "$HUD_RESOLVE_ROOT/evidence/Package.resolved.generated"
+          fi
+          if test -d "$HUD_RESOLVE_ROOT/source/.git"; then
+            git -C "$HUD_RESOLVE_ROOT/source" status --short > "$HUD_RESOLVE_ROOT/evidence/source-status.txt"
+            git -C "$HUD_RESOLVE_ROOT/source" diff -- Package.resolved > "$HUD_RESOLVE_ROOT/evidence/lock-diff.patch"
+          fi
+
+      - name: Validate all 34 real pins
+        if: success() && steps.resolve.outcome == 'success'
+        run: |
+          set -euo pipefail
+          python3 - <<'PYVERIFY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path(os.environ['HUD_RESOLVE_ROOT']); source = root / 'source'; evidence = root / 'evidence'
+          before_raw = (evidence / 'Package.resolved.seed').read_bytes()
+          after_raw = (evidence / 'Package.resolved.generated').read_bytes()
+          before, after = json.loads(before_raw), json.loads(after_raw)
+          def indexed(lock):
+              assert len(lock['pins']) == 34
+              pins = {p['identity']: p for p in lock['pins']}
+              assert len(pins) == 34
+              return pins
+          old, new = indexed(before), indexed(after)
+          assert set(old) == set(new)
+          assert old['latticecore']['state']['revision'] == '9a0616d6a130c3d20513674b9660cc5072f6cd43'
+          wanted_core = dict(old['latticecore'])
+          wanted_core['state'] = dict(wanted_core['state'], revision='648d2093a6840cdf813a27b262003e624982ca45')
+          assert new['latticecore'] == wanted_core
+          assert all(new[name] == old[name] for name in old if name != 'latticecore')
+          assert new['swift-sdk']['state']['revision'] == '82951cc9cd05de216e8dd6425f951ce31d76fa0a'
+          assert {k: v for k, v in before.items() if k not in ('pins', 'originHash')} == {k: v for k, v in after.items() if k not in ('pins', 'originHash')}
+          assert isinstance(after.get('originHash'), str) and after['originHash']
+          expected = json.loads((evidence / 'source-inputs.json').read_text())
+          for name, row in expected.items():
+              raw = (source / name).read_bytes()
+              assert len(raw) == row['bytes'] and hashlib.sha256(raw).hexdigest() == row['sha256'], name
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only'], cwd=source, text=True).splitlines())
+          assert changed == {'Package.resolved'}, changed
+          assert after_raw == (source / 'Package.resolved').read_bytes()
+          result = {'passed': True, 'pinCount': 34, 'unchangedPins': 33, 'changedIdentity': 'latticecore',
+                    'coreRevision': new['latticecore']['state']['revision'], 'mcpRevision': new['swift-sdk']['state']['revision'],
+                    'sourceSHA': (evidence / 'source-sha.txt').read_text().strip(), 'originHash': after['originHash'],
+                    'generatedLockBytes': len(after_raw), 'generatedLockSHA256': hashlib.sha256(after_raw).hexdigest(),
+                    'buildOrTestsRun': False, 'generatedLockAcceptedForOtherConsumers': False}
+          (evidence / 'PIN-DELTA-REVIEW.json').write_text(json.dumps(result, indent=2) + '\n')
+          PYVERIFY
+
+      - name: Preserve original resolution evidence including failures
+        if: always() && env.HUD_RESOLVE_ROOT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: hud-closed-query-resolution-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.HUD_RESOLVE_ROOT }}/evidence
+          if-no-files-found: error
+          retention-days: 14
