@@ -493,3 +493,92 @@ class UnionSchemaEvolutionTests: BaseTest {
         try? Lattice.delete(for: .init(fileURL: dbPath))
     }
 }
+
+// Explicit codec metadata must remain independent of default construction and hydration.
+private struct UnavailableEmbeddedCodecProbe: EmbeddedModel {
+    init() { fatalError("Metadata must not construct an embedded value") }
+    init(from decoder: any Decoder) throws { fatalError("Metadata must not decode") }
+    func encode(to encoder: any Encoder) throws { fatalError("Metadata must not encode") }
+}
+
+struct ScalarEmbeddedCodecProbe: EmbeddedModel, Equatable, Sendable {
+    var value: String
+    init() { fatalError("Metadata must not read a storage fallback") }
+    init(value: String) { self.value = value }
+    init(from decoder: any Decoder) throws { value = try decoder.singleValueContainer().decode(String.self) }
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(value)
+    }
+    static var embeddedCodec: EmbeddedCodecMetadata {
+        .available(.init(schemaID: "fixture.scalar", version: 1, root: .string))
+    }
+}
+
+@Union enum EmbeddedCodecUnionProbe {
+    case empty
+    case scalar(value: ScalarEmbeddedCodecProbe)
+}
+
+@Suite("Explicit embedded codec metadata")
+struct EmbeddedCodecMetadataTests {
+    @Test func unavailableDoesNotConstructOrDecodeDefault() throws {
+        #expect(UnavailableEmbeddedCodecProbe.embeddedCodec == .unavailable)
+        #expect(try UnavailableEmbeddedCodecProbe.embeddedCodec.validatedDescriptor() == nil)
+    }
+
+    @Test func customScalarCodecAndUnionPayloadKeepActualShape() throws {
+        let metadata = try ScalarEmbeddedCodecProbe.embeddedCodec.validatedDescriptor()
+        let descriptor = try #require(metadata)
+        #expect(descriptor.root == .string)
+        let value = ScalarEmbeddedCodecProbe(value: "actual scalar")
+        let encoded = try JSONEncoder().encode(value)
+        #expect(String(decoding: encoded, as: UTF8.self) == #""actual scalar""#)
+        #expect(try JSONDecoder().decode(ScalarEmbeddedCodecProbe.self, from: encoded) == value)
+        let definition = try #require(EmbeddedCodecUnionProbe.unionCases.first { $0.name == "scalar" })
+        let payload = try #require(definition.fields.first?.type as? any EmbeddedModel.Type)
+        #expect(try payload.embeddedCodec.validatedDescriptor() == descriptor)
+    }
+
+    @Test func recursiveReferenceValidationDoesNotExpandValues() throws {
+        let descriptor = EmbeddedCodecDescriptor(schemaID: "fixture.node", version: 1, root: .object(fields: [
+            .init("value", shape: .reference("fixture.value"), requiredOnDecode: true, nullableOnDecode: false),
+            .init("next", shape: .reference("fixture.node"), requiredOnDecode: false, nullableOnDecode: true, missingValue: .null)
+        ], unknownKeys: .reject, validation: []), definitions: [
+            .init(id: "fixture.value", shape: .array(element: .dictionary(value: .string)))
+        ])
+        #expect(try descriptor.validated() == descriptor)
+    }
+
+    @Test func malformedGraphsRefuseDuplicateAndMissingIdentities() {
+        #expect(throws: EmbeddedCodecMetadataError.duplicateSchemaID("root")) {
+            try EmbeddedCodecDescriptor(schemaID: "root", version: 1, root: .string,
+                definitions: [.init(id: "root", shape: .boolean)]).validated()
+        }
+        #expect(throws: EmbeddedCodecMetadataError.unresolvedReference("missing")) {
+            try EmbeddedCodecDescriptor(schemaID: "root", version: 1, root: .array(element: .reference("missing"))).validated()
+        }
+        let field = EmbeddedCodecField("x", shape: .string, requiredOnDecode: true, nullableOnDecode: false)
+        #expect(throws: EmbeddedCodecMetadataError.duplicateField("x")) {
+            try EmbeddedCodecDescriptor(schemaID: "root", version: 1, root: .object(fields: [field, field],
+                unknownKeys: .ignore, validation: [])).validated()
+        }
+    }
+
+    @Test func requiredKeysNullsAndMissingValuesRemainIndependent() throws {
+        let required = EmbeddedCodecField("required", shape: .string, requiredOnDecode: true, nullableOnDecode: true)
+        let defaulted = EmbeddedCodecField("defaulted", shape: .integer(bits: 64, signed: true),
+            requiredOnDecode: false, nullableOnDecode: false, missingValue: .integer(decimal: "300"))
+        let descriptor = EmbeddedCodecDescriptor(schemaID: "root", version: 1, root: .object(fields: [required, defaulted],
+            unknownKeys: .reject, validation: ["fixture.actualCodec.validate"]))
+        #expect(try descriptor.validated() == descriptor)
+        #expect(required.requiredOnDecode && required.nullableOnDecode && required.missingValue == nil)
+        #expect(!defaulted.requiredOnDecode && !defaulted.nullableOnDecode)
+        #expect(defaulted.missingValue == .integer(decimal: "300"))
+        #expect(throws: EmbeddedCodecMetadataError.invalidDescriptor("bad")) {
+            try EmbeddedCodecDescriptor(schemaID: "root", version: 1, root: .object(fields: [
+                .init("bad", shape: .string, requiredOnDecode: false, nullableOnDecode: false, missingValue: .null)
+            ], unknownKeys: .unavailable, validation: [])).validated()
+        }
+    }
+}
