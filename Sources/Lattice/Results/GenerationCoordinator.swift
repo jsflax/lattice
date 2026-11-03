@@ -52,6 +52,42 @@ public struct ResultsTuning: Sendable, Equatable, Hashable {
     public init() {}
 }
 
+/// Synchronous command admission is a separate read batch from rendering.
+/// Thread-local scope cannot survive an await; nested callers share its first
+/// current-store probes and private shape cache. Nothing replaces a render pin.
+private final class CurrentReadScope {
+    private static let key = "io.lattice.current-read-scope"
+    var probedStores = Set<Int64>()
+    var shapes: [QueryShapeKey: QueryShapeState] = [:]
+    static var current: CurrentReadScope? {
+        Thread.current.threadDictionary[key] as? CurrentReadScope
+    }
+    static func withScope<T>(_ body: () throws -> T) rethrows -> T {
+        if current != nil { return try body() }
+        Thread.current.threadDictionary[key] = CurrentReadScope()
+        defer { Thread.current.threadDictionary.removeObject(forKey: key) }
+        return try body()
+    }
+    func shape(for key: QueryShapeKey) -> QueryShapeState {
+        if let existing = shapes[key] { return existing }
+        let shape = QueryShapeState(table: key.table, columnDependency: .mustInvalidate)
+        shapes[key] = shape
+        return shape
+    }
+}
+
+public extension Lattice {
+    /// Read current committed candidates for synchronous command admission,
+    /// even when a renderer still holds an older batch. Each touched store
+    /// checks its data version once; ordinary rendering pins and caches remain
+    /// separate. This is not a transaction or authority grant: mutations must
+    /// retain their existing transactional validation. Do not return lazy reads
+    /// expecting the scope to extend beyond this nonescaping body.
+    static func withCurrentReadScope<T>(_ body: () throws -> T) rethrows -> T {
+        try CurrentReadScope.withScope(body)
+    }
+}
+
 // MARK: - Generation value types (item A §1.1)
 
 /// One minted generation: the coordinator epoch it serves plus the core
@@ -440,7 +476,10 @@ final class GenerationCoordinator: @unchecked Sendable {
     func resolve(table: String, shapeKey: QueryShapeKey? = nil) -> GenerationContext {
         // Cross-process freshness belt (§1.3, Commit 6): runs FIRST so a
         // detected foreign commit bumps the epoch before this access pins.
-        beltCheckIfDue()
+        let scope = CurrentReadScope.current
+        if let scope {
+            if scope.probedStores.insert(identityHash).inserted { beltCheckIfDue(forceCurrentScope: true) }
+        } else { beltCheckIfDue() }
         var installObserver = false
         var attempts = 0
         defer {
@@ -454,7 +493,7 @@ final class GenerationCoordinator: @unchecked Sendable {
             }
             let now = DispatchTime.now().uptimeNanoseconds
             let step: Step = lock.withLockUnchecked { state in
-                if Thread.isMainThread, let pinned = state.mainPin {
+                if scope == nil, Thread.isMainThread, let pinned = state.mainPin {
                     // Staleness escape (§1.3): the pin's clearing actor is
                     // the `.beforeWaiting` runloop observer. In a Darwin
                     // process whose main runloop never spins (dispatchMain
@@ -632,8 +671,10 @@ final class GenerationCoordinator: @unchecked Sendable {
     // floored by `crossProcessBeltIntervalMs`. Memory-family stores skip
     // the belt entirely (no cross-process writers; `xproc_read_db_` has no
     // meaning there). `nil` interval disables (§1.7).
-    private func beltCheckIfDue() {
-        guard !isMemoryFamily, let intervalMs = tuning.crossProcessBeltIntervalMs else { return }
+    private func beltCheckIfDue(forceCurrentScope: Bool = false) {
+        guard !isMemoryFamily else { return }
+        guard forceCurrentScope || tuning.crossProcessBeltIntervalMs != nil else { return }
+        let intervalMs = tuning.crossProcessBeltIntervalMs ?? 0
         let intervalNanos = UInt64(max(0, intervalMs)) &* 1_000_000
         let now = DispatchTime.now().uptimeNanoseconds
         let shouldProbe: Bool = lock.withLockUnchecked { state in
@@ -643,12 +684,12 @@ final class GenerationCoordinator: @unchecked Sendable {
             // since install, past grace, is expired — probing then is safe
             // (the next resolve drops it too) and required (an eternally
             // held pin must not silence cross-process freshness).
-            if Thread.isMainThread, state.mainPin != nil {
+            if !forceCurrentScope, Thread.isMainThread, state.mainPin != nil {
                 let pinExpired = state.lastMainLoopFireUptimeNanos < state.mainPinInstalledUptimeNanos
                     && now &- state.mainPinInstalledUptimeNanos > Self.mainPinNonSpinningGraceNanos
                 if !pinExpired { return false }
             }
-            guard now &- state.beltLastProbeUptimeNanos >= intervalNanos
+            guard forceCurrentScope || now &- state.beltLastProbeUptimeNanos >= intervalNanos
                     || state.beltLastProbeUptimeNanos == 0 else { return false }
             // Claim the probe slot under the lock (≤ 1 PRAGMA per interval
             // even under concurrent resolves).
@@ -658,8 +699,19 @@ final class GenerationCoordinator: @unchecked Sendable {
         }
         guard shouldProbe, let backend else { return }
         // SQL — NO locks held (leaf-lock rule).
-        let version = backend.dataVersion()
-        guard version >= 0 else { return }   // -1 = probe failed: no information
+        acceptDataVersionProbe(backend.dataVersion(), forceCurrentScope: forceCurrentScope)
+    }
+
+    /// Shared result boundary also permits a deterministic failed-probe test.
+    /// Failure is not evidence of a foreign commit, but a current-read caller
+    /// must not reuse its old keeper as if freshness had been established.
+    func acceptDataVersionProbe(_ version: Int64, forceCurrentScope: Bool) {
+        guard version >= 0 else {
+            if forceCurrentScope {
+                noteWrite(changes: nil, markBeltLocalWrite: false, preserveMainPin: true)
+            }
+            return
+        }
         // ONE critical section decides the delta, classifies it, clears the
         // local-write flag, and re-baselines — the belt's own bump below is
         // `beltOriginated`, so it never re-sets the flag (no disjoint
@@ -669,7 +721,11 @@ final class GenerationCoordinator: @unchecked Sendable {
             defer { state.beltLastSeenDataVersion = version }
             let localWrite = state.beltLocalWriteSinceProbe
             state.beltLocalWriteSinceProbe = false
-            guard let lastSeen = state.beltLastSeenDataVersion else { return false }  // baseline
+            guard let lastSeen = state.beltLastSeenDataVersion else {
+                // A caller may previously have disabled the periodic belt.
+                // An existing generation without a baseline is not current proof.
+                return forceCurrentScope && state.current != nil
+            }
             guard version != lastSeen else { return false }
             if localWrite {
                 state.beltAmbiguousBumpCount &+= 1   // local, foreign, or both
@@ -682,7 +738,7 @@ final class GenerationCoordinator: @unchecked Sendable {
             // Another connection committed — possibly foreign, table set
             // unknown: every shape re-captures. Never swallowed, even when a
             // local write shares the window (see the header rationale).
-            noteWrite(changes: nil, markBeltLocalWrite: false)
+            noteWrite(changes: nil, markBeltLocalWrite: false, preserveMainPin: forceCurrentScope)
         }
     }
 
@@ -741,7 +797,7 @@ final class GenerationCoordinator: @unchecked Sendable {
 
     private static func pinIfMainThread(_ state: inout State, _ generation: GenerationRef,
                                         now: UInt64, installObserver: inout Bool) {
-        guard Thread.isMainThread, !state.mainPinningDisabled else { return }
+        guard CurrentReadScope.current == nil, Thread.isMainThread, !state.mainPinningDisabled else { return }
         state.mainPin = generation
         state.mainPinInstalledUptimeNanos = now
         if !state.mainPinObserverInstalled {
@@ -898,7 +954,8 @@ final class GenerationCoordinator: @unchecked Sendable {
     /// hook-frame legal (§2.3).
     func noteWrite(changes: [WriteBatchTableChange]?,
                    markBeltLocalWrite: Bool = true,
-                   fanOutToAttachParents: Bool = true) {
+                   fanOutToAttachParents: Bool = true,
+                   preserveMainPin: Bool = false) {
         lock.withLockUnchecked { state in
             state.epoch &+= 1
             let epoch = state.epoch
@@ -948,7 +1005,7 @@ final class GenerationCoordinator: @unchecked Sendable {
             // move `data_version` on `xproc_read_db_` too — the next probe
             // re-baselines instead of double-invalidating.
             state.beltLocalWriteSinceProbe = true
-            if Thread.isMainThread {
+            if Thread.isMainThread && !preserveMainPin {
                 Self.clearPinLocked(&state)
             }
             // The superseded `current` is NOT retired here — no SQL in the
@@ -1135,6 +1192,7 @@ final class GenerationCoordinator: @unchecked Sendable {
     /// never held across SQL; the caller runs its query lock-free and
     /// re-validates before publishing into the returned state.
     func shape(for key: QueryShapeKey) -> QueryShapeState {
+        if let scope = CurrentReadScope.current { return scope.shape(for: key) }
         if let existing = lock.withLockUnchecked({ state -> QueryShapeState? in
             guard let existing = state.shapes[key] else { return nil }
             // LRU touch.

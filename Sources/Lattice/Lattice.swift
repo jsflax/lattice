@@ -109,6 +109,7 @@ public struct Lattice {
         private var currentState: lattice.transport_state = .closed
         private let stateLock = NSRecursiveLock()
         private var acceptsCallbacks = false
+        private var certificatePin: String?
         private func withState<T>(_ body: () -> T) -> T {
             stateLock.lock(); defer { stateLock.unlock() }; return body()
         }
@@ -130,6 +131,40 @@ public struct Lattice {
             // its task's cancellation fires didComplete(NSURLErrorCancelled)
             // — must not tear down the CURRENT attempt: without this guard the
             // cancel of attempt N-1 error-looped attempt N forever.
+            func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                            completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+                guard let client else {
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    return
+                }
+                let admission = client.withState {
+                    (client.acceptsCallbacks && client.session === session, client.certificatePin)
+                }
+                guard admission.0 else {
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    return
+                }
+                var disposition: URLSession.AuthChallengeDisposition = .performDefaultHandling
+                var credential: URLCredential?
+                if let pin = admission.1 {
+                    disposition = .cancelAuthenticationChallenge
+                    #if canImport(Security)
+                    credential = LatticeTLSTrust.credential(for: challenge, certificateSHA256: pin)
+                    if credential != nil { disposition = .useCredential }
+                    #endif
+                }
+                // Trust evaluation may outlive a disconnect/reconnect. Re-admit the
+                // exact session and pin before returning a credential to URLSession.
+                client.withState {
+                    guard client.acceptsCallbacks, client.session === session,
+                          client.certificatePin == admission.1 else {
+                        completionHandler(.cancelAuthenticationChallenge, nil)
+                        return
+                    }
+                    completionHandler(disposition, credential)
+                }
+            }
+
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didOpenWithProtocol protocol: String?) {
                 client?.withCurrent(session) { client?.handleOpen() }
@@ -197,6 +232,19 @@ public struct Lattice {
             let cxxPtr = UnsafeMutablePointer<lattice.generic_sync_transport>.allocate(capacity: 1)
             cxxPtr.initialize(to: cxxClient)
             self.cxxClientPtr = UnsafeMutableRawPointer(cxxPtr)
+            cxxPtr.pointee.set_certificate_pin_callback { ptr, fingerprintPtr in
+                guard let ptr, let fingerprintPtr else { return false }
+                let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
+                let pin = String(fingerprintPtr.assumingMemoryBound(to: std.string.self).pointee)
+                guard pin.isEmpty || LatticeTLSPin.isValid(pin) else { return false }
+                #if !canImport(Security)
+                guard pin.isEmpty else { return false }
+                #endif
+                return client.withState {
+                    client.certificatePin = pin.isEmpty ? nil : pin
+                    return true
+                }
+            }
             cxxPtr.pointee.set_destroy_callback { ptr in
                 guard let ptr else { return }
                 let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeRetainedValue()
@@ -452,8 +500,8 @@ public struct Lattice {
     /// - `SyncFilter()` (empty) → for UPLOADS this behaves like `nil` (LatticeCore
     ///   builds no WHERE clause for an empty entry list — it is NOT a "sync
     ///   nothing" switch; it only empties the filtered sync SET). To upload
-    ///   nothing, open the handle read-only, or list tables with a predicate
-    ///   that matches no row.
+    ///   nothing independently of filtering or local write access, set
+    ///   `Configuration.uploadsEnabled = false`.
     /// - `SyncFilter` with entries → whitelist: only listed tables, with optional per-row SQL predicates
     ///
     /// The filter is **upload-only** — it controls what leaves the device.
@@ -567,6 +615,9 @@ public struct Lattice {
         }
         public var authorizationToken: String?
         public var wssEndpoint: URL?
+        /// Optional SHA-256 of TLS leaf certificate DER. Apple transport only;
+        /// other transports reject nonempty pins instead of silently ignoring them.
+        public var pinnedServerCertificateSHA256: String? = nil
         /// WSS startup only; IPC targets retain their existing startup behavior.
         /// On initial handle creation, deferred mode opens/migrates local storage
         /// without WSS ownership, sync-only repair or a transport. Call connectSync()
@@ -581,6 +632,9 @@ public struct Lattice {
         // equality/hash; native identity conflicts are checked at attachment.
         internal var backgroundSyncManaged = false
         internal var backgroundSyncLineage: BackgroundSyncLineage?
+        /// Disable outbound sync data while retaining downloads and their acknowledgements.
+        /// This is independent of local write access and upload filters.
+        public var uploadsEnabled: Bool = true
         private var scheduler: Scheduler
 
         /// Schema migration definitions keyed by version number.
@@ -724,9 +778,11 @@ public struct Lattice {
             lhs.storage == rhs.storage &&
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
+            lhs.pinnedServerCertificateSHA256 == rhs.pinnedServerCertificateSHA256 &&
             lhs.syncStartup == rhs.syncStartup &&
             lhs.backgroundSync == rhs.backgroundSync &&
             lhs.backgroundSyncManaged == rhs.backgroundSyncManaged &&
+            lhs.uploadsEnabled == rhs.uploadsEnabled &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
             lhs.requiredExistingSchemaVersion == rhs.requiredExistingSchemaVersion &&
@@ -741,9 +797,11 @@ public struct Lattice {
             hasher.combine(storage)
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
+            hasher.combine(pinnedServerCertificateSHA256)
             hasher.combine(syncStartup)
             hasher.combine(backgroundSync)
             hasher.combine(backgroundSyncManaged)
+            hasher.combine(uploadsEnabled)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
             hasher.combine(requiredExistingSchemaVersion)
@@ -808,6 +866,8 @@ public struct Lattice {
                 self.wssEndpoint.map { std.string($0.absoluteString) } ?? std.string(),
                 authorizationToken.map { std.string($0) } ?? std.string(),
                 currentScheduler.scheduler)
+            config.set_certificate_pin(std.string(pinnedServerCertificateSHA256 ?? ""))
+            config.set_uploads_enabled(uploadsEnabled)
             config.read_only = isReadOnly
             config.background_sync_managed = backgroundSync != nil || backgroundSyncManaged
             config.sync_autostart = syncStartup == .automatic && !config.background_sync_managed
@@ -1030,6 +1090,14 @@ public struct Lattice {
                   configuration: Configuration = defaultConfiguration,
                   isSynchronizing: Bool,
                   independentConnection: Bool = false) throws {
+        if let pin = configuration.pinnedServerCertificateSHA256 {
+            guard LatticeTLSPin.isValid(pin), configuration.wssEndpoint?.scheme == "wss" else {
+                throw LatticeTLSPin.ConfigurationError.invalidPin
+            }
+            #if !canImport(Security)
+            throw LatticeTLSPin.ConfigurationError.unsupportedPlatform
+            #endif
+        }
         if let required = configuration.requiredExistingSchemaVersion {
             guard required > 0, Int32(exactly: required) != nil else {
                 throw Lattice.Error.databaseError("Required existing schema version must be a positive Int32")
@@ -2349,6 +2417,7 @@ public struct Lattice {
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
                 queryConfig.authorizationToken = nil
+                queryConfig.pinnedServerCertificateSHA256 = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
                     let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
@@ -2439,6 +2508,7 @@ public struct Lattice {
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
                 queryConfig.authorizationToken = nil
+                queryConfig.pinnedServerCertificateSHA256 = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
                     let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
@@ -2895,6 +2965,7 @@ public struct Lattice {
         queryConfig.ipcTargets = nil
         queryConfig.wssEndpoint = nil
         queryConfig.authorizationToken = nil
+        queryConfig.pinnedServerCertificateSHA256 = nil
         queryConfig.syncFilter = nil
         try queryConfig.validateBackgroundSyncStore()
         let cxxConfig = queryConfig.cxxConfiguration()

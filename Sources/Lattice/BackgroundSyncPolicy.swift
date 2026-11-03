@@ -23,6 +23,7 @@ extension Lattice.Configuration {
             // opens another transport or carries account credentials itself.
             copy.wssEndpoint = nil
             copy.authorizationToken = nil
+            copy.pinnedServerCertificateSHA256 = nil
             copy.ipcTargets = nil
         }
         copy.backgroundSync = nil
