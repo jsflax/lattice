@@ -1,5 +1,5 @@
 {
-  "originHash" : "804a84019ecd97c8de1fbc2e583df957596acfbaccedc895a484c051e720e365",
+  "originHash" : "361953e259ed0f972d2d6b3d1a231164860745fc1ddec99a663019f92abe128b",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -248,8 +248,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jsflax/swift-sdk.git",
       "state" : {
-        "revision" : "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
-        "version" : "0.13.0"
+        "revision" : "82951cc9cd05de216e8dd6425f951ce31d76fa0a"
       }
     },
     {
