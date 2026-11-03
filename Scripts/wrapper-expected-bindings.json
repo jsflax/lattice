@@ -11,15 +11,15 @@
       "identity": "swift-sdk",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/swift-sdk.git",
-      "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
-      "version": "0.13.0"
+      "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
+      "selection": "revision"
     }
   ],
-  "qualificationNote": "Qualified refers only to explicitly reviewed upstream source identities. Core uses its exact revision, while Swift SDK retains its original exact release version and revision. Prior release evidence is historical; it does not qualify this wrapper graph, compilation, tests or products.",
+  "qualificationNote": "Qualified refers only to explicitly reviewed upstream source identities. Core and Swift SDK use exact revisions. Prior release evidence is historical; it does not qualify this wrapper graph, compilation, tests or products.",
   "qualificationScope": "reviewed-upstream-source-identities-only",
   "qualified": true,
   "schema": "lattice.wrapper-dependency-bindings/1",
-  "status": "EXACT_REVISION_AND_VERSION_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",
+  "status": "EXACT_REVISION_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",
   "wrapperGraphAccepted": false,
   "previousReleaseEvidence": {
     "receiptSHA256": "98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde",
@@ -52,9 +52,13 @@
       "scope": "Reviewed shared Core9 browser/native convergence preserves the native epoch9 durable-outbox, finite background, currentness and filtered-reconciliation behavior; adds dynamic descriptors/migrations, pending-import savepoint isolation with selected audit export, and transport-managed authentication. Original upstream macOS, Linux and two C ABI jobs passed at this exact revision. SDK wrapper graph, Swift tests, iOS package and HUD/native-JS interop qualification remain separate."
     },
     "swift-sdk": {
-      "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
-      "version": "0.13.0",
-      "scope": "Unchanged original released SDK source binding."
+      "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
+      "sourceURL": "https://github.com/jsflax/swift-sdk/tree/82951cc9cd05de216e8dd6425f951ce31d76fa0a",
+      "selection": "revision",
+      "parents": [
+        "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac"
+      ],
+      "scope": "Reviewed original typed request dispatch and negotiated protocol-version transport bridge. All five original upstream jobs passed in run41626069052 attempt1; macOS564 and Linux484 tests include the four new regressions. Actual CI merge tree equals this revision. The SDK wrapper graph, Swift tests, iOS product and downstream HUD/Orbital qualification remain separate."
     }
   },
   "earlierReleaseEvidence": {
@@ -109,5 +113,10 @@
       "c4d8556525c1125d314bb8ee3537f34dc590f004"
     ],
     "scope": "Source-reviewed shared Core9 successor preserving finite background sync, durable outbox migration and currentness, with stack-owned registry callback depth valid during late thread cleanup and reuse of the exact bounded encoded entry in delivery admission/send fallback. Filtered reconciliation now selects only registered internal data tables, excluding vector/FTS/RTree index artifacts while preserving link and geo-list delivery. Upstream runtime evidence and this wrapper graph, compilation, tests and products are qualified separately; this binding makes no runtime acceptance claim."
+  },
+  "previousSwiftSDKSourceEvidence": {
+    "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
+    "version": "0.13.0",
+    "scope": "Unchanged original released SDK source binding."
   }
 }
