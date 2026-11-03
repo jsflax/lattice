@@ -32,7 +32,12 @@ struct CertificatePinTests {
         #expect(first != original)
         #expect(first != second)
         #expect(Set([original, first, second]).count == 3)
-        #expect(String(first.cxxConfiguration().pinned_server_certificate_sha256) == pin)
+        // Keep the bridge owner alive while converting its field, before macro expansion.
+        let nativeConfiguration = first.cxxConfiguration()
+        let forwardedPin = withExtendedLifetime(nativeConfiguration) {
+            String(nativeConfiguration.pinned_server_certificate_sha256)
+        }
+        #expect(forwardedPin == pin)
         second.pinnedServerCertificateSHA256 = pin
         #expect(first == second)
         #expect(first.hashValue == second.hashValue)
