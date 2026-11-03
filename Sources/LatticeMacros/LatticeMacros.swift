@@ -1180,7 +1180,7 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                             [\(raw: modelProperties)]
                         }
 
-                        public static var authoredInitializers: Lattice.AuthoredInitializers {
+                        public static var authoredInitializers: AuthoredInitializers {
                             .available([\(raw: authoredInitializers)])
                         }
 
