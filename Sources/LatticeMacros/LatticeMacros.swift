@@ -77,6 +77,7 @@ private struct MemberView {
     }
     var constraint: Constraint?
     var assignment: String?
+    var initializerSyntax: ExprSyntax? = nil
     var isComputed: Bool = false       // Flag for computed properties
     var computedBlock: String? = nil    // Captures the computed accessor block if present
 }
@@ -199,6 +200,7 @@ private func view(for member: VariableDeclSyntax) -> MemberView? {
     if let initializerValue = binding.initializer?.value {
         // For stored properties, capture the initializer if present.
         memberView.assignment = "\(initializerValue)"
+        memberView.initializerSyntax = initializerValue
     }
     
     return memberView
@@ -208,6 +210,46 @@ private func view(for member: MemberBlockItemListSyntax.Element) throws -> Membe
         return nil
     }
     return view(for: decl)
+}
+
+/// Classify syntax only. Never splice an authored expression into metadata as
+/// executable code; even member references are joined by name to descriptors.
+private func authoredInitializer(for member: MemberView, qualifiedType: String) -> String {
+    guard let expression = member.initializerSyntax else { return ".absent" }
+    func quote(_ value: String) -> String { StringLiteralExprSyntax(content: value).description }
+    let source = expression.trimmedDescription
+    let type = "(\(qualifiedType)).self"
+    func literal(_ value: String) -> String {
+        "._literal(\(value), type: \(type), source: \(quote(source)))"
+    }
+    if expression.is(NilLiteralExprSyntax.self) { return literal(".nilLiteral") }
+    if let value = expression.as(BooleanLiteralExprSyntax.self) {
+        return literal(".boolean(\(value.literal.text))")
+    }
+    if let value = expression.as(StringLiteralExprSyntax.self),
+       value.segments.allSatisfy({ $0.is(StringSegmentSyntax.self) }),
+       let text = value.representedLiteralValue {
+        return literal(".string(\(quote(text)))")
+    }
+    var number = expression
+    var sign = ""
+    if let prefix = expression.as(PrefixOperatorExprSyntax.self),
+       prefix.operator.text == "-" || prefix.operator.text == "+" {
+        number = prefix.expression
+        sign = prefix.operator.text
+    }
+    if let value = number.as(IntegerLiteralExprSyntax.self) {
+        return literal(".integer(swift: \(quote(sign + value.literal.text)))")
+    }
+    if let value = number.as(FloatLiteralExprSyntax.self) {
+        return literal(".floatingPoint(swift: \(quote(sign + value.literal.text)))")
+    }
+    if let memberAccess = expression.as(MemberAccessExprSyntax.self),
+       memberAccess.declName.argumentNames == nil,
+       memberAccess.base == nil || memberAccess.base?.trimmedDescription == member.unwrappedType {
+        return "._member(\(quote(memberAccess.declName.baseName.text)), type: \(type), source: \(quote(source)))"
+    }
+    return ".dynamic(source: \(quote(source)))"
 }
 
 enum MacroError: Error, DiagnosticMessage {
@@ -1078,6 +1120,14 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
                 return "(\"\(member.mappedName ?? member.name)\", \(qualifiedType).self)"
             }
         let modelProperties = (["(\"globalId\", UUID.self)"] + userProperties).joined(separator: ", ")
+        let authoredInitializers = members.filter {
+            !$0.isComputed && !$0.isTransient && !$0.isRelation && $0.name != "id" && $0.name != "globalId"
+        }.map { member in
+            let qualifiedType = qualifyTypeReferences(propertyType: member.type, fullTypePath: fullTypePath, simpleTypeName: typeName)
+            let name = StringLiteralExprSyntax(content: member.mappedName ?? member.name).description
+            let declaredType = StringLiteralExprSyntax(content: member.type).description
+            return ".init(name: \(name), declaredType: \(declaredType), initializer: \(authoredInitializer(for: member, qualifiedType: qualifiedType)))"
+        }.joined(separator: ", ")
         let accessors = members.filter { !$0.isComputed }
             .filter { !$0.isTransient && !$0.isRelation }
             .map { "self._\($0.name)Accessor" }
@@ -1128,6 +1178,10 @@ class ModelMacro: MemberMacro, ExtensionMacro, MemberAttributeMacro {
 
                         public static var properties: [(String, any LatticeSchemaProperty.Type)] {
                             [\(raw: modelProperties)]
+                        }
+
+                        public static var authoredInitializers: Lattice.AuthoredInitializers {
+                            .available([\(raw: authoredInitializers)])
                         }
 
                         public static var fullTextProperties: Set<String> {

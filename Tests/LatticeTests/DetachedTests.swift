@@ -2,6 +2,164 @@ import Foundation
 import Testing
 import Lattice
 
+// Declaration metadata must not take the model-construction/default-value path.
+private func authoredInitializerMustNotRun() -> String {
+    fatalError("Reading authored metadata evaluated a user initializer")
+}
+
+@LatticeEnum enum AuthoredMetadataMode: String {
+    case ready
+    static var computed: Self { fatalError("Symbolic metadata evaluated a property") }
+}
+
+@Union enum AuthoredMetadataAction {
+    case noop
+    case text(value: String)
+    static var computed: Self { fatalError("Union metadata evaluated a property") }
+}
+
+@Model final class AuthoredMetadataProbe {
+    @Property(name: "mapped_value") var mapped: Int64 = 9_007_199_254_740_993
+    var minimum: Int64 = -9_223_372_036_854_775_808
+    var narrow: Int8 = -0x7f
+    var negativeZero: Float = -0.0
+    var hexadecimal: Double = 0x1.fp-3
+    var integerFloat: Double = 1
+    var enabled: Bool = true
+    var text: String = "line\n\"quoted\""
+    var absent: String?
+    var explicitNil: String? = nil
+    var identifier: UUID = UUID()
+    var created: Date = Date()
+    var arbitrary: String = authoredInitializerMustNotRun()
+    var interpolation: String = "value: \(authoredInitializerMustNotRun())"
+    var collection: [String] = []
+    var mode: AuthoredMetadataMode = .ready
+    var computedMode: AuthoredMetadataMode = .computed
+    var action: AuthoredMetadataAction = .noop
+    var qualifiedAction: AuthoredMetadataAction = AuthoredMetadataAction.noop
+    var payload: AuthoredMetadataAction = .text(value: "hello")
+    var computedAction: AuthoredMetadataAction = .computed
+    @Transient var scratch: String = "not persisted"
+    var computed: String { "not persisted" }
+}
+
+/// Deliberately manual/old-style Model conformance: no new metadata witness.
+/// Instance-only requirements trap, proving the default witness needs no value.
+private final class ManualInitializerMetadataModel: Model {
+    init(isolation: isolated (any Actor)?) { fatalError("Manual model instantiated") }
+    static var entityName: String { "ManualInitializerMetadataModel" }
+    static var properties: [(String, any LatticeSchemaProperty.Type)] { [("value", String.self)] }
+    static var constraints: [Constraint] { [] }
+    static func _nameForKeyPath(_ keyPath: AnyKeyPath) -> String { fatalError() }
+    var primaryKey: Int64?
+    var globalId: UUID? { nil }
+    var _lastKeyPathUsed: String?
+    var _instanceObservers: [_ModelObserver] = []
+    var _dynamicObject: ModelStorage {
+        get { fatalError("Metadata read model storage") }
+        set { fatalError("Metadata wrote model storage") }
+    }
+    @available(iOS 17, macOS 14, tvOS 17, watchOS 10, *)
+    var _$observationRegistrar: Observation.ObservationRegistrar { fatalError() }
+    #if canImport(Combine)
+    var _objectWillChange: Combine.ObservableObjectPublisher { fatalError() }
+    #else
+    var _objectWillChange: ObservableObjectPublisher { fatalError() }
+    #endif
+    func _objectWillChange_send() { fatalError() }
+    func _triggerObservers_send(keyPath: String) { fatalError() }
+}
+
+@Suite("Authored initializer metadata")
+struct AuthoredInitializerMetadataTests {
+    @Test func exactStoredCoverageUsesMappedNames() throws {
+        let entries = try #require(AuthoredMetadataProbe.validatedAuthoredInitializers())
+        let expected = AuthoredMetadataProbe.properties.map(\.0).filter { $0 != "id" && $0 != "globalId" }
+        #expect(entries.map(\.name) == expected)
+        #expect(entries.count == 21)
+        #expect(entries.contains { $0.name == "mapped_value" && $0.declaredType == "Int64" })
+        #expect(!entries.contains { ["id", "globalId", "mapped", "scratch", "computed"].contains($0.name) })
+    }
+
+    @Test func literalSpellingPreservesWidthLargeIntegersAndNegativeZero() throws {
+        let entries = try #require(AuthoredMetadataProbe.validatedAuthoredInitializers())
+        let values = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0.initializer) })
+        #expect(values["mapped_value"] == .literal(.integer(swift: "9_007_199_254_740_993")))
+        #expect(values["minimum"] == .literal(.integer(swift: "-9_223_372_036_854_775_808")))
+        #expect(values["narrow"] == .literal(.integer(swift: "-0x7f")))
+        #expect(entries.first { $0.name == "narrow" }?.declaredType == "Int8")
+        #expect(values["negativeZero"] == .literal(.floatingPoint(swift: "-0.0")))
+        #expect(entries.first { $0.name == "negativeZero" }?.declaredType == "Float")
+        #expect(values["hexadecimal"] == .literal(.floatingPoint(swift: "0x1.fp-3")))
+        #expect(values["integerFloat"] == .literal(.floatingPoint(swift: "1")))
+        #expect(values["enabled"] == .literal(.boolean(true)))
+        #expect(values["text"] == .literal(.string("line\n\"quoted\"")))
+    }
+
+    @Test func absentNilAndDynamicDoNotEvaluateAnyInitializer() throws {
+        // The fixture's arbitrary and interpolated initializers trap if invoked.
+        // UUID/Date remain syntax and repeated reads cannot generate fresh values.
+        let first = AuthoredMetadataProbe.authoredInitializers
+        #expect(first == AuthoredMetadataProbe.authoredInitializers)
+        let entries = try #require(AuthoredMetadataProbe.validatedAuthoredInitializers())
+        let values = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0.initializer) })
+        #expect(values["absent"] == .absent)
+        #expect(values["explicitNil"] == .literal(.nilLiteral))
+        #expect(values["identifier"] == .dynamic(source: "UUID()"))
+        #expect(values["created"] == .dynamic(source: "Date()"))
+        #expect(values["arbitrary"] == .dynamic(source: "authoredInitializerMustNotRun()"))
+        #expect(values["interpolation"] == .dynamic(source: #""value: \(authoredInitializerMustNotRun())""#))
+        #expect(values["collection"] == .dynamic(source: "[]"))
+    }
+
+    @Test func symbolicMembersRequireExistingZeroPayloadCaseDescriptor() throws {
+        let entries = try #require(AuthoredMetadataProbe.validatedAuthoredInitializers())
+        let values = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0.initializer) })
+        #expect(values["action"] == .literal(.unionCase(name: "noop")))
+        #expect(values["qualifiedAction"] == .literal(.unionCase(name: "noop")))
+        #expect(values["payload"] == .dynamic(source: ".text(value: \"hello\")"))
+        #expect(values["computedAction"] == .dynamic(source: ".computed"))
+        #expect(values["mode"] == .dynamic(source: ".ready"))
+        #expect(values["computedMode"] == .dynamic(source: ".computed"))
+    }
+
+    @Test func manualModelDefaultIsUnavailableNotAbsent() throws {
+        #expect(ManualInitializerMetadataModel.authoredInitializers == .unavailable)
+        let unavailable = try ManualInitializerMetadataModel.validatedAuthoredInitializers()
+        #expect(unavailable == nil)
+        let empty = try AuthoredInitializers.available([]).validated(propertyNames: [])
+        #expect(empty == [])
+    }
+
+    @Test func exporterCoverageRejectsMissingExtraAndDuplicateNames() throws {
+        let entry = AuthoredPropertyInitializer(name: "value", declaredType: "String", initializer: .absent)
+        #expect(throws: AuthoredInitializerMetadataError.coverageMismatch(expected: ["value"], actual: [])) {
+            try AuthoredInitializers.available([]).validated(propertyNames: ["value"])
+        }
+        #expect(throws: AuthoredInitializerMetadataError.coverageMismatch(expected: [], actual: ["value"])) {
+            try AuthoredInitializers.available([entry]).validated(propertyNames: [])
+        }
+        #expect(throws: AuthoredInitializerMetadataError.duplicateProperty("value")) {
+            try AuthoredInitializers.available([entry, entry]).validated(propertyNames: ["value"])
+        }
+        #expect(throws: AuthoredInitializerMetadataError.duplicateProperty("value")) {
+            try AuthoredInitializers.available([entry]).validated(propertyNames: ["value", "value"])
+        }
+    }
+
+    @Test func existingDetachedMetadataKeepsCreationAndStorageSeparate() throws {
+        let entries = try #require(DPerson.validatedAuthoredInitializers())
+        let values = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0.initializer) })
+        #expect(values["name"] == .literal(.string("")))
+        #expect(values["age"] == .literal(.integer(swift: "0")))
+        #expect(values["nickname"] == .literal(.nilLiteral))
+        #expect(values["dog"] == .absent)
+        #expect(values["dogs"] == .dynamic(source: ".init()"))
+        #expect(values["tags"] == .dynamic(source: "[]"))
+    }
+}
+
 // MARK: - Fixtures (top-level so sibling links don't need namespace qualification)
 
 @Model @Detached
