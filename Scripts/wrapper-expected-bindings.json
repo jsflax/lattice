@@ -4,7 +4,7 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
+      "revision": "9a0616d6a130c3d20513674b9660cc5072f6cd43",
       "selection": "revision"
     },
     {
@@ -42,13 +42,14 @@
   },
   "sourceEvidence": {
     "latticecore": {
-      "revision": "846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
+      "revision": "9a0616d6a130c3d20513674b9660cc5072f6cd43",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/9a0616d6a130c3d20513674b9660cc5072f6cd43",
       "selection": "revision",
       "parents": [
-        "c4d8556525c1125d314bb8ee3537f34dc590f004"
+        "846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
+        "db81e0ced019803ffa5fd5c7fc5ee80d17b8aac9"
       ],
-      "scope": "Source-reviewed shared Core9 successor preserving finite background sync, durable outbox migration and currentness, with stack-owned registry callback depth valid during late thread cleanup and reuse of the exact bounded encoded entry in delivery admission/send fallback. Filtered reconciliation now selects only registered internal data tables, excluding vector/FTS/RTree index artifacts while preserving link and geo-list delivery. Upstream runtime evidence and this wrapper graph, compilation, tests and products are qualified separately; this binding makes no runtime acceptance claim."
+      "scope": "Reviewed shared Core9 browser/native convergence preserves the native epoch9 durable-outbox, finite background, currentness and filtered-reconciliation behavior; adds dynamic descriptors/migrations, pending-import savepoint isolation with selected audit export, and transport-managed authentication. Original upstream macOS, Linux and two C ABI jobs passed at this exact revision. SDK wrapper graph, Swift tests, iOS package and HUD/native-JS interop qualification remain separate."
     },
     "swift-sdk": {
       "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
@@ -99,5 +100,14 @@
       "27bdef11c818ab87d56fb93fe31d30d561ccc219"
     ],
     "scope": "Source-reviewed shared Core9 successor preserving finite background sync, durable outbox migration and currentness; upstream Linux, macOS and both C ABI CI passed at this exact revision. This wrapper graph, compilation, tests and products remain unqualified."
+  },
+  "previousFilteredReconciliationSourceEvidence": {
+    "revision": "846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
+    "selection": "revision",
+    "parents": [
+      "c4d8556525c1125d314bb8ee3537f34dc590f004"
+    ],
+    "scope": "Source-reviewed shared Core9 successor preserving finite background sync, durable outbox migration and currentness, with stack-owned registry callback depth valid during late thread cleanup and reuse of the exact bounded encoded entry in delivery admission/send fallback. Filtered reconciliation now selects only registered internal data tables, excluding vector/FTS/RTree index artifacts while preserving link and geo-list delivery. Upstream runtime evidence and this wrapper graph, compilation, tests and products are qualified separately; this binding makes no runtime acceptance claim."
   }
 }
