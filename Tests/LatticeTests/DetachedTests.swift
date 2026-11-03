@@ -21,7 +21,7 @@ private func authoredInitializerMustNotRun() -> String {
 @Model final class AuthoredMetadataProbe {
     @Property(name: "mapped_value") var mapped: Int64 = 9_007_199_254_740_993
     var minimum: Int64 = -9_223_372_036_854_775_808
-    var narrow: Int8 = -0x7f
+    var narrow: Int = -0x7f
     var negativeZero: Float = -0.0
     var hexadecimal: Double = 0x1.fp-3
     var integerFloat: Double = 1
@@ -74,7 +74,8 @@ private final class ManualInitializerMetadataModel: Model {
 @Suite("Authored initializer metadata")
 struct AuthoredInitializerMetadataTests {
     @Test func exactStoredCoverageUsesMappedNames() throws {
-        let entries = try #require(AuthoredMetadataProbe.validatedAuthoredInitializers())
+        let metadata = try AuthoredMetadataProbe.validatedAuthoredInitializers()
+        let entries = try #require(metadata)
         let expected = AuthoredMetadataProbe.properties.map(\.0).filter { $0 != "id" && $0 != "globalId" }
         #expect(entries.map(\.name) == expected)
         #expect(entries.count == 21)
@@ -83,12 +84,16 @@ struct AuthoredInitializerMetadataTests {
     }
 
     @Test func literalSpellingPreservesWidthLargeIntegersAndNegativeZero() throws {
-        let entries = try #require(AuthoredMetadataProbe.validatedAuthoredInitializers())
+        let metadata = try AuthoredMetadataProbe.validatedAuthoredInitializers()
+        let entries = try #require(metadata)
         let values = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0.initializer) })
         #expect(values["mapped_value"] == .literal(.integer(swift: "9_007_199_254_740_993")))
         #expect(values["minimum"] == .literal(.integer(swift: "-9_223_372_036_854_775_808")))
         #expect(values["narrow"] == .literal(.integer(swift: "-0x7f")))
-        #expect(entries.first { $0.name == "narrow" }?.declaredType == "Int8")
+        #expect(entries.first { $0.name == "narrow" }?.declaredType == "Int")
+        // Int8 has no current model storage accessor; its metadata classifier remains testable without a value.
+        #expect(AuthoredInitializer._literal(.integer(swift: "-0x7f"), type: Int8.self, source: "-0x7f")
+            == .literal(.integer(swift: "-0x7f")))
         #expect(values["negativeZero"] == .literal(.floatingPoint(swift: "-0.0")))
         #expect(entries.first { $0.name == "negativeZero" }?.declaredType == "Float")
         #expect(values["hexadecimal"] == .literal(.floatingPoint(swift: "0x1.fp-3")))
@@ -102,7 +107,8 @@ struct AuthoredInitializerMetadataTests {
         // UUID/Date remain syntax and repeated reads cannot generate fresh values.
         let first = AuthoredMetadataProbe.authoredInitializers
         #expect(first == AuthoredMetadataProbe.authoredInitializers)
-        let entries = try #require(AuthoredMetadataProbe.validatedAuthoredInitializers())
+        let metadata = try AuthoredMetadataProbe.validatedAuthoredInitializers()
+        let entries = try #require(metadata)
         let values = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0.initializer) })
         #expect(values["absent"] == .absent)
         #expect(values["explicitNil"] == .literal(.nilLiteral))
@@ -114,7 +120,8 @@ struct AuthoredInitializerMetadataTests {
     }
 
     @Test func symbolicMembersRequireExistingZeroPayloadCaseDescriptor() throws {
-        let entries = try #require(AuthoredMetadataProbe.validatedAuthoredInitializers())
+        let metadata = try AuthoredMetadataProbe.validatedAuthoredInitializers()
+        let entries = try #require(metadata)
         let values = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0.initializer) })
         #expect(values["action"] == .literal(.unionCase(name: "noop")))
         #expect(values["qualifiedAction"] == .literal(.unionCase(name: "noop")))
@@ -149,7 +156,8 @@ struct AuthoredInitializerMetadataTests {
     }
 
     @Test func existingDetachedMetadataKeepsCreationAndStorageSeparate() throws {
-        let entries = try #require(DPerson.validatedAuthoredInitializers())
+        let metadata = try DPerson.validatedAuthoredInitializers()
+        let entries = try #require(metadata)
         let values = Dictionary(uniqueKeysWithValues: entries.map { ($0.name, $0.initializer) })
         #expect(values["name"] == .literal(.string("")))
         #expect(values["age"] == .literal(.integer(swift: "0")))
