@@ -615,6 +615,12 @@ public struct Lattice {
         }
         public var authorizationToken: String?
         public var wssEndpoint: URL?
+        /// Optional durable WSS channel identity, separate from the address dialed above.
+        /// Nil keeps the endpoint-derived identity. Retain the original endpoint here when
+        /// changing transport-only URL parameters for an existing channel; changing this
+        /// value selects different durable receipts, cursors and replication slots.
+        /// Never reuse an identity for a different peer or authorization scope.
+        public var wssSyncIdentity: URL?
         /// Optional SHA-256 of TLS leaf certificate DER. Apple transport only;
         /// other transports reject nonempty pins instead of silently ignoring them.
         public var pinnedServerCertificateSHA256: String? = nil
@@ -778,6 +784,7 @@ public struct Lattice {
             lhs.storage == rhs.storage &&
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
+            lhs.wssSyncIdentity == rhs.wssSyncIdentity &&
             lhs.pinnedServerCertificateSHA256 == rhs.pinnedServerCertificateSHA256 &&
             lhs.syncStartup == rhs.syncStartup &&
             lhs.backgroundSync == rhs.backgroundSync &&
@@ -797,6 +804,7 @@ public struct Lattice {
             hasher.combine(storage)
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
+            hasher.combine(wssSyncIdentity)
             hasher.combine(pinnedServerCertificateSHA256)
             hasher.combine(syncStartup)
             hasher.combine(backgroundSync)
@@ -831,6 +839,7 @@ public struct Lattice {
 
         public init(storage: Storage? = nil, fileURL: URL? = nil,
                     authorizationToken: String? = nil, wssEndpoint: URL? = nil,
+                    wssSyncIdentity: URL? = nil,
                     isReadOnly: Bool = false, migration: [Int: Migration]? = nil,
                     syncFilter: SyncFilter? = nil,
                     busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs,
@@ -844,6 +853,7 @@ public struct Lattice {
                 .appendingPathComponent("lattice\(wssEndpoint != nil ? "_ws" : "").sqlite"))
             self.authorizationToken = authorizationToken
             self.wssEndpoint = wssEndpoint
+            self.wssSyncIdentity = wssSyncIdentity
             self.syncStartup = syncStartup
             self.backgroundSync = backgroundSync
             self.scheduler = Scheduler()
@@ -866,6 +876,7 @@ public struct Lattice {
                 self.wssEndpoint.map { std.string($0.absoluteString) } ?? std.string(),
                 authorizationToken.map { std.string($0) } ?? std.string(),
                 currentScheduler.scheduler)
+            config.set_websocket_sync_identity(std.string(wssSyncIdentity?.absoluteString ?? ""))
             config.set_certificate_pin(std.string(pinnedServerCertificateSHA256 ?? ""))
             config.set_uploads_enabled(uploadsEnabled)
             config.read_only = isReadOnly
@@ -1105,7 +1116,8 @@ public struct Lattice {
             if let target = configuration.migration?.keys.max(), target != required {
                 throw Lattice.Error.databaseError("Required existing schema version conflicts with migration target")
             }
-            guard configuration.wssEndpoint == nil, configuration.ipcTargets?.isEmpty ?? true,
+            guard configuration.wssEndpoint == nil, configuration.wssSyncIdentity == nil,
+                  configuration.ipcTargets?.isEmpty ?? true,
                   configuration.backgroundSync == nil, !configuration.backgroundSyncManaged,
                   configuration.backgroundSyncLineage == nil else {
                 throw Lattice.Error.databaseError("Existing schema handles do not own sync transports or background lifecycle")
@@ -2431,6 +2443,7 @@ public struct Lattice {
                 var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
+                queryConfig.wssSyncIdentity = nil
                 queryConfig.authorizationToken = nil
                 queryConfig.pinnedServerCertificateSHA256 = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
@@ -2522,6 +2535,7 @@ public struct Lattice {
                 var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
+                queryConfig.wssSyncIdentity = nil
                 queryConfig.authorizationToken = nil
                 queryConfig.pinnedServerCertificateSHA256 = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
@@ -2993,6 +3007,7 @@ public struct Lattice {
         var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
         queryConfig.ipcTargets = nil
         queryConfig.wssEndpoint = nil
+        queryConfig.wssSyncIdentity = nil
         queryConfig.authorizationToken = nil
         queryConfig.pinnedServerCertificateSHA256 = nil
         queryConfig.syncFilter = nil

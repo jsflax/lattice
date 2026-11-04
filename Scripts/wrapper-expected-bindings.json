@@ -4,7 +4,7 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "c089b94a53f52eda843e9c1480b9c1c79f3921ef",
+      "revision": "2d693dcf4f14a32699e02d901480312e3d90cdb4",
       "selection": "revision"
     },
     {
@@ -42,13 +42,13 @@
   },
   "sourceEvidence": {
     "latticecore": {
-      "revision": "c089b94a53f52eda843e9c1480b9c1c79f3921ef",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/c089b94a53f52eda843e9c1480b9c1c79f3921ef",
+      "revision": "2d693dcf4f14a32699e02d901480312e3d90cdb4",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/2d693dcf4f14a32699e02d901480312e3d90cdb4",
       "selection": "revision",
       "parents": [
-        "cd202e30a94d228f4c7dde4b9d9bec2c3f7aa218"
+        "c089b94a53f52eda843e9c1480b9c1c79f3921ef"
       ],
-      "scope": "Source-reviewed epoch9 successor restores all non-list parent-reference audit columns during trigger recreation, with exact fresh geo expansion and unchanged no_history policy. Trigger-template fingerprint revision 2 and three-trigger coverage repair already-affected precise-v1 stores without rewriting data/history. Preserves the qualified cd202 fixture-lifetime correction; upstream successor CI and this SDK graph remain pending, with no installed-product acceptance inferred."
+      "scope": "Source-reviewed optional logical WSS identity separates transport URL from durable receipt/cursor/slot ownership. Defaults preserve endpoint-derived identity; bounded explicit identity participates in native cache and logical registry, with same-dial no-eviction preserved. Existing parent-reference repair and epoch9 behavior remain. Original Core and SDK full qualification are pending; no installed-product acceptance inferred."
     },
     "swift-sdk": {
       "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
@@ -172,5 +172,14 @@
       "ffb84d0137e62b0ce9862e243a495eedafe63536"
     ],
     "scope": "Source-reviewed successor preserves epoch9 history/identity, typed-union decoding, opt-in immutable/authorized receive, receipt ownership and transport behavior. Restores null-preserving 17-digit REAL audit encoding and upgrades affected audit triggers through the existing schema-owner path; adds test-local vector-filter phase observations with the unchanged watchdog. Actual upstream CI and this complete SDK consumer graph remain unqualified; no build, test or installed-product acceptance is inferred."
+  },
+  "previousParentReferenceSourceEvidence": {
+    "revision": "c089b94a53f52eda843e9c1480b9c1c79f3921ef",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/c089b94a53f52eda843e9c1480b9c1c79f3921ef",
+    "selection": "revision",
+    "parents": [
+      "cd202e30a94d228f4c7dde4b9d9bec2c3f7aa218"
+    ],
+    "scope": "Source-reviewed epoch9 successor restores all non-list parent-reference audit columns during trigger recreation, with exact fresh geo expansion and unchanged no_history policy. Trigger-template fingerprint revision 2 and three-trigger coverage repair already-affected precise-v1 stores without rewriting data/history. Preserves the qualified cd202 fixture-lifetime correction; upstream successor CI and this SDK graph remain pending, with no installed-product acceptance inferred."
   }
 }
