@@ -527,6 +527,7 @@ public protocol LatticeBackend: AnyObject, Sendable {
 
     // Sync data flow
     func receiveSyncData(_ data: Data) -> [String]   // acked global ids
+    func receiveSyncData(_ data: Data, immutableTables: Set<String>, authorize: (() -> Bool)?) throws -> [String]
     func lastReceiveError() -> String?
 
     // Sync filter
@@ -675,6 +676,15 @@ extension LatticeBackend {
     public func commitChecked() throws {
         commit()
         if let error = lastQueryError() { throw LatticeError.transactionError(error) }
+    }
+
+    public func receiveSyncData(_ data: Data, immutableTables: Set<String>, authorize: (() -> Bool)?) throws -> [String] {
+        guard immutableTables.isEmpty, authorize == nil else {
+            throw LatticeError.syncReceiveFailed("backend does not support immutable sync")
+        }
+        let ids = receiveSyncData(data)
+        if let error = lastReceiveError() { throw LatticeError.syncReceiveFailed(error) }
+        return ids
     }
 
     @inlinable

@@ -32,11 +32,14 @@ struct CertificatePinTests {
         #expect(first != original)
         #expect(first != second)
         #expect(Set([original, first, second]).count == 3)
-        // Keep the bridge owner alive while converting its field, before macro expansion.
-        let nativeConfiguration = first.cxxConfiguration()
-        let forwardedPin = withExtendedLifetime(nativeConfiguration) {
-            String(nativeConfiguration.pinned_server_certificate_sha256)
-        }
+        // A native value copy must survive both mutation and destruction of its owner.
+        let copiedPin = {
+            var nativeConfiguration = first.cxxConfiguration()
+            let copied = nativeConfiguration.get_certificate_pin()
+            nativeConfiguration.set_certificate_pin(.init(String(repeating: "c", count: 64)))
+            return copied
+        }()
+        let forwardedPin = String(copiedPin)
         #expect(forwardedPin == pin)
         second.pinnedServerCertificateSHA256 = pin
         #expect(first == second)
@@ -85,6 +88,14 @@ struct CertificatePinTests {
         } catch { Issue.record("Unexpected error: \(error)") }
     }
     #else
+    @Test func validPinSurvivesDeferredOpenAndClose() throws {
+        var configuration = Lattice.Configuration(storage: .memory(named: "valid-pin-" + UUID().uuidString),
+            wssEndpoint: URL(string: "wss://fixture.invalid/sync"), syncStartup: .deferred)
+        configuration.pinnedServerCertificateSHA256 = pin
+        let store = try Lattice(configuration: configuration)
+        store.close()
+    }
+
     // Self-signed fixture.invalid leaf, valid 2026-01-01 through 2027-01-01.
     // Generated only for this source fixture; private key discarded. No listener.
     private static let leafDER = "MIIBdTCCARugAwIBAgICHIUwCgYIKoZIzj0EAwIwGjEYMBYGA1UEAwwPZml4dHVyZS5pbnZhbGlkMB4XDTI2MDEwMTAwMDAwMFoXDTI3MDEwMTAwMDAwMFowGjEYMBYGA1UEAwwPZml4dHVyZS5pbnZhbGlkMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEU5D57neDCovU5J9jaJJIxULnShiGn5ZcesB/5C1+alSuzWoJSpIx3T+xZKfHK3qMBIWhQ+ZZHy7yKUKFhRtfLKNRME8wGgYDVR0RBBMwEYIPZml4dHVyZS5pbnZhbGlkMAwGA1UdEwEB/wQCMAAwEwYDVR0lBAwwCgYIKwYBBQUHAwEwDgYDVR0PAQH/BAQDAgeAMAoGCCqGSM49BAMCA0gAMEUCIFN/gLtGGSr0UjyVrBXvkHIsqVbmDu1aXfKthzdBLhD5AiEAhve4lBRGBhfG90HfdW+K8FgrygC+44rooNwEkHpwGik="

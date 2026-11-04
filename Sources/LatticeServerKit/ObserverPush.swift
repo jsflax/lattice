@@ -187,6 +187,7 @@ struct MountPushContext: @unchecked Sendable {
     let schema: [any Lattice.Model.Type]
     let storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)?
     let options: SyncObserverPush
+    var excludedTables: Set<String> = []
 }
 
 // MARK: - WatcherRef
@@ -228,6 +229,8 @@ final class PushSubscription: @unchecked Sendable {
     /// options (the manager is process-wide, so per-mount tuning rides the
     /// subscription). Clamped positive at construction.
     let pageSize: Int
+    /// Per-mount policy travels with each subscription, never the shared watcher.
+    let excludedTables: Set<String>
     /// Already selected for this connection's exact channel by the mount.
     let sendBoundaryProbe: ObserverSendBoundaryProbe?
     /// Recorder-local identity, immutable for this subscription (nil when off).
@@ -249,12 +252,14 @@ final class PushSubscription: @unchecked Sendable {
     var active = true
 
     init(socket: WebSocket, revocation: RevocationFlag, key: String, pageSize: Int,
+         excludedTables: Set<String> = [],
          sendBoundaryProbe: ObserverSendBoundaryProbe? = nil,
          pipelineSubscription: UInt64? = nil, diagnosticGroupID: UInt64? = nil, setupDiagnostic: ACKPathConnection? = nil) {
         self.socket = socket
         self.revocation = revocation
         self.key = key
         self.pageSize = max(1, pageSize)
+        self.excludedTables = Set(excludedTables.map { $0.lowercased() })
         self.sendBoundaryProbe = sendBoundaryProbe
         self.pipelineSubscription = pipelineSubscription
         self.diagnosticGroupID = diagnosticGroupID
@@ -301,6 +306,7 @@ private final class FileWatchGroup {
 /// A prepared page owns bytes and fixed metadata, never managed row handles.
 private enum PreparedPushPage: Sendable {
     case empty, stopped
+    case excluded(last: Int64)
     case encodingFailed(String)
     case encoded(data: Data, count: Int, last: Int64, ids: [UUID?], trace: UInt64?)
 }
@@ -492,6 +498,7 @@ private enum PreparedPushPage: Sendable {
             actorGroupID: group.diagnosticGroupID)
         let sub = PushSubscription(socket: socket, revocation: revocation, key: key,
                                    pageSize: context.options.pageSize,
+                                   excludedTables: context.excludedTables,
                                    sendBoundaryProbe: sendBoundaryProbe,
                                    pipelineSubscription: subscriptionTrace,
                                    diagnosticGroupID: group.diagnosticGroupID,
@@ -667,6 +674,14 @@ private enum PreparedPushPage: Sendable {
             // chunk. A nudge can neither fall between them nor start a rival.
             if finishPass(sub, pipelinePass: pump.pass) { startPass(pump) }
             else { stopPump(pump) }
+        case let .excluded(last):
+            // The bounded page contained only excluded rows. Advance this
+            // socket's scan cursor without emitting an empty frame or ending
+            // the pass; a visible row may follow on the next bounded page.
+            guard !sub.nativePagesStopped.isRevoked, last > pump.cursor else { unsubscribe(sub); return }
+            pump.cursor = last
+            advance(sub, to: last, pipelineRequest: pump.pass)
+            readNextPage(pump)
         case let .encodingFailed(reason):
             log.error("observer-push: failed after id \(pump.cursor): \(reason); dropping subscriber")
             _ = sub.socket.close(code: .policyViolation)
@@ -722,7 +737,8 @@ private enum PreparedPushPage: Sendable {
             var preparedCursor = cursor
             // Reads and encoding now interleave; encode span covers whole bounded preparation.
             let encoding = pipeline?.capture(.encodeBegin, parent: pageRead, cursor: cursor)
-            let frame = try BoundedAuditFrame.encode(start: 0, maxCount: pageSize) { _ in
+            let frame = try BoundedAuditFrame.encode(start: 0, maxCount: pageSize,
+                including: { !sub.excludedTables.contains($0.tableName.lowercased()) }) { _ in
                 let after = preparedCursor
                 guard !sub.nativePagesStopped.isRevoked, !sub.revocation.isRevoked,
                       !sub.socket.isClosed else {
@@ -739,7 +755,8 @@ private enum PreparedPushPage: Sendable {
             let pageReadEnd = pipeline?.capture(.pageReadEnd, parent: pageRead, cursor: cursor, count: frame.count)
             sub.setupDiagnostic?.record(.pushPageEnd, span: sub.diagnosticGroupID ?? 0, count: frame.count)
             pipeline?.capture(.encodeEnd, parent: encoding, count: frame.data.count)
-            guard let last = frame.lastID else { return .empty }
+            guard frame.scannedCount > 0, let last = frame.scannedLastID else { return .empty }
+            if frame.count == 0 { return .excluded(last: last) }
             let ids = sub.sendBoundaryProbe == nil ? [] : frame.ids
             return .encoded(data: frame.data, count: frame.count, last: last, ids: ids, trace: pageReadEnd)
         } catch {
@@ -766,8 +783,8 @@ private enum PreparedPushPage: Sendable {
         return cursor
     }
 
-    /// The cursor only advances after a successful send completion — every
-    /// frame is produced by `id > cursor ORDER BY id ASC`, so no dupes by
+    /// Visible content advances after a successful send; excluded-only pages
+    /// advance after a bounded scan. Every frame is produced by `id > cursor ORDER BY id ASC`, so no dupes by
     /// construction.
     private func advance(_ sub: PushSubscription, to cursor: Int64, pipelineRequest: UInt64?) {
         let scope = actorDiagnostics.begin(.advance, group: sub.diagnosticGroupID)

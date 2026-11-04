@@ -112,4 +112,32 @@ struct BoundedAuditFrameTests {
         }
         #expect(!diagnosticCalled)
     }
+    @Test func filteredRowsAdvanceOnlyScannedPrefixWithinByteBound() throws {
+        let rows = [row(0, bytes: 128), row(1, bytes: 4096), row(2, bytes: 128)]
+        rows[1].tableName = "PrivateFence"
+        let single = try BoundedAuditFrame.encode(start: 0, maxCount: 1) { rows[$0] }
+        let first = try BoundedAuditFrame.encode(start: 0, maxCount: 3, maximumBytes: single.data.count,
+            including: { $0.tableName != "PrivateFence" }) { rows[$0] }
+        #expect(first.count == 1 && first.scannedCount == 2)
+        #expect(first.lastID == rows[0].primaryKey && first.scannedLastID == rows[1].primaryKey)
+        #expect(first.data.count <= single.data.count) // excluded large row was never encoded
+        guard case let .auditLog(visible) = try JSONDecoder().decode(ServerSentEvent.self, from: first.data) else {
+            Issue.record("Wrong filtered wire kind"); return
+        }
+        #expect(visible.map(\.globalId) == [rows[0].globalId])
+        let next = try BoundedAuditFrame.encode(start: first.scannedCount, maxCount: 1,
+            maximumBytes: single.data.count, including: { $0.tableName != "PrivateFence" }) { rows[$0] }
+        #expect(next.ids == [rows[2].globalId] && next.scannedCount == 1)
+        let hidden = try BoundedAuditFrame.encode(start: 1, maxCount: 1, maximumBytes: 128,
+            including: { _ in false }) { rows[$0] }
+        #expect(hidden.count == 0 && hidden.lastID == nil)
+        #expect(hidden.scannedCount == 1 && hidden.scannedLastID == rows[1].primaryKey)
+        #expect(throws: BoundedAuditFrame.Failure.self) {
+            try BoundedAuditFrame.encode(start: 0, maxCount: 2, including: { _ in false }) { index in
+                if index == 0 { return rows[0] }
+                throw BoundedAuditFrame.Failure.queryFailed
+            }
+        }
+    }
+
 }

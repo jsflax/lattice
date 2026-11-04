@@ -296,6 +296,103 @@ struct UncheckedSendable<T>: @unchecked Sendable {
 }
 
 extension Lattice {
+    /// Appends exact current model rows to the audit stream once per publication
+    /// key, preserving previous history. Use only for an authoritative snapshot
+    /// inside `withTransaction`; replicas must not certify their partial state.
+    @discardableResult public func appendCurrentSnapshots(tables: Set<String>, publicationKey: String) throws -> Int64 {
+        guard Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) else {
+            throw LatticeError.transactionError("Snapshot publication requires withTransaction.")
+        }
+        guard let core = backend as? CxxBackend else { throw LatticeError.syncReceiveFailed("Snapshot publication requires the core backend.") }
+        var names = lattice.StringVector()
+        for name in tables.sorted() { names.push_back(std.string(name)) }
+        let count = core.ref.append_current_snapshots(names, std.string(publicationKey))
+        if let error = core.lastQueryError() { throw LatticeError.syncReceiveFailed(error) }
+        return count
+    }
+
+    /// Makes retained history sufficient to bootstrap a fresh peer. Appends
+    /// complete current model and relationship INSERTs where no INSERT remains,
+    /// preserving existing audit events, cursors, and replication slots. A tail
+    /// containing only UPDATEs does not count as a baseline. Repeated calls are
+    /// idempotent until retention removes those baselines again.
+    ///
+    /// Call only on the authoritative database, inside `withTransaction`.
+    /// This does not reconcile a stale replica or certify partial replica state.
+    @discardableResult public func ensureCurrentHistory() throws -> Int64 {
+        guard Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) else {
+            throw LatticeError.transactionError("History publication requires withTransaction.")
+        }
+        guard let core = backend as? CxxBackend else {
+            throw LatticeError.syncReceiveFailed("History publication requires the core backend.")
+        }
+        let count = core.ref.ensure_current_history()
+        if let error = core.lastQueryError() { throw LatticeError.syncReceiveFailed(error) }
+        return count
+    }
+
+    /// A consistent, canonical JSON snapshot of every model's global IDs and
+    /// all ordinary/polymorphic relationship row identities and endpoints.
+    /// Contains no model scalar payloads or audit events. Use inside
+    /// `withTransaction` on either authority or replica; compare or hash the
+    /// returned value to verify identities/links as well as row counts.
+    public func currentIdentitySnapshot() throws -> String {
+        guard Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) else {
+            throw LatticeError.transactionError("Identity snapshot requires withTransaction.")
+        }
+        guard let core = backend as? CxxBackend else {
+            throw LatticeError.syncReceiveFailed("Identity snapshot requires the core backend.")
+        }
+        let snapshot = core.ref.current_identity_snapshot()
+        if let error = core.lastQueryError() { throw LatticeError.syncReceiveFailed(error) }
+        return String(snapshot)
+    }
+
+    /// Reads exact applied-event evidence, including a suppressed no-op's
+    /// receipt and equality with a persisted channel cursor after retention.
+    /// This does not certify stream completeness or current model/relationship
+    /// state; retain application validation. No bookkeeping, schema, or
+    /// cursor writes occur. Successful standalone probes emit no result
+    /// invalidation or commit notification.
+    ///
+    /// Standalone calls own a checked backend transaction (and its bounded
+    /// reservation). An existing explicit transaction is reused, never ended.
+    /// The standalone path intentionally avoids `withTransaction`'s write
+    /// invalidation. Its synchronous body only calls Core; it cannot invoke
+    /// Swift model reads or arbitrary callbacks inside the unrecorded scope.
+    public func hasAppliedSyncEvent(globalID: UUID) throws -> Bool {
+        guard let core = backend as? CxxBackend else {
+            throw LatticeError.syncReceiveFailed("Applied-event lookup requires the core backend.")
+        }
+        let ownsTransaction = !Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash)
+        if ownsTransaction { try core.beginTransactionChecked() }
+        do {
+            let applied = core.ref.has_applied_sync_event(std.string(globalID.uuidString.lowercased()))
+            if let error = core.lastQueryError() { throw LatticeError.syncReceiveFailed(error) }
+            if ownsTransaction { try core.commitChecked() }
+            return applied
+        } catch {
+            if ownsTransaction { core.rollback() }
+            throw error
+        }
+    }
+
+    /// Receives one frame atomically when `immutableTables` is nonempty.
+    /// Protected tables accept complete INSERT snapshots only. Identical row
+    /// content is replayable; changed content under a previously accepted row
+    /// identity fails the whole frame. Table names match case-insensitively.
+    /// JSON stored in a text property is compared as text; canonicalize it in
+    /// the application. Transport timestamps/row ids and field ordering do not
+    /// affect identity. Local writes are not restricted by this receive policy.
+    public func receive(_ data: Data, immutableTables: Set<String>, authorize: (() -> Bool)? = nil) throws -> [UUID] {
+        guard !immutableTables.isEmpty || authorize != nil else { return try receive(data) }
+        let checked: (() -> Bool)? = authorize.map { callback in
+            { self._authorizeSyncWrite(callback) }
+        }
+        return try backend.receiveSyncData(data, immutableTables: immutableTables, authorize: checked)
+            .compactMap(UUID.init(uuidString:))
+    }
+
     public func receive(_ data: Data) throws -> [UUID] {
         let result = backend.receiveSyncData(data).compactMap {
             UUID(uuidString: $0)

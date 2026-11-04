@@ -70,7 +70,7 @@ let package = Package(
         // and native NACK/decode diagnostics.
         // Exact integration keeps those released APIs plus checked audit fences,
         // local receipt metadata and owned audited-writer preparation.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "6d54ae205102c6ad16105f6bdc98371bd25ef456"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "ffb84d0137e62b0ce9862e243a495eedafe63536"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -86,6 +86,12 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
     ],
     targets: [
+        .systemLibrary(name: "CLatticeDiagnosticsSQLite", providers: [.apt(["libsqlite3-dev"])]),
+        .target(name: "LatticeDebugBridge",
+                dependencies: [.product(name: "LatticeSwiftCppBridge", package: "LatticeCore")],
+                publicHeadersPath: "include",
+                cxxSettings: [.unsafeFlags(["-std=c++20"]),
+                              .unsafeFlags(["-fno-implicit-module-maps"], .when(platforms: [.macOS, .iOS]))]),
         // Test-only real SQLite fault injection; the suite must compile on Linux.
         .systemLibrary(
             name: "CLatticeTestSQLite",
@@ -104,7 +110,7 @@ let package = Package(
         ),
         .target(
             name: "Lattice",
-            dependencies: ["LatticeMacros",
+            dependencies: ["LatticeMacros", "LatticeDebugBridge",
                 .product(name: "LatticeSwiftCppBridge", package: "LatticeCore"),
                 .product(name: "LatticeSwiftModule", package: "LatticeCore"),
                 .product(name: "Collections", package: "swift-collections"),
@@ -165,7 +171,7 @@ let package = Package(
         // shell imports the MCP SDK WITHOUT Cxx interop so the SDK's dependency
         // graph (EventSource/swift-numerics) compiles normally.
         .target(name: "LatticeMCP",
-                dependencies: ["Lattice"],
+                dependencies: ["Lattice", "CLatticeDiagnosticsSQLite"],
                 swiftSettings: [.interoperabilityMode(.Cxx)]),
         .target(name: "LatticeMCPTransport", dependencies: [.product(name: "MCP", package: "swift-sdk"), .product(name: "Logging", package: "swift-log")]),
         .testTarget(
@@ -179,6 +185,7 @@ let package = Package(
         .executableTarget(name: "lattice-mcp",
                           dependencies: [
                             "LatticeMCP",
+                            "LatticeMCPTransport",
                             .product(name: "MCP", package: "swift-sdk"),
                           ],
                           swiftSettings: [.interoperabilityMode(.Cxx)])

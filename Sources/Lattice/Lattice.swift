@@ -2862,6 +2862,20 @@ public struct Lattice {
         }
     }
     
+    /// Core already owns BEGIN. Read policy from that writer connection and
+    /// refuse on sealed query errors instead of consulting a pinned MVCC view.
+    internal func _authorizeSyncWrite(_ authorize: () -> Bool) -> Bool {
+        guard !TransactionFailureScope.isActive else { return false }
+        let failures = TransactionFailureScope()
+        let owner = ObjectIdentifier(Thread.current)
+        Self._recordExplicitTxnBegin(identityHash: backend.identityHash)
+        defer {
+            Self._recordExplicitTxnEnd(identityHash: backend.identityHash, expectedOwner: owner)
+            failures.restore()
+        }
+        return authorize() && failures.firstError == nil
+    }
+
     /// Run a synchronous write transaction with catchable backend failures.
     /// A failed BEGIN never executes `block`. A reported query or primitive
     /// write failure rolls back the transaction even if a later operation

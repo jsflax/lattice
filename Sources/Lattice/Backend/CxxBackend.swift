@@ -703,6 +703,24 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditCursorBackend,
         }
         return out
     }
+    func receiveSyncData(_ data: Data, immutableTables: Set<String>, authorize: (() -> Bool)?) throws -> [String] {
+        var tables = lattice.StringVector()
+        for table in immutableTables.sorted() { tables.push_back(std.string(table)) }
+        let box = SyncTransactionAuthorization(authorize)
+        let result = withExtendedLifetime(box) {
+            ref.receive_sync_data_authorized(data.toCxxValue(), tables, Unmanaged.passUnretained(box).toOpaque()) { context in
+                guard let context else { return false }
+                return Unmanaged<SyncTransactionAuthorization>.fromOpaque(context).takeUnretainedValue().authorize?() ?? true
+            }
+        }
+        if result.error.__convertToBool() {
+            throw LatticeError.syncReceiveFailed(String(result.error.pointee))
+        }
+        var out: [String] = []
+        for index in 0..<result.ids.size() { out.append(String(result.ids[index])) }
+        return out
+    }
+
     func lastReceiveError() -> String? {
         let e = ref.last_receive_error()
         return e.__convertToBool() ? String(e.pointee) : nil
@@ -1052,4 +1070,9 @@ func _makeCxxSyncFilter(_ entries: [(String, String?)]) -> lattice.SyncFilterVec
         vec.push_back(entry)
     }
     return vec
+}
+
+private final class SyncTransactionAuthorization {
+    let authorize: (() -> Bool)?
+    init(_ authorize: (() -> Bool)?) { self.authorize = authorize }
 }

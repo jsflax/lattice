@@ -8,6 +8,9 @@ struct BoundedAuditFrame {
     let count: Int
     let lastID: Int64?
     let ids: [UUID?]
+    /// Includes filtered rows, but never a visible row rejected by the byte cap.
+    let scannedCount: Int
+    let scannedLastID: Int64?
 
     enum Failure: Error, CustomStringConvertible {
         case invalidLimit, missingRow, queryFailed, rowTooLarge
@@ -30,6 +33,7 @@ struct BoundedAuditFrame {
     /// no whole-tail COUNT is needed before starting a bounded page.
     static func encode(start: Int, maxCount: Int,
                        maximumBytes: Int = Lattice.maximumEncodedSyncMessageBytes,
+                       including: (AuditLog) -> Bool = { _ in true },
                        didPrepare: (([AuditLog]) -> Void)? = nil,
                        rowAt: (Int) throws -> AuditLog?) throws -> Self {
         let prefix = Data(#"{"kind":"auditLog","auditLog":["#.utf8)
@@ -38,6 +42,8 @@ struct BoundedAuditFrame {
         guard maximumBytes > envelope, start >= 0, maxCount > 0 else { throw Failure.invalidLimit }
         var data = prefix
         var count = 0
+        var scannedCount = 0
+        var scannedLastID: Int64?
         var lastID: Int64?
         var ids: [UUID?] = []
         var diagnosticRows: [AuditLog] = []
@@ -45,6 +51,11 @@ struct BoundedAuditFrame {
         for offset in 0..<maxCount {
             guard offset <= Int.max - start else { throw Failure.invalidLimit }
             guard let row = try rowAt(start + offset) else { break }
+            if !including(row) {
+                scannedCount += 1
+                scannedLastID = row.primaryKey
+                continue
+            }
             let encoded = try encoder.encode(row)
             guard encoded.count <= maximumBytes - envelope else {
                 if count != 0 { break }
@@ -55,13 +66,16 @@ struct BoundedAuditFrame {
             if separator != 0 { data.append(0x2c) }
             data.append(encoded)
             count += 1
+            scannedCount += 1
+            scannedLastID = row.primaryKey
             lastID = row.primaryKey
             ids.append(row.globalId)
             if didPrepare != nil { diagnosticRows.append(row) }
         }
         data.append(suffix)
         didPrepare?(diagnosticRows) // synchronous only; managed rows are dropped before return
-        return Self(data: data, count: count, lastID: lastID, ids: ids)
+        return Self(data: data, count: count, lastID: lastID, ids: ids,
+                    scannedCount: scannedCount, scannedLastID: scannedLastID)
     }
 
     /// Run synchronously on the existing store IO route. Materializing the single

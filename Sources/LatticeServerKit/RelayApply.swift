@@ -156,6 +156,11 @@ enum RelayApplyErrorClass: String, Sendable {
     static func classify(_ message: String?) -> RelayApplyErrorClass {
         guard let message else { return .containedChunkFailure }
         let text = message.lowercased()
+        // Policy detail can contain identifiers such as BusyCommand. These
+        // terminal refusals must never be mistaken for SQLite contention.
+        if text.contains("immutable sync violation:") || text.contains("sync authorization denied:") {
+            return .other
+        }
         if text.contains("cannot start a transaction within a transaction") {
             return .nestedTransaction
         }
@@ -199,6 +204,14 @@ struct RelayFrame {
     /// True when the frame carries an `auditLog` key at all (even a malformed
     /// one) — i.e. it claims to be an upload.
     var claimsUpload: Bool { root?["auditLog"] != nil }
+
+    /// Exact no-content ACK form supported by a read-only download source.
+    /// Mixed uploads and malformed control frames never take this no-write path.
+    var isPureAcknowledgement: Bool {
+        guard let root, Set(root.keys) == Set(["kind", "ack"]), root["kind"] as? String == "ack",
+              let ids = root["ack"] as? [String] else { return false }
+        return ids.allSatisfy { UUID(uuidString: $0) != nil }
+    }
 
     init(_ data: Data) {
         byteCount = data.count
@@ -288,7 +301,9 @@ func applyWithRetry(
     data: Data,
     frame: RelayFrame,
     channelId: String,
-    userId: UUID
+    userId: UUID,
+    immutableTables: Set<String> = [],
+    authorize: (() -> Bool)? = nil
 ) -> RelayApplyOutcome {
     var outcome = RelayApplyOutcome()
     var appliedSet: Set<UUID> = []
@@ -307,7 +322,10 @@ func applyWithRetry(
             if let fault = _applyFaultForTesting.withLockedValue({ $0 }) {
                 try fault(channelId, outcome.attempts)
             }
-            for id in try lattice.receive(data) where appliedSet.insert(id).inserted {
+            let received = try immutableTables.isEmpty && authorize == nil
+                ? lattice.receive(data)
+                : lattice.receive(data, immutableTables: immutableTables, authorize: authorize)
+            for id in received where appliedSet.insert(id).inserted {
                 outcome.applied.append(id)
             }
         } catch {
