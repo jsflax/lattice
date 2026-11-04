@@ -115,8 +115,13 @@ struct AppliedSyncEventTests {
         #expect(sqlite3_open_v2(url.path, &pointer, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK)
         let db = try #require(pointer)
         defer { sqlite3_close(db) }
-        guard sqlite3_exec(db, statement, nil, nil, nil) == SQLITE_OK else {
-            throw LatticeError.transactionError("Owned applied-event metadata fixture failed.")
+        // This connection intentionally writes the owned current-epoch fixture.
+        // The read-only Lattice probes above do not register this capability.
+        try registerCurrentWriterForFixtureMutation(db)
+        let result = sqlite3_exec(db, statement, nil, nil, nil)
+        guard result == SQLITE_OK else {
+            let reason = String(cString: sqlite3_errmsg(db))
+            throw LatticeError.transactionError("Owned applied-event metadata fixture failed (SQLite \(result)): \(reason); statement: \(statement)")
         }
     }
     #endif

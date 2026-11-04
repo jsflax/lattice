@@ -4,7 +4,7 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "ffb84d0137e62b0ce9862e243a495eedafe63536",
+      "revision": "e678b10e9cdb8eabad65b0a16dcd05a2166f771e",
       "selection": "revision"
     },
     {
@@ -42,13 +42,13 @@
   },
   "sourceEvidence": {
     "latticecore": {
-      "revision": "ffb84d0137e62b0ce9862e243a495eedafe63536",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/ffb84d0137e62b0ce9862e243a495eedafe63536",
+      "revision": "e678b10e9cdb8eabad65b0a16dcd05a2166f771e",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/e678b10e9cdb8eabad65b0a16dcd05a2166f771e",
       "selection": "revision",
       "parents": [
-        "ed05c91e8e60e46057ce07864c4a6daaa9b9d1f7"
+        "ffb84d0137e62b0ce9862e243a495eedafe63536"
       ],
-      "scope": "Reviewed successor preserves authoritative history/identity/applied-event and opt-in immutable/authorized receive, current transaction ownership, receipt handling and owned certificate-pin copying. Restores canonical and legacy typed-union receiver decoding with owned schema metadata and quoted SQL identifiers. Original Core CI is running; this complete Swift consumer graph, tests and installed products remain unqualified."
+      "scope": "Source-reviewed successor preserves epoch9 history/identity, typed-union decoding, opt-in immutable/authorized receive, receipt ownership and transport behavior. Restores null-preserving 17-digit REAL audit encoding and upgrades affected audit triggers through the existing schema-owner path; adds test-local vector-filter phase observations with the unchanged watchdog. Actual upstream CI and this complete SDK consumer graph remain unqualified; no build, test or installed-product acceptance is inferred."
     },
     "swift-sdk": {
       "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
@@ -154,5 +154,14 @@
       "6d54ae205102c6ad16105f6bdc98371bd25ef456"
     ],
     "scope": "Reviewed authoritative history/identity/applied-event and opt-in immutable/authorized receive restoration, preserving current transaction ownership, receipt handling and ordinary sync behavior. Includes an owned certificate-pin copy bridge for the Swift lifetime regression. Original Core CI and this complete Swift consumer graph remain pending; no runtime or installed-product acceptance is inferred."
+  },
+  "previousUnionReceiverSourceEvidence": {
+    "revision": "ffb84d0137e62b0ce9862e243a495eedafe63536",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/ffb84d0137e62b0ce9862e243a495eedafe63536",
+    "selection": "revision",
+    "parents": [
+      "ed05c91e8e60e46057ce07864c4a6daaa9b9d1f7"
+    ],
+    "scope": "Reviewed successor preserves authoritative history/identity/applied-event and opt-in immutable/authorized receive, current transaction ownership, receipt handling and owned certificate-pin copying. Restores canonical and legacy typed-union receiver decoding with owned schema metadata and quoted SQL identifiers. Original Core CI is running; this complete Swift consumer graph, tests and installed products remain unqualified."
   }
 }

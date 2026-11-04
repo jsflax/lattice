@@ -1,7 +1,8 @@
 import Foundation
 import Testing
 import Lattice
-import LatticeMCP
+@testable import LatticeMCP
+import CLatticeTestSQLite
 
 // Exercises the full MCP tool pipeline (schema/query/get/count + DynamicQuery +
 // serializer) through LatticeDataProvider — JSON string in, JSON string out —
@@ -10,7 +11,7 @@ import LatticeMCP
 @Suite("LatticeMCP Provider Tests")
 final class LatticeMCPProviderTests {
 
-    private func fixture() throws -> URL {
+    private func fixture(captureSourceDiagnostics: Bool = false) throws -> URL {
         let url = testTemporaryDirectory
             .appending(path: "mcp_\(UUID().uuidString).sqlite")
         let lattice = try Lattice(DynPerson.self, DynDog.self, configuration: .init(fileURL: url))
@@ -21,8 +22,62 @@ final class LatticeMCPProviderTests {
         let bob = DynPerson(); bob.name = "Bob"; bob.age = 20
         try lattice.add(bob)
         lattice.checkpoint()
+        if captureSourceDiagnostics { captureSourceSnapshot(url, phase: "before-close") }
         lattice.close()
+        if captureSourceDiagnostics { captureSourceSnapshot(url, phase: "after-close") }
         return url
+    }
+
+    /// Metadata from this synthetic fixture only. No row values, source paths or inode numbers.
+    /// These observations diagnose a refusal; they never authorize or retry a query.
+    private func emitSourceDiagnostic(_ observation: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: observation, options: [.sortedKeys]),
+              data.count <= 131_072 else { return }
+        FileHandle.standardError.write(Data("[mcp-source-diagnostic] ".utf8) + data + Data([10]))
+    }
+
+    private func captureSourceSnapshot(_ url: URL, phase: String) {
+        var observation: [String: Any] = ["phase": phase]
+        var db: OpaquePointer?
+        let openCode = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil)
+        observation["openCode"] = openCode
+        defer { if let db { sqlite3_close(db) } }
+        guard openCode == SQLITE_OK, let db else { emitSourceDiagnostic(observation); return }
+        sqlite3_busy_timeout(db, 1_000)
+        var statement: OpaquePointer?
+        let cookieCode = sqlite3_prepare_v2(db, "PRAGMA schema_version", -1, &statement, nil)
+        observation["cookiePrepareCode"] = cookieCode
+        if cookieCode == SQLITE_OK, sqlite3_step(statement) == SQLITE_ROW {
+            observation["schemaCookie"] = sqlite3_column_int64(statement, 0)
+        }
+        sqlite3_finalize(statement); statement = nil
+        // Names/types/definition lengths distinguish statistics creation from other schema work
+        // without emitting SQL or payload values. Bounded evidence, not a structural admission proof.
+        let code = sqlite3_prepare_v2(db,
+            "SELECT type, name, tbl_name, COALESCE(length(sql), 0) FROM sqlite_master ORDER BY type, name, tbl_name LIMIT 129",
+            -1, &statement, nil)
+        observation["schemaPrepareCode"] = code
+        defer { sqlite3_finalize(statement) }
+        if code == SQLITE_OK {
+            var rows: [[String: Any]] = []
+            var truncated = false
+            var step = sqlite3_step(statement)
+            while step == SQLITE_ROW {
+                if rows.count == 128 { truncated = true; break }
+                var row: [String: Any] = ["sqlLength": sqlite3_column_int64(statement, 3)]
+                for (index, key) in ["type", "name", "table"].enumerated() {
+                    let value = sqlite3_column_text(statement, Int32(index)).map { String(cString: $0) } ?? ""
+                    if value.utf8.count > 256 { truncated = true }
+                    row[key] = String(value.prefix(256))
+                }
+                rows.append(row)
+                step = sqlite3_step(statement)
+            }
+            observation["objects"] = rows
+            observation["truncated"] = truncated
+            observation["schemaStepCode"] = step
+        }
+        emitSourceDiagnostic(observation)
     }
 
     @Test func testProviderToolCalls() async throws {
@@ -104,13 +159,20 @@ final class LatticeMCPProviderTests {
     }
 
     @Test func testScopedQueriesKeepRowsFieldsAndSourcePrivate() async throws {
-        let url = try fixture()
+        let url = try fixture(captureSourceDiagnostics: true)
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         let pool = LatticeProviderPool(defaultDB: url,
             readPolicy: LatticeReadPolicy(permittedFields: ["DynPerson": ["name"]],
                 requiredRowValues: ["DynPerson": ["name": "Alice"]]), sourceID: "selected-room")
+        captureSourceSnapshot(url, phase: "before-first-query")
         let result = await pool.handle(tool: "lattice_query",
             argumentsJSON: #"{"model":"DynPerson","depth":3}"#)
+        captureSourceSnapshot(url, phase: "after-first-query")
+        if let change = await pool.lastSourceChangeDiagnostic {
+            emitSourceDiagnostic(["phase": "pool-source-change", "identityChanged": change.identityChanged,
+                "schemaCookieBefore": change.schemaCookieBefore ?? "unavailable",
+                "schemaCookieAfter": change.schemaCookieAfter ?? "unavailable"])
+        }
         #expect(!result.isError)
         let json = try #require(JSONSerialization.jsonObject(with: Data(result.json.utf8)) as? [String: Any])
         let rows = try #require(json["results"] as? [[String: Any]])

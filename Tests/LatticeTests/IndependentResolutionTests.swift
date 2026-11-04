@@ -21,6 +21,82 @@ private final class IndependentWeakBackend {
 
 @Suite("Independent reference resolution", .serialized)
 class IndependentResolutionTests: BaseTest {
+    @Test @MainActor func publicIndependentReadersPreserveIsolationAndDoNotCloseCachedOwner() throws {
+        let writer = try testLattice(IndependentResolutionItem.self)
+        defer { writer.close() }
+        try writer.add(IndependentResolutionItem(name: "original"))
+        var config = writer.configuration
+        config.isReadOnly = true
+        config.uploadsEnabled = false
+        config.busyTimeoutMs = 137
+        config.resultsTuning.generationTTLSeconds = 7
+        let cached = try Lattice(for: [IndependentResolutionItem.self], configuration: config)
+        let first = try Lattice(independentFor: [IndependentResolutionItem.self], configuration: config)
+        let second = try Lattice(independentFor: [IndependentResolutionItem.self], configuration: config)
+        defer { first.close(); second.close(); cached.close() }
+        #expect(first.backend.identityHash != cached.backend.identityHash)
+        #expect(second.backend.identityHash != cached.backend.identityHash)
+        #expect(first.backend.identityHash != second.backend.identityHash)
+        #expect(first.isolation === MainActor.shared)
+        #expect(second.isolation === MainActor.shared)
+        #expect(first.configuration == config)
+        #expect(first.configuration.isReadOnly && !first.configuration.uploadsEnabled)
+        #expect(first.configuration.busyTimeoutMs == 137)
+        #expect(first.configuration.resultsTuning.generationTTLSeconds == 7)
+        #expect(first.objects(IndependentResolutionItem.self).first?.name == "original")
+        let nativeRef = try #require(second.backend.asCxxLatticeRef)
+        #expect(Lattice(ref: nativeRef)?.backend.identityHash == second.backend.identityHash)
+        first.close()
+        #expect(throws: (any Error).self) { _ = try first.storedSchemaVersion() }
+        try writer.add(IndependentResolutionItem(name: "still writable"))
+        try Lattice.withCurrentReadScope {
+            #expect(try cached.storedSchemaVersion() > 0)
+            #expect(try second.storedSchemaVersion() > 0)
+            #expect(cached.objects(IndependentResolutionItem.self).count == 2)
+            #expect(second.objects(IndependentResolutionItem.self).count == 2)
+        }
+        #expect(throws: (any Error).self) { try second.add(IndependentResolutionItem(name: "must fail")) }
+        let stillCached = try Lattice(for: [IndependentResolutionItem.self], configuration: config)
+        #expect(stillCached.backend.identityHash == cached.backend.identityHash)
+        #expect(writer.objects(IndependentResolutionItem.self).count == 2)
+    }
+
+    @Test func publicIndependentReadOnlyOpenThrowsWithoutCreatingMissingStore() throws {
+        let original = try testLattice(IndependentResolutionItem.self)
+        var config = original.configuration
+        original.close()
+        try Lattice.delete(for: config)
+        config.isReadOnly = true
+        config.uploadsEnabled = false
+        #expect(throws: (any Error).self) {
+            _ = try Lattice(independentFor: [IndependentResolutionItem.self], configuration: config)
+        }
+        #expect(!FileManager.default.fileExists(atPath: config.fileURL.path))
+        try FileManager.default.createDirectory(at: config.fileURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: config.fileURL) }
+        #expect(throws: (any Error).self) {
+            _ = try Lattice(independentFor: [IndependentResolutionItem.self], configuration: config)
+        }
+        #expect(try config.fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true)
+    }
+
+    @Test func publicIndependentOpenRunsConfiguredMigration() throws {
+        typealias V1 = IndependentMigrationV1.Item
+        typealias V2 = IndependentMigrationV2.Item
+        let original = try testLattice(V1.self)
+        let row = V1(); row.value = "42"
+        try original.add(row)
+        var config = original.configuration
+        original.close()
+        config.migration = [2: Migration((from: V1.self, to: V2.self), blocks: { old, new in
+            new.value = Int(old.value) ?? -1
+        })]
+        let migrated = try Lattice(independentFor: [V2.self], configuration: config)
+        defer { migrated.close() }
+        #expect(migrated.objects(V2.self).first?.value == 42)
+        #expect(migrated.configuration.migration?.keys.max() == 2)
+    }
+
     @Test func distinctConnectionsKeepCachedResolutionAndStoreIdentity() throws {
         let original = try testLattice(IndependentResolutionItem.self)
         defer { original.close() }

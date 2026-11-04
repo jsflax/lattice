@@ -70,7 +70,7 @@ let package = Package(
         // and native NACK/decode diagnostics.
         // Exact integration keeps those released APIs plus checked audit fences,
         // local receipt metadata and owned audited-writer preparation.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "ffb84d0137e62b0ce9862e243a495eedafe63536"),
+        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "e678b10e9cdb8eabad65b0a16dcd05a2166f771e"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",

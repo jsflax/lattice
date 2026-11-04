@@ -10,6 +10,13 @@ public actor LatticeProviderPool {
     private let readPolicy: LatticeReadPolicy?
     private let sourceID: String?
     private var authorizedIdentity: String?
+    /// Bounded internal failure evidence; never exposed in the MCP response or used for admission.
+    struct SourceChangeDiagnostic: Sendable {
+        let identityChanged: Bool
+        let schemaCookieBefore: String?
+        let schemaCookieAfter: String?
+    }
+    private(set) var lastSourceChangeDiagnostic: SourceChangeDiagnostic?
     private struct Entry {
         let signature: String
         let diagnostics: LatticeDiagnostics
@@ -92,7 +99,12 @@ public actor LatticeProviderPool {
                     throw error
                 }
             }
-            guard try LatticeFilePreflight.signature(file) == signature else {
+            let finalSignature = try LatticeFilePreflight.signature(file)
+            guard finalSignature == signature else {
+                lastSourceChangeDiagnostic = SourceChangeDiagnostic(
+                    identityChanged: LatticeFilePreflight.identity(finalSignature) != LatticeFilePreflight.identity(signature),
+                    schemaCookieBefore: signature.split(separator: ":").last.map(String.init),
+                    schemaCookieAfter: finalSignature.split(separator: ":").last.map(String.init))
                 entries[key] = nil
                 return .error("source_changed", "The store or schema changed during the read. Retry with a fresh reader.")
             }

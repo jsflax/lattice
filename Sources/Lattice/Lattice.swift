@@ -1271,6 +1271,21 @@ public struct Lattice {
         try self.init(isolation: isolation, for: schema, configuration: configuration, isSynchronizing: false)
     }
 
+    /// Open a distinct connection without joining the path/scheduler cache.
+    /// Storage identity, schema, migrations and configuration are preserved;
+    /// independence applies to the connection, not to the stored data.
+    /// Closing this handle does not close another handle opened with the same
+    /// configuration. Native open failures are thrown through the checked route.
+    ///
+    /// The handle keeps the caller's isolation. Set `isReadOnly` and other
+    /// configuration policies explicitly; independence does not change them.
+    public init(isolation: isolated (any Actor)? = #isolation,
+                independentFor schema: [any Model.Type],
+                configuration: Configuration = defaultConfiguration) throws {
+        try self.init(isolation: isolation, for: schema, configuration: configuration,
+                      isSynchronizing: false, independentConnection: true)
+    }
+
     internal var schema: _Schema?
     /// The schema as it was BEFORE any attach — detach rebuilds from this,
     /// preserving the original (possibly pack-based) schema semantics.
