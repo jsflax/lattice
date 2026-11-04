@@ -50,8 +50,10 @@ class IndependentResolutionTests: BaseTest {
         #expect(throws: (any Error).self) { _ = try first.storedSchemaVersion() }
         try writer.add(IndependentResolutionItem(name: "still writable"))
         try Lattice.withCurrentReadScope {
-            #expect(try cached.storedSchemaVersion() > 0)
-            #expect(try second.storedSchemaVersion() > 0)
+            let cachedSchemaVersion = try cached.storedSchemaVersion()
+            #expect(cachedSchemaVersion > 0)
+            let secondSchemaVersion = try second.storedSchemaVersion()
+            #expect(secondSchemaVersion > 0)
             #expect(cached.objects(IndependentResolutionItem.self).count == 2)
             #expect(second.objects(IndependentResolutionItem.self).count == 2)
         }
