@@ -13,10 +13,12 @@ struct CodexInitializeCompatibilityTests {
         ], options: [.sortedKeys])
     }
 
-    @Test func emptyUnsupportedAdvertisementNoLongerBreaksActualSDKInitialization() throws {
+    @Test func emptyCodexAdvertisementNormalizesAndRetainsNativeDecoding() throws {
         // Exact synthetic loaded-thread initialize frame captured from installed Codex 0.154.0.
         let original = Data(#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{"experimental":{"codex/auth-change":{}},"elicitation":{"form":{},"url":{}}},"clientInfo":{"name":"codex-mcp-client","title":"Codex","version":"0.154.0"}}}"#.utf8)
-        #expect(throws: (any Error).self) { try JSONDecoder().decode(Request<Initialize>.self, from: original) }
+        let originalRequest = try JSONDecoder().decode(Request<Initialize>.self, from: original)
+        let emptyAdvertisement: Value = .object([:])
+        #expect(originalRequest.params.capabilities.experimental?["codex/auth-change"] == emptyAdvertisement)
         let normalized = LatticeSerializedStdioTransport.compatibleCodexInitialize(original)
         let request = try JSONDecoder().decode(Request<Initialize>.self, from: normalized)
         #expect(request.id == .number(0))
@@ -51,20 +53,35 @@ struct CodexInitializeCompatibilityTests {
         let parsed = try JSONSerialization.jsonObject(with: Data(value.utf8), options: [.fragmentsAllowed])
         let data = try message(experimental: ["codex/auth-change": parsed])
         #expect(LatticeSerializedStdioTransport.compatibleCodexInitialize(data) == data)
-        if value != "\"supported-string\"" {
-            #expect(throws: (any Error).self) { try JSONDecoder().decode(Request<Initialize>.self, from: data) }
-        }
+        let expected = try JSONDecoder().decode(Value.self, from: Data(value.utf8))
+        let request = try JSONDecoder().decode(Request<Initialize>.self, from: data)
+        #expect(request.params.capabilities.experimental?["codex/auth-change"] == expected)
+        #expect(request.id == .string("exact-request-id"))
+        #expect(request.params.capabilities.roots?.listChanged == true)
     }
 
-    @Test func anotherUnsupportedExtensionStillFailsTheActualSDK() throws {
+    @Test func supportedUnknownExtensionPreservesNativeCoreValidation() throws {
         let data = try message(experimental: ["codex/auth-change": [:], "unknown/object-extension": [:]])
         let normalized = LatticeSerializedStdioTransport.compatibleCodexInitialize(data)
-        #expect(throws: (any Error).self) { try JSONDecoder().decode(Request<Initialize>.self, from: normalized) }
+        let request = try JSONDecoder().decode(Request<Initialize>.self, from: normalized)
+        let emptyExtension: Value = .object([:])
+        #expect(request.params.capabilities.experimental?["unknown/object-extension"] == emptyExtension)
+        #expect(request.params.capabilities.experimental?["codex/auth-change"] == nil)
         let root = try #require(try JSONSerialization.jsonObject(with: normalized) as? [String: Any])
         let params = try #require(root["params"] as? [String: Any])
         let caps = try #require(params["capabilities"] as? [String: Any])
         let experimental = try #require(caps["experimental"] as? [String: Any])
         #expect(experimental["unknown/object-extension"] != nil)
+        // A wrong core capability type remains invalid before and after the narrow normalization.
+        var invalidRoot = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var invalidParams = try #require(invalidRoot["params"] as? [String: Any])
+        var invalidCapabilities = try #require(invalidParams["capabilities"] as? [String: Any])
+        invalidCapabilities["roots"] = ["listChanged": "not-a-boolean"]
+        invalidParams["capabilities"] = invalidCapabilities; invalidRoot["params"] = invalidParams
+        let invalid = try JSONSerialization.data(withJSONObject: invalidRoot, options: [.sortedKeys])
+        let normalizedInvalid = LatticeSerializedStdioTransport.compatibleCodexInitialize(invalid)
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(Request<Initialize>.self, from: invalid) }
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(Request<Initialize>.self, from: normalizedInvalid) }
     }
 
     @Test(arguments: ["tools/call", "notifications/initialized", "other/initialize"])

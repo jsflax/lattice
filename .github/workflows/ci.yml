@@ -188,7 +188,7 @@ jobs:
       - name: Test
         id: test
         env:
-          LATTICE_ACK_PATH_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
+          LATTICE_ACK_PATH_DIAGNOSTICS: '1'
           LATTICE_OBSERVER_WORKER_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
         working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
         run: >-

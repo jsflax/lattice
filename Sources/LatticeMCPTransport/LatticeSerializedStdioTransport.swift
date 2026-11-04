@@ -82,7 +82,7 @@ public actor LatticeSerializedStdioTransport: Transport {
         }
     }
 
-    /// The selected MCP SDK decodes experimental client capabilities as string values.
+    /// Experimental capabilities retain the selected MCP SDK's JSON value semantics.
     /// Codex advertises an optional empty auth-change capability that this server
     /// does not implement. Omit only that exact advertisement, as our existing
     /// Codex compatibility relay does; every other shape keeps native validation.
