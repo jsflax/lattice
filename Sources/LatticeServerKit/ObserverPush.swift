@@ -138,9 +138,9 @@ struct ObserverSendBoundaryProbe: Sendable {
 /// pre-1.7 behavior exactly — the parameter is purely additive, so rollback
 /// is `observerPush: nil`.
 public struct SyncObserverPush: Sendable {
-    /// AuditLog entries per pushed frame. Catch-up uses 1000; push defaults
-    /// lower because a worst-case entry is ~16KiB (the ToolEvent result
-    /// cap), so 256 bounds a page at ~4MiB.
+    /// Maximum AuditLog entries per pushed frame. The shared encoded-message
+    /// byte limit also applies; neither binary fields nor arbitrary strings
+    /// are assumed to have a fixed per-row size.
     public var pageSize: Int
     /// Safety-net pump for the documented best-effort cross-process wakeup:
     /// every interval, nudge all subscribers (a clean pump is one indexed
@@ -187,6 +187,7 @@ struct MountPushContext: @unchecked Sendable {
     let schema: [any Lattice.Model.Type]
     let storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)?
     let options: SyncObserverPush
+    var excludedTables: Set<String> = []
 }
 
 // MARK: - WatcherRef
@@ -228,6 +229,8 @@ final class PushSubscription: @unchecked Sendable {
     /// options (the manager is process-wide, so per-mount tuning rides the
     /// subscription). Clamped positive at construction.
     let pageSize: Int
+    /// Per-mount policy travels with each subscription, never the shared watcher.
+    let excludedTables: Set<String>
     /// Already selected for this connection's exact channel by the mount.
     let sendBoundaryProbe: ObserverSendBoundaryProbe?
     /// Recorder-local identity, immutable for this subscription (nil when off).
@@ -249,12 +252,14 @@ final class PushSubscription: @unchecked Sendable {
     var active = true
 
     init(socket: WebSocket, revocation: RevocationFlag, key: String, pageSize: Int,
+         excludedTables: Set<String> = [],
          sendBoundaryProbe: ObserverSendBoundaryProbe? = nil,
          pipelineSubscription: UInt64? = nil, diagnosticGroupID: UInt64? = nil, setupDiagnostic: ACKPathConnection? = nil) {
         self.socket = socket
         self.revocation = revocation
         self.key = key
         self.pageSize = max(1, pageSize)
+        self.excludedTables = Set(excludedTables.map { $0.lowercased() })
         self.sendBoundaryProbe = sendBoundaryProbe
         self.pipelineSubscription = pipelineSubscription
         self.diagnosticGroupID = diagnosticGroupID
@@ -300,7 +305,9 @@ private final class FileWatchGroup {
 
 /// A prepared page owns bytes and fixed metadata, never managed row handles.
 private enum PreparedPushPage: Sendable {
-    case empty, stopped, encodingFailed
+    case empty, stopped
+    case excluded(last: Int64)
+    case encodingFailed(String)
     case encoded(data: Data, count: Int, last: Int64, ids: [UUID?], trace: UInt64?)
 }
 
@@ -491,6 +498,7 @@ private enum PreparedPushPage: Sendable {
             actorGroupID: group.diagnosticGroupID)
         let sub = PushSubscription(socket: socket, revocation: revocation, key: key,
                                    pageSize: context.options.pageSize,
+                                   excludedTables: context.excludedTables,
                                    sendBoundaryProbe: sendBoundaryProbe,
                                    pipelineSubscription: subscriptionTrace,
                                    diagnosticGroupID: group.diagnosticGroupID,
@@ -666,8 +674,17 @@ private enum PreparedPushPage: Sendable {
             // chunk. A nudge can neither fall between them nor start a rival.
             if finishPass(sub, pipelinePass: pump.pass) { startPass(pump) }
             else { stopPump(pump) }
-        case .encodingFailed:
-            log.error("observer-push: failed to encode page after id \(pump.cursor); dropping subscriber")
+        case let .excluded(last):
+            // The bounded page contained only excluded rows. Advance this
+            // socket's scan cursor without emitting an empty frame or ending
+            // the pass; a visible row may follow on the next bounded page.
+            guard !sub.nativePagesStopped.isRevoked, last > pump.cursor else { unsubscribe(sub); return }
+            pump.cursor = last
+            advance(sub, to: last, pipelineRequest: pump.pass)
+            readNextPage(pump)
+        case let .encodingFailed(reason):
+            log.error("observer-push: failed after id \(pump.cursor): \(reason); dropping subscriber")
+            _ = sub.socket.close(code: .policyViolation)
             unsubscribe(sub)
         case let .encoded(data, count, last, ids, pageTrace):
             pump.phase = .sending
@@ -691,6 +708,8 @@ private enum PreparedPushPage: Sendable {
                                last: Int64, count: Int, send: UInt64?) {
         guard isCurrent(pump), pump.phase == .sending else { stopPump(pump); return }
         let sub = pump.sub
+        guard !sub.nativePagesStopped.isRevoked, !sub.revocation.isRevoked,
+              !sub.socket.isClosed else { unsubscribe(sub); return }
         guard case .success = result else { unsubscribe(sub); return }
         sub.setupDiagnostic?.record(.pushSendReturn, span: sub.diagnosticGroupID ?? 0)
         // This remains a promise-completion-plus-control-admission marker,
@@ -713,20 +732,38 @@ private enum PreparedPushPage: Sendable {
         let pipeline = sub.sendBoundaryProbe?.pipeline
         sub.setupDiagnostic?.record(.pushPageBegin, span: sub.diagnosticGroupID ?? 0)
         let pageRead = pipeline?.capture(.pageReadBegin, parent: pass, cursor: cursor)
-        let page = watcher.lattice.lateBindNoHistory(
-            watcher.lattice.eventsAfter(id: cursor).snapshot(limit: Int64(pageSize)))
-        let pageReadEnd = pipeline?.capture(.pageReadEnd, parent: pageRead, cursor: cursor, count: page.count)
-        sub.setupDiagnostic?.record(.pushPageEnd, span: sub.diagnosticGroupID ?? 0, count: page.count)
-        guard !page.isEmpty, let last = page.last?.primaryKey else { return .empty }
-        let encoding = pipeline?.capture(.encodeBegin, parent: pageReadEnd,
-                                         cursor: cursor, count: page.count, lastPK: last)
-        guard let encoded = try? JSONEncoder().encode(ServerSentEvent.auditLog(page)) else {
-            pipeline?.capture(.encodeFailed, parent: encoding)
-            return .encodingFailed
+        let events = watcher.lattice.eventsAfter(id: cursor)
+        do {
+            var preparedCursor = cursor
+            // Reads and encoding now interleave; encode span covers whole bounded preparation.
+            let encoding = pipeline?.capture(.encodeBegin, parent: pageRead, cursor: cursor)
+            let frame = try BoundedAuditFrame.encode(start: 0, maxCount: pageSize,
+                including: { !sub.excludedTables.contains($0.tableName.lowercased()) }) { _ in
+                let after = preparedCursor
+                guard !sub.nativePagesStopped.isRevoked, !sub.revocation.isRevoked,
+                      !sub.socket.isClosed else {
+                    throw BoundedAuditFrame.Failure.missingRow
+                }
+                guard let row = try BoundedAuditFrame.nextRow(in: watcher.lattice, events: events, after: after)
+                    else { return nil }
+                guard let nextID = row.primaryKey, nextID > after else {
+                    throw BoundedAuditFrame.Failure.missingRow
+                }
+                preparedCursor = nextID
+                return row
+            }
+            let pageReadEnd = pipeline?.capture(.pageReadEnd, parent: pageRead, cursor: cursor, count: frame.count)
+            sub.setupDiagnostic?.record(.pushPageEnd, span: sub.diagnosticGroupID ?? 0, count: frame.count)
+            pipeline?.capture(.encodeEnd, parent: encoding, count: frame.data.count)
+            guard frame.scannedCount > 0, let last = frame.scannedLastID else { return .empty }
+            if frame.count == 0 { return .excluded(last: last) }
+            let ids = sub.sendBoundaryProbe == nil ? [] : frame.ids
+            return .encoded(data: frame.data, count: frame.count, last: last, ids: ids, trace: pageReadEnd)
+        } catch {
+            pipeline?.capture(.encodeFailed, parent: pageRead)
+            let reason = (error as? BoundedAuditFrame.Failure)?.description ?? "Audit row encoding failed"
+            return .encodingFailed(reason)
         }
-        pipeline?.capture(.encodeEnd, parent: encoding, count: encoded.count)
-        let ids = sub.sendBoundaryProbe == nil ? [] : page.map { $0.globalId }
-        return .encoded(data: encoded, count: page.count, last: last, ids: ids, trace: pageReadEnd)
     }
 
     /// Start of a pump pass: consume the dirty flag and read the cursor.
@@ -746,8 +783,8 @@ private enum PreparedPushPage: Sendable {
         return cursor
     }
 
-    /// The cursor only advances after a successful send completion — every
-    /// frame is produced by `id > cursor ORDER BY id ASC`, so no dupes by
+    /// Visible content advances after a successful send; excluded-only pages
+    /// advance after a bounded scan. Every frame is produced by `id > cursor ORDER BY id ASC`, so no dupes by
     /// construction.
     private func advance(_ sub: PushSubscription, to cursor: Int64, pipelineRequest: UInt64?) {
         let scope = actorDiagnostics.begin(.advance, group: sub.diagnosticGroupID)
@@ -890,12 +927,10 @@ private enum PreparedPushPage: Sendable {
     /// subscribers from other mounts over the same file share it as-is.
     private nonisolated static func openWatcher(fileURL: URL,
                                     context: MountPushContext) -> UnsafeSendableBox<Lattice>? {
-        // Same bounded busy budget as the relay's per-connection open: the
-        // core's instance cache does not key on `busyTimeoutMs`, so whichever
-        // open wins the race for a file installs the budget every aliased
-        // handle then runs with — a watcher opening first with the library's
-        // 30s default would silently restore the parking behavior 1.7.1
-        // removes.
+        // Use the relay's bounded default busy budget for watcher reads too,
+        // while respecting an explicitly customized mount timeout. The core
+        // cache includes busyTimeoutMs, so a different timeout creates a
+        // separate instance rather than replacing another handle's budget.
         var configuration = SyncRelayApplyPolicy.configuration(
             fileURL: fileURL, storeConfiguration: context.storeConfiguration)
         configuration.ipcTargets = nil

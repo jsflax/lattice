@@ -81,6 +81,16 @@ extension LatticeBackend {
         (self as? CxxBackend)?.lastQueryError()
     }
 
+    /// Release an internal read gate while preserving the completed query's
+    /// error. A cleanup failure is still reported and takes precedence.
+    func commitReadGate() {
+        if let backend = self as? CxxBackend {
+            backend.commitReadGate()
+        } else {
+            commit()
+        }
+    }
+
     /// Register a handler for sealed-query failures (nil clears). No-op on
     /// non-C++ backends.
     func setOnQueryError(_ handler: (@Sendable (String) -> Void)?) {
@@ -267,7 +277,7 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
 
 // MARK: - CxxBackend (wraps swift_lattice_ref)
 
-final class CxxBackend: LatticeBackend, GroupedCountBackend, StoredSchemaVersionBackend, SyncLifecycleBackend, @unchecked Sendable {
+final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditCursorBackend, MainFileCurrentnessBackend, SyncChannelRetirementBackend, AuditReadFenceBackend, LocalMetadataBackend, AuditedWritesBackend, StoredSchemaVersionBackend, SyncLifecycleBackend, @unchecked Sendable {
     // The db ops are const forwarders on swift_lattice_ref, so they import
     // non-mutating on both paths and the handle can be a `let`.
     let ref: lattice.swift_lattice_ref
@@ -406,6 +416,77 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, StoredSchemaVersion
         return ok
     }
 
+    func auditCursor() throws -> AuditCursor {
+        let value = ref.auditCursor()
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+        if value.head == 0 && value.floor == 0 {
+            return AuditCursor(head: 0, headID: nil, floor: 0)
+        }
+        guard value.head > 0, value.floor > 0, value.floor <= value.head,
+              let id = UUID(uuidString: String(value.head_global_id)) else {
+            throw Lattice.Error.databaseError("Invalid audit cursor")
+        }
+        return AuditCursor(head: Int64(value.head), headID: id, floor: Int64(value.floor))
+    }
+
+    func requireMainFileUnmoved(expectedPath: String) throws {
+        let admitted = ref.requireMainFileUnmoved(std.string(expectedPath))
+        // Consume the exact bridge seal before another call can overwrite it.
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+        guard admitted else { throw Lattice.Error.databaseError("Main file currentness failed") }
+    }
+
+    func auditReadFence() throws -> AuditReadFence {
+        let value = ref.auditReadFence()
+        // Capture the sealed error before any other bridge call can clear its thread-local slot.
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+        let cursor: AuditCursor
+        if value.cursor.head == 0 && value.cursor.floor == 0 && value.cursor.head_global_id.empty() {
+            cursor = AuditCursor(head: 0, headID: nil, floor: 0)
+        } else {
+            guard value.cursor.head > 0, value.cursor.floor > 0, value.cursor.floor <= value.cursor.head,
+                  let id = UUID(uuidString: String(value.cursor.head_global_id)) else {
+                throw Lattice.Error.databaseError("Invalid audit read fence cursor")
+            }
+            cursor = AuditCursor(head: Int64(value.cursor.head), headID: id, floor: Int64(value.cursor.floor))
+        }
+        let generation: UUID?
+        if value.has_history_generation {
+            guard let id = UUID(uuidString: String(value.history_generation)) else {
+                throw Lattice.Error.databaseError("Invalid audit history generation")
+            }
+            generation = id
+        } else {
+            guard value.history_generation.empty() else {
+                throw Lattice.Error.databaseError("Invalid absent audit history generation")
+            }
+            generation = nil
+        }
+        return AuditReadFence(cursor: cursor, historyGeneration: generation)
+    }
+
+    func localMetadata(namespace: String, key: String) throws -> String? {
+        let result = ref.local_metadata(std.string(namespace), std.string(key))
+        if let message = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(message) }
+        return result.__convertToBool() ? String(result.pointee) : nil
+    }
+
+    func insertLocalMetadataIfAbsent(_ value: String, namespace: String, key: String) throws -> Bool {
+        guard TransactionFailureScope.isActive,
+              Lattice._threadHoldsExplicitTransaction(identityHash: identityHash) else {
+            throw LatticeError.transactionError("Local metadata insertion requires this handle's checked transaction")
+        }
+        let inserted = ref.insert_local_metadata_if_absent(std.string(namespace), std.string(key), std.string(value))
+        if let message = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(message) }
+        return inserted
+    }
+
+    func prepareForAuditedWrites() throws -> Bool {
+        let changed = ref.prepare_for_audited_writes()
+        if let message = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(message) }
+        return changed
+    }
+
     // Maintenance
     func trainUntrainedVec0Tables() { ref.trainUntrainedVec0Tables() }
     func waitForVec0Training() { ref.waitForVec0Training() }
@@ -471,6 +552,11 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, StoredSchemaVersion
     func commit() {
         ref.commit()
         reportQueryFailureIfAny()
+    }
+    func commitReadGate() {
+        // The query already reported its own failure. Report only a new
+        // cleanup failure, without firing the query callback twice.
+        if !ref.commit_read_gate() { reportQueryFailureIfAny() }
     }
     func beginTransactionChecked() throws {
         ref.begin_transaction()
@@ -617,6 +703,24 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, StoredSchemaVersion
         }
         return out
     }
+    func receiveSyncData(_ data: Data, immutableTables: Set<String>, authorize: (() -> Bool)?) throws -> [String] {
+        var tables = lattice.StringVector()
+        for table in immutableTables.sorted() { tables.push_back(std.string(table)) }
+        let box = SyncTransactionAuthorization(authorize)
+        let result = withExtendedLifetime(box) {
+            ref.receive_sync_data_authorized(data.toCxxValue(), tables, Unmanaged.passUnretained(box).toOpaque()) { context in
+                guard let context else { return false }
+                return Unmanaged<SyncTransactionAuthorization>.fromOpaque(context).takeUnretainedValue().authorize?() ?? true
+            }
+        }
+        if result.error.__convertToBool() {
+            throw LatticeError.syncReceiveFailed(String(result.error.pointee))
+        }
+        var out: [String] = []
+        for index in 0..<result.ids.size() { out.append(String(result.ids[index])) }
+        return out
+    }
+
     func lastReceiveError() -> String? {
         let e = ref.last_receive_error()
         return e.__convertToBool() ? String(e.pointee) : nil
@@ -671,6 +775,16 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, StoredSchemaVersion
     func removeSyncChannelState(syncId: String) {
         ref.remove_sync_channel_state(std.string(syncId))
         reportQueryFailureIfAny()
+    }
+
+    func removeSyncChannelStateChecked(syncId: String) throws {
+        let retired = ref.remove_sync_channel_state_checked(std.string(syncId))
+        if let error = reportQueryFailureIfAny() {
+            throw Lattice.Error.databaseError(error)
+        }
+        guard retired else {
+            throw Lattice.Error.databaseError("Sync channel retirement did not complete")
+        }
     }
 
     func deleteRowsNoRelay(table: String, globalRowIds: [String]) -> Int64 {
@@ -956,4 +1070,9 @@ func _makeCxxSyncFilter(_ entries: [(String, String?)]) -> lattice.SyncFilterVec
         vec.push_back(entry)
     }
     return vec
+}
+
+private final class SyncTransactionAuthorization {
+    let authorize: (() -> Bool)?
+    init(_ authorize: (() -> Bool)?) { self.authorize = authorize }
 }

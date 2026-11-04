@@ -109,6 +109,7 @@ public struct Lattice {
         private var currentState: lattice.transport_state = .closed
         private let stateLock = NSRecursiveLock()
         private var acceptsCallbacks = false
+        private var certificatePin: String?
         private func withState<T>(_ body: () -> T) -> T {
             stateLock.lock(); defer { stateLock.unlock() }; return body()
         }
@@ -130,6 +131,40 @@ public struct Lattice {
             // its task's cancellation fires didComplete(NSURLErrorCancelled)
             // — must not tear down the CURRENT attempt: without this guard the
             // cancel of attempt N-1 error-looped attempt N forever.
+            func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                            completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+                guard let client else {
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    return
+                }
+                let admission = client.withState {
+                    (client.acceptsCallbacks && client.session === session, client.certificatePin)
+                }
+                guard admission.0 else {
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    return
+                }
+                var disposition: URLSession.AuthChallengeDisposition = .performDefaultHandling
+                var credential: URLCredential?
+                if let pin = admission.1 {
+                    disposition = .cancelAuthenticationChallenge
+                    #if canImport(Security)
+                    credential = LatticeTLSTrust.credential(for: challenge, certificateSHA256: pin)
+                    if credential != nil { disposition = .useCredential }
+                    #endif
+                }
+                // Trust evaluation may outlive a disconnect/reconnect. Re-admit the
+                // exact session and pin before returning a credential to URLSession.
+                client.withState {
+                    guard client.acceptsCallbacks, client.session === session,
+                          client.certificatePin == admission.1 else {
+                        completionHandler(.cancelAuthenticationChallenge, nil)
+                        return
+                    }
+                    completionHandler(disposition, credential)
+                }
+            }
+
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didOpenWithProtocol protocol: String?) {
                 client?.withCurrent(session) { client?.handleOpen() }
@@ -197,6 +232,19 @@ public struct Lattice {
             let cxxPtr = UnsafeMutablePointer<lattice.generic_sync_transport>.allocate(capacity: 1)
             cxxPtr.initialize(to: cxxClient)
             self.cxxClientPtr = UnsafeMutableRawPointer(cxxPtr)
+            cxxPtr.pointee.set_certificate_pin_callback { ptr, fingerprintPtr in
+                guard let ptr, let fingerprintPtr else { return false }
+                let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
+                let pin = String(fingerprintPtr.assumingMemoryBound(to: std.string.self).pointee)
+                guard pin.isEmpty || LatticeTLSPin.isValid(pin) else { return false }
+                #if !canImport(Security)
+                guard pin.isEmpty else { return false }
+                #endif
+                return client.withState {
+                    client.certificatePin = pin.isEmpty ? nil : pin
+                    return true
+                }
+            }
             cxxPtr.pointee.set_destroy_callback { ptr in
                 guard let ptr else { return }
                 let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeRetainedValue()
@@ -452,8 +500,8 @@ public struct Lattice {
     /// - `SyncFilter()` (empty) → for UPLOADS this behaves like `nil` (LatticeCore
     ///   builds no WHERE clause for an empty entry list — it is NOT a "sync
     ///   nothing" switch; it only empties the filtered sync SET). To upload
-    ///   nothing, open the handle read-only, or list tables with a predicate
-    ///   that matches no row.
+    ///   nothing independently of filtering or local write access, set
+    ///   `Configuration.uploadsEnabled = false`.
     /// - `SyncFilter` with entries → whitelist: only listed tables, with optional per-row SQL predicates
     ///
     /// The filter is **upload-only** — it controls what leaves the device.
@@ -567,6 +615,15 @@ public struct Lattice {
         }
         public var authorizationToken: String?
         public var wssEndpoint: URL?
+        /// Optional durable WSS channel identity, separate from the address dialed above.
+        /// Nil keeps the endpoint-derived identity. Retain the original endpoint here when
+        /// changing transport-only URL parameters for an existing channel; changing this
+        /// value selects different durable receipts, cursors and replication slots.
+        /// Never reuse an identity for a different peer or authorization scope.
+        public var wssSyncIdentity: URL?
+        /// Optional SHA-256 of TLS leaf certificate DER. Apple transport only;
+        /// other transports reject nonempty pins instead of silently ignoring them.
+        public var pinnedServerCertificateSHA256: String? = nil
         /// WSS startup only; IPC targets retain their existing startup behavior.
         /// On initial handle creation, deferred mode opens/migrates local storage
         /// without WSS ownership, sync-only repair or a transport. Call connectSync()
@@ -581,12 +638,22 @@ public struct Lattice {
         // equality/hash; native identity conflicts are checked at attachment.
         internal var backgroundSyncManaged = false
         internal var backgroundSyncLineage: BackgroundSyncLineage?
+        /// Disable outbound sync data while retaining downloads and their acknowledgements.
+        /// This is independent of local write access and upload filters.
+        public var uploadsEnabled: Bool = true
         private var scheduler: Scheduler
 
         /// Schema migration definitions keyed by version number.
         /// Stored here so that `SendableReference.resolve(on:)` can reconstruct
         /// a `Lattice` with the correct target schema version.
         public var migration: [Int: Migration]?
+
+        /// Open an already activated file at exactly this positive Int32 version, with no create,
+        /// migration, schema repair or automatic maintenance. The complete typed schema must have
+        /// a current persisted fingerprint. These local handles use the admitted connection for
+        /// reads, cannot attach databases or own WSS/IPC, and require full close/open to reconnect.
+        /// nil preserves normal open behavior. Invalid or conflicting values throw at open.
+        public var requiredExistingSchemaVersion: Int?
 
         /// Read-only mode. When true:
         /// - Database is opened with SQLITE_OPEN_READONLY
@@ -717,11 +784,15 @@ public struct Lattice {
             lhs.storage == rhs.storage &&
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
+            lhs.wssSyncIdentity == rhs.wssSyncIdentity &&
+            lhs.pinnedServerCertificateSHA256 == rhs.pinnedServerCertificateSHA256 &&
             lhs.syncStartup == rhs.syncStartup &&
             lhs.backgroundSync == rhs.backgroundSync &&
             lhs.backgroundSyncManaged == rhs.backgroundSyncManaged &&
+            lhs.uploadsEnabled == rhs.uploadsEnabled &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
+            lhs.requiredExistingSchemaVersion == rhs.requiredExistingSchemaVersion &&
             lhs.syncFilter == rhs.syncFilter &&
             lhs.ipcTargets == rhs.ipcTargets &&
             lhs.busyTimeoutMs == rhs.busyTimeoutMs &&
@@ -733,11 +804,15 @@ public struct Lattice {
             hasher.combine(storage)
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
+            hasher.combine(wssSyncIdentity)
+            hasher.combine(pinnedServerCertificateSHA256)
             hasher.combine(syncStartup)
             hasher.combine(backgroundSync)
             hasher.combine(backgroundSyncManaged)
+            hasher.combine(uploadsEnabled)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
+            hasher.combine(requiredExistingSchemaVersion)
             hasher.combine(syncFilter)
             hasher.combine(ipcTargets)
             hasher.combine(busyTimeoutMs)
@@ -764,23 +839,27 @@ public struct Lattice {
 
         public init(storage: Storage? = nil, fileURL: URL? = nil,
                     authorizationToken: String? = nil, wssEndpoint: URL? = nil,
+                    wssSyncIdentity: URL? = nil,
                     isReadOnly: Bool = false, migration: [Int: Migration]? = nil,
                     syncFilter: SyncFilter? = nil,
                     busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs,
                     syncTuning: SyncTuning? = nil,
                     syncStartup: SyncStartup = .automatic,
-                    backgroundSync: BackgroundSync? = nil) {
+                    backgroundSync: BackgroundSync? = nil,
+                    requiredExistingSchemaVersion: Int? = nil) {
             // storage wins; fileURL is the long-standing convenience spelling;
             // neither → the default documents-directory database.
             self.storage = storage ?? .file(fileURL ?? Self.defaultDatabaseDirectory()
                 .appendingPathComponent("lattice\(wssEndpoint != nil ? "_ws" : "").sqlite"))
             self.authorizationToken = authorizationToken
             self.wssEndpoint = wssEndpoint
+            self.wssSyncIdentity = wssSyncIdentity
             self.syncStartup = syncStartup
             self.backgroundSync = backgroundSync
             self.scheduler = Scheduler()
             self.isReadOnly = isReadOnly
             self.migration = migration
+            self.requiredExistingSchemaVersion = requiredExistingSchemaVersion
             self.syncFilter = syncFilter
             self.busyTimeoutMs = busyTimeoutMs
             self.busyTimeoutMsWasCustomized = (busyTimeoutMs != Configuration.defaultBusyTimeoutMs)
@@ -797,6 +876,9 @@ public struct Lattice {
                 self.wssEndpoint.map { std.string($0.absoluteString) } ?? std.string(),
                 authorizationToken.map { std.string($0) } ?? std.string(),
                 currentScheduler.scheduler)
+            config.set_websocket_sync_identity(std.string(wssSyncIdentity?.absoluteString ?? ""))
+            config.set_certificate_pin(std.string(pinnedServerCertificateSHA256 ?? ""))
+            config.set_uploads_enabled(uploadsEnabled)
             config.read_only = isReadOnly
             config.background_sync_managed = backgroundSync != nil || backgroundSyncManaged
             config.sync_autostart = syncStartup == .automatic && !config.background_sync_managed
@@ -842,6 +924,12 @@ public struct Lattice {
             // higher schema version than the default of 1.
             if let migration, let maxVersion = migration.keys.max() {
                 config.target_schema_version = Int32(maxVersion)
+            }
+            if let requiredExistingSchemaVersion {
+                // Throwing typed opens validate range before reaching this conversion. Auxiliary
+                // internal callers get a rejecting sentinel instead of a trapping Int32 conversion.
+                config.required_existing_schema_version = Int32(exactly: requiredExistingSchemaVersion) ?? -1
+                config.target_schema_version = config.required_existing_schema_version
             }
             return config
         }
@@ -1013,6 +1101,28 @@ public struct Lattice {
                   configuration: Configuration = defaultConfiguration,
                   isSynchronizing: Bool,
                   independentConnection: Bool = false) throws {
+        if let pin = configuration.pinnedServerCertificateSHA256 {
+            guard LatticeTLSPin.isValid(pin), configuration.wssEndpoint?.scheme == "wss" else {
+                throw LatticeTLSPin.ConfigurationError.invalidPin
+            }
+            #if !canImport(Security)
+            throw LatticeTLSPin.ConfigurationError.unsupportedPlatform
+            #endif
+        }
+        if let required = configuration.requiredExistingSchemaVersion {
+            guard required > 0, Int32(exactly: required) != nil else {
+                throw Lattice.Error.databaseError("Required existing schema version must be a positive Int32")
+            }
+            if let target = configuration.migration?.keys.max(), target != required {
+                throw Lattice.Error.databaseError("Required existing schema version conflicts with migration target")
+            }
+            guard configuration.wssEndpoint == nil, configuration.wssSyncIdentity == nil,
+                  configuration.ipcTargets?.isEmpty ?? true,
+                  configuration.backgroundSync == nil, !configuration.backgroundSyncManaged,
+                  configuration.backgroundSyncLineage == nil else {
+                throw Lattice.Error.databaseError("Existing schema handles do not own sync transports or background lifecycle")
+            }
+        }
         var configuration = configuration
         let ownsBackgroundLifecycle = configuration.backgroundSync != nil ||
             (configuration.backgroundSyncManaged && configuration.backgroundSyncLineage == nil)
@@ -1077,7 +1187,7 @@ public struct Lattice {
 
         if let migration = configuration.migration {
             // Find the target version from migration dict (highest key)
-            let targetVersion = migration.keys.max() ?? 1
+            let targetVersion = migration.keys.max() ?? configuration.requiredExistingSchemaVersion ?? 1
 
             // Create swift_configuration with row migration callback
             swiftConfig.target_schema_version = Int32(targetVersion)
@@ -1171,6 +1281,21 @@ public struct Lattice {
                 for schema: [any Model.Type],
                 configuration: Configuration = defaultConfiguration) throws {
         try self.init(isolation: isolation, for: schema, configuration: configuration, isSynchronizing: false)
+    }
+
+    /// Open a distinct connection without joining the path/scheduler cache.
+    /// Storage identity, schema, migrations and configuration are preserved;
+    /// independence applies to the connection, not to the stored data.
+    /// Closing this handle does not close another handle opened with the same
+    /// configuration. Native open failures are thrown through the checked route.
+    ///
+    /// The handle keeps the caller's isolation. Set `isReadOnly` and other
+    /// configuration policies explicitly; independence does not change them.
+    public init(isolation: isolated (any Actor)? = #isolation,
+                independentFor schema: [any Model.Type],
+                configuration: Configuration = defaultConfiguration) throws {
+        try self.init(isolation: isolation, for: schema, configuration: configuration,
+                      isSynchronizing: false, independentConnection: true)
     }
 
     internal var schema: _Schema?
@@ -1312,8 +1437,12 @@ public struct Lattice {
         latticeSHMURL = fileURL.deletingPathExtension().appendingPathExtension("sqlite-shm")
         latticeWALURL = fileURL.deletingPathExtension().appendingPathExtension("sqlite-wal")
         try FileManager.default.removeItem(at: fileURL)
-        try FileManager.default.removeItem(at: latticeSHMURL)
-        try FileManager.default.removeItem(at: latticeWALURL)
+        // SQLite can unlink WAL/SHM when the last connection closes. Their
+        // absence is already clean; preserve every other removal failure.
+        for sidecar in [latticeSHMURL, latticeWALURL] {
+            do { try FileManager.default.removeItem(at: sidecar) }
+            catch let error as CocoaError where error.code == .fileNoSuchFile { }
+        }
     }
 
     /// Recursively discover all Model types linked from the given schema.
@@ -2314,7 +2443,9 @@ public struct Lattice {
                 var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
+                queryConfig.wssSyncIdentity = nil
                 queryConfig.authorizationToken = nil
+                queryConfig.pinnedServerCertificateSHA256 = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
                     let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
@@ -2404,7 +2535,9 @@ public struct Lattice {
                 var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
+                queryConfig.wssSyncIdentity = nil
                 queryConfig.authorizationToken = nil
+                queryConfig.pinnedServerCertificateSHA256 = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
                     let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
@@ -2758,6 +2891,20 @@ public struct Lattice {
         }
     }
     
+    /// Core already owns BEGIN. Read policy from that writer connection and
+    /// refuse on sealed query errors instead of consulting a pinned MVCC view.
+    internal func _authorizeSyncWrite(_ authorize: () -> Bool) -> Bool {
+        guard !TransactionFailureScope.isActive else { return false }
+        let failures = TransactionFailureScope()
+        let owner = ObjectIdentifier(Thread.current)
+        Self._recordExplicitTxnBegin(identityHash: backend.identityHash)
+        defer {
+            Self._recordExplicitTxnEnd(identityHash: backend.identityHash, expectedOwner: owner)
+            failures.restore()
+        }
+        return authorize() && failures.firstError == nil
+    }
+
     /// Run a synchronous write transaction with catchable backend failures.
     /// A failed BEGIN never executes `block`. A reported query or primitive
     /// write failure rolls back the transaction even if a later operation
@@ -2796,6 +2943,10 @@ public struct Lattice {
     }
     
     public mutating func attach(lattice: Lattice) throws {
+        guard configuration.requiredExistingSchemaVersion == nil,
+              lattice.configuration.requiredExistingSchemaVersion == nil else {
+            throw LatticeError.attachFailed("Existing schema handles cannot participate in attachments")
+        }
         try backend.attach(lattice.backend)
         // Item A §4.2: attaching changes what this handle's tables mean
         // (union views over both stores) — every cached shape is stale. Link
@@ -2847,12 +2998,18 @@ public struct Lattice {
     }
 
     public func attaching(lattice: Lattice) throws -> Lattice {
+        guard configuration.requiredExistingSchemaVersion == nil,
+              lattice.configuration.requiredExistingSchemaVersion == nil else {
+            throw LatticeError.attachFailed("Existing schema handles cannot participate in attachments")
+        }
         // Build a query-only config: strip IPC/WSS to avoid duplicate socket
         // bind and unnecessary sync on a connection used only for UNION ALL reads.
         var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
         queryConfig.ipcTargets = nil
         queryConfig.wssEndpoint = nil
+        queryConfig.wssSyncIdentity = nil
         queryConfig.authorizationToken = nil
+        queryConfig.pinnedServerCertificateSHA256 = nil
         queryConfig.syncFilter = nil
         try queryConfig.validateBackgroundSyncStore()
         let cxxConfig = queryConfig.cxxConfiguration()

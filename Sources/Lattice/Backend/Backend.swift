@@ -350,6 +350,21 @@ public protocol GroupedCountBackend: LatticeBackend {
                        distinctBy: String?, params: [QueryParameter]) throws -> [GroupedCount]
 }
 
+/// Optional local-only immutable metadata support. These values never become
+/// model rows or audit entries. A backend must implement atomic insertion on
+/// its existing transaction connection; a separate database is not conforming.
+public protocol LocalMetadataBackend: LatticeBackend {
+    func localMetadata(namespace: String, key: String) throws -> String?
+    func insertLocalMetadataIfAbsent(_ value: String, namespace: String, key: String) throws -> Bool
+}
+
+/// Explicit native store-role preparation. Backends must validate the control
+/// state and normalize it inside an owned transaction, never by an unguarded
+/// flag update or by silently changing generic store-opening semantics.
+public protocol AuditedWritesBackend: LatticeBackend {
+    func prepareForAuditedWrites() throws -> Bool
+}
+
 /// Neutral database-level surface. All members are per-query / per-snapshot, so
 /// array-of-existential returns (allocating once per snapshot) match today's
 /// vector-hydration cost. Class-bound for `final class` + `@inlinable`
@@ -512,6 +527,7 @@ public protocol LatticeBackend: AnyObject, Sendable {
 
     // Sync data flow
     func receiveSyncData(_ data: Data) -> [String]   // acked global ids
+    func receiveSyncData(_ data: Data, immutableTables: Set<String>, authorize: (() -> Bool)?) throws -> [String]
     func lastReceiveError() -> String?
 
     // Sync filter
@@ -660,6 +676,15 @@ extension LatticeBackend {
     public func commitChecked() throws {
         commit()
         if let error = lastQueryError() { throw LatticeError.transactionError(error) }
+    }
+
+    public func receiveSyncData(_ data: Data, immutableTables: Set<String>, authorize: (() -> Bool)?) throws -> [String] {
+        guard immutableTables.isEmpty, authorize == nil else {
+            throw LatticeError.syncReceiveFailed("backend does not support immutable sync")
+        }
+        let ids = receiveSyncData(data)
+        if let error = lastReceiveError() { throw LatticeError.syncReceiveFailed(error) }
+        return ids
     }
 
     @inlinable
