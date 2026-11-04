@@ -11,7 +11,8 @@ import CLatticeTestSQLite
 @Suite("LatticeMCP Provider Tests")
 final class LatticeMCPProviderTests {
 
-    private func fixture(captureSourceDiagnostics: Bool = false) throws -> URL {
+    private func fixture(captureSourceDiagnostics: Bool = false,
+                         retainClosedWriter: ((Lattice) -> Void)? = nil) throws -> URL {
         let url = testTemporaryDirectory
             .appending(path: "mcp_\(UUID().uuidString).sqlite")
         let lattice = try Lattice(DynPerson.self, DynDog.self, configuration: .init(fileURL: url))
@@ -25,6 +26,9 @@ final class LatticeMCPProviderTests {
         if captureSourceDiagnostics { captureSourceSnapshot(url, phase: "before-close") }
         lattice.close()
         if captureSourceDiagnostics { captureSourceSnapshot(url, phase: "after-close") }
+        // close() is logical; a stable-reader fixture may keep the closed writer
+        // alive so its final-release optimize cannot race the scoped read.
+        retainClosedWriter?(lattice)
         return url
     }
 
@@ -159,8 +163,11 @@ final class LatticeMCPProviderTests {
     }
 
     @Test func testScopedQueriesKeepRowsFieldsAndSourcePrivate() async throws {
-        let url = try fixture(captureSourceDiagnostics: true)
+        var closedWriter: Lattice?
+        let url = try fixture(captureSourceDiagnostics: true,
+                              retainClosedWriter: { closedWriter = $0 })
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        defer { withExtendedLifetime(closedWriter) {} }
         let pool = LatticeProviderPool(defaultDB: url,
             readPolicy: LatticeReadPolicy(permittedFields: ["DynPerson": ["name"]],
                 requiredRowValues: ["DynPerson": ["name": "Alice"]]), sourceID: "selected-room")
