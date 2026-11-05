@@ -1096,6 +1096,55 @@ public struct Lattice {
         init(_ m: [Int: Migration], _ v: Int) { migration = m; targetVersion = v }
     }
 
+    private static func configureMigration(
+        _ configuration: Configuration, swiftConfig: inout lattice.swift_configuration
+    ) {
+        if let migration = configuration.migration {
+            // Find the target version from migration dict (highest key)
+            let targetVersion = migration.keys.max() ?? configuration.requiredExistingSchemaVersion ?? 1
+
+            // Create swift_configuration with row migration callback
+            swiftConfig.target_schema_version = Int32(targetVersion)
+
+            // Pre-populate migration schema pairs (no callback needed)
+            for (version, migrationDef) in migration {
+                for (tableName, schemas) in migrationDef.schemas {
+                    swiftConfig.addMigrationSchema(version, std.string(tableName), schemas.from, schemas.to)
+                }
+            }
+
+            // Set up the row migration callback using C function pointers
+            // (same pattern as generic_scheduler — avoids block lifetime issues on Linux)
+            let ctx = _MigrationCtx(migration, Int(targetVersion))
+            let ctxRaw = Unmanaged.passRetained(ctx).toOpaque()
+
+            swiftConfig.setRowMigrationCallback(ctxRaw, { tableName, rawCtx in
+                guard let rawCtx, let tableName else { return }
+                let migCtx = Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).takeUnretainedValue()
+                let entityName = String(cString: tableName)
+
+                // Read old/new refs from thread-local storage (set by C++ before
+                // this callback). `_optRef` normalizes the value-path import
+                // (non-optional, empty when absent) to a Swift optional.
+                guard let oldRef = _optRef(lattice.migrationGetOldRow()),
+                      let newRef = _optRef(lattice.migrationGetNewRow()) else { return }
+
+                // Dispatch to the Migration for the version step the bridge is
+                // currently walking — NOT the final target. A v1→v3 walk fires
+                // v2 tables' rows first; dispatching those into migration[3]
+                // (which has no blocks for them) would preconditionFailure.
+                let stepVersion = Int(lattice.migrationGetCurrentVersion())
+                if let currentMigration = migCtx.migration[stepVersion] {
+                    currentMigration._sendRow(entityName: entityName, oldRef, newRef)
+                }
+            }, { rawCtx in
+                guard let rawCtx else { return }
+                Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).release()
+            })
+
+        }
+    }
+
     internal init(isolation: isolated (any Actor)? = #isolation,
                   for schema: [any Model.Type],
                   configuration: Configuration = defaultConfiguration,
@@ -1185,50 +1234,7 @@ public struct Lattice {
         // step. Only the native connection-cache policy differs.
         var swiftConfig = configuration.cxxConfiguration(isolation: isolation)
 
-        if let migration = configuration.migration {
-            // Find the target version from migration dict (highest key)
-            let targetVersion = migration.keys.max() ?? configuration.requiredExistingSchemaVersion ?? 1
-
-            // Create swift_configuration with row migration callback
-            swiftConfig.target_schema_version = Int32(targetVersion)
-
-            // Pre-populate migration schema pairs (no callback needed)
-            for (version, migrationDef) in migration {
-                for (tableName, schemas) in migrationDef.schemas {
-                    swiftConfig.addMigrationSchema(version, std.string(tableName), schemas.from, schemas.to)
-                }
-            }
-
-            // Set up the row migration callback using C function pointers
-            // (same pattern as generic_scheduler — avoids block lifetime issues on Linux)
-            let ctx = _MigrationCtx(migration, Int(targetVersion))
-            let ctxRaw = Unmanaged.passRetained(ctx).toOpaque()
-
-            swiftConfig.setRowMigrationCallback(ctxRaw, { tableName, rawCtx in
-                guard let rawCtx, let tableName else { return }
-                let migCtx = Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).takeUnretainedValue()
-                let entityName = String(cString: tableName)
-
-                // Read old/new refs from thread-local storage (set by C++ before
-                // this callback). `_optRef` normalizes the value-path import
-                // (non-optional, empty when absent) to a Swift optional.
-                guard let oldRef = _optRef(lattice.migrationGetOldRow()),
-                      let newRef = _optRef(lattice.migrationGetNewRow()) else { return }
-
-                // Dispatch to the Migration for the version step the bridge is
-                // currently walking — NOT the final target. A v1→v3 walk fires
-                // v2 tables' rows first; dispatching those into migration[3]
-                // (which has no blocks for them) would preconditionFailure.
-                let stepVersion = Int(lattice.migrationGetCurrentVersion())
-                if let currentMigration = migCtx.migration[stepVersion] {
-                    currentMigration._sendRow(entityName: entityName, oldRef, newRef)
-                }
-            }, { rawCtx in
-                guard let rawCtx else { return }
-                Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).release()
-            })
-
-        }
+        Self.configureMigration(configuration, swiftConfig: &swiftConfig)
         if independentConnection {
             createdRef = lattice.swift_lattice_ref.createUncached(swiftConfig: swiftConfig,
                                                                   schemas: cxxSchemas,
@@ -1274,6 +1280,164 @@ public struct Lattice {
             return (previous, live)
         }
         withExtendedLifetime(retired) {}
+    }
+
+    // MARK: Async local open
+
+    public enum AsyncLocalOpenError: Swift.Error, Equatable, Sendable {
+        /// Transport/background owners must use the synchronous initializer.
+        case unsupportedConfiguration
+        /// A surviving migration callback was not registered with addSendable.
+        case unsafeMigrationCallbacks
+    }
+
+    /// A one-shot ownership handoff, not a concurrently accessed handle. Only
+    /// run() touches the prepared C++ inputs; after its task is joined, the
+    /// destination either takes the reference or joins discard() on a worker.
+    /// No partially initialized facade or managed model crosses this boundary.
+    private final class LocalOpenWorker: @unchecked Sendable {
+        private var configuration: lattice.swift_configuration?
+        private var schemas: lattice.SchemaVector?
+        private var reference: lattice.swift_lattice_ref?
+        private var failure: (any Swift.Error)?
+
+        init(configuration: lattice.swift_configuration, schemas: lattice.SchemaVector) {
+            self.configuration = configuration
+            self.schemas = schemas
+        }
+
+        func run(independentConnection: Bool) {
+            defer {
+                configuration = nil
+                schemas = nil
+            }
+            var error = lattice.cxx_error()
+            let opened: lattice.swift_lattice_ref
+            if independentConnection {
+                opened = lattice.swift_lattice_ref.createUncached(
+                    swiftConfig: configuration!, schemas: schemas!, error: &error)
+            } else {
+                opened = lattice.swift_lattice_ref.create(
+                    swiftConfig: configuration!, schemas: schemas!, error: &error)
+            }
+            // Inspect/capture the checked error on the same worker as create.
+            // Any failed constructor's returned reference is released here.
+            if error.msg.empty() {
+                reference = opened
+            } else {
+                failure = error
+            }
+        }
+
+        func takeReference() throws -> lattice.swift_lattice_ref {
+            if let failure { throw failure }
+            guard let reference else { preconditionFailure("Local open has no joined result") }
+            self.reference = nil
+            return reference
+        }
+
+        func discard() {
+            // Never close(): a cached open may share Core with an older facade.
+            // Last-reference teardown can block, so do it on this joined worker.
+            reference = nil
+            failure = nil
+        }
+    }
+
+    /// Open local storage without blocking the destination actor on Core's
+    /// checked open/migration. Schema preparation and the final facade retain
+    /// the caller's isolation, including scheduler/cache identity and observers.
+    /// The ordinary connection cache remains enabled.
+    ///
+    /// WSS, IPC and managed background lifecycle configurations are rejected
+    /// before opening; no transport setting is silently dropped or deferred.
+    /// Core's normal local retention and cross-process notification remain on.
+    /// All migration callbacks must use Migration.addSendable. They run inline
+    /// on the worker, not on their original actor, and may not escape row models.
+    ///
+    /// Cancellation joins the synchronous Core operation and worker cleanup
+    /// before throwing CancellationError without publishing a facade. It cannot
+    /// interrupt Core or undo a migration already committed to disk. Cancellation
+    /// observed after the final handoff check follows normal cooperative semantics.
+    public static func openLocal(isolation: isolated (any Actor)? = #isolation,
+                                 for schema: [any Model.Type],
+                                 configuration: Configuration = defaultConfiguration) async throws -> Lattice {
+        try await openLocal(isolation: isolation, for: schema, configuration: configuration,
+                            independentConnection: false)
+    }
+
+    /// The local async-open contract above, using a distinct native connection.
+    /// Closing this returned handle does not close another same-store handle.
+    public static func openLocal(isolation: isolated (any Actor)? = #isolation,
+                                 independentFor schema: [any Model.Type],
+                                 configuration: Configuration = defaultConfiguration) async throws -> Lattice {
+        try await openLocal(isolation: isolation, for: schema, configuration: configuration,
+                            independentConnection: true)
+    }
+
+    private static func openLocal(isolation: isolated (any Actor)?,
+                                  for schema: [any Model.Type],
+                                  configuration: Configuration,
+                                  independentConnection: Bool) async throws -> Lattice {
+        try Task.checkCancellation()
+        // Admission precedes registration, schema callbacks and all native work.
+        guard configuration.wssEndpoint == nil, configuration.wssSyncIdentity == nil,
+              configuration.pinnedServerCertificateSHA256 == nil,
+              configuration.ipcTargets?.isEmpty ?? true,
+              configuration.backgroundSync == nil, !configuration.backgroundSyncManaged,
+              configuration.backgroundSyncLineage == nil else {
+            throw AsyncLocalOpenError.unsupportedConfiguration
+        }
+        guard configuration.migration?.values.allSatisfy({ $0.supportsAsyncLocalOpen }) ?? true else {
+            throw AsyncLocalOpenError.unsafeMigrationCallbacks
+        }
+        if let required = configuration.requiredExistingSchemaVersion {
+            guard required > 0, Int32(exactly: required) != nil else {
+                throw Lattice.Error.databaseError("Required existing schema version must be a positive Int32")
+            }
+            if let target = configuration.migration?.keys.max(), target != required {
+                throw Lattice.Error.databaseError("Required existing schema version conflicts with migration target")
+            }
+        }
+        // Keep global factory setup on the destination, as in synchronous init.
+        // The local-only guard guarantees no background lifecycle to register.
+        Self.registerNetworkFactoryIfNeeded()
+        let delivery = isolation != nil ? ObserverActorDelivery(isolation: isolation) : nil
+        let allTypes = Self.discoverAllTypes(from: schema)
+        for type in allTypes { ModelTypeRegistry.shared.register(type) }
+        var swiftConfig = configuration.cxxConfiguration(isolation: isolation)
+        Self.configureMigration(configuration, swiftConfig: &swiftConfig)
+        let worker = LocalOpenWorker(configuration: swiftConfig, schemas: allTypes.cxxSchema)
+        try Task.checkCancellation()
+        // A detached task does not inherit cancellation or the caller executor.
+        // Awaiting its nonthrowing value always joins the checked native open.
+        await Task.detached(priority: Task.currentPriority) {
+            worker.run(independentConnection: independentConnection)
+        }.value
+        if Task.isCancelled {
+            await Task.detached { worker.discard() }.value
+            throw CancellationError()
+        }
+        // No await from ownership transfer through cache publication. Form one
+        // facade on the original actor, never a temporary worker-bound Lattice.
+        let backend = CxxBackend(try worker.takeReference())
+        let result = Lattice(backend: backend, configuration: configuration,
+                             modelTypes: allTypes, schema: SchemaCompat(modelTypes: schema),
+                             isolation: isolation, observerActorDelivery: delivery)
+        let tuning = configuration.resultsTuning
+        backend.setReadGenerationTTLMs(Int64((tuning.generationTTLSeconds * 1000).rounded()))
+        backend.setWALKeeperEvictionThresholdBytes(Int64(tuning.walKeeperEvictionThresholdBytes))
+        let key = CacheKey(backend)
+        let entry = WeakCacheEntry(result)
+        let retired = Self.cacheLock.withLockUnchecked {
+            let previous = Self.cache[key]
+            let live = previous?.liveBackends ?? []
+            entry.preserveBackends(live)
+            Self.cache[key] = entry
+            return (previous, live)
+        }
+        withExtendedLifetime(retired) {}
+        return result
     }
 
     // MARK: Public Inits
