@@ -72,7 +72,7 @@ public actor LatticeSerializedStdioTransport: Transport {
                 do {
                     for try await message in await underlying.receive() {
                         guard !closed, !Task.isCancelled else { break }
-                        continuation.yield(message)
+                        continuation.yield(Self.compatibleCodexInitialize(message))
                     }
                     continuation.finish()
                 } catch {
@@ -80,6 +80,26 @@ public actor LatticeSerializedStdioTransport: Transport {
                 }
             }
         }
+    }
+
+    /// Experimental capabilities retain the selected MCP SDK's JSON value semantics.
+    /// Codex advertises an optional empty auth-change capability that this server
+    /// does not implement. Omit only that exact advertisement, as our existing
+    /// Codex compatibility relay does; every other shape keeps native validation.
+    public nonisolated static func compatibleCodexInitialize(_ data: Data) -> Data {
+        guard var message = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              message["method"] as? String == "initialize",
+              var params = message["params"] as? [String: Any],
+              var capabilities = params["capabilities"] as? [String: Any],
+              var experimental = capabilities["experimental"] as? [String: Any],
+              let advertisement = experimental["codex/auth-change"] as? [String: Any],
+              advertisement.isEmpty else { return data }
+        experimental.removeValue(forKey: "codex/auth-change")
+        if experimental.isEmpty { capabilities.removeValue(forKey: "experimental") }
+        else { capabilities["experimental"] = experimental }
+        params["capabilities"] = capabilities
+        message["params"] = params
+        return (try? JSONSerialization.data(withJSONObject: message, options: [.sortedKeys])) ?? data
     }
 
     public func send(_ data: Data) async throws {

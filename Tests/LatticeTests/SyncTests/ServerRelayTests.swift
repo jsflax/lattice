@@ -72,6 +72,8 @@ private final class FrameCollector: @unchecked Sendable {
     private var texts: [String] = []
     private var ackedIds: [UUID] = []
     private var auditIds: [UUID] = []
+    private var auditPageSizes: [Int] = []
+    private var auditPageBytes: [Int] = []
     private var waiters: [(predicate: () -> Bool, cont: CheckedContinuation<Void, Never>)] = []
     private(set) var socket: WebSocket?
     private let diagnostic: ACKPathConnection?
@@ -104,6 +106,8 @@ private final class FrameCollector: @unchecked Sendable {
                 self.ackedIds.append(contentsOf: ids.compactMap(UUID.init(uuidString:)))
             }
             if kind == "auditLog", let entries = root?["auditLog"] as? [[String: Any]] {
+                self.auditPageSizes.append(entries.count)
+                self.auditPageBytes.append(data.count)
                 self.auditIds.append(contentsOf: entries.compactMap {
                     ($0["globalId"] as? String).flatMap(UUID.init(uuidString:))
                 })
@@ -141,6 +145,8 @@ private final class FrameCollector: @unchecked Sendable {
     var receivedTexts: [String] { lock.withLock { texts } }
     var acks: [UUID] { lock.withLock { ackedIds } }
     var receivedAuditIds: [UUID] { lock.withLock { auditIds } }
+    var receivedAuditPageSizes: [Int] { lock.withLock { auditPageSizes } }
+    var receivedAuditPageBytes: [Int] { lock.withLock { auditPageBytes } }
 
     func count(of kind: String) -> Int { kinds.filter { $0 == kind }.count }
 
@@ -182,7 +188,11 @@ private final class RelayHarness: @unchecked Sendable {
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
         onSetupFinished: (@Sendable () -> Void)? = nil,
         maxBufferedFrameBytes: Int? = nil,
+        initialCatchUpPageSize: Int = 1000,
+        downloadExcludedTables: Set<String> = [],
         reauthorizeChannel: (@Sendable (Request, SyncChannel) async throws -> Void)? = nil,
+        revalidateAfterRegistration: Bool = false,
+        transactionAuthorization: (@Sendable (SyncChannel, Data, Lattice) -> Bool)? = nil,
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) async throws {
         let diagnostics = RelayHarnessDiagnostics.make()
@@ -219,7 +229,11 @@ private final class RelayHarness: @unchecked Sendable {
             on: app.routes, path: path, for: schema, storageURL: storageURL,
             writePolicy: writePolicy, handshake: handshake,
             storeConfiguration: storeConfiguration,
+            initialCatchUpPageSize: initialCatchUpPageSize,
             reauthorizeChannel: reauthorizeChannel,
+            revalidateAfterRegistration: revalidateAfterRegistration,
+            transactionAuthorization: transactionAuthorization,
+            downloadExcludedTables: downloadExcludedTables,
             channelExtractor: channelExtractor)
         try await app.startup()
         guard let assigned = app.http.server.shared.localAddress?.port else {
@@ -504,6 +518,39 @@ final class ServerRelayTests: BaseTest {
         await harness.shutdown()
     }
 
+    @Test(arguments: ["channel", "user", "file", "currentness"])
+    func legacyRevalidationRefusesChangedOriginalBeforeOpeningStore(kind: String) async throws {
+        let extractions = RelaySetupCompletions()
+        let reauthorizations = RelaySetupCompletions()
+        let setups = RelaySetupCompletions()
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"], schema: [SimpleSyncObject.self],
+            onSetupFinished: { setups.noteFinished() },
+            reauthorizeChannel: { _, _ in reauthorizations.noteFinished() },
+            revalidateAfterRegistration: true,
+            channelExtractor: { request in
+                let original = try await groupExtractor(request)
+                extractions.noteFinished()
+                guard extractions.count > 1 else { return original }
+                return SyncChannel(
+                    id: kind == "channel" ? "another-channel" : original.id,
+                    userId: kind == "user" ? UUID() : original.userId,
+                    databaseFileName: kind == "file" ? "another-file.sqlite" : original.databaseFileName,
+                    isCurrent: { kind != "currentness" })
+            })
+        do {
+            let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+            try #require(await peer.wait { $0.isClosed })
+            try #require(await peer.wait { _ in setups.count == 1 })
+            #expect(extractions.count == 2)
+            #expect(reauthorizations.count == 0)
+            #expect(peer.receivedAuditIds.isEmpty)
+            #expect(!FileManager.default.fileExists(atPath: harness.storageURL.appending(path: "group-g1.sqlite").path))
+            #expect(!FileManager.default.fileExists(atPath: harness.storageURL.appending(path: "another-file.sqlite").path))
+            #expect(await harness.awaitConnectionCount(0, channelId: "group-g1") == 0)
+        } catch { await harness.shutdown(); throw error }
+        await harness.shutdown()
+    }
+
     @Test func revocationBeforeRegistrationIsCaughtBySecondAuthorization() async throws {
         let gate = RelayAdmissionGate()
         let setups = RelaySetupCompletions()
@@ -688,6 +735,244 @@ final class ServerRelayTests: BaseTest {
         let channelDB = try Lattice(SimpleSyncObject.self, configuration: .init(
             fileURL: harness.storageURL.appending(path: "group-g1.sqlite")))
         #expect(channelDB.objects(SimpleSyncObject.self).contains { $0.value == 90 })
+    }
+
+    @Test("Initial catch-up retains ordered history and resumed suffix", arguments: [1, 2, 1000])
+    func initialCatchUpPageSizePreservesHistoryAndResume(pageSize: Int) async throws {
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self], initialCatchUpPageSize: pageSize,
+            channelExtractor: groupExtractor)
+        do {
+            try FileManager.default.createDirectory(at: harness.storageURL, withIntermediateDirectories: true)
+            let expected: [UUID] = try {
+                let store = try Lattice(SimpleSyncObject.self, configuration: .init(
+                    fileURL: harness.storageURL.appending(path: "group-pages.sqlite")))
+                defer { store.close() }
+                try store.withTransaction {
+                    for value in 0..<9 { try store.add(SimpleSyncObject(value: value, floatValue: 0)) }
+                }
+                return try Array(store.eventsAfter(globalId: nil)).map { try #require($0.globalId) }
+            }()
+            try #require(expected.count == 9)
+            let full = try await harness.connect(
+                pathSuffix: "sync/group/pages?lattice-catch-up-complete=1", user: UUID())
+            try #require(await full.wait { $0.count(of: "catchUpComplete") == 1 })
+            #expect(full.receivedAuditIds == expected)
+            #expect(full.receivedAuditPageSizes.allSatisfy { $0 > 0 && $0 <= pageSize })
+            #expect(full.receivedAuditPageSizes.count == (expected.count + pageSize - 1) / pageSize)
+            #expect(full.receivedAuditPageBytes.allSatisfy { $0 <= Lattice.maximumEncodedSyncMessageBytes })
+            await harness.handle.disconnectAll(channelId: "group-pages")
+            try #require(await harness.awaitConnectionCount(0, channelId: "group-pages") == 0)
+            let middle = expected.count / 2
+            let resumed = try await harness.connect(pathSuffix: "sync/group/pages?last-event-id=" +
+                expected[middle].uuidString.lowercased() + "&lattice-catch-up-complete=1", user: UUID())
+            try #require(await resumed.wait { $0.count(of: "catchUpComplete") == 1 })
+            #expect(resumed.receivedAuditIds == Array(expected.dropFirst(middle + 1)))
+            #expect(resumed.receivedAuditPageSizes.allSatisfy { $0 > 0 && $0 <= pageSize })
+            #expect(resumed.count(of: "floorReset") == 0)
+        } catch { await harness.shutdown(); throw error }
+        await harness.shutdown()
+    }
+
+    @Test func readOnlySourceExcludesPrivatePagesAndConsumesOnlyPureAcknowledgements() async throws {
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self, SyncChild.self],
+            writePolicy: .init(allowedOperations: [:], unlistedTables: .deny),
+            storeConfiguration: { url in
+                var config = Lattice.Configuration(fileURL: url)
+                config.isReadOnly = true
+                config.uploadsEnabled = false
+                return config
+            }, initialCatchUpPageSize: 1, downloadExcludedTables: ["sYnCcHiLd"],
+            channelExtractor: groupExtractor)
+        do {
+            try FileManager.default.createDirectory(at: harness.storageURL, withIntermediateDirectories: true)
+            let url = harness.storageURL.appending(path: "group-readonly.sqlite")
+            let expected: [UUID] = try {
+                let store = try Lattice(SimpleSyncObject.self, SyncChild.self, configuration: .init(fileURL: url))
+                defer { store.close() }
+                try store.withTransaction {
+                    for value in 0..<3 { try store.add(SyncChild(name: "private-\(value)")) }
+                    for value in 0..<2 { try store.add(SimpleSyncObject(value: value, floatValue: 0)) }
+                }
+                return try Array(store.eventsAfter(globalId: nil))
+                    .filter { $0.tableName == "SimpleSyncObject" }.map { try #require($0.globalId) }
+            }()
+            try #require(expected.count == 2)
+            let reader = try await harness.connect(
+                pathSuffix: "sync/group/readonly?lattice-catch-up-complete=1", user: UUID())
+            try #require(await reader.wait { $0.count(of: "catchUpComplete") == 1 })
+            #expect(reader.receivedAuditIds == expected)
+            #expect(reader.receivedAuditPageSizes == [1, 1])
+            let validACK = try JSONEncoder().encode(ServerSentEvent.ack(expected))
+            try await reader.socket!.send(Array(validACK))
+            // Ordered malformed ACK is a positive processing barrier after the
+            // valid ACK; no sleeping or inferred successful write is needed.
+            let malformed = try JSONSerialization.data(withJSONObject: ["kind": "ack", "ack": ["invalid"]])
+            try await reader.socket!.send(Array(malformed))
+            try #require(await reader.wait { $0.count(of: "rejected") == 1 })
+            let denied = try donorEntries { try $0.add(SimpleSyncObject(value: 999, floatValue: 0)) }
+            try await reader.socket!.send(try makeFrame(entries: denied))
+            try #require(await reader.wait { $0.count(of: "rejected") == 2 })
+            #expect(reader.acks.isEmpty && reader.count(of: "nack") == 0)
+            let store = try Lattice(SimpleSyncObject.self, SyncChild.self, configuration: .init(fileURL: url))
+            defer { store.close() }
+            #expect(store.objects(SimpleSyncObject.self).count == 2)
+            #expect(store.objects(SyncChild.self).count == 3)
+            #expect(store.eventsAfter(globalId: nil).allSatisfy { !$0.isSynchronized })
+            #expect(RelayFrame(validACK).isPureAcknowledgement)
+            #expect(!RelayFrame(malformed).isPureAcknowledgement)
+            let mixed = try JSONSerialization.data(withJSONObject: ["kind": "ack", "ack": [], "auditLog": []])
+            #expect(!RelayFrame(mixed).isPureAcknowledgement)
+        } catch { await harness.shutdown(); throw error }
+        await harness.shutdown()
+    }
+
+    @Test func defaultRelayPreservesOrdinarySchemaSkewAcknowledgement() async throws {
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"],
+            schema: [SimpleSyncObject.self], channelExtractor: groupExtractor)
+        do {
+            let writer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+            let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 73, floatValue: 1)) }
+            let ids = Set(entries.compactMap(\.globalId))
+            try #require(!ids.isEmpty)
+            var frame = try #require(JSONSerialization.jsonObject(
+                with: Data(try makeFrame(entries: entries))) as? [String: Any])
+            var rows = try #require(frame["auditLog"] as? [[String: Any]])
+            var newerTable = try #require(rows.first)
+            let unknownID = UUID()
+            newerTable["globalId"] = unknownID.uuidString.lowercased()
+            newerTable["tableName"] = "NewerPeerOnly"
+            rows.append(newerTable)
+            frame["auditLog"] = rows
+            try await writer.socket!.send(Array(try JSONSerialization.data(withJSONObject: frame)))
+            // The default receiver stores its known model and ACKs an unknown
+            // newer table without promoting it. Strict policy is not implicit.
+            try #require(await writer.wait { ids.union([unknownID]).isSubset(of: Set($0.acks)) })
+            #expect(writer.count(of: "rejected") == 0)
+            #expect(writer.count(of: "nack") == 0)
+            let store = try Lattice(SimpleSyncObject.self, configuration: .init(
+                fileURL: harness.storageURL.appending(path: "group-g1.sqlite")))
+            defer { store.close() }
+            #expect(store.objects(SimpleSyncObject.self).count == 1)
+            #expect(store.objects(SimpleSyncObject.self).first?.value == 73)
+            #expect(!store.eventsAfter(globalId: nil).contains { $0.globalId == unknownID })
+        } catch { await harness.shutdown(); throw error }
+        await harness.shutdown()
+    }
+
+    @Test func immutableTablePolicyRejectsConflictWithoutAckOrFanout() async throws {
+        #expect(!RelayApplyErrorClass.classify("immutable sync violation: BusyCommand identity changed").isContention)
+        #expect(!RelayApplyErrorClass.classify("sync authorization denied: busy principal revoked").isContention)
+        let setups = RelaySetupCompletions()
+        let reauthorizations = RelaySetupCompletions()
+        let policy = SyncWritePolicy(allowedOperations: ["SimpleSyncObject": [.insert]],
+            unlistedTables: .deny, immutableTables: ["SimpleSyncObject"])
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"], schema: [SimpleSyncObject.self],
+            writePolicy: policy, onSetupFinished: { setups.noteFinished() },
+            reauthorizeChannel: { _, _ in reauthorizations.noteFinished() },
+            revalidateAfterRegistration: true, channelExtractor: groupExtractor)
+        do {
+            let writer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+            let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+            try #require(await writer.wait { _ in setups.count == 2 })
+            #expect(reauthorizations.count == 2)
+            let entries = try donorEntries { try $0.add(SimpleSyncObject(value: 91, floatValue: 1)) }
+            let ids = Set(entries.compactMap(\.globalId))
+            try #require(!ids.isEmpty)
+            let bytes = try makeFrame(entries: entries)
+            try await writer.socket!.send(bytes)
+            try #require(await writer.wait { ids.isSubset(of: Set($0.acks)) })
+            try #require(await peer.wait { ids.isSubset(of: Set($0.receivedAuditIds)) })
+
+            // Replaying the original complete snapshot settles the same identity.
+            let ackCount = writer.acks.count
+            try await writer.socket!.send(bytes)
+            try #require(await writer.wait { $0.acks.count >= ackCount + ids.count })
+
+            var frame = try #require(JSONSerialization.jsonObject(with: Data(bytes)) as? [String: Any])
+            var rows = try #require(frame["auditLog"] as? [[String: Any]])
+            let index = try #require(rows.firstIndex { ($0["tableName"] as? String) == "SimpleSyncObject" })
+            let conflictingID = UUID()
+            rows[index]["globalId"] = conflictingID.uuidString.lowercased()
+            var fields = try #require(rows[index]["changedFields"] as? [String: Any])
+            var value = try #require(fields["value"] as? [String: Any])
+            value["value"] = 999
+            fields["value"] = value
+            rows[index]["changedFields"] = fields
+            frame["auditLog"] = rows
+            try await writer.socket!.send(Array(try JSONSerialization.data(withJSONObject: frame)))
+            try #require(await writer.wait { $0.count(of: "rejected") == 1 })
+
+            // A subsequent accepted frame is the positive ordering barrier for
+            // the conflict's no-fanout assertion; no elapsed-time guess is used.
+            let later = try donorEntries { try $0.add(SimpleSyncObject(value: 92, floatValue: 1)) }
+            let laterIDs = Set(later.compactMap(\.globalId))
+            try #require(!laterIDs.isEmpty)
+            try await writer.socket!.send(try makeFrame(entries: later))
+            try #require(await peer.wait { laterIDs.isSubset(of: Set($0.receivedAuditIds)) })
+            #expect(!writer.acks.contains(conflictingID))
+            #expect(!peer.receivedAuditIds.contains(conflictingID))
+            let store = try Lattice(SimpleSyncObject.self, configuration: .init(
+                fileURL: harness.storageURL.appending(path: "group-g1.sqlite")))
+            defer { store.close() }
+            #expect(store.objects(SimpleSyncObject.self).contains { $0.value == 91 })
+            #expect(store.objects(SimpleSyncObject.self).contains { $0.value == 92 })
+            #expect(!store.objects(SimpleSyncObject.self).contains { $0.value == 999 })
+            #expect(!store.eventsAfter(globalId: nil).contains { $0.globalId == conflictingID })
+        } catch { await harness.shutdown(); throw error }
+        await harness.shutdown()
+    }
+
+    @Test(arguments: [false, true])
+    func transactionAuthorizationRefusesDeniedOrReentrantlyRevokedFrame(revokeInsideCallback: Bool) async throws {
+        let writerID = UUID()
+        let current = RelayAdmissionGate()
+        let authorizations = RelaySetupCompletions()
+        let setups = RelaySetupCompletions()
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"], schema: [SimpleSyncObject.self],
+            onSetupFinished: { setups.noteFinished() },
+            transactionAuthorization: { channel, _, _ in
+                guard channel.userId == writerID else { return true }
+                authorizations.noteFinished()
+                if revokeInsideCallback { current.revoke(); return true }
+                return false
+            },
+            channelExtractor: { request in
+                let channel = try await groupExtractor(request)
+                return SyncChannel(id: channel.id, userId: channel.userId,
+                    databaseFileName: channel.databaseFileName,
+                    isCurrent: { channel.userId != writerID || current.isAllowed })
+            })
+        do {
+            let writer = try await harness.connect(pathSuffix: "sync/group/g1", user: writerID)
+            let peer = try await harness.connect(pathSuffix: "sync/group/g1", user: UUID())
+            try #require(await writer.wait { _ in setups.count == 2 })
+            let refused = try donorEntries { try $0.add(SimpleSyncObject(value: 41, floatValue: 1)) }
+            let refusedIDs = Set(refused.compactMap(\.globalId))
+            try #require(!refusedIDs.isEmpty)
+            try await writer.socket!.send(try makeFrame(entries: refused))
+            try #require(await writer.wait { _ in authorizations.count > 0 })
+            if !revokeInsideCallback {
+                try #require(await writer.wait { $0.count(of: "rejected") == 1 })
+            }
+            let accepted = try donorEntries { try $0.add(SimpleSyncObject(value: 42, floatValue: 1)) }
+            let acceptedIDs = Set(accepted.compactMap(\.globalId))
+            try #require(!acceptedIDs.isEmpty)
+            try await peer.socket!.send(try makeFrame(entries: accepted))
+            try #require(await peer.wait { acceptedIDs.isSubset(of: Set($0.acks)) })
+            #expect(refusedIDs.isDisjoint(with: Set(writer.acks)))
+            #expect(refusedIDs.isDisjoint(with: Set(peer.receivedAuditIds)))
+            let store = try Lattice(SimpleSyncObject.self, configuration: .init(
+                fileURL: harness.storageURL.appending(path: "group-g1.sqlite")))
+            defer { store.close() }
+            #expect(store.objects(SimpleSyncObject.self).contains { $0.value == 42 })
+            #expect(!store.objects(SimpleSyncObject.self).contains { $0.value == 41 })
+            #expect(store.eventsAfter(globalId: nil).allSatisfy { entry in
+                entry.globalId.map { !refusedIDs.contains($0) } ?? true
+            })
+        } catch { await harness.shutdown(); throw error }
+        await harness.shutdown()
     }
 
     @Test func writePolicyDeleteCapAdmitsSingleRejectsBulk() async throws {
