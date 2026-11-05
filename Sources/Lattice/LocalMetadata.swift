@@ -29,13 +29,13 @@ extension Lattice {
     /// transaction retain their normal auditing and replication behavior.
     @discardableResult
     public func insertLocalMetadataIfAbsent(_ value: String, namespace: String, key: String) throws -> Bool {
-        guard TransactionFailureScope.isActive,
+        guard TransactionFailureScope.isActive(identityHash: backend.identityHash),
               Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) else {
             throw LatticeError.transactionError("Local metadata insertion requires this handle's checked transaction")
         }
         guard let provider = backend as? any LocalMetadataBackend else {
             let message = "Local metadata is unsupported by this backend"
-            TransactionFailureScope.record(message)
+            TransactionFailureScope.record(message, identityHash: backend.identityHash)
             throw Lattice.Error.databaseError(message)
         }
         return try provider.insertLocalMetadataIfAbsent(value, namespace: namespace, key: key)

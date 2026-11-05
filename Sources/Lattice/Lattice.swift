@@ -969,6 +969,7 @@ public struct Lattice {
     /// the C++ surface directly (observers, nearest queries, attach) use
     /// `cxxLatticeRef` below.
     let backend: any LatticeBackend
+    private let transactionStoreState: TransactionFailureScope.StoreState
 
     /// The underlying C++ `swift_lattice_ref` — a foreign reference on
     /// iOS 16.4+, a copyable value type over the same shared db below the floor.
@@ -1010,8 +1011,11 @@ public struct Lattice {
                   modelTypes: [any Model.Type],
                   schema: _Schema?,
                   isolation: (any Actor)?,
-                  observerActorDelivery: ObserverActorDelivery?) {
+                  observerActorDelivery: ObserverActorDelivery?,
+                  transactionStoreState: TransactionFailureScope.StoreState? = nil) {
         self.backend = backend
+        self.transactionStoreState = transactionStoreState
+            ?? Self.internTransactionStoreState(for: backend, storage: configuration.storage)
         self.configuration = configuration
         self.modelTypes = modelTypes
         self.schema = schema
@@ -1065,6 +1069,7 @@ public struct Lattice {
         let schema: _Schema?
         let isolation: (any Actor)?
         let observerActorDelivery: ObserverActorDelivery?
+        weak var transactionStoreState: TransactionFailureScope.StoreState?
 
         init(_ lattice: Lattice) {
             self.backends = [WeakBackend(lattice.backend)]
@@ -1073,6 +1078,7 @@ public struct Lattice {
             self.schema = lattice.schema
             self.isolation = lattice.isolation
             self.observerActorDelivery = lattice.observerActorDelivery
+            self.transactionStoreState = lattice.transactionStoreState
         }
 
         func preserveBackends(_ previous: [any LatticeBackend]) {
@@ -1080,14 +1086,78 @@ public struct Lattice {
         }
 
         func resurrect() -> Lattice? {
-            guard let backend else { return nil }
+            guard let transactionStoreState else { return nil }
+            let backend = self.backend ?? transactionStoreState.owner
             return Lattice(backend: backend, configuration: configuration,
                            modelTypes: modelTypes, schema: schema, isolation: isolation,
-                           observerActorDelivery: observerActorDelivery)
+                           observerActorDelivery: observerActorDelivery,
+                           transactionStoreState: transactionStoreState)
         }
     }
 
     private nonisolated(unsafe) static var cache: [CacheKey: WeakCacheEntry] = [:]
+
+    private final class WeakTransactionStoreState {
+        weak var value: TransactionFailureScope.StoreState?
+        let identity: TransactionFailureScope.StoreIdentity
+        let attachments: TransactionFailureScope.Attachments
+        init(_ value: TransactionFailureScope.StoreState) {
+            self.value = value
+            identity = value.identity
+            attachments = value.attachments
+        }
+    }
+    private nonisolated(unsafe) static var transactionStoreStates: [CacheKey: WeakTransactionStoreState] = [:]
+    private nonisolated(unsafe) static var transactionStateInsertions = 0
+
+    private static func internTransactionStoreState(for backend: any LatticeBackend,
+                                                    storage: Configuration.Storage) -> TransactionFailureScope.StoreState {
+        let key = CacheKey(backend)
+        // Both weak promotions leave the lock as strong values. Capture and
+        // disposal can touch the filesystem/native owner, never under this lock.
+        let retained = cacheLock.withLockUnchecked { transactionStoreStates[key]?.value }
+        if let retained { return retained }
+        let candidate = TransactionFailureScope.StoreState(storage: storage, backend: backend)
+        let selection = cacheLock.withLockUnchecked {
+            if let current = transactionStoreStates[key]?.value { return (current, [TransactionFailureScope.StoreState]()) }
+            let selected: TransactionFailureScope.StoreState
+            if let previous = transactionStoreStates[key], previous.identity.mayAlias(candidate.identity) {
+                // Managed objects may preserve a cached Core handle after all
+                // facades disappear. Keep its cheap attachment metadata. A
+                // proven different physical store is a new incarnation; an
+                // unknown identity must remain conservative instead.
+                if !previous.identity.isKnown || !candidate.identity.isKnown { previous.attachments.retainUnknown() }
+                selected = .init(identity: candidate.identity, backend: backend, attachments: previous.attachments)
+            } else { selected = candidate }
+            transactionStoreStates[key] = WeakTransactionStoreState(selected)
+            transactionStateInsertions += 1
+            var promoted: [TransactionFailureScope.StoreState] = []
+            if transactionStateInsertions == 64 {
+                transactionStateInsertions = 0
+                var expired: [CacheKey] = []
+                for (key, entry) in transactionStoreStates {
+                    if let live = entry.value { promoted.append(live) }
+                    else if !entry.attachments.mayHaveAttachments { expired.append(key) }
+                }
+                // Without a live facade/state there is no Swift attachment
+                // mutator. Empty metadata is safe to forget, even if a managed
+                // object still owns that unattached Core. Retain nonempty or
+                // unknown metadata until detach, close, or proven incarnation
+                // replacement; it owns no native handles.
+                for key in expired { transactionStoreStates.removeValue(forKey: key) }
+            }
+            return (selected, promoted)
+        }
+        withExtendedLifetime((candidate, selection.1)) {}
+        return selection.0
+    }
+
+    private static func retireTransactionStoreState(for backend: any LatticeBackend) {
+        // The caller retains the just-closed backend. Entries own only weak
+        // states and attachment metadata; removing one cannot release native
+        // ownership under the lock.
+        _ = cacheLock.withLockUnchecked { transactionStoreStates.removeValue(forKey: CacheKey(backend)) }
+    }
 
     /// Context passed through void* for the row migration C function pointer callback.
     private final class _MigrationCtx: @unchecked Sendable {
@@ -1251,6 +1321,7 @@ public struct Lattice {
         // `create` (a foreign reference on iOS 16.4+, a copyable value type
         // below the floor) is boxed into the one stored backend.
         self.backend = CxxBackend(createdRef)
+        self.transactionStoreState = Self.internTransactionStoreState(for: backend, storage: configuration.storage)
         // Item A §1.7/§3: forward the per-Lattice read-generation tunables to
         // the core pool at open (plain atomic stores). `keeperPoolSize`
         // documents the core pool capacity (no per-instance setter in 1.0);
@@ -1300,10 +1371,13 @@ public struct Lattice {
         private var schemas: lattice.SchemaVector?
         private var reference: lattice.swift_lattice_ref?
         private var failure: (any Swift.Error)?
+        private let storage: Configuration.Storage
+        private(set) var transactionStoreState: TransactionFailureScope.StoreState?
 
-        init(configuration: lattice.swift_configuration, schemas: lattice.SchemaVector) {
+        init(configuration: lattice.swift_configuration, schemas: lattice.SchemaVector, storage: Configuration.Storage) {
             self.configuration = configuration
             self.schemas = schemas
+            self.storage = storage
         }
 
         func run(independentConnection: Bool) {
@@ -1324,9 +1398,15 @@ public struct Lattice {
             // Any failed constructor's returned reference is released here.
             if error.msg.empty() {
                 reference = opened
+                transactionStoreState = Self.captureState(opened, storage: storage)
             } else {
                 failure = error
             }
+        }
+
+        private static func captureState(_ reference: lattice.swift_lattice_ref, storage: Configuration.Storage) -> TransactionFailureScope.StoreState {
+            let backend = CxxBackend(reference)
+            return Lattice.internTransactionStoreState(for: backend, storage: storage)
         }
 
         func takeReference() throws -> lattice.swift_lattice_ref {
@@ -1340,6 +1420,7 @@ public struct Lattice {
             // Never close(): a cached open may share Core with an older facade.
             // Last-reference teardown can block, so do it on this joined worker.
             reference = nil
+            transactionStoreState = nil
             failure = nil
         }
     }
@@ -1407,7 +1488,7 @@ public struct Lattice {
         for type in allTypes { ModelTypeRegistry.shared.register(type) }
         var swiftConfig = configuration.cxxConfiguration(isolation: isolation)
         Self.configureMigration(configuration, swiftConfig: &swiftConfig)
-        let worker = LocalOpenWorker(configuration: swiftConfig, schemas: allTypes.cxxSchema)
+        let worker = LocalOpenWorker(configuration: swiftConfig, schemas: allTypes.cxxSchema, storage: configuration.storage)
         try Task.checkCancellation()
         // A detached task does not inherit cancellation or the caller executor.
         // Awaiting its nonthrowing value always joins the checked native open.
@@ -1423,7 +1504,8 @@ public struct Lattice {
         let backend = CxxBackend(try worker.takeReference())
         let result = Lattice(backend: backend, configuration: configuration,
                              modelTypes: allTypes, schema: SchemaCompat(modelTypes: schema),
-                             isolation: isolation, observerActorDelivery: delivery)
+                             isolation: isolation, observerActorDelivery: delivery,
+                             transactionStoreState: worker.transactionStoreState)
         let tuning = configuration.resultsTuning
         backend.setReadGenerationTTLMs(Int64((tuning.generationTTLSeconds * 1000).rounded()))
         backend.setWALKeeperEvictionThresholdBytes(Int64(tuning.walKeeperEvictionThresholdBytes))
@@ -1591,6 +1673,7 @@ public struct Lattice {
                     let identityHash = backend.identityHash
                     BackgroundSyncBindings.invalidate(identity: identityHash)
                     closeBackend(backend)
+                    retireTransactionStoreState(for: backend)
                     // A read can remint this identity after the path-wide
                     // eviction but before native close finishes.
                     GenerationCoordinatorRegistry.evict(identityHash: identityHash)
@@ -2017,6 +2100,7 @@ public struct Lattice {
         let identityHash = backend.identityHash
         GenerationCoordinatorRegistry.evict(identityHash: identityHash)
         closeBackend(backend)
+        Self.retireTransactionStoreState(for: backend)
         // Readers may have recreated a coordinator while native close was
         // still pending. Facades reacquire their coordinator on every access;
         // remove this last pre-close cache before close() returns.
@@ -2033,6 +2117,7 @@ public struct Lattice {
         let identity = backend.identityHash
         GenerationCoordinatorRegistry.evict(identityHash: identity)
         backend.close()
+        retireTransactionStoreState(for: backend)
         GenerationCoordinatorRegistry.evict(identityHash: identity)
     }
 
@@ -3059,7 +3144,8 @@ public struct Lattice {
     /// refuse on sealed query errors instead of consulting a pinned MVCC view.
     internal func _authorizeSyncWrite(_ authorize: () -> Bool) -> Bool {
         guard !TransactionFailureScope.isActive else { return false }
-        let failures = TransactionFailureScope()
+        let failures = TransactionFailureScope(identityHash: backend.identityHash,
+            storeState: transactionStoreState, allowsIndependentStores: false)
         let owner = ObjectIdentifier(Thread.current)
         Self._recordExplicitTxnBegin(identityHash: backend.identityHash)
         defer {
@@ -3074,16 +3160,20 @@ public struct Lattice {
     /// write failure rolls back the transaction even if a later operation
     /// succeeds and clears the bridge's last-error slot. Commit failures also
     /// roll back. The original failure is preserved if rollback reports an
-    /// additional error. Nested checked transactions, including transactions on
-    /// different handles, are rejected before the inner body executes. The
-    /// synchronous failure scope cannot attribute writes to a different owner.
+    /// additional error. A nested transaction on a different physical store is
+    /// independent: its commit survives a later outer rollback. Failures are
+    /// retained by their owning handle, even when another store is innermost.
+    /// Re-entering the same handle, physical file, or named memory store is
+    /// rejected before BEGIN. Callers must use a consistent store lock order;
+    /// nesting does not provide a multi-store atomic commit. Handles with
+    /// attachments cannot participate in independent-store nesting.
     public func withTransaction<T>(isolation: isolated (any Actor)? = #isolation,
                                    _ block: () throws -> T) throws -> T {
-        guard !TransactionFailureScope.isActive,
-              !Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) else {
-            throw LatticeError.transactionError("Nested checked transactions are not supported")
+        guard !Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash),
+              TransactionFailureScope.canEnter(identityHash: backend.identityHash, storeState: transactionStoreState) else {
+            throw LatticeError.transactionError("Nested checked transactions require a different physical store")
         }
-        let failures = TransactionFailureScope()
+        let failures = TransactionFailureScope(identityHash: backend.identityHash, storeState: transactionStoreState)
         defer { failures.restore() }
         try backend.beginTransactionChecked()
         let transactionOwner = ObjectIdentifier(Thread.current)
@@ -3111,7 +3201,11 @@ public struct Lattice {
               lattice.configuration.requiredExistingSchemaVersion == nil else {
             throw LatticeError.attachFailed("Existing schema handles cannot participate in attachments")
         }
+        guard !TransactionFailureScope.isActive(identityHash: backend.identityHash) else {
+            throw LatticeError.attachFailed("Cannot change attachments during this handle's checked transaction")
+        }
         try backend.attach(lattice.backend)
+        transactionStoreState.attached(lattice.configuration.canonicalPath)
         // Item A §4.2: attaching changes what this handle's tables mean
         // (union views over both stores) — every cached shape is stale. Link
         // the two paths so writes on either store invalidate this handle's
@@ -3146,7 +3240,11 @@ public struct Lattice {
     /// one reopened later — detaches it. Idempotent: detaching a lattice
     /// that isn't attached is a no-op and leaves the schema untouched.
     public mutating func detach(lattice: Lattice) throws {
+        guard !TransactionFailureScope.isActive(identityHash: backend.identityHash) else {
+            throw LatticeError.attachFailed("Cannot change attachments during this handle's checked transaction")
+        }
         try backend.detach(lattice.backend)
+        transactionStoreState.detached(lattice.configuration.canonicalPath)
         GenerationCoordinatorRegistry.unlinkAttachedPaths(parent: backend.path,
                                                           attached: lattice.backend.path)
         _noteWrite(tables: nil)
@@ -3195,6 +3293,7 @@ public struct Lattice {
                                  schema: schema,
                                  isolation: isolation,
                                  observerActorDelivery: observerActorDelivery)
+        newLattice.transactionStoreState.attached(lattice.configuration.canonicalPath)
         if let lineage = queryConfig.backgroundSyncLineage {
             _ = try BackgroundSyncBindings.attachManaged(backend: newLattice.backend, owner: isolation,
                 lineage: lineage, ownsLifecycle: false)

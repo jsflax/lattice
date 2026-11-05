@@ -150,7 +150,7 @@ final class CxxObjectBackend: ObjectBackend, @unchecked Sendable {
         guard ref.is_managed() else { return body() }
         LocalWriteFieldAnnotation.with(table: String(ref.getTableName()), column: column, body)
         let message = String(ref.lastQueryErrorMessage())
-        if !message.isEmpty { TransactionFailureScope.record(message) }
+        if !message.isEmpty { TransactionFailureScope.record(message, identityHash: lattice?.identityHash) }
     }
 
     // Materialized reads — forwarded to the dynamic_object row cache.
@@ -270,7 +270,7 @@ final class CxxObjectListBackend: ObjectListBackend, @unchecked Sendable {
     private func recordFailure() -> Bool {
         let message = String(ref.lastQueryErrorMessage())
         guard !message.isEmpty else { return false }
-        TransactionFailureScope.record(message)
+        TransactionFailureScope.record(message, identityHash: lattice?.identityHash)
         return true
     }
 }
@@ -472,7 +472,7 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditCursorBackend,
     }
 
     func insertLocalMetadataIfAbsent(_ value: String, namespace: String, key: String) throws -> Bool {
-        guard TransactionFailureScope.isActive,
+        guard TransactionFailureScope.isActive(identityHash: identityHash),
               Lattice._threadHoldsExplicitTransaction(identityHash: identityHash) else {
             throw LatticeError.transactionError("Local metadata insertion requires this handle's checked transaction")
         }
@@ -746,7 +746,7 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditCursorBackend,
     @discardableResult
     @inline(__always) private func reportQueryFailureIfAny() -> String? {
         guard let msg = lastQueryError() else { return nil }
-        TransactionFailureScope.record(msg)
+        TransactionFailureScope.record(msg, identityHash: identityHash)
         onQueryErrorLock.lock()
         let handler = onQueryErrorHandler
         onQueryErrorLock.unlock()
