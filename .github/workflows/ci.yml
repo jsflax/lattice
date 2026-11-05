@@ -191,19 +191,19 @@ jobs:
           LATTICE_ACK_PATH_DIAGNOSTICS: '1'
           LATTICE_OBSERVER_WORKER_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
         working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
-        # Keep unrelated MainActor tests out of the bounded responsiveness probe.
+        # Keep unrelated parallel work out of the bounded timing probes.
         # Both partitions run once under the same watchdog, even if one fails.
         run: |
           python3 Scripts/linux-suite-watchdog.py --evidence "$WRAPPER_JOB_ROOT/consumer/linux-suite-watchdog" \
             --timeout-seconds 900 -- bash -c '
               echo "[lattice-test-partition] ordinary start"
               ordinary_status=0
-              swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --skip "^LatticeTests[.]AsyncLocalOpenTests(/|$)" || ordinary_status=$?
+              swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --skip "^LatticeTests[.]AsyncLocalOpenTests(/|$)|^LatticeTests[.]ServerRelayTests/initialCatchUpPageSizePreservesHistoryAndResume([(]|$)" || ordinary_status=$?
               echo "[lattice-test-partition] ordinary end exit=$ordinary_status"
-              echo "[lattice-test-partition] async-local-open start"
+              echo "[lattice-test-partition] timing-sensitive start"
               async_status=0
-              swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --skip-build --no-parallel --filter "^LatticeTests[.]AsyncLocalOpenTests(/|$)" || async_status=$?
-              echo "[lattice-test-partition] async-local-open end exit=$async_status"
+              swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --skip-build --no-parallel --filter "^LatticeTests[.]AsyncLocalOpenTests(/|$)|^LatticeTests[.]ServerRelayTests/initialCatchUpPageSizePreservesHistoryAndResume([(]|$)" || async_status=$?
+              echo "[lattice-test-partition] timing-sensitive end exit=$async_status"
               status=$ordinary_status
               if [ "$async_status" -ne 0 ]; then status=$async_status; fi
               exit "$status"
@@ -306,16 +306,16 @@ jobs:
           LATTICE_ACK_PATH_DIAGNOSTICS: '1'
           LATTICE_OBSERVER_WORKER_DIAGNOSTICS: '1'
         working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
-        # All nine async-open tests run once, with their original gate deadlines.
+        # Ten timing-sensitive methods (twelve cases) run once with their original deadlines.
         run: |
           echo "[lattice-test-partition] ordinary start"
           ordinary_status=0
-          swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --skip "^LatticeTests[.]AsyncLocalOpenTests(/|$)" || ordinary_status=$?
+          swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --skip "^LatticeTests[.]AsyncLocalOpenTests(/|$)|^LatticeTests[.]ServerRelayTests/initialCatchUpPageSizePreservesHistoryAndResume([(]|$)" || ordinary_status=$?
           echo "[lattice-test-partition] ordinary end exit=$ordinary_status"
-          echo "[lattice-test-partition] async-local-open start"
+          echo "[lattice-test-partition] timing-sensitive start"
           async_status=0
-          swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --skip-build --no-parallel --filter "^LatticeTests[.]AsyncLocalOpenTests(/|$)" || async_status=$?
-          echo "[lattice-test-partition] async-local-open end exit=$async_status"
+          swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --skip-build --no-parallel --filter "^LatticeTests[.]AsyncLocalOpenTests(/|$)|^LatticeTests[.]ServerRelayTests/initialCatchUpPageSizePreservesHistoryAndResume([(]|$)" || async_status=$?
+          echo "[lattice-test-partition] timing-sensitive end exit=$async_status"
           status=$ordinary_status
           if [ "$async_status" -ne 0 ]; then status=$async_status; fi
           exit "$status"
