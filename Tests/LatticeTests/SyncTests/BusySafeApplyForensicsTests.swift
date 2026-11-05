@@ -393,13 +393,11 @@ final class BusySafeApplyForensicsTests: BaseTest {
     /// the BEGIN-acquisition budget, so a contended apply parks half a minute
     /// (twice, with the core's contained chunk retry) on a live socket.
     ///
-    /// Also pins the aliasing fact the old "ONE lattice per connection"
-    /// comment obscured: every relay-shaped open of one file returns ONE
-    /// cached instance, so leaked per-connection Lattices retain that shared
-    /// instance rather than adding SQLite connections — and since the instance
-    /// cache does not key on `busyTimeoutMs`, the FIRST open installs the
-    /// budget for every later aliased handle (which is why the observer-push
-    /// watcher open uses the same policy).
+    /// Also verifies that opens with the same schema, scheduler and relay
+    /// configuration share a cached instance. The current cache includes
+    /// busyTimeoutMs; an open with a different timeout does not replace the
+    /// budget of these matching handles. The observer-push watcher uses the
+    /// same policy to give its reads the same bounded default wait.
     @Test func relayOpensChannelStoresWithABoundedBusyBudget() async throws {
         let url = testTemporaryDirectory
             .appending(path: "alias-\(String.random(length: 12)).sqlite")
@@ -1070,11 +1068,17 @@ final class BusySafeApplyForensicsTests: BaseTest {
         }
         let nacks = clients.reduce(0) { $0 + $1.nacks.count }
         print("FORENSIC concurrency: clients=\(clientCount) acked=\(acked) nacks=\(nacks)")
+        phase("acked_expect_begin", -1, nil, nil)
         #expect(acked == clientCount, "every concurrent upload must apply")
+        phase("acked_expect_returned", -1, nil, nil)
+        phase("nacks_expect_begin", -1, nil, nil)
         #expect(nacks == 0, "serialized applies must not contend")
+        phase("nacks_expect_returned", -1, nil, nil)
         // The existing recorder closes once; preserve apply facts before cleanup.
         // Early throws use the deferred fallback, never an extra wait or poll.
+        phase("recorder_snapshot_begin", -1, nil, nil)
         recorder?.emitSnapshot(partial: true)
+        phase("recorder_snapshot_returned", -1, nil, nil)
 
         phase("shutdown_begin", -1, nil, nil)
         await harness.shutdown_keepingStorage()

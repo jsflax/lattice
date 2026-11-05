@@ -13,9 +13,13 @@ public typealias CxxManagedStringList = lattice.ManagedStringList
 public typealias CxxManagedString = lattice.ManagedString
 
 public protocol EmbeddedModel: Codable, PrimitiveProperty, CxxListManaged, DefaultInitializable, UnionProperty where CxxManagedListType == CxxManagedStringList {
+    /// Explicit codec metadata only; never infer the JSON shape from stored Swift fields.
+    static var embeddedCodec: EmbeddedCodecMetadata { get }
 }
 
 extension EmbeddedModel {
+    public static var embeddedCodec: EmbeddedCodecMetadata { .unavailable }
+
     public static func getManagedList(from object: lattice.ManagedModel, name: std.string) -> CxxManagedStringList {
         fatalError()
     }

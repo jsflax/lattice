@@ -365,10 +365,18 @@ public struct SyncChannel: Sendable {
     /// `"group-<uuid>"` get collision-free names for free.
     public let databaseFileName: String
 
-    public init(id: String, userId: UUID, databaseFileName: String? = nil) {
+    /// Optional supplemental lifetime gate supplied by the trusted channel extractor. It must be
+    /// inexpensive, thread-safe and synchronous; it cannot authenticate a connection by itself.
+    /// The first false result permanently revokes this connection. Already in-flight transport
+    /// bytes cannot be recalled; ordinary disconnect and resource cleanup are still required.
+    public let isCurrent: (@Sendable () -> Bool)?
+
+    public init(id: String, userId: UUID, databaseFileName: String? = nil,
+                isCurrent: (@Sendable () -> Bool)? = nil) {
         self.id = id
         self.userId = userId
         self.databaseFileName = databaseFileName ?? "\(id).sqlite"
+        self.isCurrent = isCurrent
     }
 }
 
@@ -415,6 +423,9 @@ public struct SyncWritePolicy: Sendable {
     /// mass-deletion brake that still admits legitimate single-row
     /// retractions on tables whose policy allows deletes.
     public var maxDeletesPerFrame: Int?
+    /// Complete INSERT snapshots only, with transactional content/identity checks
+    /// in LatticeCore. Any violation rolls back the entire upload frame.
+    public var immutableTables: Set<String>
     /// Treatment of tables absent from `allowedOperations`.
     public var unlistedTables: UnlistedTablePolicy
 
@@ -428,11 +439,13 @@ public struct SyncWritePolicy: Sendable {
     public init(
         allowedOperations: [String: Set<Operation>],
         maxDeletesPerFrame: Int? = nil,
-        unlistedTables: UnlistedTablePolicy = .allow
+        unlistedTables: UnlistedTablePolicy = .allow,
+        immutableTables: Set<String> = []
     ) {
         self.allowedOperations = allowedOperations
         self.maxDeletesPerFrame = maxDeletesPerFrame
         self.unlistedTables = unlistedTables
+        self.immutableTables = immutableTables
     }
 
     /// Case-insensitive lookup over `allowedOperations`.
@@ -642,7 +655,27 @@ public struct SyncSchemaHandshake: Sendable {
 final class RevocationFlag: @unchecked Sendable {
     private let lock = NIOLock()
     private var revoked = false
-    var isRevoked: Bool { lock.withLock { revoked } }
+    private var bound = false
+    private var current: (@Sendable () -> Bool)?
+    /// Bound once after authentication and before any store is opened or socket is registered.
+    /// Rebinding would replace the original authorization lifetime, so it permanently refuses.
+    func bind(isCurrent: (@Sendable () -> Bool)?) {
+        lock.withLock {
+            guard !bound else { revoked = true; return }
+            bound = true; current = isCurrent
+        }
+    }
+    var isRevoked: Bool {
+        let observed = lock.withLock { (revoked, current) }
+        if observed.0 { return true }
+        // Never invoke host code under the flag's lock. In particular, a gate can synchronously
+        // revoke this flag. Read the latest flag again after the callback, not the old snapshot.
+        let admitted = observed.1?() ?? true
+        return lock.withLock {
+            if !admitted { revoked = true }
+            return revoked
+        }
+    }
     func revoke() { lock.withLock { revoked = true } }
 }
 
@@ -830,6 +863,11 @@ extension Lattice {
     ///     same-channel peers (delivery is the pump's job; on a watch mount
     ///     the only client frames are acks, and echoing every observer's ack
     ///     to every other observer is N² frames per commit).
+    ///   - initialCatchUpPageSize: Maximum scanned audit rows per initial or
+    ///     resumed page (1...1000). Existing encoded-byte bounds also apply.
+    ///   - downloadExcludedTables: Case-insensitive table exclusions for initial
+    ///     and live downloads. Excluded-only pages still advance the socket's
+    ///     cursor. Uses existing observer push so legacy fan-out cannot bypass it.
     ///   - channelExtractor: Maps the request to its `SyncChannel`
     ///   - reauthorizeChannel: Optional second authorization after the socket is
     ///     registered for revocation, before opening its store or sending data.
@@ -837,6 +875,13 @@ extension Lattice {
     ///     leaves a gap where a kick can miss an unregistered connection. Pending
     ///     connections cannot receive fan-out. Throw to refuse; no error details
     ///     are sent to the peer or logged. Later revocation still uses the handle.
+    ///   - revalidateAfterRegistration: Compatibility option to rerun the original
+    ///     extractor after registration, requiring the exact same channel, user,
+    ///     and file before admission. Does not replace `reauthorizeChannel` or
+    ///     the originally bound `isCurrent` lifetime.
+    ///   - transactionAuthorization: Optional trusted synchronous admission in
+    ///     the native receive transaction, checked again before commit. Combined
+    ///     with the original connection's revocation gate, including ACK writes.
     @discardableResult
     public static func configureSyncRelay(
         on routes: any RoutesBuilder,
@@ -847,9 +892,16 @@ extension Lattice {
         handshake: SyncSchemaHandshake? = nil,
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
         observerPush: SyncObserverPush? = nil,
+        initialCatchUpPageSize: Int = 1000,
         reauthorizeChannel: (@Sendable (Request, SyncChannel) async throws -> Void)? = nil,
+        revalidateAfterRegistration: Bool = false,
+        transactionAuthorization: (@Sendable (SyncChannel, Data, Lattice) -> Bool)? = nil,
+        downloadExcludedTables: Set<String> = [],
         channelExtractor: @escaping @Sendable (Request) async throws -> SyncChannel
     ) -> SyncRelayHandle {
+        precondition((1...1000).contains(initialCatchUpPageSize), "Initial catch-up page size must be 1...1000")
+        let downloadExcludedTables = Set(downloadExcludedTables.map { $0.lowercased() })
+        let observerPush = observerPush ?? (downloadExcludedTables.isEmpty ? nil : SyncObserverPush())
         let sockets = SocketManager()
         let ackPathRecorder = ACKPathDiagnostics.recorder(for: storageURL)
         let ingressHooks = RelayIngressTesting.hooks(for: storageURL)
@@ -862,7 +914,7 @@ extension Lattice {
         // context below; `nil` on legacy mounts (zero new work anywhere).
         let watchManager: FileWatchManager? = observerPush != nil ? .shared : nil
         let pushContext = observerPush.map {
-            MountPushContext(schema: schema, storeConfiguration: storeConfiguration, options: $0)
+            MountPushContext(schema: schema, storeConfiguration: storeConfiguration, options: $0, excludedTables: downloadExcludedTables)
         }
         // Select Vapor's synchronous upgrade overload. Its async overload
         // starts a Task before invoking our closure, while WebSocketKit's
@@ -890,17 +942,12 @@ extension Lattice {
             // socket's lifetime (a fresh Lattice per frame raced the weak
             // instance cache and segfaulted under real bursts — exit 139).
             //
-            // NOT one SQLite connection per socket: every relay-shaped open of
-            // the same file+schema aliases ONE cached `swift_lattice`
-            // (LatticeCache::get_or_create) and therefore ONE
-            // FULLMUTEX-serialized SQLite connection — leaked per-connection
-            // Lattices retain that shared instance rather than adding
-            // connections. That is why concurrent applies on a channel
-            // contend inside `begin_transaction` (they are siblings on one
-            // connection, not rivals for a file lock) and why 1.7.1
-            // serializes them per file instead. The instance cache does NOT
-            // key on `busyTimeoutMs`, so the first open of a file installs the
-            // budget every later aliased handle runs with.
+            // Matching file, schema, scheduler and connection settings can
+            // share a cached native instance and its SQLite connection.
+            // Different settings (including busyTimeoutMs), schedulers, or
+            // explicit independent opens can create separate connections to
+            // the same file. Per-file apply serialization handles contention
+            // for both shared instances and separate SQLite connections.
             let state = ConnectionRelayState()
 
             // Handlers go live IMMEDIATELY — synchronously on the socket's
@@ -923,6 +970,19 @@ extension Lattice {
                 // never ack, never fan out, never buffer.
                 guard !state.revocation.isRevoked, !state.isRefused else {
                     ackPath?.record(.ingressDiscarded, bytes: bb.readableBytes)
+                    return
+                }
+                // Refuse before retaining/queuing bytes; count-based client or
+                // legacy relay batching must not bypass the shared byte budget.
+                guard bb.readableBytes <= Lattice.maximumEncodedSyncMessageBytes else {
+                    ackPath?.record(.ingressRefused, bytes: bb.readableBytes)
+                    state.revocation.revoke()
+                    state.isRefused = true
+                    state.buffered.removeAll()
+                    state.bufferedBytes = 0
+                    state.applyContinuation?.finish()
+                    ws.pingInterval = .seconds(5)
+                    _ = ws.close(code: .policyViolation)
                     return
                 }
                 if state.lattice != nil, let cont = state.applyContinuation {
@@ -1019,6 +1079,13 @@ extension Lattice {
                 ackPath?.record(.extractorBegin)
                 do {
                     channel = try await channelExtractor(req)
+                    state.revocation.bind(isCurrent: channel.isCurrent)
+                    guard !state.revocation.isRevoked else {
+                        state.isRefused = true
+                        ws.pingInterval = .seconds(5)
+                        try? await ws.close(code: .policyViolation)
+                        return
+                    }
                     ackPath?.record(.extractorEnd)
                 } catch {
                     ackPath?.record(.extractorError)
@@ -1090,6 +1157,18 @@ extension Lattice {
                         return
                     }
 
+                    // A read-only source's ACK is connection-local download receipt
+                    // information. Never write source audit/checkpoint metadata or
+                    // echo it; malformed/ambiguous ACKs still fail explicitly.
+                    if lattice.configuration.isReadOnly, frame.root?["kind"] as? String == "ack" {
+                        if !frame.isPureAcknowledgement,
+                           let encoded = try? JSONEncoder().encode(ServerSentEvent.rejected(
+                            reason: "Malformed acknowledgement on a read-only source.")) {
+                            ws.send(ByteBuffer(data: encoded))
+                        }
+                        return
+                    }
+
                     // Per-FILE serialization + bounded busy retry. Every write
                     // through this relay — uploads AND the catch-up ack
                     // bookkeeping, which is also a BEGIN + UPDATE burst
@@ -1100,18 +1179,48 @@ extension Lattice {
                     // connection they all alias.
                     ackPath?.record(.applyRequested, span: frameSpan, count: frame.requestedIds.count,
                                     matching: frame.requestedIds)
-                    let outcome = await withApplyLock(applyKey) { [ackPath] in
+                    let outcome: RelayApplyOutcome? = await withApplyLock(applyKey) { [ackPath] in
+                        // The connection can be revoked while waiting for the
+                        // existing file gate. Native receive repeats this guard
+                        // at its transaction boundary and before commit.
+                        guard !state.revocation.isRevoked else { return nil }
                         ackPath?.record(.applyBodyEntered, span: frameSpan, matching: frame.requestedIds)
+                        let immutableTables = writePolicy?.immutableTables ?? []
+                        let authorize: (() -> Bool)?
+                        if transactionAuthorization != nil || channel.isCurrent != nil ||
+                            revalidateAfterRegistration || !immutableTables.isEmpty {
+                            authorize = {
+                                guard !state.revocation.isRevoked else { return false }
+                                let admitted = transactionAuthorization?(channel, data, lattice) ?? true
+                                return admitted && !state.revocation.isRevoked
+                            }
+                        } else {
+                            // Legacy mounts keep ordinary per-entry/schema-skew
+                            // receive behavior. Strict atomic admission is opt-in.
+                            authorize = nil
+                        }
                         let applied = applyWithRetry(lattice: lattice, data: data, frame: frame,
-                                                     channelId: channel.id, userId: channel.userId)
+                            channelId: channel.id, userId: channel.userId,
+                            immutableTables: immutableTables, authorize: authorize)
                         ackPath?.record(.applyBodyReturned, span: frameSpan, count: frame.requestedIds.count,
                                         applied: applied.applied.count, missing: applied.unapplied.count,
                                         attempts: applied.attempts, matching: applied.applied)
                         return applied
                     }
+                    guard let outcome, !state.revocation.isRevoked else { return }
                     ackPath?.record(.applyGateReturned, span: frameSpan, count: frame.requestedIds.count,
                                     applied: outcome.applied.count, missing: outcome.unapplied.count,
                                     attempts: outcome.attempts, matching: outcome.applied)
+
+                    // Policy rejection is terminal, not a transient shortfall.
+                    // Never ACK or fan out a transaction that was refused.
+                    if let error = outcome.lastError,
+                       error.contains("immutable sync violation:") || error.contains("sync authorization denied:") {
+                        if let encoded = try? JSONEncoder().encode(ServerSentEvent.rejected(reason: error)) {
+                            ws.send(ByteBuffer(data: encoded))
+                        }
+                        return
+                    }
 
                     // §1.7.2 governor: apply-coupled checkpoint (threshold- or time-due), OUTSIDE the
                     // apply gate so the slot hold is never extended — RelayCheckpoint.swift carries the
@@ -1236,7 +1345,7 @@ extension Lattice {
                 ackPath?.record(.registryAddBegin)
                 await sockets.add(socket: ws, channelId: channel.id,
                                   userId: channel.userId, revocation: state.revocation,
-                                  admitted: reauthorizeChannel == nil)
+                                  admitted: reauthorizeChannel == nil && !revalidateAfterRegistration)
                 ackPath?.record(.registryAddEnd)
                 // A socket that closed while the extractor was awaiting ran its
                 // onClose with channelId still nil and deregistered nothing —
@@ -1248,9 +1357,16 @@ extension Lattice {
                     return
                 }
 
-                if let reauthorizeChannel {
+                if reauthorizeChannel != nil || revalidateAfterRegistration {
                     do {
-                        try await reauthorizeChannel(req, channel)
+                        if revalidateAfterRegistration {
+                            let current = try await channelExtractor(req)
+                            guard current.id == channel.id, current.userId == channel.userId,
+                                  current.databaseFileName == channel.databaseFileName,
+                                  current.isCurrent?() != false,
+                                  !state.revocation.isRevoked else { throw Abort(.forbidden) }
+                        }
+                        try await reauthorizeChannel?(req, channel)
                         guard await sockets.admit(socket: ws, channelId: channel.id) else {
                             throw CancellationError()
                         }
@@ -1439,7 +1555,12 @@ extension Lattice {
 
                         ackPath?.record(.catchUpReadBegin)
                         let events = lattice.eventsAfter(globalId: lastEventId)
+                        guard lattice.lastQueryError() == nil else { throw BoundedAuditFrame.Failure.queryFailed }
                         let count = events.count
+                        guard lattice.lastQueryError() == nil else { throw BoundedAuditFrame.Failure.queryFailed }
+                        // COUNT on a closed handle may return zero without a sealed error.
+                        // Do not activate a supposedly caught-up socket from that default.
+                        if count == 0 { _ = try lattice.auditCursor() }
                         ackPath?.record(.catchUpReadEnd, count: count)
                         // Observer-push activation boundary: the pk of the last
                         // catch-up entry this socket was sent, taken from the
@@ -1451,31 +1572,48 @@ extension Lattice {
                         var boundary: Int64 = 0
                         if count > 0 {
                             print(">>> Bringing channel \(channel.id) connection up to date with \(count) events")
-                            for i in stride(from: 0, to: count, by: 1000) {
+                            var offset = 0
+                            while offset < count {
                                 guard !state.revocation.isRevoked else { break }
-                                // Late-bind @NoHistory columns — this page is serialized
-                                // here in Swift, outside core's upload-side fill.
-                                let page = lattice.lateBindNoHistory(Array(events[i..<min(count, i + 1000)]))
-                                let encoded = try JSONEncoder().encode(ServerSentEvent.auditLog(page))
-                                sendBoundaryProbe?.capture(page: page, route: .catchup)
-                                ackPath?.record(.catchUpSendBegin, bytes: encoded.count, count: page.count)
-                                // Await the write result; a failed page cannot
-                                // be followed by a successful completion marker.
-                                let sent = ws.eventLoop.makePromise(of: Void.self)
-                                ws.send(encoded, promise: sent)
-                                try await sent.futureResult.get()
-                                ackPath?.record(.catchUpSendReturn)
-                                boundary = page.last?.primaryKey ?? boundary
+                                var preparedCursor = boundary
+                                let frame = try BoundedAuditFrame.encode(start: offset, maxCount: min(initialCatchUpPageSize, count - offset),
+                                    including: { !downloadExcludedTables.contains($0.tableName.lowercased()) },
+                                    didPrepare: sendBoundaryProbe.map { probe in { rows in
+                                        _ = probe.capture(page: rows, route: .catchup)
+                                    } }) { _ in
+                                    let after = preparedCursor
+                                    guard let row = try BoundedAuditFrame.nextRow(in: lattice, events: events, after: after) else {
+                                        throw BoundedAuditFrame.Failure.missingRow
+                                    }
+                                    guard let nextID = row.primaryKey, nextID > after else {
+                                        throw BoundedAuditFrame.Failure.missingRow
+                                    }
+                                    preparedCursor = nextID // local only; excluded rows are read again next page
+                                    return row
+                                }
+                                guard frame.scannedCount > 0 else { throw BoundedAuditFrame.Failure.missingRow }
+                                if frame.count > 0 {
+                                    ackPath?.record(.catchUpSendBegin, bytes: frame.data.count, count: frame.count)
+                                    let sent = ws.eventLoop.makePromise(of: Void.self)
+                                    ws.send(raw: frame.data, opcode: .binary, promise: sent)
+                                    try await sent.futureResult.get()
+                                    guard !state.revocation.isRevoked, !ws.isClosed else { break }
+                                    ackPath?.record(.catchUpSendReturn)
+                                }
+                                boundary = frame.scannedLastID ?? boundary
+                                offset += frame.scannedCount // byte-excluded visible rows remain unconsumed
                             }
                         } else if let lastEventId, state.pushSubscription != nil {
                             // The boundary only feeds push activation — legacy
                             // mounts (and sockets whose watcher open failed)
                             // skip this SELECT entirely rather than paying it
                             // on every redial for a value nobody reads.
-                            boundary = lattice.objects(AuditLog.self)
+                            let checkpoint = lattice.objects(AuditLog.self)
                                 .where { $0.globalId == lastEventId }
-                                .snapshot(limit: 1)
-                                .first?.primaryKey ?? 0
+                                .materializedSnapshot(limit: 1)
+                            guard lattice.lastQueryError() == nil else { throw BoundedAuditFrame.Failure.queryFailed }
+                            if checkpoint.isEmpty { _ = try lattice.auditCursor() }
+                            boundary = checkpoint.first?.primaryKey ?? 0
                         }
                         if wantsCatchUpComplete && !state.revocation.isRevoked && !ws.isClosed {
                             let encoded = try JSONEncoder().encode(ServerSentEvent.catchUpComplete)

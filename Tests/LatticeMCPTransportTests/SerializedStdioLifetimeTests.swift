@@ -4,9 +4,41 @@ import MCP
 import Testing
 @testable import LatticeMCPTransport
 
-/// Authored UNRUN. The selected Lattice manifest has no transport test target;
-/// this file still needs an explicit private test-target/harness composition.
+/// Exercises the selected LatticeMCPTransport target through its owned reader and shutdown joins.
 struct SerializedStdioLifetimeTests {
+    @Test func readerNormalizesOnlyTheExactEmptyCodexAdvertisement() async throws {
+        let underlying = SerializedLifetimeTransport()
+        let transport = LatticeSerializedStdioTransport(testingUnderlying: underlying, logger: underlying.logger)
+        let original = Data(#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{"experimental":{"codex/auth-change":{}},"elicitation":{"form":{},"url":{}}},"clientInfo":{"name":"codex-mcp-client","version":"0.154.0"}}}"#.utf8)
+        let ordinary = Data(#" { "jsonrpc":"2.0", "id":17, "method":"tools/call", "params":{"capabilities":{"experimental":{"codex/auth-change":{}}}} } "#.utf8)
+        let unknownExtension = Data(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{"experimental":{"codex/auth-change":{},"unknown/object-extension":{}}},"clientInfo":{"name":"codex-mcp-client","version":"0.154.0"}}}"#.utf8)
+        let invalidCore = Data(#"{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{"experimental":{"codex/auth-change":{}},"roots":{"listChanged":"not-a-boolean"}},"clientInfo":{"name":"codex-mcp-client","version":"0.154.0"}}}"#.utf8)
+        let originalRequest = try JSONDecoder().decode(Request<Initialize>.self, from: original)
+        let emptyAdvertisement: Value = .object([:])
+        #expect(originalRequest.params.capabilities.experimental?["codex/auth-change"] == emptyAdvertisement)
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(Request<Initialize>.self, from: invalidCore) }
+        try await transport.connect()
+        await underlying.finishIncoming([original, ordinary, unknownExtension, invalidCore])
+        var frames: [Data] = []
+        for try await frame in await transport.receive() { frames.append(frame) }
+        let joined = await transport.waitForShutdown()
+        let readers = await underlying.receiveCount
+        #expect(joined && readers == 1)
+        #expect(frames.count == 4)
+        guard frames.count == 4 else { return }
+        let request = try JSONDecoder().decode(Request<Initialize>.self, from: frames[0])
+        #expect(request.id == .number(0))
+        #expect(request.params.protocolVersion == "2025-06-18")
+        #expect(request.params.clientInfo.name == "codex-mcp-client")
+        #expect(request.params.capabilities.experimental == nil)
+        #expect(frames[1] == ordinary)
+        let unknownRequest = try JSONDecoder().decode(Request<Initialize>.self, from: frames[2])
+        #expect(unknownRequest.id == .number(1))
+        #expect(unknownRequest.params.capabilities.experimental?["unknown/object-extension"] == emptyAdvertisement)
+        #expect(unknownRequest.params.capabilities.experimental?["codex/auth-change"] == nil)
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(Request<Initialize>.self, from: frames[3]) }
+    }
+
     @Test func disconnectWaitsForActualEnteredSendAndRejectsConcurrentSend() async throws {
         let release = SerializedLifetimeGate()
         let underlying = SerializedLifetimeTransport(sendRelease: release)
@@ -157,6 +189,11 @@ private actor SerializedLifetimeTransport: Transport {
         if let onSend { await onSend() }
         guard !closed else { throw CancellationError() }
         frames.append(data)
+    }
+    func finishIncoming(_ messages: [Data]) {
+        guard !closed else { return }
+        for message in messages { continuation.yield(message) }
+        continuation.finish()
     }
     func receive() -> AsyncThrowingStream<Data, Error> {
         receiveCount += 1
