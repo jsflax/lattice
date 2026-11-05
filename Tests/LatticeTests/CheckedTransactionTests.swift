@@ -494,13 +494,14 @@ struct CheckedTransactionTests {
         #expect(outer.object(CheckedTransactionListOwner.self, globalId: ownerID)?.value == 2)
     }
 
-    enum StoreAlias: CaseIterable { case samePath, symbolicLink, hardLink }
+    enum StoreAlias: CaseIterable { case samePath, symbolicLink }
 
     @Test(arguments: StoreAlias.allCases)
     func samePhysicalStoreAliasIsRejectedBeforeBegin(_ kind: StoreAlias) throws {
-        let (seed, url) = try database()
-        try seed.add(CheckedTransactionItem())
-        seed.close()
+        let url = try seededDatabaseURL()
+        // close() is logical; the helper must release its last native owner
+        // and checkpoint the seed before creating another filesystem name.
+        try #require(!FileManager.default.fileExists(atPath: url.path + "-wal"))
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         let aliasURL = kind == .samePath ? url : url.deletingLastPathComponent()
             .appendingPathComponent("checked-alias-\(UUID().uuidString).sqlite")
@@ -508,8 +509,6 @@ struct CheckedTransactionTests {
         case .samePath: break
         case .symbolicLink:
             try FileManager.default.createSymbolicLink(at: aliasURL, withDestinationURL: url)
-        case .hardLink:
-            try FileManager.default.linkItem(at: url, to: aliasURL)
         }
         defer {
             if aliasURL != url { try? Lattice.delete(for: .init(fileURL: aliasURL)) }
@@ -541,6 +540,65 @@ struct CheckedTransactionTests {
         outer.retireAllGenerations()
         #expect(value(outer) == 6)
         #expect(!Lattice._threadHoldsExplicitTransaction(identityHash: alias.backend.identityHash))
+    }
+
+    private func seededDatabaseURL() throws -> URL {
+        let (seed, url) = try database()
+        defer { seed.close() }
+        try seed.add(CheckedTransactionItem())
+        return url
+    }
+
+    @Test func hardLinkPhysicalIdentityIsRejectedAtCheckedAdmission() throws {
+        let url = try seededDatabaseURL()
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        try #require(!FileManager.default.fileExists(atPath: url.path + "-wal"),
+                     "the seed must be physically closed and checkpointed before linking")
+        let aliasURL = url.deletingLastPathComponent()
+            .appendingPathComponent("checked-hardlink-\(UUID().uuidString).sqlite")
+        try FileManager.default.linkItem(at: url, to: aliasURL)
+        defer { try? FileManager.default.removeItem(at: aliasURL) }
+
+        // SQLite does not support alternate hard-link journal/WAL names.
+        // Open both real handles at the canonical path; exercise only the
+        // physical-identity/admission boundary for the actual hard link.
+        let outer = try Lattice(CheckedTransactionItem.self, CheckedTransactionListOwner.self,
+                                configuration: .init(fileURL: url, busyTimeoutMs: 100))
+        defer { outer.close() }
+        let other = try Lattice(independentFor: [CheckedTransactionItem.self, CheckedTransactionListOwner.self],
+                                configuration: .init(fileURL: url, busyTimeoutMs: 100))
+        defer { other.close() }
+        #expect(outer.backend.identityHash != other.backend.identityHash)
+        let attributes = try FileManager.default.attributesOfItem(atPath: aliasURL.path)
+        try #require(attributes[.type] as? FileAttributeType == .typeRegular)
+        let device = try #require(attributes[.systemNumber] as? NSNumber).uint64Value
+        let inode = try #require(attributes[.systemFileNumber] as? NSNumber).uint64Value
+        let aliasIdentity = TransactionFailureScope.StoreIdentity.file(device: device, inode: inode)
+        func requireFileIdentity(_ backend: any LatticeBackend) throws {
+            let captured = TransactionFailureScope.StoreIdentity.capture(storage: .file(url), backend: backend)
+            guard case let .file(capturedDevice, capturedInode) = captured else {
+                throw LatticeError.transactionError("canonical handle must capture a known file identity")
+            }
+            try #require(capturedDevice == device && capturedInode == inode)
+        }
+        try requireFileIdentity(outer.backend)
+        try requireFileIdentity(other.backend)
+        let aliasState = TransactionFailureScope.StoreState(identity: aliasIdentity,
+            backend: other.backend, attachments: .init())
+        #expect(TransactionFailureScope.canEnter(identityHash: other.backend.identityHash, storeState: aliasState))
+        let item = try #require(outer.objects(CheckedTransactionItem.self).first)
+        try outer.withTransaction {
+            item.value = 5
+            let admitted = TransactionFailureScope.canEnter(identityHash: other.backend.identityHash,
+                                                            storeState: aliasState)
+            #expect(!admitted)
+            #expect(!Lattice._threadHoldsExplicitTransaction(identityHash: other.backend.identityHash))
+            item.increment("value")
+        }
+        outer.retireAllGenerations()
+        #expect(value(outer) == 6)
+        #expect(TransactionFailureScope.canEnter(identityHash: other.backend.identityHash, storeState: aliasState))
+        #expect(!Lattice._threadHoldsExplicitTransaction(identityHash: other.backend.identityHash))
     }
 
     @Test func unrelatedSameFileHandleFailureDoesNotPoisonCheckedOwner() throws {
