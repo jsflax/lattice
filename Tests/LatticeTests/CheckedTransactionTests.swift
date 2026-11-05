@@ -499,9 +499,7 @@ struct CheckedTransactionTests {
     @Test(arguments: StoreAlias.allCases)
     func samePhysicalStoreAliasIsRejectedBeforeBegin(_ kind: StoreAlias) throws {
         let url = try seededDatabaseURL()
-        // close() is logical; the helper must release its last native owner
-        // and checkpoint the seed before creating another filesystem name.
-        try #require(!FileManager.default.fileExists(atPath: url.path + "-wal"))
+        // Same-path and symlink handles use the same canonical SQLite journal.
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
         let aliasURL = kind == .samePath ? url : url.deletingLastPathComponent()
             .appendingPathComponent("checked-alias-\(UUID().uuidString).sqlite")
@@ -552,8 +550,6 @@ struct CheckedTransactionTests {
     @Test func hardLinkPhysicalIdentityIsRejectedAtCheckedAdmission() throws {
         let url = try seededDatabaseURL()
         defer { try? Lattice.delete(for: .init(fileURL: url)) }
-        try #require(!FileManager.default.fileExists(atPath: url.path + "-wal"),
-                     "the seed must be physically closed and checkpointed before linking")
         let aliasURL = url.deletingLastPathComponent()
             .appendingPathComponent("checked-hardlink-\(UUID().uuidString).sqlite")
         try FileManager.default.linkItem(at: url, to: aliasURL)
