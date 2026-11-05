@@ -305,8 +305,10 @@ struct CheckedTransactionTests {
                     innerBodyEntered = true
                     innerItem.value = 99
                     // A remains an active checked owner while B is on top.
-                    #expect(try outer.insertLocalMetadataIfAbsent("outer", namespace: "checked.nesting", key: "receipt"))
-                    #expect(try inner.insertLocalMetadataIfAbsent("inner", namespace: "checked.nesting", key: "receipt"))
+                    let insertedOuter = try outer.insertLocalMetadataIfAbsent("outer", namespace: "checked.nesting", key: "receipt")
+                    let insertedInner = try inner.insertLocalMetadataIfAbsent("inner", namespace: "checked.nesting", key: "receipt")
+                    #expect(insertedOuter)
+                    #expect(insertedInner)
                 }
                 outerItem.increment("value")
             }
