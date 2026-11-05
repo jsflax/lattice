@@ -593,7 +593,8 @@ struct CheckedTransactionTests {
             let innerItem = CheckedTransactionItem()
             try outer.add(outerItem); try inner.add(innerItem)
             var entered = false
-            #expect(throws: LatticeError.self) {
+            var caughtError: (any Error)?
+            do {
                 try outer.withTransaction {
                     outerItem.value = 3
                     try inner.withTransaction {
@@ -603,7 +604,10 @@ struct CheckedTransactionTests {
                         _ = innerItem.value
                     }
                 }
+            } catch {
+                caughtError = error
             }
+            #expect(caughtError is LatticeError)
             outer.retireAllGenerations(); inner.retireAllGenerations()
             #expect(entered)
             #expect(value(outer) == 0)
