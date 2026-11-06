@@ -143,7 +143,9 @@ class CrossProcessChildRunner: XCTestCase {
             var db: OpaquePointer?
             guard sqlite3_open(childDBPath, &db) == SQLITE_OK else { return }
             defer { sqlite3_close(db) }
-            sqlite3_exec(db, "UPDATE AuditLog SET isSynchronized = 1 WHERE isSynchronized = 0", nil, nil, nil)
+            try registerCurrentWriterForFixtureMutation(db)
+            let updated = sqlite3_exec(db, "UPDATE AuditLog SET isSynchronized = 1 WHERE isSynchronized = 0", nil, nil, nil)
+            guard updated == SQLITE_OK else { throw CurrentWriterFixtureError.mutation(updated) }
             _lattice_post_cross_process_notification(std.string(childDBPath))
         case "append_to_list":
             let lattice = try Lattice(
@@ -653,7 +655,9 @@ struct CrossProcessTests {
             var db: OpaquePointer?
             guard sqlite3_open(childDBPath, &db) == SQLITE_OK else { return }
             defer { sqlite3_close(db) }
-            sqlite3_exec(db, "UPDATE AuditLog SET isSynchronized = 1 WHERE isSynchronized = 0", nil, nil, nil)
+            try registerCurrentWriterForFixtureMutation(db)
+            let updated = sqlite3_exec(db, "UPDATE AuditLog SET isSynchronized = 1 WHERE isSynchronized = 0", nil, nil, nil)
+            guard updated == SQLITE_OK else { throw CurrentWriterFixtureError.mutation(updated) }
             _lattice_post_cross_process_notification(std.string(childDBPath))
             return
         }

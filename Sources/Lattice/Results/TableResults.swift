@@ -285,7 +285,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         }
         let backend = _lattice.backend
         backend.beginTransaction()
-        defer { backend.commit() }
+        defer { backend.commitReadGate() }
         return body()
     }
 

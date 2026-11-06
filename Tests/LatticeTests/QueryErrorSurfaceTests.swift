@@ -81,4 +81,45 @@ final class QueryErrorSurfaceTests: BaseTest {
         #expect(n == 0)
         #expect(lattice.lastQueryError() != nil)
     }
+
+    @Test(arguments: [false, true])
+    func closedMaterializedSnapshotReportsInsteadOfEmptySuccess(memory: Bool) throws {
+        let lattice = try memory
+            ? Lattice(ErrItem.self, configuration: .init(storage: .memory()))
+            : testLattice(ErrItem.self)
+        defer { lattice.close() }
+        try lattice.add(ErrItem(name: "retained"))
+        let query = lattice.objects(ErrItem.self)
+        // Exercise an existing query/generation, not only a fresh backend call.
+        #expect(query.materializedSnapshot(limit: 2).count == 1)
+        let messages = LockedBox<[String]>([])
+        lattice.onQueryError { message in messages.withLock { $0.append(message) } }
+        lattice.close()
+        let rows = query.materializedSnapshot(limit: 2)
+        #expect(rows.isEmpty)
+        #expect(lattice.lastQueryError()?.isEmpty == false)
+        #expect(messages.withLock { $0.count } == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func healthyEmptyReadClearsClosedQueryError(memory: Bool) throws {
+        let closed = try memory
+            ? Lattice(ErrItem.self, configuration: .init(storage: .memory()))
+            : testLattice(ErrItem.self)
+        let healthy = try memory
+            ? Lattice(ErrItem.self, configuration: .init(storage: .memory()))
+            : testLattice(ErrItem.self)
+        defer { closed.close(); healthy.close() }
+        closed.close()
+        _ = closed.backend.objects(table: "ErrItem", where: nil, orderBy: nil,
+            limit: 2, offset: nil, groupBy: nil, distinctBy: nil)
+        #expect(closed.lastQueryError()?.isEmpty == false)
+        let messages = LockedBox<[String]>([])
+        healthy.onQueryError { message in messages.withLock { $0.append(message) } }
+        let rows = healthy.objects(ErrItem.self).materializedSnapshot(limit: 2)
+        #expect(rows.isEmpty)
+        #expect(healthy.lastQueryError() == nil)
+        #expect(messages.withLock { $0.isEmpty })
+    }
+
 }

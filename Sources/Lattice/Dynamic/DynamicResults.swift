@@ -51,6 +51,23 @@ public final class DynamicResults: @unchecked Sendable {
                               whereClause: whereClause, orderByClause: combined)
     }
 
+    /// One live scalar query on the existing read route, without model/payload hydration.
+    /// Predicate placeholders use the supplied typed parameters. As with `where`, SQL
+    /// structure is caller-authored; variable values must be bound, never interpolated.
+    /// Grouping keys must name a stored schema column. Ordering is unspecified; a
+    /// sorted results shape is refused rather than silently discarding its ordering.
+    /// This inherits DynamicResults live-read semantics and sees own transaction writes.
+    public func groupedCounts(by column: String, parameters: [QueryParameter] = []) throws -> [GroupedCount] {
+        guard orderByClause == nil, let schema = backend as? any DynamicSchemaProviding,
+              schema.dynamicTableNames().contains(tableName),
+              Set(schema.dynamicProperties(table: tableName).map(\.name)).union(["id", "globalId"]).contains(column),
+              let grouped = backend as? any GroupedCountBackend else {
+            throw Lattice.Error.databaseError("Unsupported dynamic grouped count query")
+        }
+        return try grouped.groupedCounts(table: tableName, groupBy: column,
+                                         where: whereClause, distinctBy: nil, params: parameters)
+    }
+
     public var count: Int {
         Int(backend.count(table: tableName, where: whereClause, groupBy: nil, distinctBy: nil))
     }

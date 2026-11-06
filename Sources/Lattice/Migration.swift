@@ -281,6 +281,13 @@ internal protocol MigrationProtocol {
 
 public struct Migration : MigrationProtocol, @unchecked Sendable {
     private var typeErasedBlocks: [String: (CxxDynamicObjectRef, CxxDynamicObjectRef) -> ()] = [:]
+    private var sendableBlockEntities: Set<String> = []
+
+    // Empty/schema-only steps are safe. Every surviving callback must have
+    // been registered explicitly for execution away from its creation actor.
+    internal var supportsAsyncLocalOpen: Bool {
+        typeErasedBlocks.keys.allSatisfy { sendableBlockEntities.contains($0) }
+    }
     var schemas: [String: (from: lattice.SwiftSchema, to: lattice.SwiftSchema)] = [:]
     
     private static func unsafeTypeCast<T>(_ type: T.Type, value: CxxDynamicObjectRef) -> T where T: Model {
@@ -316,6 +323,7 @@ public struct Migration : MigrationProtocol, @unchecked Sendable {
     /// `Migration().add(from: V1.self, to: V2.self) { old, new in … }`.
     public func add<From: Model, To: Model>(from: From.Type, to: To.Type, _ block: @escaping (From, To) -> ()) -> Self {
         var copy = self
+        copy.sendableBlockEntities.remove(to.entityName)
         copy.schemas[to.entityName] = (
             from: from.cxxPropertyDescriptor(),
             to: to.cxxPropertyDescriptor()
@@ -327,6 +335,24 @@ public struct Migration : MigrationProtocol, @unchecked Sendable {
         return copy
     }
     
+    /// Registers a transform that may run on the local-open worker. The block
+    /// still executes synchronously inside Core's migration callback, so its
+    /// old/new models and Migration.lookup/children must stay within that call.
+    /// Do not retain or send these managed models to another task or actor.
+    /// Captured state must satisfy Sendable; use the legacy add builder when a
+    /// transform intentionally requires the synchronous opener's executor.
+    ///
+    /// Replaces the same entity's prior transform, as add does. Other legacy
+    /// transforms in this migration continue to make async local open unsafe.
+    public func addSendable<From: Model, To: Model>(
+        from: From.Type, to: To.Type,
+        _ block: @escaping @Sendable (From, To) -> Void
+    ) -> Self {
+        var copy = add(from: from, to: to, block)
+        copy.sendableBlockEntities.insert(to.entityName)
+        return copy
+    }
+
     internal func _sendRow(entityName: String, _ oldValue: CxxDynamicObjectRef, _ newValue: CxxDynamicObjectRef) {
         guard let block = typeErasedBlocks[entityName] else {
             preconditionFailure("Migration not set up correctly")

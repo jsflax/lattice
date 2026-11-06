@@ -109,6 +109,7 @@ public struct Lattice {
         private var currentState: lattice.transport_state = .closed
         private let stateLock = NSRecursiveLock()
         private var acceptsCallbacks = false
+        private var certificatePin: String?
         private func withState<T>(_ body: () -> T) -> T {
             stateLock.lock(); defer { stateLock.unlock() }; return body()
         }
@@ -130,6 +131,40 @@ public struct Lattice {
             // its task's cancellation fires didComplete(NSURLErrorCancelled)
             // — must not tear down the CURRENT attempt: without this guard the
             // cancel of attempt N-1 error-looped attempt N forever.
+            func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                            completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+                guard let client else {
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    return
+                }
+                let admission = client.withState {
+                    (client.acceptsCallbacks && client.session === session, client.certificatePin)
+                }
+                guard admission.0 else {
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    return
+                }
+                var disposition: URLSession.AuthChallengeDisposition = .performDefaultHandling
+                var credential: URLCredential?
+                if let pin = admission.1 {
+                    disposition = .cancelAuthenticationChallenge
+                    #if canImport(Security)
+                    credential = LatticeTLSTrust.credential(for: challenge, certificateSHA256: pin)
+                    if credential != nil { disposition = .useCredential }
+                    #endif
+                }
+                // Trust evaluation may outlive a disconnect/reconnect. Re-admit the
+                // exact session and pin before returning a credential to URLSession.
+                client.withState {
+                    guard client.acceptsCallbacks, client.session === session,
+                          client.certificatePin == admission.1 else {
+                        completionHandler(.cancelAuthenticationChallenge, nil)
+                        return
+                    }
+                    completionHandler(disposition, credential)
+                }
+            }
+
             func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
                             didOpenWithProtocol protocol: String?) {
                 client?.withCurrent(session) { client?.handleOpen() }
@@ -197,6 +232,19 @@ public struct Lattice {
             let cxxPtr = UnsafeMutablePointer<lattice.generic_sync_transport>.allocate(capacity: 1)
             cxxPtr.initialize(to: cxxClient)
             self.cxxClientPtr = UnsafeMutableRawPointer(cxxPtr)
+            cxxPtr.pointee.set_certificate_pin_callback { ptr, fingerprintPtr in
+                guard let ptr, let fingerprintPtr else { return false }
+                let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeUnretainedValue()
+                let pin = String(fingerprintPtr.assumingMemoryBound(to: std.string.self).pointee)
+                guard pin.isEmpty || LatticeTLSPin.isValid(pin) else { return false }
+                #if !canImport(Security)
+                guard pin.isEmpty else { return false }
+                #endif
+                return client.withState {
+                    client.certificatePin = pin.isEmpty ? nil : pin
+                    return true
+                }
+            }
             cxxPtr.pointee.set_destroy_callback { ptr in
                 guard let ptr else { return }
                 let client = Unmanaged<WebsocketClient>.fromOpaque(ptr).takeRetainedValue()
@@ -452,8 +500,8 @@ public struct Lattice {
     /// - `SyncFilter()` (empty) → for UPLOADS this behaves like `nil` (LatticeCore
     ///   builds no WHERE clause for an empty entry list — it is NOT a "sync
     ///   nothing" switch; it only empties the filtered sync SET). To upload
-    ///   nothing, open the handle read-only, or list tables with a predicate
-    ///   that matches no row.
+    ///   nothing independently of filtering or local write access, set
+    ///   `Configuration.uploadsEnabled = false`.
     /// - `SyncFilter` with entries → whitelist: only listed tables, with optional per-row SQL predicates
     ///
     /// The filter is **upload-only** — it controls what leaves the device.
@@ -567,6 +615,15 @@ public struct Lattice {
         }
         public var authorizationToken: String?
         public var wssEndpoint: URL?
+        /// Optional durable WSS channel identity, separate from the address dialed above.
+        /// Nil keeps the endpoint-derived identity. Retain the original endpoint here when
+        /// changing transport-only URL parameters for an existing channel; changing this
+        /// value selects different durable receipts, cursors and replication slots.
+        /// Never reuse an identity for a different peer or authorization scope.
+        public var wssSyncIdentity: URL?
+        /// Optional SHA-256 of TLS leaf certificate DER. Apple transport only;
+        /// other transports reject nonempty pins instead of silently ignoring them.
+        public var pinnedServerCertificateSHA256: String? = nil
         /// WSS startup only; IPC targets retain their existing startup behavior.
         /// On initial handle creation, deferred mode opens/migrates local storage
         /// without WSS ownership, sync-only repair or a transport. Call connectSync()
@@ -581,12 +638,22 @@ public struct Lattice {
         // equality/hash; native identity conflicts are checked at attachment.
         internal var backgroundSyncManaged = false
         internal var backgroundSyncLineage: BackgroundSyncLineage?
+        /// Disable outbound sync data while retaining downloads and their acknowledgements.
+        /// This is independent of local write access and upload filters.
+        public var uploadsEnabled: Bool = true
         private var scheduler: Scheduler
 
         /// Schema migration definitions keyed by version number.
         /// Stored here so that `SendableReference.resolve(on:)` can reconstruct
         /// a `Lattice` with the correct target schema version.
         public var migration: [Int: Migration]?
+
+        /// Open an already activated file at exactly this positive Int32 version, with no create,
+        /// migration, schema repair or automatic maintenance. The complete typed schema must have
+        /// a current persisted fingerprint. These local handles use the admitted connection for
+        /// reads, cannot attach databases or own WSS/IPC, and require full close/open to reconnect.
+        /// nil preserves normal open behavior. Invalid or conflicting values throw at open.
+        public var requiredExistingSchemaVersion: Int?
 
         /// Read-only mode. When true:
         /// - Database is opened with SQLITE_OPEN_READONLY
@@ -717,11 +784,15 @@ public struct Lattice {
             lhs.storage == rhs.storage &&
             lhs.authorizationToken == rhs.authorizationToken &&
             lhs.wssEndpoint == rhs.wssEndpoint &&
+            lhs.wssSyncIdentity == rhs.wssSyncIdentity &&
+            lhs.pinnedServerCertificateSHA256 == rhs.pinnedServerCertificateSHA256 &&
             lhs.syncStartup == rhs.syncStartup &&
             lhs.backgroundSync == rhs.backgroundSync &&
             lhs.backgroundSyncManaged == rhs.backgroundSyncManaged &&
+            lhs.uploadsEnabled == rhs.uploadsEnabled &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
+            lhs.requiredExistingSchemaVersion == rhs.requiredExistingSchemaVersion &&
             lhs.syncFilter == rhs.syncFilter &&
             lhs.ipcTargets == rhs.ipcTargets &&
             lhs.busyTimeoutMs == rhs.busyTimeoutMs &&
@@ -733,11 +804,15 @@ public struct Lattice {
             hasher.combine(storage)
             hasher.combine(authorizationToken)
             hasher.combine(wssEndpoint)
+            hasher.combine(wssSyncIdentity)
+            hasher.combine(pinnedServerCertificateSHA256)
             hasher.combine(syncStartup)
             hasher.combine(backgroundSync)
             hasher.combine(backgroundSyncManaged)
+            hasher.combine(uploadsEnabled)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
+            hasher.combine(requiredExistingSchemaVersion)
             hasher.combine(syncFilter)
             hasher.combine(ipcTargets)
             hasher.combine(busyTimeoutMs)
@@ -764,23 +839,27 @@ public struct Lattice {
 
         public init(storage: Storage? = nil, fileURL: URL? = nil,
                     authorizationToken: String? = nil, wssEndpoint: URL? = nil,
+                    wssSyncIdentity: URL? = nil,
                     isReadOnly: Bool = false, migration: [Int: Migration]? = nil,
                     syncFilter: SyncFilter? = nil,
                     busyTimeoutMs: Int = Configuration.defaultBusyTimeoutMs,
                     syncTuning: SyncTuning? = nil,
                     syncStartup: SyncStartup = .automatic,
-                    backgroundSync: BackgroundSync? = nil) {
+                    backgroundSync: BackgroundSync? = nil,
+                    requiredExistingSchemaVersion: Int? = nil) {
             // storage wins; fileURL is the long-standing convenience spelling;
             // neither → the default documents-directory database.
             self.storage = storage ?? .file(fileURL ?? Self.defaultDatabaseDirectory()
                 .appendingPathComponent("lattice\(wssEndpoint != nil ? "_ws" : "").sqlite"))
             self.authorizationToken = authorizationToken
             self.wssEndpoint = wssEndpoint
+            self.wssSyncIdentity = wssSyncIdentity
             self.syncStartup = syncStartup
             self.backgroundSync = backgroundSync
             self.scheduler = Scheduler()
             self.isReadOnly = isReadOnly
             self.migration = migration
+            self.requiredExistingSchemaVersion = requiredExistingSchemaVersion
             self.syncFilter = syncFilter
             self.busyTimeoutMs = busyTimeoutMs
             self.busyTimeoutMsWasCustomized = (busyTimeoutMs != Configuration.defaultBusyTimeoutMs)
@@ -797,6 +876,9 @@ public struct Lattice {
                 self.wssEndpoint.map { std.string($0.absoluteString) } ?? std.string(),
                 authorizationToken.map { std.string($0) } ?? std.string(),
                 currentScheduler.scheduler)
+            config.set_websocket_sync_identity(std.string(wssSyncIdentity?.absoluteString ?? ""))
+            config.set_certificate_pin(std.string(pinnedServerCertificateSHA256 ?? ""))
+            config.set_uploads_enabled(uploadsEnabled)
             config.read_only = isReadOnly
             config.background_sync_managed = backgroundSync != nil || backgroundSyncManaged
             config.sync_autostart = syncStartup == .automatic && !config.background_sync_managed
@@ -843,6 +925,12 @@ public struct Lattice {
             if let migration, let maxVersion = migration.keys.max() {
                 config.target_schema_version = Int32(maxVersion)
             }
+            if let requiredExistingSchemaVersion {
+                // Throwing typed opens validate range before reaching this conversion. Auxiliary
+                // internal callers get a rejecting sentinel instead of a trapping Int32 conversion.
+                config.required_existing_schema_version = Int32(exactly: requiredExistingSchemaVersion) ?? -1
+                config.target_schema_version = config.required_existing_schema_version
+            }
             return config
         }
     }
@@ -881,6 +969,7 @@ public struct Lattice {
     /// the C++ surface directly (observers, nearest queries, attach) use
     /// `cxxLatticeRef` below.
     let backend: any LatticeBackend
+    private let transactionStoreState: TransactionFailureScope.StoreState
 
     /// The underlying C++ `swift_lattice_ref` — a foreign reference on
     /// iOS 16.4+, a copyable value type over the same shared db below the floor.
@@ -922,8 +1011,11 @@ public struct Lattice {
                   modelTypes: [any Model.Type],
                   schema: _Schema?,
                   isolation: (any Actor)?,
-                  observerActorDelivery: ObserverActorDelivery?) {
+                  observerActorDelivery: ObserverActorDelivery?,
+                  transactionStoreState: TransactionFailureScope.StoreState? = nil) {
         self.backend = backend
+        self.transactionStoreState = transactionStoreState
+            ?? Self.internTransactionStoreState(for: backend, storage: configuration.storage)
         self.configuration = configuration
         self.modelTypes = modelTypes
         self.schema = schema
@@ -977,6 +1069,7 @@ public struct Lattice {
         let schema: _Schema?
         let isolation: (any Actor)?
         let observerActorDelivery: ObserverActorDelivery?
+        weak var transactionStoreState: TransactionFailureScope.StoreState?
 
         init(_ lattice: Lattice) {
             self.backends = [WeakBackend(lattice.backend)]
@@ -985,6 +1078,7 @@ public struct Lattice {
             self.schema = lattice.schema
             self.isolation = lattice.isolation
             self.observerActorDelivery = lattice.observerActorDelivery
+            self.transactionStoreState = lattice.transactionStoreState
         }
 
         func preserveBackends(_ previous: [any LatticeBackend]) {
@@ -992,14 +1086,78 @@ public struct Lattice {
         }
 
         func resurrect() -> Lattice? {
-            guard let backend else { return nil }
+            guard let transactionStoreState else { return nil }
+            let backend = self.backend ?? transactionStoreState.owner
             return Lattice(backend: backend, configuration: configuration,
                            modelTypes: modelTypes, schema: schema, isolation: isolation,
-                           observerActorDelivery: observerActorDelivery)
+                           observerActorDelivery: observerActorDelivery,
+                           transactionStoreState: transactionStoreState)
         }
     }
 
     private nonisolated(unsafe) static var cache: [CacheKey: WeakCacheEntry] = [:]
+
+    private final class WeakTransactionStoreState {
+        weak var value: TransactionFailureScope.StoreState?
+        let identity: TransactionFailureScope.StoreIdentity
+        let attachments: TransactionFailureScope.Attachments
+        init(_ value: TransactionFailureScope.StoreState) {
+            self.value = value
+            identity = value.identity
+            attachments = value.attachments
+        }
+    }
+    private nonisolated(unsafe) static var transactionStoreStates: [CacheKey: WeakTransactionStoreState] = [:]
+    private nonisolated(unsafe) static var transactionStateInsertions = 0
+
+    private static func internTransactionStoreState(for backend: any LatticeBackend,
+                                                    storage: Configuration.Storage) -> TransactionFailureScope.StoreState {
+        let key = CacheKey(backend)
+        // Both weak promotions leave the lock as strong values. Capture and
+        // disposal can touch the filesystem/native owner, never under this lock.
+        let retained = cacheLock.withLockUnchecked { transactionStoreStates[key]?.value }
+        if let retained { return retained }
+        let candidate = TransactionFailureScope.StoreState(storage: storage, backend: backend)
+        let selection = cacheLock.withLockUnchecked {
+            if let current = transactionStoreStates[key]?.value { return (current, [TransactionFailureScope.StoreState]()) }
+            let selected: TransactionFailureScope.StoreState
+            if let previous = transactionStoreStates[key], previous.identity.mayAlias(candidate.identity) {
+                // Managed objects may preserve a cached Core handle after all
+                // facades disappear. Keep its cheap attachment metadata. A
+                // proven different physical store is a new incarnation; an
+                // unknown identity must remain conservative instead.
+                if !previous.identity.isKnown || !candidate.identity.isKnown { previous.attachments.retainUnknown() }
+                selected = .init(identity: candidate.identity, backend: backend, attachments: previous.attachments)
+            } else { selected = candidate }
+            transactionStoreStates[key] = WeakTransactionStoreState(selected)
+            transactionStateInsertions += 1
+            var promoted: [TransactionFailureScope.StoreState] = []
+            if transactionStateInsertions == 64 {
+                transactionStateInsertions = 0
+                var expired: [CacheKey] = []
+                for (key, entry) in transactionStoreStates {
+                    if let live = entry.value { promoted.append(live) }
+                    else if !entry.attachments.mayHaveAttachments { expired.append(key) }
+                }
+                // Without a live facade/state there is no Swift attachment
+                // mutator. Empty metadata is safe to forget, even if a managed
+                // object still owns that unattached Core. Retain nonempty or
+                // unknown metadata until detach, close, or proven incarnation
+                // replacement; it owns no native handles.
+                for key in expired { transactionStoreStates.removeValue(forKey: key) }
+            }
+            return (selected, promoted)
+        }
+        withExtendedLifetime((candidate, selection.1)) {}
+        return selection.0
+    }
+
+    private static func retireTransactionStoreState(for backend: any LatticeBackend) {
+        // The caller retains the just-closed backend. Entries own only weak
+        // states and attachment metadata; removing one cannot release native
+        // ownership under the lock.
+        _ = cacheLock.withLockUnchecked { transactionStoreStates.removeValue(forKey: CacheKey(backend)) }
+    }
 
     /// Context passed through void* for the row migration C function pointer callback.
     private final class _MigrationCtx: @unchecked Sendable {
@@ -1008,11 +1166,82 @@ public struct Lattice {
         init(_ m: [Int: Migration], _ v: Int) { migration = m; targetVersion = v }
     }
 
+    private static func configureMigration(
+        _ configuration: Configuration, swiftConfig: inout lattice.swift_configuration
+    ) {
+        if let migration = configuration.migration {
+            // Find the target version from migration dict (highest key)
+            let targetVersion = migration.keys.max() ?? configuration.requiredExistingSchemaVersion ?? 1
+
+            // Create swift_configuration with row migration callback
+            swiftConfig.target_schema_version = Int32(targetVersion)
+
+            // Pre-populate migration schema pairs (no callback needed)
+            for (version, migrationDef) in migration {
+                for (tableName, schemas) in migrationDef.schemas {
+                    swiftConfig.addMigrationSchema(version, std.string(tableName), schemas.from, schemas.to)
+                }
+            }
+
+            // Set up the row migration callback using C function pointers
+            // (same pattern as generic_scheduler — avoids block lifetime issues on Linux)
+            let ctx = _MigrationCtx(migration, Int(targetVersion))
+            let ctxRaw = Unmanaged.passRetained(ctx).toOpaque()
+
+            swiftConfig.setRowMigrationCallback(ctxRaw, { tableName, rawCtx in
+                guard let rawCtx, let tableName else { return }
+                let migCtx = Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).takeUnretainedValue()
+                let entityName = String(cString: tableName)
+
+                // Read old/new refs from thread-local storage (set by C++ before
+                // this callback). `_optRef` normalizes the value-path import
+                // (non-optional, empty when absent) to a Swift optional.
+                guard let oldRef = _optRef(lattice.migrationGetOldRow()),
+                      let newRef = _optRef(lattice.migrationGetNewRow()) else { return }
+
+                // Dispatch to the Migration for the version step the bridge is
+                // currently walking — NOT the final target. A v1→v3 walk fires
+                // v2 tables' rows first; dispatching those into migration[3]
+                // (which has no blocks for them) would preconditionFailure.
+                let stepVersion = Int(lattice.migrationGetCurrentVersion())
+                if let currentMigration = migCtx.migration[stepVersion] {
+                    currentMigration._sendRow(entityName: entityName, oldRef, newRef)
+                }
+            }, { rawCtx in
+                guard let rawCtx else { return }
+                Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).release()
+            })
+
+        }
+    }
+
     internal init(isolation: isolated (any Actor)? = #isolation,
                   for schema: [any Model.Type],
                   configuration: Configuration = defaultConfiguration,
                   isSynchronizing: Bool,
                   independentConnection: Bool = false) throws {
+        if let pin = configuration.pinnedServerCertificateSHA256 {
+            guard LatticeTLSPin.isValid(pin), configuration.wssEndpoint?.scheme == "wss" else {
+                throw LatticeTLSPin.ConfigurationError.invalidPin
+            }
+            #if !canImport(Security)
+            throw LatticeTLSPin.ConfigurationError.unsupportedPlatform
+            #endif
+        }
+        if let required = configuration.requiredExistingSchemaVersion {
+            guard required > 0, Int32(exactly: required) != nil else {
+                throw Lattice.Error.databaseError("Required existing schema version must be a positive Int32")
+            }
+            if let target = configuration.migration?.keys.max(), target != required {
+                throw Lattice.Error.databaseError("Required existing schema version conflicts with migration target")
+            }
+            guard configuration.wssEndpoint == nil, configuration.wssSyncIdentity == nil,
+                  configuration.ipcTargets?.isEmpty ?? true,
+                  configuration.backgroundSync == nil, !configuration.backgroundSyncManaged,
+                  configuration.backgroundSyncLineage == nil else {
+                throw Lattice.Error.databaseError("Existing schema handles do not own sync transports or background lifecycle")
+            }
+        }
         var configuration = configuration
         let ownsBackgroundLifecycle = configuration.backgroundSync != nil ||
             (configuration.backgroundSyncManaged && configuration.backgroundSyncLineage == nil)
@@ -1075,50 +1304,7 @@ public struct Lattice {
         // step. Only the native connection-cache policy differs.
         var swiftConfig = configuration.cxxConfiguration(isolation: isolation)
 
-        if let migration = configuration.migration {
-            // Find the target version from migration dict (highest key)
-            let targetVersion = migration.keys.max() ?? 1
-
-            // Create swift_configuration with row migration callback
-            swiftConfig.target_schema_version = Int32(targetVersion)
-
-            // Pre-populate migration schema pairs (no callback needed)
-            for (version, migrationDef) in migration {
-                for (tableName, schemas) in migrationDef.schemas {
-                    swiftConfig.addMigrationSchema(version, std.string(tableName), schemas.from, schemas.to)
-                }
-            }
-
-            // Set up the row migration callback using C function pointers
-            // (same pattern as generic_scheduler — avoids block lifetime issues on Linux)
-            let ctx = _MigrationCtx(migration, Int(targetVersion))
-            let ctxRaw = Unmanaged.passRetained(ctx).toOpaque()
-
-            swiftConfig.setRowMigrationCallback(ctxRaw, { tableName, rawCtx in
-                guard let rawCtx, let tableName else { return }
-                let migCtx = Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).takeUnretainedValue()
-                let entityName = String(cString: tableName)
-
-                // Read old/new refs from thread-local storage (set by C++ before
-                // this callback). `_optRef` normalizes the value-path import
-                // (non-optional, empty when absent) to a Swift optional.
-                guard let oldRef = _optRef(lattice.migrationGetOldRow()),
-                      let newRef = _optRef(lattice.migrationGetNewRow()) else { return }
-
-                // Dispatch to the Migration for the version step the bridge is
-                // currently walking — NOT the final target. A v1→v3 walk fires
-                // v2 tables' rows first; dispatching those into migration[3]
-                // (which has no blocks for them) would preconditionFailure.
-                let stepVersion = Int(lattice.migrationGetCurrentVersion())
-                if let currentMigration = migCtx.migration[stepVersion] {
-                    currentMigration._sendRow(entityName: entityName, oldRef, newRef)
-                }
-            }, { rawCtx in
-                guard let rawCtx else { return }
-                Unmanaged<_MigrationCtx>.fromOpaque(rawCtx).release()
-            })
-
-        }
+        Self.configureMigration(configuration, swiftConfig: &swiftConfig)
         if independentConnection {
             createdRef = lattice.swift_lattice_ref.createUncached(swiftConfig: swiftConfig,
                                                                   schemas: cxxSchemas,
@@ -1135,6 +1321,7 @@ public struct Lattice {
         // `create` (a foreign reference on iOS 16.4+, a copyable value type
         // below the floor) is boxed into the one stored backend.
         self.backend = CxxBackend(createdRef)
+        self.transactionStoreState = Self.internTransactionStoreState(for: backend, storage: configuration.storage)
         // Item A §1.7/§3: forward the per-Lattice read-generation tunables to
         // the core pool at open (plain atomic stores). `keeperPoolSize`
         // documents the core pool capacity (no per-instance setter in 1.0);
@@ -1166,11 +1353,195 @@ public struct Lattice {
         withExtendedLifetime(retired) {}
     }
 
+    // MARK: Async local open
+
+    public enum AsyncLocalOpenError: Swift.Error, Equatable, Sendable {
+        /// Transport/background owners must use the synchronous initializer.
+        case unsupportedConfiguration
+        /// A surviving migration callback was not registered with addSendable.
+        case unsafeMigrationCallbacks
+    }
+
+    /// A one-shot ownership handoff, not a concurrently accessed handle. Only
+    /// run() touches the prepared C++ inputs; after its task is joined, the
+    /// destination either takes the reference or joins discard() on a worker.
+    /// No partially initialized facade or managed model crosses this boundary.
+    private final class LocalOpenWorker: @unchecked Sendable {
+        private var configuration: lattice.swift_configuration?
+        private var schemas: lattice.SchemaVector?
+        private var reference: lattice.swift_lattice_ref?
+        private var failure: (any Swift.Error)?
+        private let storage: Configuration.Storage
+        private(set) var transactionStoreState: TransactionFailureScope.StoreState?
+
+        init(configuration: lattice.swift_configuration, schemas: lattice.SchemaVector, storage: Configuration.Storage) {
+            self.configuration = configuration
+            self.schemas = schemas
+            self.storage = storage
+        }
+
+        func run(independentConnection: Bool) {
+            defer {
+                configuration = nil
+                schemas = nil
+            }
+            var error = lattice.cxx_error()
+            let opened: lattice.swift_lattice_ref
+            if independentConnection {
+                opened = lattice.swift_lattice_ref.createUncached(
+                    swiftConfig: configuration!, schemas: schemas!, error: &error)
+            } else {
+                opened = lattice.swift_lattice_ref.create(
+                    swiftConfig: configuration!, schemas: schemas!, error: &error)
+            }
+            // Inspect/capture the checked error on the same worker as create.
+            // Any failed constructor's returned reference is released here.
+            if error.msg.empty() {
+                reference = opened
+                transactionStoreState = Self.captureState(opened, storage: storage)
+            } else {
+                failure = error
+            }
+        }
+
+        private static func captureState(_ reference: lattice.swift_lattice_ref, storage: Configuration.Storage) -> TransactionFailureScope.StoreState {
+            let backend = CxxBackend(reference)
+            return Lattice.internTransactionStoreState(for: backend, storage: storage)
+        }
+
+        func takeReference() throws -> lattice.swift_lattice_ref {
+            if let failure { throw failure }
+            guard let reference else { preconditionFailure("Local open has no joined result") }
+            self.reference = nil
+            return reference
+        }
+
+        func discard() {
+            // Never close(): a cached open may share Core with an older facade.
+            // Last-reference teardown can block, so do it on this joined worker.
+            reference = nil
+            transactionStoreState = nil
+            failure = nil
+        }
+    }
+
+    /// Open local storage without blocking the destination actor on Core's
+    /// checked open/migration. Schema preparation and the final facade retain
+    /// the caller's isolation, including scheduler/cache identity and observers.
+    /// The ordinary connection cache remains enabled.
+    ///
+    /// WSS, IPC and managed background lifecycle configurations are rejected
+    /// before opening; no transport setting is silently dropped or deferred.
+    /// Core's normal local retention and cross-process notification remain on.
+    /// All migration callbacks must use Migration.addSendable. They run inline
+    /// on the worker, not on their original actor, and may not escape row models.
+    ///
+    /// Cancellation joins the synchronous Core operation and worker cleanup
+    /// before throwing CancellationError without publishing a facade. It cannot
+    /// interrupt Core or undo a migration already committed to disk. Cancellation
+    /// observed after the final handoff check follows normal cooperative semantics.
+    public static func openLocal(isolation: isolated (any Actor)? = #isolation,
+                                 for schema: [any Model.Type],
+                                 configuration: Configuration = defaultConfiguration) async throws -> Lattice {
+        try await openLocal(isolation: isolation, for: schema, configuration: configuration,
+                            independentConnection: false)
+    }
+
+    /// The local async-open contract above, using a distinct native connection.
+    /// Closing this returned handle does not close another same-store handle.
+    public static func openLocal(isolation: isolated (any Actor)? = #isolation,
+                                 independentFor schema: [any Model.Type],
+                                 configuration: Configuration = defaultConfiguration) async throws -> Lattice {
+        try await openLocal(isolation: isolation, for: schema, configuration: configuration,
+                            independentConnection: true)
+    }
+
+    private static func openLocal(isolation: isolated (any Actor)?,
+                                  for schema: [any Model.Type],
+                                  configuration: Configuration,
+                                  independentConnection: Bool) async throws -> Lattice {
+        try Task.checkCancellation()
+        // Admission precedes registration, schema callbacks and all native work.
+        guard configuration.wssEndpoint == nil, configuration.wssSyncIdentity == nil,
+              configuration.pinnedServerCertificateSHA256 == nil,
+              configuration.ipcTargets?.isEmpty ?? true,
+              configuration.backgroundSync == nil, !configuration.backgroundSyncManaged,
+              configuration.backgroundSyncLineage == nil else {
+            throw AsyncLocalOpenError.unsupportedConfiguration
+        }
+        guard configuration.migration?.values.allSatisfy({ $0.supportsAsyncLocalOpen }) ?? true else {
+            throw AsyncLocalOpenError.unsafeMigrationCallbacks
+        }
+        if let required = configuration.requiredExistingSchemaVersion {
+            guard required > 0, Int32(exactly: required) != nil else {
+                throw Lattice.Error.databaseError("Required existing schema version must be a positive Int32")
+            }
+            if let target = configuration.migration?.keys.max(), target != required {
+                throw Lattice.Error.databaseError("Required existing schema version conflicts with migration target")
+            }
+        }
+        // Keep global factory setup on the destination, as in synchronous init.
+        // The local-only guard guarantees no background lifecycle to register.
+        Self.registerNetworkFactoryIfNeeded()
+        let delivery = isolation != nil ? ObserverActorDelivery(isolation: isolation) : nil
+        let allTypes = Self.discoverAllTypes(from: schema)
+        for type in allTypes { ModelTypeRegistry.shared.register(type) }
+        var swiftConfig = configuration.cxxConfiguration(isolation: isolation)
+        Self.configureMigration(configuration, swiftConfig: &swiftConfig)
+        let worker = LocalOpenWorker(configuration: swiftConfig, schemas: allTypes.cxxSchema, storage: configuration.storage)
+        try Task.checkCancellation()
+        // A detached task does not inherit cancellation or the caller executor.
+        // Awaiting its nonthrowing value always joins the checked native open.
+        await Task.detached(priority: Task.currentPriority) {
+            worker.run(independentConnection: independentConnection)
+        }.value
+        if Task.isCancelled {
+            await Task.detached { worker.discard() }.value
+            throw CancellationError()
+        }
+        // No await from ownership transfer through cache publication. Form one
+        // facade on the original actor, never a temporary worker-bound Lattice.
+        let backend = CxxBackend(try worker.takeReference())
+        let result = Lattice(backend: backend, configuration: configuration,
+                             modelTypes: allTypes, schema: SchemaCompat(modelTypes: schema),
+                             isolation: isolation, observerActorDelivery: delivery,
+                             transactionStoreState: worker.transactionStoreState)
+        let tuning = configuration.resultsTuning
+        backend.setReadGenerationTTLMs(Int64((tuning.generationTTLSeconds * 1000).rounded()))
+        backend.setWALKeeperEvictionThresholdBytes(Int64(tuning.walKeeperEvictionThresholdBytes))
+        let key = CacheKey(backend)
+        let entry = WeakCacheEntry(result)
+        let retired = Self.cacheLock.withLockUnchecked {
+            let previous = Self.cache[key]
+            let live = previous?.liveBackends ?? []
+            entry.preserveBackends(live)
+            Self.cache[key] = entry
+            return (previous, live)
+        }
+        withExtendedLifetime(retired) {}
+        return result
+    }
+
     // MARK: Public Inits
     public init(isolation: isolated (any Actor)? = #isolation,
                 for schema: [any Model.Type],
                 configuration: Configuration = defaultConfiguration) throws {
         try self.init(isolation: isolation, for: schema, configuration: configuration, isSynchronizing: false)
+    }
+
+    /// Open a distinct connection without joining the path/scheduler cache.
+    /// Storage identity, schema, migrations and configuration are preserved;
+    /// independence applies to the connection, not to the stored data.
+    /// Closing this handle does not close another handle opened with the same
+    /// configuration. Native open failures are thrown through the checked route.
+    ///
+    /// The handle keeps the caller's isolation. Set `isReadOnly` and other
+    /// configuration policies explicitly; independence does not change them.
+    public init(isolation: isolated (any Actor)? = #isolation,
+                independentFor schema: [any Model.Type],
+                configuration: Configuration = defaultConfiguration) throws {
+        try self.init(isolation: isolation, for: schema, configuration: configuration,
+                      isSynchronizing: false, independentConnection: true)
     }
 
     internal var schema: _Schema?
@@ -1302,6 +1673,7 @@ public struct Lattice {
                     let identityHash = backend.identityHash
                     BackgroundSyncBindings.invalidate(identity: identityHash)
                     closeBackend(backend)
+                    retireTransactionStoreState(for: backend)
                     // A read can remint this identity after the path-wide
                     // eviction but before native close finishes.
                     GenerationCoordinatorRegistry.evict(identityHash: identityHash)
@@ -1312,8 +1684,12 @@ public struct Lattice {
         latticeSHMURL = fileURL.deletingPathExtension().appendingPathExtension("sqlite-shm")
         latticeWALURL = fileURL.deletingPathExtension().appendingPathExtension("sqlite-wal")
         try FileManager.default.removeItem(at: fileURL)
-        try FileManager.default.removeItem(at: latticeSHMURL)
-        try FileManager.default.removeItem(at: latticeWALURL)
+        // SQLite can unlink WAL/SHM when the last connection closes. Their
+        // absence is already clean; preserve every other removal failure.
+        for sidecar in [latticeSHMURL, latticeWALURL] {
+            do { try FileManager.default.removeItem(at: sidecar) }
+            catch let error as CocoaError where error.code == .fileNoSuchFile { }
+        }
     }
 
     /// Recursively discover all Model types linked from the given schema.
@@ -1724,6 +2100,7 @@ public struct Lattice {
         let identityHash = backend.identityHash
         GenerationCoordinatorRegistry.evict(identityHash: identityHash)
         closeBackend(backend)
+        Self.retireTransactionStoreState(for: backend)
         // Readers may have recreated a coordinator while native close was
         // still pending. Facades reacquire their coordinator on every access;
         // remove this last pre-close cache before close() returns.
@@ -1740,6 +2117,7 @@ public struct Lattice {
         let identity = backend.identityHash
         GenerationCoordinatorRegistry.evict(identityHash: identity)
         backend.close()
+        retireTransactionStoreState(for: backend)
         GenerationCoordinatorRegistry.evict(identityHash: identity)
     }
 
@@ -2314,7 +2692,9 @@ public struct Lattice {
                 var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
+                queryConfig.wssSyncIdentity = nil
                 queryConfig.authorizationToken = nil
+                queryConfig.pinnedServerCertificateSHA256 = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
                     let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
@@ -2404,7 +2784,9 @@ public struct Lattice {
                 var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
                 queryConfig.ipcTargets = nil
                 queryConfig.wssEndpoint = nil
+                queryConfig.wssSyncIdentity = nil
                 queryConfig.authorizationToken = nil
+                queryConfig.pinnedServerCertificateSHA256 = nil
                 queryConfig.auditRetention = nil   // a query handle never prunes
                 do {
                     let queryLattice = UncheckedSendable(try Lattice(for: types.value, configuration: queryConfig))
@@ -2758,21 +3140,40 @@ public struct Lattice {
         }
     }
     
+    /// Core already owns BEGIN. Read policy from that writer connection and
+    /// refuse on sealed query errors instead of consulting a pinned MVCC view.
+    internal func _authorizeSyncWrite(_ authorize: () -> Bool) -> Bool {
+        guard !TransactionFailureScope.isActive else { return false }
+        let failures = TransactionFailureScope(identityHash: backend.identityHash,
+            storeState: transactionStoreState, allowsIndependentStores: false)
+        let owner = ObjectIdentifier(Thread.current)
+        Self._recordExplicitTxnBegin(identityHash: backend.identityHash)
+        defer {
+            Self._recordExplicitTxnEnd(identityHash: backend.identityHash, expectedOwner: owner)
+            failures.restore()
+        }
+        return authorize() && failures.firstError == nil
+    }
+
     /// Run a synchronous write transaction with catchable backend failures.
     /// A failed BEGIN never executes `block`. A reported query or primitive
     /// write failure rolls back the transaction even if a later operation
     /// succeeds and clears the bridge's last-error slot. Commit failures also
     /// roll back. The original failure is preserved if rollback reports an
-    /// additional error. Nested checked transactions, including transactions on
-    /// different handles, are rejected before the inner body executes. The
-    /// synchronous failure scope cannot attribute writes to a different owner.
+    /// additional error. A nested transaction on a different physical store is
+    /// independent: its commit survives a later outer rollback. Failures are
+    /// retained by their owning handle, even when another store is innermost.
+    /// Re-entering the same handle, physical file, or named memory store is
+    /// rejected before BEGIN. Callers must use a consistent store lock order;
+    /// nesting does not provide a multi-store atomic commit. Handles with
+    /// attachments cannot participate in independent-store nesting.
     public func withTransaction<T>(isolation: isolated (any Actor)? = #isolation,
                                    _ block: () throws -> T) throws -> T {
-        guard !TransactionFailureScope.isActive,
-              !Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash) else {
-            throw LatticeError.transactionError("Nested checked transactions are not supported")
+        guard !Self._threadHoldsExplicitTransaction(identityHash: backend.identityHash),
+              TransactionFailureScope.canEnter(identityHash: backend.identityHash, storeState: transactionStoreState) else {
+            throw LatticeError.transactionError("Nested checked transactions require a different physical store")
         }
-        let failures = TransactionFailureScope()
+        let failures = TransactionFailureScope(identityHash: backend.identityHash, storeState: transactionStoreState)
         defer { failures.restore() }
         try backend.beginTransactionChecked()
         let transactionOwner = ObjectIdentifier(Thread.current)
@@ -2796,7 +3197,15 @@ public struct Lattice {
     }
     
     public mutating func attach(lattice: Lattice) throws {
+        guard configuration.requiredExistingSchemaVersion == nil,
+              lattice.configuration.requiredExistingSchemaVersion == nil else {
+            throw LatticeError.attachFailed("Existing schema handles cannot participate in attachments")
+        }
+        guard !TransactionFailureScope.isActive(identityHash: backend.identityHash) else {
+            throw LatticeError.attachFailed("Cannot change attachments during this handle's checked transaction")
+        }
         try backend.attach(lattice.backend)
+        transactionStoreState.attached(lattice.configuration.canonicalPath)
         // Item A §4.2: attaching changes what this handle's tables mean
         // (union views over both stores) — every cached shape is stale. Link
         // the two paths so writes on either store invalidate this handle's
@@ -2831,7 +3240,11 @@ public struct Lattice {
     /// one reopened later — detaches it. Idempotent: detaching a lattice
     /// that isn't attached is a no-op and leaves the schema untouched.
     public mutating func detach(lattice: Lattice) throws {
+        guard !TransactionFailureScope.isActive(identityHash: backend.identityHash) else {
+            throw LatticeError.attachFailed("Cannot change attachments during this handle's checked transaction")
+        }
         try backend.detach(lattice.backend)
+        transactionStoreState.detached(lattice.configuration.canonicalPath)
         GenerationCoordinatorRegistry.unlinkAttachedPaths(parent: backend.path,
                                                           attached: lattice.backend.path)
         _noteWrite(tables: nil)
@@ -2847,12 +3260,18 @@ public struct Lattice {
     }
 
     public func attaching(lattice: Lattice) throws -> Lattice {
+        guard configuration.requiredExistingSchemaVersion == nil,
+              lattice.configuration.requiredExistingSchemaVersion == nil else {
+            throw LatticeError.attachFailed("Existing schema handles cannot participate in attachments")
+        }
         // Build a query-only config: strip IPC/WSS to avoid duplicate socket
         // bind and unnecessary sync on a connection used only for UNION ALL reads.
         var queryConfig = configuration.withoutBackgroundTaskOwnership(queryOnly: true)
         queryConfig.ipcTargets = nil
         queryConfig.wssEndpoint = nil
+        queryConfig.wssSyncIdentity = nil
         queryConfig.authorizationToken = nil
+        queryConfig.pinnedServerCertificateSHA256 = nil
         queryConfig.syncFilter = nil
         try queryConfig.validateBackgroundSyncStore()
         let cxxConfig = queryConfig.cxxConfiguration()
@@ -2874,6 +3293,7 @@ public struct Lattice {
                                  schema: schema,
                                  isolation: isolation,
                                  observerActorDelivery: observerActorDelivery)
+        newLattice.transactionStoreState.attached(lattice.configuration.canonicalPath)
         if let lineage = queryConfig.backgroundSyncLineage {
             _ = try BackgroundSyncBindings.attachManaged(backend: newLattice.backend, owner: isolation,
                 lineage: lineage, ownsLifecycle: false)
