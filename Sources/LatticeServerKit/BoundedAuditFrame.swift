@@ -13,20 +13,22 @@ struct BoundedAuditFrame {
     let scannedLastID: Int64?
 
     enum Failure: Error, CustomStringConvertible {
-        case invalidLimit, missingRow, queryFailed, rowTooLarge
+        case invalidLimit, missingRow, queryFailed
         var description: String {
             switch self {
             case .invalidLimit: "Invalid encoded sync message byte limit"
             case .missingRow: "Audit row became unavailable during sync preparation"
             case .queryFailed: "Audit query failed during sync preparation"
-            case .rowTooLarge: "Sync audit row exceeds encoded message byte limit"
             }
         }
     }
 
     /// Loads/encodes one row at a time, retaining only the emitted prefix. A row
-    /// that does not fit is not included in count/cursor. If it cannot fit even
-    /// alone, return an earlier valid prefix first, then fail on the next pass.
+    /// that does not fit after an emitted row is left for the next page. A first
+    /// visible row that exceeds the byte budget is sent alone so it cannot block
+    /// the cursor or the rows after it.
+    /// The relay re-encodes stored rows and adds an envelope, so the client's
+    /// per-row hard limit must not be applied to the resulting one-row frame.
     /// A single row encoder may allocate that row; this is not a hostile-parser
     /// or pre-hydration allocation limit.
     /// `nil` means a successful end-of-page read. Query failures must throw;
@@ -57,12 +59,8 @@ struct BoundedAuditFrame {
                 continue
             }
             let encoded = try encoder.encode(row)
-            guard encoded.count <= maximumBytes - envelope else {
-                if count != 0 { break }
-                throw Failure.rowTooLarge
-            }
             let separator = count == 0 ? 0 : 1
-            guard encoded.count + separator <= maximumBytes - suffix.count - data.count else { break }
+            guard count == 0 || encoded.count + separator <= maximumBytes - suffix.count - data.count else { break }
             if separator != 0 { data.append(0x2c) }
             data.append(encoded)
             count += 1

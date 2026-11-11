@@ -972,9 +972,10 @@ extension Lattice {
                     ackPath?.record(.ingressDiscarded, bytes: bb.readableBytes)
                     return
                 }
-                // Refuse before retaining/queuing bytes; count-based client or
-                // legacy relay batching must not bypass the shared byte budget.
-                guard bb.readableBytes <= Lattice.maximumEncodedSyncMessageBytes else {
+                // Older clients batch by row count, so their valid uploads can
+                // exceed the outbound encoded-message budget. Retain the legacy
+                // 64 MiB ingress cap; queued bytes remain bounded separately.
+                guard bb.readableBytes <= maxBufferedFrameBytes else {
                     ackPath?.record(.ingressRefused, bytes: bb.readableBytes)
                     state.revocation.revoke()
                     state.isRefused = true
@@ -1306,9 +1307,9 @@ extension Lattice {
                         }
                     }
 
-                    // Legacy same-channel fan-out — unchanged on mounts without
-                    // observer push (writer mounts keep verbatim fan-out
-                    // byte-for-byte on the healthy path). On push-enabled mounts
+                    // Same-channel fan-out keeps healthy frames byte-for-byte
+                    // within the outbound budget. Larger legacy batches are
+                    // repacked below. On push-enabled mounts
                     // it is skipped entirely: delivery is the pump's job
                     // (commit-ordered, cursor-deduped), uploads are policy-refused
                     // anyway, and fanning every frame would echo each observer's
@@ -1333,8 +1334,22 @@ extension Lattice {
                         fanOut = nil
                     }
                     guard let fanOut else { return }
-                    for socket in await sockets.sockets(channelId: channel.id) where socket !== ws {
-                        socket.send(fanOut)
+                    let peers = await sockets.sockets(channelId: channel.id).filter { $0 !== ws }
+                    guard !peers.isEmpty else { return }
+                    if frame.claimsUpload, fanOut.readableBytes > Lattice.maximumEncodedSyncMessageBytes {
+                        do {
+                            let pages = try frame.boundedAuditFrames(keeping: Set(outcome.applied))
+                            for page in pages {
+                                for socket in peers { socket.send(ByteBuffer(data: page)) }
+                            }
+                        } catch {
+                            relayLog.error("Relay audit fan-out encoding failed: \(error)")
+                            // The upload is durable. Close peers so reconnect
+                            // catch-up can recover instead of silently missing it.
+                            for socket in peers { socket.close(code: .unexpectedServerError, promise: nil) }
+                        }
+                    } else {
+                        for socket in peers { socket.send(fanOut) }
                     }
                 }
 
