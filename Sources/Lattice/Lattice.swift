@@ -1461,6 +1461,8 @@ public struct Lattice {
                                   configuration: Configuration,
                                   independentConnection: Bool) async throws -> Lattice {
         try Task.checkCancellation()
+        let preparation = LatticePerf.beginSpan("Lattice.openLocal.prepare", scope: .caller)
+        defer { preparation.end() }
         // Admission precedes registration, schema callbacks and all native work.
         guard configuration.wssEndpoint == nil, configuration.wssSyncIdentity == nil,
               configuration.pinnedServerCertificateSHA256 == nil,
@@ -1492,13 +1494,27 @@ public struct Lattice {
         try Task.checkCancellation()
         // A detached task does not inherit cancellation or the caller executor.
         // Awaiting its nonthrowing value always joins the checked native open.
+        let spanHook = LatticePerf.spanHook
+        preparation.end()
         await Task.detached(priority: Task.currentPriority) {
-            worker.run(independentConnection: independentConnection)
+            LatticePerf.$spanHook.withValue(spanHook) {
+                let opening = LatticePerf.beginSpan("Lattice.openLocal.worker.open", scope: .worker)
+                defer { opening.end() }
+                worker.run(independentConnection: independentConnection)
+            }
         }.value
         if Task.isCancelled {
-            await Task.detached { worker.discard() }.value
+            await Task.detached {
+                LatticePerf.$spanHook.withValue(spanHook) {
+                    let disposal = LatticePerf.beginSpan("Lattice.openLocal.dispose", scope: .worker)
+                    defer { disposal.end() }
+                    worker.discard()
+                }
+            }.value
             throw CancellationError()
         }
+        let adoption = LatticePerf.beginSpan("Lattice.openLocal.adopt", scope: .caller)
+        defer { adoption.end() }
         // No await from ownership transfer through cache publication. Form one
         // facade on the original actor, never a temporary worker-bound Lattice.
         let backend = CxxBackend(try worker.takeReference())
@@ -1519,6 +1535,9 @@ public struct Lattice {
             return (previous, live)
         }
         withExtendedLifetime(retired) {}
+        adoption.end()
+        let returning = LatticePerf.beginSpan("Lattice.openLocal.return", scope: .caller)
+        defer { returning.end() }
         return result
     }
 
