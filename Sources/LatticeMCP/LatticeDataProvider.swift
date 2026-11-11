@@ -24,13 +24,12 @@ private final class QueryFailureCapture: @unchecked Sendable {
     func value() -> String? { lock.lock(); defer { lock.unlock() }; return failure }
 }
 
-/// Read-only model queries. One actor owns each dynamic reader; values are bounded and projected
-/// before relationship hydration. Every sealed backend error is captured instead of becoming []/0.
+/// Read-only model queries. One actor owns each dynamic reader. An explicit read policy
+/// bounds and projects values before relationship hydration; unscoped reads retain the
+/// original serialization contract. Backend query errors are captured instead of becoming []/0.
 public actor LatticeDataProvider {
     private let fileURL: URL
-    private let defaultLimit: Int
-    private let maxLimit: Int
-    private let maxDepthCap: Int
+    private let limits: LatticeQueryLimits
     private let readPolicy: LatticeReadPolicy?
     private let lattice: Lattice
     private let diagnostics: LatticeDiagnostics
@@ -40,10 +39,13 @@ public actor LatticeDataProvider {
     private let failures = QueryFailureCapture()
     public static var toolNames: [String] { LatticeToolCatalog.toolNames }
 
-    public init(fileURL: URL, defaultLimit: Int = 25, maxLimit: Int = 500,
-                maxDepthCap: Int = 3, readPolicy: LatticeReadPolicy? = nil) async throws {
-        self.fileURL = fileURL; self.defaultLimit = max(1, min(defaultLimit, maxLimit, 500))
-        self.maxLimit = max(1, min(maxLimit, 500)); self.maxDepthCap = max(0, min(maxDepthCap, 3))
+    /// Without a policy, rows default to 100, depth to 1, and numeric limits clamp.
+    /// Passing a policy opts into the bounded defaults and strict argument ranges.
+    public init(fileURL: URL, defaultLimit: Int? = nil, maxLimit: Int? = nil,
+                maxDepthCap: Int? = nil, readPolicy: LatticeReadPolicy? = nil) async throws {
+        self.fileURL = fileURL
+        self.limits = LatticeQueryLimits(defaultRows: defaultLimit, maxRows: maxLimit,
+                                         maxDepth: maxDepthCap, scoped: readPolicy != nil)
         self.readPolicy = readPolicy
         self.serializationPolicy = readPolicy?.permittedFields
         diagnostics = LatticeDiagnostics(fileURL: fileURL, readPolicy: readPolicy)
@@ -78,11 +80,13 @@ public actor LatticeDataProvider {
         }
         failures.clear()
         do {
-            guard argumentsJSON.utf8.count <= 65_536,
+            guard readPolicy == nil || argumentsJSON.utf8.count <= 65_536,
                   let data = argumentsJSON.data(using: .utf8),
-                  let args = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                  let parsedArgs = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw ToolError("invalid_arguments", "Arguments must be a JSON object of at most 64 KiB.")
             }
+            // Unscoped optional nulls mean omitted arguments; predicate values stay intact.
+            let args = readPolicy == nil ? parsedArgs.filter { !($0.value is NSNull) } : parsedArgs
             try validateArguments(tool: tool, args: args)
             var payload: [String: Any]
             switch tool {
@@ -96,6 +100,9 @@ public actor LatticeDataProvider {
             try checkQuery()
             payload["source"] = ["id": fileURL.path, "kind": "file", "observedAt": ISO8601DateFormatter().string(from: Date()), "consistency": "live_read"]
             var encoded = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+            if readPolicy == nil {
+                return .init(json: String(decoding: encoded, as: UTF8.self), isError: false)
+            }
             // Never return a silently cut JSON frame. Rows are removed at complete-object boundaries.
             if tool == "lattice_query", readPolicy?.requiredRowValues == nil,
                var rows = payload["results"] as? [[String: Any]] {
@@ -167,13 +174,14 @@ public actor LatticeDataProvider {
         return (ids, objects)
     }
     private func validateArguments(tool: String, args: [String: Any]) throws {
-        guard let descriptor = LatticeToolCatalog.tools.first(where: { $0.name == tool }),
+        guard let descriptor = LatticeToolCatalog.tools(readPolicy: readPolicy).first(where: { $0.name == tool }),
               let data = descriptor.inputSchemaJSON.data(using: .utf8),
               let schema = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let properties = schema["properties"] as? [String: Any] else { throw ToolError("unknown_tool", "Unknown tool.") }
         let unknown = Set(args.keys).subtracting(properties.keys)
-        guard unknown.isEmpty else { throw ToolError("invalid_arguments", "Unknown arguments: \(unknown.sorted().joined(separator: ", ")).") }
+        guard readPolicy == nil || unknown.isEmpty else { throw ToolError("invalid_arguments", "Unknown arguments: \(unknown.sorted().joined(separator: ", ")).") }
         for (key, value) in args {
+            if readPolicy == nil && ["limit", "offset", "depth", "k"].contains(key) { continue }
             guard let property = properties[key] as? [String: Any], let type = property["type"] as? String else { continue }
             let valid: Bool
             switch type {
@@ -190,10 +198,10 @@ public actor LatticeDataProvider {
         for required in schema["required"] as? [String] ?? [] where args[required] == nil {
             throw ToolError("invalid_arguments", "'\(required)' is required.")
         }
-        if let predicate = args["where"] as? [String: Any] { var count = 0; try validatePredicate(predicate, depth: 0, count: &count) }
-        _ = try integer(args, "limit", default: defaultLimit, range: 1...maxLimit)
+        if readPolicy != nil, let predicate = args["where"] as? [String: Any] { var count = 0; try validatePredicate(predicate, depth: 0, count: &count) }
+        _ = try integer(args, "limit", default: limits.defaultRows, range: limits.rowRange)
         _ = try integer(args, "offset", default: 0, range: 0...Int.max)
-        _ = try integer(args, "depth", default: 0, range: 0...maxDepthCap)
+        _ = try integer(args, "depth", default: limits.defaultDepth, range: 0...limits.maxDepth)
     }
     private static func isInteger(_ value: Any) -> Bool {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
@@ -206,6 +214,9 @@ public actor LatticeDataProvider {
         return value.doubleValue
     }
     private func integer(_ args: [String: Any], _ key: String, default fallback: Int, range: ClosedRange<Int>) throws -> Int {
+        if readPolicy == nil && ["limit", "offset", "depth", "k"].contains(key) {
+            return max(range.lowerBound, min((args[key] as? Int) ?? fallback, range.upperBound))
+        }
         guard let value = args[key] else { return fallback }
         guard Self.isInteger(value), let number = value as? NSNumber, range.contains(number.intValue) else {
             throw ToolError("invalid_arguments", "'\(key)' must be an integer in \(range.lowerBound)...\(range.upperBound).")
@@ -231,7 +242,7 @@ public actor LatticeDataProvider {
     }
     private func fields(_ args: [String: Any], model: String) throws -> Set<String>? {
         guard let value = args["fields"] else { return nil }
-        guard let names = value as? [String], names.count <= 100 else { throw ToolError("invalid_arguments", "'fields' must contain at most 100 field names.") }
+        guard let names = value as? [String], readPolicy == nil || names.count <= 100 else { throw ToolError("invalid_arguments", "'fields' must contain at most 100 field names.") }
         for name in names { try requireField(name, model: model) }
         return Set(names)
     }
@@ -260,7 +271,7 @@ public actor LatticeDataProvider {
         let predicate = try (args["where"] as? [String: Any]).map { try DynamicQuery.whereSQL($0, schema: schemaByTable[name]!.properties) }
         if let predicate { results = results.where(predicate) }
         if let sort = args["sort"] as? [Any] {
-            guard sort.count <= 16 else { throw ToolError("invalid_arguments", "At most 16 sort fields are allowed.") }
+            guard readPolicy == nil || sort.count <= 16 else { throw ToolError("invalid_arguments", "At most 16 sort fields are allowed.") }
             for entry in sort {
                 guard let entry = entry as? [String: Any], let field = entry["field"] as? String,
                       Set(entry.keys).isSubset(of: ["field", "order"]),
@@ -272,10 +283,11 @@ public actor LatticeDataProvider {
             }
         }
         results = results.sortedBy("id")
-        let limit = try integer(args, "limit", default: defaultLimit, range: 1...maxLimit)
+        let limit = try integer(args, "limit", default: limits.defaultRows, range: limits.rowRange)
+        if limit == 0 { return ["model": name, "count": 0, "results": [], "hasMore": false] }
         let offset = try integer(args, "offset", default: 0, range: 0...Int.max)
-        let rows = results.snapshot(limit: limit + 1, offset: offset); try checkQuery()
-        let depth = try integer(args, "depth", default: 0, range: 0...maxDepthCap)
+        let rows = results.snapshot(limit: limit == Int.max ? limit : limit + 1, offset: offset); try checkQuery()
+        let depth = try integer(args, "depth", default: limits.defaultDepth, range: 0...limits.maxDepth)
         if readPolicy?.requiredRowValues != nil {
             let snapshot = try immutableRows(Array(rows.prefix(limit)), model: name, fields: projection, predicate: predicate)
             var serialized: [[String: Any]] = []; var bytes = 0; var consumed = 0
@@ -318,8 +330,8 @@ public actor LatticeDataProvider {
             }
             return ["model": name, "found": true, "object": object]
         }
-        let depth = try integer(args, "depth", default: 0, range: 0...maxDepthCap)
-        return ["model": name, "found": true, "object": try row.debugJSON(fields: projection, maxDepth: depth, permittedFields: serializationPolicy)]
+        let depth = try integer(args, "depth", default: limits.defaultDepth, range: 0...limits.maxDepth)
+        return ["model": name, "found": true, "object": try serialize(row, fields: projection, depth: depth)]
     }
     private func countPayload(_ args: [String: Any]) throws -> [String: Any] {
         let name = try model(args); var results = scopedObjects(name)
@@ -331,18 +343,22 @@ public actor LatticeDataProvider {
         let name = try model(args); let projection = try fields(args, model: name)
         guard let field = args["field"] as? String,
               let property = schemaByTable[name]!.properties.first(where: { $0.name == field }) else { throw ToolError("unknown_property", "Unknown or unavailable search field.") }
-        let limit = try integer(args, tool == "lattice_nearest" ? "k" : "limit", default: defaultLimit, range: 1...maxLimit)
+        let nearest = tool == "lattice_nearest"
+        let limit = try integer(args, nearest ? "k" : "limit",
+                                default: nearest ? limits.defaultNearest : limits.defaultRows,
+                                range: nearest ? limits.nearestRange : limits.rowRange)
+        if limit == 0 { return ["model": name, "count": 0, "results": [], "limited": true] }
         let rows: [(object: DynamicObject, distances: [DistanceEntry])]
         let distanceKey: String
         switch tool {
         case "lattice_search":
             guard property.isFullText else { throw ToolError("unsupported_search", "The field has no full-text index.") }
             guard let match = args["match"] as? String, !match.isEmpty else { throw ToolError("invalid_arguments", "match must be nonempty.") }
-            rows = lattice.dynamicNearest(table: name, texts: [TextConstraintParam(column: field, searchText: match, limit: Int32(limit))], where: scopePredicates[name], sort: SortDescriptorParam(kind: .textRank, column: field, ascending: true), limit: limit)
+            rows = lattice.dynamicNearest(table: name, texts: [TextConstraintParam(column: field, searchText: match, limit: Int32(clamping: limit))], where: scopePredicates[name], sort: SortDescriptorParam(kind: .textRank, column: field, ascending: true), limit: limit)
             distanceKey = "score"
         case "lattice_nearest":
             guard property.isVector else { throw ToolError("unsupported_search", "The field is not a vector column.") }
-            guard let vector = args["vector"] as? [Any], !vector.isEmpty, vector.count <= 65_536 else { throw ToolError("invalid_arguments", "vector must be a nonempty numeric array.") }
+            guard let vector = args["vector"] as? [Any], !vector.isEmpty, readPolicy == nil || vector.count <= 65_536 else { throw ToolError("invalid_arguments", "vector must be a nonempty numeric array.") }
             var bytes = [UInt8](); bytes.reserveCapacity(vector.count * 4)
             for member in vector {
                 guard let value = Self.number(member), Float(value).isFinite else { throw ToolError("invalid_arguments", "Every vector component must be a finite Float32 number.") }
@@ -362,7 +378,7 @@ public actor LatticeDataProvider {
             distanceKey = "distanceMeters"
         }
         try checkQuery()
-        let depth = try integer(args, "depth", default: 0, range: 0...maxDepthCap)
+        let depth = try integer(args, "depth", default: limits.defaultDepth, range: 0...limits.maxDepth)
         let snapshot = try readPolicy?.requiredRowValues == nil ? nil
             : immutableRows(rows.map(\.object), model: name, fields: projection)
         var objects: [[String: Any]] = []; var bytes = 0
@@ -373,13 +389,13 @@ public actor LatticeDataProvider {
                 guard let id = snapshot.ids[index], let projected = snapshot.objects[id] else { continue }
                 object = projected
             } else {
-                object = try row.object.debugJSON(fields: projection, maxDepth: depth, permittedFields: serializationPolicy)
+                object = try serialize(row.object, fields: projection, depth: depth)
             }
             try checkQuery()
             if let distance = row.distances.first(where: { $0.column == field })?.distance, distance.isFinite { object[distanceKey] = distance }
             let size = try JSONSerialization.data(withJSONObject: object).count
-            guard size <= 28_000 else { throw ToolError("result_too_large", "Select fewer fields or depth 0.") }
-            if bytes + size > 28_000 { byteTruncated = true; break }
+            guard readPolicy == nil || size <= 28_000 else { throw ToolError("result_too_large", "Select fewer fields or depth 0.") }
+            if readPolicy != nil && bytes + size > 28_000 { byteTruncated = true; break }
             objects.append(object); bytes += size
         }
         var payload: [String: Any] = ["model": name, "count": objects.count, "results": objects, "limited": rows.count == limit || objects.count < rows.count]
@@ -390,14 +406,22 @@ public actor LatticeDataProvider {
         }
         return payload
     }
+    private func serialize(_ row: DynamicObject, fields: Set<String>?, depth: Int) throws -> [String: Any] {
+        if readPolicy != nil {
+            return try row.debugJSON(fields: fields, maxDepth: depth, permittedFields: serializationPolicy)
+        }
+        let object = row.jsonObject(maxDepth: depth)
+        guard let fields else { return object }
+        return object.filter { fields.contains($0.key) || $0.key == "id" || $0.key == "globalId" }
+    }
     private func boundedRows(_ rows: [DynamicObject], fields: Set<String>?, depth: Int) throws -> [[String: Any]] {
         var output: [[String: Any]] = []; var bytes = 0
         for row in rows {
-            let object = try row.debugJSON(fields: fields, maxDepth: depth, permittedFields: serializationPolicy)
+            let object = try serialize(row, fields: fields, depth: depth)
             try checkQuery()
             let size = try JSONSerialization.data(withJSONObject: object).count
-            guard size <= 28_000 else { throw ToolError("result_too_large", "Select fewer fields or depth 0.") }
-            if bytes + size > 28_000 { break }
+            guard readPolicy == nil || size <= 28_000 else { throw ToolError("result_too_large", "Select fewer fields or depth 0.") }
+            if readPolicy != nil && bytes + size > 28_000 { break }
             output.append(object); bytes += size
         }
         return output

@@ -131,6 +131,7 @@ let package = Package(
                 "LatticeMCP",
                 "LatticeServerKit",
                 "WalEpochWriterChild",
+                "lattice-mcp", // Required by the unskipped standalone defaults regression.
                     .product(name: "Vapor", package: "vapor")
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]
