@@ -1,9 +1,5 @@
 import Foundation
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
+import CxxStdlib
 
 /// Keep the first reported backend failure until a synchronous transaction
 /// finishes. The bridge's last-error slot is cleared by the next successful
@@ -20,19 +16,22 @@ internal final class TransactionFailureScope {
         static func capture(storage: Lattice.Configuration.Storage, backend: any LatticeBackend) -> Self {
             switch storage {
             case .memory(let name): return .memory(name)
-            case .file(let url):
+            case .file:
                 // The path's inode is meaningful only while Core's original
                 // open connection still occupies that canonical pathname.
                 // Missing identity preserves ordinary single-store operation
                 // but refuses nesting, rather than guessing an alias is safe.
-                guard let checker = backend as? any MainFileCurrentnessBackend else { return .unavailable }
-                // Foundation can remove a leading /private after resolving a
-                // Darwin path. SQLite retains the realpath spelling, and the
-                // currentness probe deliberately compares that name byte-for-byte.
-                guard let path = canonicalFilePath(url) else { return .unavailable }
+                guard let checker = backend as? CxxBackend else { return .unavailable }
                 do {
+                    // Identify the open handle, without re-resolving a configured
+                    // alias. Keep SQLite's exact bytes for both currentness probes.
+                    let path = try checker.mainFilePath()
+                    let decodedPath = String(path)
+                    // Foundation's attribute lookup needs a String. Fail closed
+                    // if decoding would make it inspect a different filename.
+                    guard std.string(decodedPath) == path else { return .unavailable }
                     try checker.requireMainFileUnmoved(expectedPath: path)
-                    let attributes = try FileManager.default.attributesOfItem(atPath: path)
+                    let attributes = try FileManager.default.attributesOfItem(atPath: decodedPath)
                     guard attributes[.type] as? FileAttributeType == .typeRegular,
                           let device = attributes[.systemNumber] as? NSNumber,
                           let inode = attributes[.systemFileNumber] as? NSNumber else { return .unavailable }
@@ -40,20 +39,6 @@ internal final class TransactionFailureScope {
                     return .file(device: device.uint64Value, inode: inode.uint64Value)
                 } catch { return .unavailable }
             }
-        }
-
-        private static func canonicalFilePath(_ url: URL) -> String? {
-            #if canImport(Darwin) || canImport(Glibc)
-            return url.withUnsafeFileSystemRepresentation { path in
-                guard let path, let resolved = realpath(path, nil) else { return nil }
-                defer { free(resolved) }
-                // Keep the result as a string: creating another URL can apply
-                // Foundation's /private normalization again.
-                return String(cString: resolved)
-            }
-            #else
-            return nil
-            #endif
         }
 
         var isKnown: Bool {
