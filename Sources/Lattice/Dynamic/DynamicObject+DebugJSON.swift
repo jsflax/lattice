@@ -1,11 +1,11 @@
 import Foundation
 import LatticeSwiftCppBridge
-import LatticeDebugBridge
+internal import LatticeDebugBridge
 import CxxStdlib
 
 /// A sealed backend failure encountered while constructing a debug response.
 /// This is distinct from invalid input: callers must not report a defaulted field as valid data.
-public enum DynamicDebugReadError: Error, CustomStringConvertible, Sendable {
+@_spi(LatticeInternals) public enum DynamicDebugReadError: Error, CustomStringConvertible, Sendable {
     case queryFailed(String)
     public var description: String {
         switch self { case .queryFailed(let message): message }
@@ -15,7 +15,7 @@ public enum DynamicDebugReadError: Error, CustomStringConvertible, Sendable {
 extension DynamicObject {
     /// A candidate query key with immediate backend error checking. A live
     /// object's identity is not a substitute for authorizing its returned values.
-    public func debugPrimaryKey() throws -> Int64? {
+    @_spi(LatticeInternals) public func debugPrimaryKey() throws -> Int64? {
         try Self.debugPrimaryKey(backend)
     }
 
@@ -23,7 +23,7 @@ extension DynamicObject {
     /// or traversing links. The optional policy is supplied by the embedding host, never by a query.
     /// TEXT stays literal, including JSON-looking strings. Each sealed read is checked immediately,
     /// before another getter can clear the bridge's thread-local error slot.
-    public func debugJSON(fields: Set<String>? = nil, maxDepth: Int = 0,
+    @_spi(LatticeInternals) public func debugJSON(fields: Set<String>? = nil, maxDepth: Int = 0,
                           permittedFields: [String: Set<String>]? = nil) throws -> [String: Any] {
         var remaining = 100
         var visited = Set<String>()
