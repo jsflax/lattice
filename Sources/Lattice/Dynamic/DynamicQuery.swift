@@ -5,11 +5,14 @@ import Foundation
 // Translates a structured JSON predicate (the shape an MCP client sends) into a
 // SQL WHERE fragment for `DynamicResults.where(_:)`. This is the security gate:
 //
-//   * Column names are WHITELISTED against the table's reconstructed schema
-//     (`[PropertyInfo]`) — an unknown identifier throws, so an agent can't name
-//     a column/subquery that isn't in the model.
+//   * Only same-named primitive columns without geo-bounds are admitted from
+//     the reconstructed schema, plus id and globalId. Relationships and geo
+//     properties use separate storage and cannot be compared as row columns.
+//     Union properties are also refused, even when stored in a same-named column.
+//     Admitted identifiers are quoted so SQL keywords keep their column meaning.
 //   * Operators are whitelisted — unknown operators throw.
-//   * Literal values are escaped (single-quote doubling) before interpolation.
+//   * Operands must be JSON scalars; string literals use single-quote doubling.
+//   * Empty $or matches no rows; empty $and matches all rows.
 //
 // Grammar (per field): { "<col>": <bareValue> } means equality, or
 //   { "<col>": { "$op": operand } }. Logical: { "$and": [..] }, { "$or": [..] },
@@ -23,7 +26,7 @@ public enum DynamicQueryError: Error, CustomStringConvertible, Equatable {
 
     public var description: String {
         switch self {
-        case .unknownProperty(let p): return "unknown_property: '\(p)' is not a property of the model"
+        case .unknownProperty(let p): return "unknown_property: '\(p)' is not a filterable scalar column of the model"
         case .unsupportedOperator(let o): return "unsupported_operator: '\(o)'"
         case .malformed(let m): return "invalid_predicate: \(m)"
         }
@@ -37,9 +40,14 @@ public enum DynamicQuery {
          "$contains", "$hasPrefix", "$hasSuffix", "$in", "$between"]
 
     /// Translate a JSON `where` object into a validated SQL WHERE fragment.
-    /// Throws `DynamicQueryError` on unknown columns / operators / malformed input.
+    /// Filterable fields are primitive, non-geo row columns, plus `id` and `globalId`.
+    /// Operands are String, number, Bool or NSNull; $in and $between take arrays
+    /// of those scalars. Convert Swift-native values such as UUID to JSON first
+    /// (for example, `uuid.uuidString`). Empty $or is false; empty $and is true.
+    /// Throws `DynamicQueryError` on other columns, operators or malformed input.
     public static func whereSQL(_ predicate: [String: Any], schema: [PropertyInfo]) throws -> String {
-        let allowed = Set(schema.map { $0.name }).union(["id", "globalId"])
+        let allowed = Set(schema.filter { $0.kind == .primitive && !$0.isGeoBounds }.map { $0.name })
+            .union(["id", "globalId"])
         var clauses: [String] = []
         for (key, value) in predicate {
             switch key {
@@ -52,7 +60,8 @@ public enum DynamicQuery {
                 clauses.append("NOT (\(try whereSQL(obj, schema: schema)))")
             default:
                 guard allowed.contains(key) else { throw DynamicQueryError.unknownProperty(key) }
-                clauses.append(try fieldClause(column: key, value: value))
+                let identifier = "\"" + key.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+                clauses.append(try fieldClause(column: identifier, value: value))
             }
         }
         if clauses.isEmpty { return "1=1" }
@@ -69,20 +78,28 @@ public enum DynamicQuery {
             }
             return "(\(try whereSQL(obj, schema: schema)))"
         }
-        return parts.isEmpty ? "1=1" : parts.joined(separator: separator)
+        return parts.isEmpty ? (separator == " OR " ? "0=1" : "1=1") : parts.joined(separator: separator)
     }
 
     private static func fieldClause(column: String, value: Any) throws -> String {
         // { col: { $op: operand } } — one or more operators (ANDed).
         if let opObject = value as? [String: Any] {
+            guard !opObject.isEmpty else {
+                throw DynamicQueryError.malformed("field \(column): operator object cannot be empty")
+            }
             let parts = try opObject.map { try opClause(column: column, op: $0.key, operand: $0.value) }
-            return parts.isEmpty ? "1=1" : parts.joined(separator: " AND ")
+            return parts.joined(separator: " AND ")
         }
         // Bare value → equality (or IS NULL for null).
+        try requireScalar(value, column: column, operation: "$eq")
         return eqClause(column: column, operand: value)
     }
 
     private static func opClause(column c: String, op: String, operand: Any) throws -> String {
+        guard operators.contains(op) else { throw DynamicQueryError.unsupportedOperator(op) }
+        if op != "$in" && op != "$between" {
+            try requireScalar(operand, column: c, operation: op)
+        }
         switch op {
         case "$eq":  return eqClause(column: c, operand: operand)
         case "$ne":  return (operand is NSNull) ? "\(c) IS NOT NULL" : "\(c) != \(lit(operand))"
@@ -95,13 +112,15 @@ public enum DynamicQuery {
         case "$hasPrefix": return "substr(\(c), 1, length(\(lit(operand)))) = \(lit(operand))"
         case "$hasSuffix": return "substr(\(c), -length(\(lit(operand)))) = \(lit(operand))"
         case "$in":
-            guard let arr = operand as? [Any] else { throw DynamicQueryError.malformed("$in expects an array") }
+            guard let arr = operand as? [Any] else { throw DynamicQueryError.malformed("field \(c): $in expects an array") }
+            try arr.forEach { try requireScalar($0, column: c, operation: op) }
             let vals = arr.map { lit($0) }.joined(separator: ", ")
             return "\(c) IN (\(vals))"
         case "$between":
             guard let arr = operand as? [Any], arr.count == 2 else {
-                throw DynamicQueryError.malformed("$between expects [low, high]")
+                throw DynamicQueryError.malformed("field \(c): $between expects [low, high]")
             }
+            try arr.forEach { try requireScalar($0, column: c, operation: op) }
             return "\(c) BETWEEN \(lit(arr[0])) AND \(lit(arr[1]))"
         default:
             throw DynamicQueryError.unsupportedOperator(op)
@@ -110,6 +129,12 @@ public enum DynamicQuery {
 
     private static func eqClause(column c: String, operand: Any) -> String {
         (operand is NSNull) ? "\(c) IS NULL" : "\(c) = \(lit(operand))"
+    }
+
+    private static func requireScalar(_ value: Any, column: String, operation: String) throws {
+        guard value is NSNull || value is String || value is NSNumber else {
+            throw DynamicQueryError.malformed("field \(column): \(operation) operands must be scalar JSON values")
+        }
     }
 
     /// Render a JSON scalar as an escaped SQL literal.
@@ -123,7 +148,7 @@ public enum DynamicQuery {
         case let s as String:  return "'" + s.replacingOccurrences(of: "'", with: "''") + "'"
         case let n as NSNumber: return n.stringValue
         default:
-            return "'" + String(describing: v).replacingOccurrences(of: "'", with: "''") + "'"
+            preconditionFailure("SQL literals require a validated JSON scalar")
         }
     }
 }
