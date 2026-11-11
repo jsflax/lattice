@@ -496,7 +496,14 @@ extension Optional: CxxManaged where Wrapped: CxxManaged {
         guard storage._ref.hasValue(named: name) else {
             return nil
         }
-        return Wrapped.getField(from: storage, named: name)
+        let value = Wrapped.getField(from: storage, named: name)
+        // A junction can outlive its target, or disappear after hasValue.
+        // Only a managed parent requires a managed link result: staged
+        // unmanaged parents can legitimately contain unmanaged children.
+        if storage._ref.hasLattice, let model = value as? any Model, !model.isManaged {
+            return nil
+        }
+        return value
     }
 
     public static func setField(on storage: inout ModelStorage, named name: String, _ value: Optional<Wrapped>) {
