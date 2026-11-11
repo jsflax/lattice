@@ -1538,6 +1538,8 @@ public struct Lattice {
                                              reuseCachedBackend: Bool,
                                              _ body: (Lattice) throws -> Value) async throws -> Value {
         try Task.checkCancellation()
+        let preparation = LatticePerf.beginSpan("Lattice.openLocal.prepare", scope: .caller)
+        defer { preparation.end() }
         // Admission precedes registration, schema callbacks and all native work.
         guard configuration.wssEndpoint == nil, configuration.wssSyncIdentity == nil,
               configuration.pinnedServerCertificateSHA256 == nil,
@@ -1570,12 +1572,20 @@ public struct Lattice {
         try Task.checkCancellation()
         // A detached task does not inherit cancellation or the caller executor.
         // Awaiting its nonthrowing value always joins the checked native open.
+        let spanHook = LatticePerf.spanHook
+        preparation.end()
         await Task.detached(priority: Task.currentPriority) {
-            worker.run(independentConnection: independentConnection)
+            LatticePerf.$spanHook.withValue(spanHook) {
+                let opening = LatticePerf.beginSpan("Lattice.openLocal.worker.open", scope: .worker)
+                defer { opening.end() }
+                worker.run(independentConnection: independentConnection)
+            }
         }.value
         let result: Result<Value, any Swift.Error>
         do {
             try Task.checkCancellation()
+            let adoption = LatticePerf.beginSpan("Lattice.openLocal.adopt", scope: .caller)
+            defer { adoption.end() }
             result = .success(try adoptLocalOpen(isolation: isolation, worker: worker,
                 schema: schema, allTypes: allTypes, configuration: configuration,
                 delivery: delivery, reuseCachedBackend: reuseCachedBackend, body))
@@ -1583,9 +1593,17 @@ public struct Lattice {
         // No temporary Lattice or copied raw reference crosses this await. The
         // worker holder keeps the final native owner until this joined release,
         // including when adoption throws or the caller has been cancelled.
-        await Task.detached(priority: .utility) { worker.discard() }.value
+        await Task.detached(priority: .utility) {
+            LatticePerf.$spanHook.withValue(spanHook) {
+                let disposal = LatticePerf.beginSpan("Lattice.openLocal.dispose", scope: .worker)
+                defer { disposal.end() }
+                worker.discard()
+            }
+        }.value
         // A successful body may already have published the handle. A later
         // cancellation must not destroy that accepted ownership on the caller.
+        let returning = LatticePerf.beginSpan("Lattice.openLocal.return", scope: .caller)
+        defer { returning.end() }
         return try result.get()
     }
 
