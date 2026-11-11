@@ -278,7 +278,8 @@ private final class RelayHarness: @unchecked Sendable {
         initialized = true
     }
 
-    func connect(pathSuffix: String, user: UUID, headers extra: [String: String] = [:]) async throws -> FrameCollector {
+    func connect(pathSuffix: String, user: UUID, headers extra: [String: String] = [:],
+                 maxFrameSize: Int = 1 << 14) async throws -> FrameCollector {
         // All raw clients can upload; this role does not assert a frame was sent.
         let diagnostic = diagnostics?.recorder.registerConnection(id: UUID(), role: .uploader)
         let failureDiagnostic: (@Sendable (UInt) -> Void)?
@@ -299,10 +300,12 @@ private final class RelayHarness: @unchecked Sendable {
         // strictly ordered, and reading collector.socket before onUpgrade
         // ran was a nil crash under parallel test load.
         let once = AtomicOnce()
+        let configuration = WebSocketClient.Configuration(maxFrameSize: maxFrameSize)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             WebSocket.connect(
                 to: "ws://127.0.0.1:\(port)/\(pathSuffix)",
                 headers: headers,
+                configuration: configuration,
                 on: app.eventLoopGroup
             ) { ws in
                 collector.attach(ws)
@@ -735,6 +738,66 @@ final class ServerRelayTests: BaseTest {
         let channelDB = try Lattice(SimpleSyncObject.self, configuration: .init(
             fileURL: harness.storageURL.appending(path: "group-g1.sqlite")))
         #expect(channelDB.objects(SimpleSyncObject.self).contains { $0.value == 90 })
+    }
+
+    @Test func legacyUploadAboveOutboundLimitIsStoredAndOutboundStaysBounded() async throws {
+        let donor = try testLattice(SyncChild.self)
+        defer { donor.close() }
+        let payload = String(repeating: "x", count: 600 * 1024)
+        try donor.withTransaction {
+            for _ in 0..<8 { try donor.add(SyncChild(name: payload)) }
+        }
+        let entries = Array(donor.eventsAfter(globalId: nil))
+        let expected = try entries.map { try #require($0.globalId) }
+        let legacyFrame = try makeFrame(entries: entries)
+        try #require(expected.count == 8)
+        try #require(legacyFrame.count > Lattice.maximumEncodedSyncMessageBytes)
+        try #require(legacyFrame.count < 64 * 1024 * 1024)
+
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"],
+            schema: [SyncChild.self], channelExtractor: groupExtractor)
+        do {
+            let writer = try await harness.connect(
+                pathSuffix: "sync/group/legacy?lattice-catch-up-complete=1", user: UUID())
+            let ready = await writer.wait { $0.count(of: "catchUpComplete") == 1 }
+            try #require(ready)
+            let live = try await harness.connect(
+                pathSuffix: "sync/group/legacy?lattice-catch-up-complete=1", user: UUID(),
+                maxFrameSize: Lattice.maximumEncodedSyncMessageBytes)
+            let liveReady = await live.wait { $0.count(of: "catchUpComplete") == 1 }
+            try #require(liveReady)
+            let socket = try #require(writer.socket)
+            try await socket.send(legacyFrame)
+            let acknowledged = await writer.wait { $0.acks.count == expected.count }
+            try #require(acknowledged)
+            #expect(writer.acks == expected)
+            #expect(writer.count(of: "nack") == 0)
+            #expect(writer.count(of: "rejected") == 0)
+            #expect(!writer.isClosed)
+            let deliveredLive = await live.wait { $0.receivedAuditIds.count == expected.count }
+            try #require(deliveredLive)
+            #expect(live.receivedAuditIds == expected)
+            #expect(live.receivedAuditPageBytes.count > 1)
+            #expect(live.receivedAuditPageBytes.allSatisfy { $0 <= Lattice.maximumEncodedSyncMessageBytes })
+            #expect(!live.isClosed)
+
+            let reader = try await harness.connect(
+                pathSuffix: "sync/group/legacy?lattice-catch-up-complete=1", user: UUID(),
+                maxFrameSize: Lattice.maximumEncodedSyncMessageBytes)
+            let caughtUp = await reader.wait { $0.count(of: "catchUpComplete") == 1 }
+            try #require(caughtUp)
+            #expect(reader.receivedAuditIds == expected)
+            #expect(reader.receivedAuditPageBytes.count > 1)
+            #expect(reader.receivedAuditPageBytes.allSatisfy { $0 <= Lattice.maximumEncodedSyncMessageBytes })
+            #expect(!reader.isClosed)
+
+            let persisted = try Lattice(SyncChild.self, configuration: .init(
+                fileURL: harness.storageURL.appending(path: "group-legacy.sqlite")))
+            defer { persisted.close() }
+            #expect(persisted.objects(SyncChild.self).count == expected.count)
+            #expect(persisted.objects(SyncChild.self).allSatisfy { $0.name == payload })
+        } catch { await harness.shutdown(); throw error }
+        await harness.shutdown()
     }
 
     @Test("Initial catch-up retains ordered history and resumed suffix", arguments: [1, 2, 1000])
