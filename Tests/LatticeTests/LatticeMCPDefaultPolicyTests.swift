@@ -166,6 +166,64 @@ final class LatticeMCPDefaultPolicyTests {
         #expect(scoped.isError)
     }
 
+    @Test func nullDBUsesThePoolLaunchDefaultWithoutPolicy() async throws {
+        let (url, writer) = try fixture(rows: 2)
+        defer { writer.close(); try? Lattice.delete(for: .init(fileURL: url)) }
+        let result = await LatticeProviderPool(defaultDB: url).handle(
+            tool: "lattice_query", argumentsJSON: #"{"db":null,"model":"DynPerson"}"#)
+        let payload = try json(result)
+        let rows = try #require(payload["results"] as? [[String: Any]])
+        #expect(payload["count"] as? Int == 2)
+        #expect(rows.compactMap { $0["name"] as? String } == ["person0", "person1"])
+    }
+
+    @Test(arguments: [
+        #"{"model":"DynPerson","where":null}"#,
+        #"{"model":"DynPerson","sort":null}"#,
+        #"{"model":"DynPerson","where":null,"sort":null}"#
+    ])
+    func nullQueryOptionsAreOmittedWithoutPolicy(arguments: String) async throws {
+        let (url, writer) = try fixture(rows: 2)
+        defer { writer.close(); try? Lattice.delete(for: .init(fileURL: url)) }
+        let provider = try await LatticeDataProvider(fileURL: url)
+        let result = await provider.handle(tool: "lattice_query", argumentsJSON: arguments)
+        let payload = try json(result)
+        let rows = try #require(payload["results"] as? [[String: Any]])
+        #expect(payload["count"] as? Int == 2)
+        #expect(rows.compactMap { $0["name"] as? String } == ["person0", "person1"])
+    }
+
+    @Test func nullGlobalIdDoesNotConflictWithPrimaryKeyWithoutPolicy() async throws {
+        let (url, writer) = try fixture(rows: 1)
+        defer { writer.close(); try? Lattice.delete(for: .init(fileURL: url)) }
+        let pool = LatticeProviderPool(defaultDB: url)
+        let query = await pool.handle(tool: "lattice_query",
+            argumentsJSON: #"{"model":"DynPerson","fields":["name"]}"#)
+        let queryPayload = try json(query)
+        let rows = try #require(queryPayload["results"] as? [[String: Any]])
+        let selected = try #require(rows.first)
+        let primaryKey = try #require(selected["id"] as? Int)
+        let result = await pool.handle(tool: "lattice_get",
+            argumentsJSON: "{\"model\":\"DynPerson\",\"primaryKey\":\(primaryKey),\"globalId\":null}")
+        let payload = try json(result)
+        let object = try #require(payload["object"] as? [String: Any])
+        #expect(payload["found"] as? Bool == true)
+        #expect(object["id"] as? Int == primaryKey)
+        #expect(object["name"] as? String == "person0")
+    }
+
+    @Test func explicitPolicyStillRefusesANullQueryOption() async throws {
+        let (url, writer) = try fixture(rows: 1)
+        defer { writer.close(); try? Lattice.delete(for: .init(fileURL: url)) }
+        let provider = try await LatticeDataProvider(fileURL: url, readPolicy: policy)
+        let result = await provider.handle(tool: "lattice_query",
+            argumentsJSON: #"{"model":"DynPerson","where":null}"#)
+        #expect(result.isError)
+        let payload = try #require(JSONSerialization.jsonObject(with: Data(result.json.utf8)) as? [String: Any])
+        #expect(payload["error"] as? String == "invalid_arguments")
+        #expect(payload["results"] == nil)
+    }
+
     @Test func capabilitiesAndDefaultCatalogDescribeTheirLimits() async throws {
         let legacy = await LatticeProviderPool().handle(tool: "lattice_status", argumentsJSON: "{}")
         let scoped = await LatticeProviderPool(readPolicy: LatticeReadPolicy(permittedFields: [:])).handle(

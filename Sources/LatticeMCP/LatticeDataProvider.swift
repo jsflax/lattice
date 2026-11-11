@@ -82,9 +82,11 @@ public actor LatticeDataProvider {
         do {
             guard readPolicy == nil || argumentsJSON.utf8.count <= 65_536,
                   let data = argumentsJSON.data(using: .utf8),
-                  let args = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                  let parsedArgs = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw ToolError("invalid_arguments", "Arguments must be a JSON object of at most 64 KiB.")
             }
+            // Unscoped optional nulls mean omitted arguments; predicate values stay intact.
+            let args = readPolicy == nil ? parsedArgs.filter { !($0.value is NSNull) } : parsedArgs
             try validateArguments(tool: tool, args: args)
             var payload: [String: Any]
             switch tool {
