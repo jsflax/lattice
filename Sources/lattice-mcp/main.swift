@@ -71,7 +71,7 @@ do {
         print("lattice-mcp \(LatticeToolCatalog.version)")
         exit(0)
     }
-    let pool = LatticeProviderPool(defaultDB: options.db, defaultLimit: 25, maxLimit: 500, maxDepthCap: 3)
+    let pool = LatticeProviderPool(defaultDB: options.db)
     if options.doctor {
         let result = await pool.handle(tool: "lattice_status", argumentsJSON: "{}")
         print(result.json)
