@@ -293,6 +293,39 @@ struct CheckedTransactionTests {
         try body(outer, inner)
     }
 
+    @Test func systemTemporaryDirectoryStoresCanNestAndCommit() throws {
+        // Deliberately bypass the configurable test scratch root: the system
+        // temporary directory exercises Darwin's /var -> /private/var spelling.
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("checked-system-tmp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outer = try Lattice(CheckedTransactionItem.self,
+                                configuration: .init(fileURL: root.appendingPathComponent("outer.sqlite")))
+        defer { outer.close() }
+        let inner = try Lattice(CheckedTransactionItem.self,
+                                configuration: .init(fileURL: root.appendingPathComponent("inner.sqlite")))
+        defer { inner.close() }
+        let outerItem = CheckedTransactionItem()
+        let innerItem = CheckedTransactionItem()
+        try outer.add(outerItem)
+        try inner.add(innerItem)
+        var innerBodyEntered = false
+        try outer.withTransaction {
+            outerItem.value = 17
+            try inner.withTransaction {
+                innerBodyEntered = true
+                innerItem.value = 29
+            }
+            outerItem.increment("value")
+        }
+        #expect(innerBodyEntered)
+        outer.retireAllGenerations()
+        inner.retireAllGenerations()
+        #expect(value(outer) == 18)
+        #expect(value(inner) == 29)
+    }
+
     @Test func distinctStoreNestedTransactionsCommitBothOwners() throws {
         try withTwoDatabases { outer, inner in
             let outerItem = CheckedTransactionItem()
