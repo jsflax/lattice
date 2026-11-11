@@ -186,6 +186,7 @@ private final class RelayHarness: @unchecked Sendable {
         writePolicy: SyncWritePolicy? = nil,
         handshake: SyncSchemaHandshake? = nil,
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)? = nil,
+        observerPush: SyncObserverPush? = nil,
         onSetupFinished: (@Sendable () -> Void)? = nil,
         maxBufferedFrameBytes: Int? = nil,
         initialCatchUpPageSize: Int = 1000,
@@ -229,6 +230,7 @@ private final class RelayHarness: @unchecked Sendable {
             on: app.routes, path: path, for: schema, storageURL: storageURL,
             writePolicy: writePolicy, handshake: handshake,
             storeConfiguration: storeConfiguration,
+            observerPush: observerPush,
             initialCatchUpPageSize: initialCatchUpPageSize,
             reauthorizeChannel: reauthorizeChannel,
             revalidateAfterRegistration: revalidateAfterRegistration,
@@ -796,6 +798,76 @@ final class ServerRelayTests: BaseTest {
             defer { persisted.close() }
             #expect(persisted.objects(SyncChild.self).count == expected.count)
             #expect(persisted.objects(SyncChild.self).allSatisfy { $0.name == payload })
+        } catch { await harness.shutdown(); throw error }
+        await harness.shutdown()
+    }
+
+    @Test(arguments: [false, true])
+    func oversizedLegacyRowReachesFreshAndLiveReaders(observerPush: Bool) async throws {
+        let donor = try testLattice(SyncChild.self)
+        defer { donor.close() }
+        let payload = String(repeating: "x", count: 5 * 1024 * 1024)
+        try donor.add(SyncChild(name: payload))
+        let entries = Array(donor.eventsAfter(globalId: nil))
+        try #require(entries.count == 1)
+        let firstID = try #require(entries.first?.globalId)
+        let firstFrame = try makeFrame(entries: entries)
+        try #require(firstFrame.count > Lattice.maximumEncodedSyncMessageBytes)
+        try #require(firstFrame.count < 64 * 1024 * 1024)
+
+        let harness = try await RelayHarness(path: ["sync", "group", ":groupID"],
+            schema: [SyncChild.self],
+            observerPush: observerPush ? SyncObserverPush(reconcileInterval: nil) : nil,
+            channelExtractor: groupExtractor)
+        do {
+            // Receivers must admit a whole legacy row; the page budget is not
+            // a hard frame cap when splitting that row would change its meaning.
+            let writer = try await harness.connect(
+                pathSuffix: "sync/group/oversized-row?lattice-catch-up-complete=1", user: UUID(),
+                maxFrameSize: 16 * 1024 * 1024)
+            let writerReady = await writer.wait { $0.count(of: "catchUpComplete") == 1 }
+            try #require(writerReady)
+            let socket = try #require(writer.socket)
+            try await socket.send(firstFrame)
+            let firstAcknowledged = await writer.wait { $0.acks == [firstID] }
+            try #require(firstAcknowledged)
+
+            let reader = try await harness.connect(
+                pathSuffix: "sync/group/oversized-row?lattice-catch-up-complete=1", user: UUID(),
+                maxFrameSize: 16 * 1024 * 1024)
+            let caughtUp = await reader.wait { $0.count(of: "catchUpComplete") == 1 }
+            try #require(caughtUp)
+            #expect(reader.receivedAuditIds == [firstID])
+            #expect(reader.receivedAuditPageSizes == [1])
+            #expect(reader.receivedAuditPageBytes.count == 1)
+            #expect(reader.receivedAuditPageBytes.allSatisfy { $0 > Lattice.maximumEncodedSyncMessageBytes })
+            #expect(!reader.isClosed)
+
+            // On a push mount legacy fan-out is disabled: this later upload
+            // must cross the observer's live page encoder, not initial catch-up.
+            try donor.add(SyncChild(name: "later-" + payload))
+            let laterEntries = Array(donor.eventsAfter(globalId: firstID))
+            try #require(laterEntries.count == 1)
+            let secondID = try #require(laterEntries.first?.globalId)
+            let secondFrame = try makeFrame(entries: laterEntries)
+            try #require(secondFrame.count > Lattice.maximumEncodedSyncMessageBytes)
+            try await socket.send(secondFrame)
+            let secondAcknowledged = await writer.wait { $0.acks == [firstID, secondID] }
+            try #require(secondAcknowledged)
+            let deliveredLive = await reader.wait { $0.receivedAuditIds.count >= 2 }
+            try #require(deliveredLive)
+            #expect(reader.receivedAuditIds == [firstID, secondID])
+            #expect(reader.receivedAuditPageSizes == [1, 1])
+            #expect(reader.receivedAuditPageBytes.count == 2)
+            #expect(reader.receivedAuditPageBytes.allSatisfy { $0 > Lattice.maximumEncodedSyncMessageBytes })
+            #expect(reader.count(of: "catchUpComplete") == 1)
+            #expect(!reader.isClosed)
+            #expect(writer.count(of: "nack") == 0)
+            #expect(writer.count(of: "rejected") == 0)
+            #expect(!writer.isClosed)
+            try await socket.close(code: .goingAway)
+            let readerSocket = try #require(reader.socket)
+            try await readerSocket.close(code: .goingAway)
         } catch { await harness.shutdown(); throw error }
         await harness.shutdown()
     }

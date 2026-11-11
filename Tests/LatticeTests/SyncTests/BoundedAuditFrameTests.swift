@@ -26,12 +26,19 @@ struct BoundedAuditFrameTests {
         let single = try BoundedAuditFrame.encode(start: 0, maxCount: 1) { rows[$0] }
         let exact = try BoundedAuditFrame.encode(start: 0, maxCount: 2, maximumBytes: single.data.count) { rows[$0] }
         #expect(exact.count == 1 && exact.data.count == single.data.count && exact.lastID == rows[0].primaryKey)
-        #expect(throws: BoundedAuditFrame.Failure.self) {
-            try BoundedAuditFrame.encode(start: 0, maxCount: 1, maximumBytes: single.data.count - 1) { rows[$0] }
-        }
+        let oversized = try BoundedAuditFrame.encode(start: 0, maxCount: 2,
+            maximumBytes: single.data.count - 1) { rows[$0] }
+        #expect(oversized.data.count == single.data.count)
+        #expect(oversized.count == 1 && oversized.scannedCount == 1)
+        #expect(oversized.lastID == rows[0].primaryKey && oversized.scannedLastID == rows[0].primaryKey)
+        #expect(oversized.ids == [rows[0].globalId])
         let decoded = try JSONDecoder().decode(ServerSentEvent.self, from: exact.data)
         guard case let .auditLog(logs) = decoded else { Issue.record("Wrong wire kind"); return }
         #expect(logs.map(\.globalId) == [rows[0].globalId])
+        let oversizedDecoded = try JSONDecoder().decode(ServerSentEvent.self, from: oversized.data)
+        guard case let .auditLog(oversizedLogs) = oversizedDecoded else { Issue.record("Wrong wire kind"); return }
+        #expect(oversizedLogs.map(\.globalId) == [rows[0].globalId])
+        #expect(oversizedLogs.first?.changedFields["payload"]?.stringValue == String(repeating: "ab", count: 128))
     }
 
     @Test func largeSupportedChunksSplitWithoutDroppingOrDuplicating() throws {
@@ -60,13 +67,43 @@ struct BoundedAuditFrameTests {
         #expect(frames >= 3)
     }
 
-    @Test func oversizedMiddleRowPreservesPrefixAndFailsAtSameCursor() throws {
+    @Test func oversizedMiddleRowTravelsAloneAndPreservesFollowingRows() throws {
         let rows = [row(0, bytes: 16), row(1, bytes: 4096), row(2, bytes: 16)]
         let first = try BoundedAuditFrame.encode(start: 0, maxCount: rows.count, maximumBytes: 1024) { rows[$0] }
-        #expect(first.count == 1)
-        #expect(throws: BoundedAuditFrame.Failure.self) {
-            try BoundedAuditFrame.encode(start: first.count, maxCount: rows.count - first.count, maximumBytes: 1024) { rows[$0] }
+        #expect(first.count == 1 && first.scannedCount == 1 && first.data.count <= 1024)
+        let middle = try BoundedAuditFrame.encode(start: first.scannedCount,
+            maxCount: rows.count - first.scannedCount, maximumBytes: 1024) { rows[$0] }
+        #expect(middle.count == 1 && middle.scannedCount == 1 && middle.data.count > 1024)
+        let offset = first.scannedCount + middle.scannedCount
+        let last = try BoundedAuditFrame.encode(start: offset,
+            maxCount: rows.count - offset, maximumBytes: 1024) { rows[$0] }
+        #expect(last.count == 1 && last.scannedCount == 1 && last.data.count <= 1024)
+        var received: [UUID?] = []
+        for (frame, expectedRow) in zip([first, middle, last], rows) {
+            let decoded = try JSONDecoder().decode(ServerSentEvent.self, from: frame.data)
+            guard case let .auditLog(logs) = decoded else { Issue.record("Wrong wire kind"); return }
+            #expect(logs.count == 1)
+            let payload = try #require(logs.first?.changedFields["payload"]?.stringValue)
+            let expectedPayload = try #require(expectedRow.changedFields["payload"]?.stringValue)
+            #expect(payload == expectedPayload)
+            #expect(frame.lastID == expectedRow.primaryKey && frame.scannedLastID == expectedRow.primaryKey)
+            #expect(frame.ids == [expectedRow.globalId])
+            received.append(contentsOf: logs.map(\.globalId))
         }
+        #expect(received == rows.map(\.globalId))
+    }
+
+    @Test func oversizedFirstVisibleRowConsumesOnlyItsScannedPrefix() throws {
+        let rows = [row(0, bytes: 16), row(1, bytes: 4096), row(2, bytes: 16)]
+        rows[0].tableName = "PrivateFence"
+        let first = try BoundedAuditFrame.encode(start: 0, maxCount: rows.count, maximumBytes: 1024,
+            including: { $0.tableName != "PrivateFence" }) { rows[$0] }
+        #expect(first.count == 1 && first.scannedCount == 2 && first.data.count > 1024)
+        #expect(first.ids == [rows[1].globalId])
+        #expect(first.lastID == rows[1].primaryKey && first.scannedLastID == rows[1].primaryKey)
+        let next = try BoundedAuditFrame.encode(start: first.scannedCount,
+            maxCount: rows.count - first.scannedCount, maximumBytes: 1024) { rows[$0] }
+        #expect(next.ids == [rows[2].globalId] && next.scannedCount == 1)
     }
 
     @Test func rowLoadFailureProducesNoSuccessfulPartialFrame() throws {
