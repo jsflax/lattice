@@ -18,7 +18,7 @@ import CLatticeTestSQLite
 }
 
 @Model final class DynPack {
-    var dogs: [DynDog] = []
+    var dogs: List<DynDog> = .init()
 }
 
 @Suite("Dynamic API Tests")
@@ -256,7 +256,7 @@ final class DynamicAPITests {
             try writer.add(pack)
             try writer.add(GeoPlace())
             person.dog = dog
-            pack.dogs = [dog]
+            pack.dogs.append(dog)
             writer.checkpoint()
             writer.close()
         }
