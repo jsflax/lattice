@@ -1,6 +1,6 @@
 import Foundation
 #if DEBUG
-import LatticeDebugBridge
+internal import LatticeDebugBridge
 #endif
 import LatticeSwiftCppBridge
 import LatticeSwiftModule
