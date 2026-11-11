@@ -37,6 +37,9 @@ import Testing
 /// `(path, scheduler, …)` key on subsequent fires, so there's no
 /// `ensure_tables` thrash.
 ///
+/// The DEBUG case also holds Core's active-generation-read witness across
+/// owner close; the existing handshakes and their diagnostics remain intact.
+///
 /// These tests exercise the safe pattern across two attaching
 /// isolations (`@MainActor` and a custom `actor`). With consumer
 /// code following this pattern, the close-during-observe race
@@ -111,6 +114,61 @@ class ObserveCloseRaceTests: BaseTest {
         reader.finishClosing()
         let snapshotCount = try #require(await reader.waitUntilExited())
         #expect(snapshotCount >= 500)
+    }
+
+    #if DEBUG
+    /// The native generation's in_flight count is held across owner close.
+    /// SQL has not begun at the hook; this does not claim opcode-level overlap.
+    @MainActor
+    @Test(.timeLimit(.minutes(2)))
+    func test_PerIsolationResolve_HeldReadSurvivesOwnerCloseOnMain() async throws {
+        let lattice = try testLattice(path: path, Person.self)
+        try Self.seed(lattice: lattice, count: 500)
+        let read = InFlightGenerationRead()
+        let reference = lattice.sendableReference
+        let ownerIdentity = lattice.backend.identityHash
+        let token = lattice.objects(Person.self).observe { _ in
+            MainActor.preconditionIsolated()
+            read.start(reference: reference, ownerIdentity: ownerIdentity)
+        }
+        defer { token.cancel(); read.release() }
+        let trigger = Person()
+        trigger.name = "trigger"
+        try lattice.add(trigger)
+
+        let prepared = await Self.poll { read.state.hookEntered || read.state.finished }
+        let held = prepared && read.state.hookEntered && !read.state.queryReturned
+        #expect(held, "native active-generation-read witness was not held: \(read.state.failure ?? "no hook")")
+        guard held else {
+            read.release()
+            _ = await Self.poll { read.state.finished }
+            lattice.close()
+            return
+        }
+        // No owning actor, observer callback or cooperative-pool thread waits.
+        // The dedicated reader Thread is inside Core's native active-read hook.
+        lattice.close()
+        #expect(lattice.objects(Person.self).count == 0)
+        #expect(read.state.hookEntered && !read.state.queryReturned,
+                "the active read must remain held until owner close returns")
+        read.release()
+        let finished = await Self.poll { read.state.finished }
+        #expect(finished, "independent reader Thread did not finish")
+        #expect(read.state.failure == nil)
+        #expect(read.state.independentBackend)
+        #expect(read.state.generationID != 0)
+        #expect(read.state.queryReturned)
+        #expect(!read.state.stale)
+        #expect(read.state.snapshotCount == 501)
+    }
+    #endif
+
+    private static func poll(_ condition: @escaping @Sendable () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(20)
+        while !condition() && ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
     }
 
     private static func seed(lattice: Lattice, count: Int) throws {
@@ -274,3 +332,99 @@ private actor LatticeOwner {
         lattice.close()
     }
 }
+
+#if DEBUG
+/// Resolves and queries only on one dedicated Thread. The witness is emitted
+/// by Core after gen->in_flight increments, never by a pre-query Swift gate.
+private final class InFlightGenerationRead: @unchecked Sendable {
+    struct State {
+        var started = false
+        var hookEntered = false
+        var queryReturned = false
+        var finished = false
+        var independentBackend = false
+        var generationID: UInt64 = 0
+        var snapshotCount: Int64?
+        var stale = false
+        var failure: String?
+    }
+    private let values = LockedBox(State())
+    private let worker = LockedBox<Thread?>(nil)
+    private let proceed = DispatchSemaphore(value: 0)
+    var state: State {
+        var snapshot = values.withLock { $0 }
+        snapshot.finished = worker.withLock { $0?.isFinished == true }
+        return snapshot
+    }
+
+    func start(reference: LatticeThreadSafeReference, ownerIdentity: Int64) {
+        let first = values.withLock { state in
+            guard !state.started else { return false }
+            state.started = true
+            return true
+        }
+        guard first else { return }
+        let thread = Thread { [weak self] in
+            guard let self else { return }
+            guard let reader = reference.resolve(isolation: nil),
+                  let backend = reader.backend as? CxxBackend else {
+                values.withLock { $0.failure = "independent Cxx reader did not resolve" }
+                return
+            }
+            let generation = backend.acquireReadGeneration()
+            guard generation != 0 else {
+                values.withLock { $0.failure = "reader did not acquire a generation" }
+                return
+            }
+            values.withLock {
+                $0.independentBackend = reader.backend.identityHash != ownerIdentity
+                $0.generationID = generation
+            }
+            defer {
+                // This fixture has only this generation query. It has returned
+                // before hook mutation; release the hold only after clearing.
+                if !backend.setGenerationQueryGapForTesting(nil) {
+                    values.withLock { $0.failure = "test generation hook did not clear" }
+                }
+                backend.releaseReadGeneration(generation)
+            }
+            let installed = backend.setGenerationQueryGapForTesting { [weak self] in
+                guard let self else { return }
+                // Never park the shared observer worker or any other executor,
+                // even if a future fixture change adds another generation read.
+                guard worker.withLock({ $0 === Thread.current }) else { return }
+                let first = values.withLock { state in
+                    guard !state.hookEntered else { return false }
+                    state.hookEntered = true
+                    return true
+                }
+                guard first else { return }
+                if proceed.wait(timeout: .now() + 30) != .success {
+                    values.withLock { $0.failure = "owner-close active-read gate timed out" }
+                }
+            }
+            guard installed else {
+                values.withLock { $0.failure = "test generation hook did not install" }
+                return
+            }
+            let count = backend.countAt(generation: generation, table: Person.entityName,
+                                        where: nil, groupBy: nil, distinctBy: nil, params: [])
+            let stale = backend.lastGenerationReadStale()
+            values.withLock {
+                $0.snapshotCount = count
+                $0.stale = stale
+                $0.queryReturned = true
+            }
+            // Never explicitly close the nil-isolation backend: it may also be
+            // held by the observer worker's already completed decision reader.
+            withExtendedLifetime(reader) {}
+        }
+        thread.name = "lattice.test.active-generation-read"
+        thread.stackSize = ObserverDeliveryWorker.requiredStackSize
+        worker.withLock { $0 = thread }
+        thread.start()
+    }
+
+    func release() { proceed.signal() }
+}
+#endif
