@@ -1641,6 +1641,13 @@ extension Lattice {
                                 boundary = frame.scannedLastID ?? boundary
                                 offset += frame.scannedCount // byte-excluded visible rows remain unconsumed
                             }
+                            if boundary < upper || offset < count {
+                                relayLog.notice("""
+                                    Relay catch-up completed with pruned audit rows skipped: \
+                                    channel=\(channel.id) scanned=\(offset) initialCount=\(count) \
+                                    boundary=\(boundary) upper=\(upper)
+                                    """)
+                            }
                         } else if let lastEventId, state.pushSubscription != nil {
                             try requireActiveCatchUp()
                             // The boundary only feeds push activation — legacy
