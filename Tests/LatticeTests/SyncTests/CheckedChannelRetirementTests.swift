@@ -17,8 +17,8 @@ struct CheckedChannelRetirementTests {
     private func fixture(_ body: (Lattice, URL) throws -> Void) throws {
         let configured = ProcessInfo.processInfo.environment["LATTICE_TEST_TMPDIR"]
         let root = configured.map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("localdev/hud-scratch/lattice-retirement-tests", isDirectory: true)
+            ?? FileManager.default.temporaryDirectory
+                .appendingPathComponent("lattice-retirement-tests", isDirectory: true)
         let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
