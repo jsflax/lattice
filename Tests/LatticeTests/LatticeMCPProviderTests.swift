@@ -135,6 +135,17 @@ final class LatticeMCPProviderTests {
         #expect(e3.json.contains("unknown_tool"))
     }
 
+    @Test func testContainerPredicateReturnsInvalidPredicate() async throws {
+        let url = try fixture()
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        let provider = try await LatticeDataProvider(fileURL: url)
+        let response = await provider.handle(tool: "lattice_query",
+            argumentsJSON: #"{"model":"DynPerson","where":{"name":[]}}"#)
+        #expect(response.isError)
+        #expect(response.json.contains("invalid_predicate"))
+        #expect(!response.json.contains("query_failed"))
+    }
+
     // `toolNames` is the embedder's registration list (1.0 public surface):
     // every advertised name must be answered by `handle` (anything else comes
     // back `unknown_tool`), so the constant cannot drift from the dispatch
