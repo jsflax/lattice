@@ -4,9 +4,7 @@ import Foundation
 /// default file. No synchronization, migrations, eager directory scans, or persistent registry.
 public actor LatticeProviderPool {
     private let defaultDB: URL?
-    private let defaultLimit: Int
-    private let maxLimit: Int
-    private let maxDepthCap: Int
+    private let limits: LatticeQueryLimits
     private let readPolicy: LatticeReadPolicy?
     private let sourceID: String?
     private var authorizedIdentity: String?
@@ -25,22 +23,24 @@ public actor LatticeProviderPool {
         var active: Int = 0
     }
     private var entries: [String: Entry] = [:]
-    public init(defaultDB: URL? = nil, defaultLimit: Int = 25, maxLimit: Int = 500,
-                maxDepthCap: Int = 3, readPolicy: LatticeReadPolicy? = nil, sourceID: String? = nil) {
-        self.defaultDB = defaultDB; self.defaultLimit = defaultLimit; self.maxLimit = maxLimit
-        self.maxDepthCap = maxDepthCap; self.readPolicy = readPolicy; self.sourceID = sourceID
+    public init(defaultDB: URL? = nil, defaultLimit: Int? = nil, maxLimit: Int? = nil,
+                maxDepthCap: Int? = nil, readPolicy: LatticeReadPolicy? = nil, sourceID: String? = nil) {
+        self.defaultDB = defaultDB
+        self.limits = LatticeQueryLimits(defaultRows: defaultLimit, maxRows: maxLimit,
+                                         maxDepth: maxDepthCap, scoped: readPolicy != nil)
+        self.readPolicy = readPolicy; self.sourceID = sourceID
     }
 
     public func handle(tool: String, argumentsJSON: String) async -> ProviderResult {
-        guard argumentsJSON.utf8.count <= 65_536,
+        guard readPolicy == nil || argumentsJSON.utf8.count <= 65_536,
               let data = argumentsJSON.data(using: .utf8),
               let args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             return .error("invalid_arguments", "Arguments must be a JSON object of at most 64 KiB.")
         }
         guard LatticeToolCatalog.toolNames.contains(tool) else { return .error("unknown_tool", "Unknown Lattice tool.") }
-        if let db = args["db"], !(db is String) { return .error("invalid_arguments", "db must be a path string.") }
+        if readPolicy != nil, let db = args["db"], !(db is String) { return .error("invalid_arguments", "db must be a path string.") }
         let url: URL?
-        if let db = args["db"] as? String {
+        if let db = args["db"] as? String, readPolicy != nil || !db.isEmpty {
             guard !db.isEmpty else { return .error("invalid_arguments", "db cannot be empty.") }
             guard readPolicy == nil || defaultDB?.standardizedFileURL.resolvingSymlinksInPath().path == URL(fileURLWithPath: db).standardizedFileURL.resolvingSymlinksInPath().path else {
                 return .error("source_unavailable", "The requested source is not authorized.")
@@ -53,7 +53,7 @@ public actor LatticeProviderPool {
                 let payload: [String: Any] = ["version": LatticeToolCatalog.version, "readOnly": true,
                     "tools": LatticeToolCatalog.toolNames, "knownSources": Array(entries.keys.sorted().prefix(8)),
                     "knownSourcesTruncated": entries.count > 8,
-                    "limits": ["defaultRows": 25, "maxRows": 500, "defaultDepth": 0, "maxDepth": 3, "maxOutputBytes": 32_768]]
+                    "limits": limits.status]
                 return encode(payload)
             }
             return .error("no_database", "Pass db, or launch lattice-mcp with --db.")
@@ -86,7 +86,7 @@ public actor LatticeProviderPool {
                 result = await entries[key]!.diagnostics.handle(tool: tool, argumentsJSON: argumentsJSON)
             } else {
                 if entries[key]!.provider == nil {
-                    let limit = defaultLimit, maximum = maxLimit, depth = maxDepthCap, policy = readPolicy
+                    let limit = limits.defaultRows, maximum = limits.maxRows, depth = limits.maxDepth, policy = readPolicy
                     entries[key]!.provider = Task {
                         try await LatticeDataProvider(fileURL: file, defaultLimit: limit, maxLimit: maximum,
                                                       maxDepthCap: depth, readPolicy: policy)
@@ -121,7 +121,7 @@ public actor LatticeProviderPool {
     }
     private func encode(_ payload: [String: Any]) -> ProviderResult {
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return .error("encoding_failed", "Cannot encode status.") }
-        guard data.count <= 32_768 else { return .error("result_too_large", "Select a source for its status.") }
+        guard readPolicy == nil || data.count <= 32_768 else { return .error("result_too_large", "Select a source for its status.") }
         return .init(json: String(decoding: data, as: UTF8.self), isError: false)
     }
     private func withSource(_ result: ProviderResult, path: String, transactional: Bool) -> ProviderResult {
@@ -129,7 +129,7 @@ public actor LatticeProviderPool {
               var payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return result }
         payload["source"] = ["id": sourceID ?? path, "kind": "file", "observedAt": ISO8601DateFormatter().string(from: Date()),
                              "readerVersion": LatticeToolCatalog.version, "consistency": transactional ? "read_transaction" : "live_read"]
-        guard let encoded = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]), encoded.count <= 32_768 else {
+        guard let encoded = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]), (readPolicy == nil || encoded.count <= 32_768) else {
             return .error("result_too_large", "Reduce the requested page size or selected fields.")
         }
         return .init(json: String(decoding: encoded, as: UTF8.self), isError: false)
