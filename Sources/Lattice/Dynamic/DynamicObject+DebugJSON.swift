@@ -1,6 +1,6 @@
 import Foundation
 import LatticeSwiftCppBridge
-import LatticeDebugBridge
+internal import LatticeDebugBridge
 import CxxStdlib
 
 /// A sealed backend failure encountered while constructing a debug response.
