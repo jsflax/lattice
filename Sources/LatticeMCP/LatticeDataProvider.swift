@@ -1,6 +1,6 @@
 import Foundation
 import CoreFoundation
-import Lattice
+@_spi(LatticeInternals) import Lattice
 
 public struct ProviderResult: Sendable {
     public let json: String

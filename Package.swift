@@ -87,6 +87,8 @@ let package = Package(
     ],
     targets: [
         .systemLibrary(name: "CLatticeDiagnosticsSQLite", providers: [.apt(["libsqlite3-dev"])]),
+        // Implementation target only, not a library product. Diagnostic Swift
+        // consumers opt into LatticeInternals SPI on the Lattice product.
         .target(name: "LatticeDebugBridge",
                 dependencies: [.product(name: "LatticeSwiftCppBridge", package: "LatticeCore")],
                 publicHeadersPath: "include",
