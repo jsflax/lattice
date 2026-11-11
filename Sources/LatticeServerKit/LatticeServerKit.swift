@@ -1021,6 +1021,9 @@ extension Lattice {
             }
             ws.onClose.whenComplete { [ackPath] _ in
                 ackPath?.record(.connectionClosed)
+                // Mark closure before scheduling cleanup so a busy catch-up
+                // cannot keep reading while the executor is occupied.
+                state.cancelCatchUp()
                 Task {
                     if let channelId = state.channelId {
                         await sockets.remove(socket: ws, channelId: channelId)
@@ -1488,8 +1491,15 @@ extension Lattice {
 
                 // Catch-up AFTER handlers are live. Incoming frames during
                 // catch-up serialize through the same per-channel lattice.
+                let observeCatchUp = _catchUpObservationForTesting.withLockedValue { $0 }
                 do {
-                    try await Task {
+                    let catchUp = Task<Void, Error> {
+                        func requireActiveCatchUp() throws {
+                            try Task.checkCancellation()
+                            guard !state.catchUpStopped, !ws.isClosed, !state.revocation.isRevoked else {
+                                throw CancellationError()
+                            }
+                        }
                         ackPath?.record(.catchUpTaskStarted)
                         // The go-live hop hands ownership here when it abandons:
                         // release the opened lattice off-loop and do not touch
@@ -1508,6 +1518,7 @@ extension Lattice {
                             }
                             return
                         }
+                        try requireActiveCatchUp()
                         let lattice = held.value
 
                         // TEST-ONLY fault injection (nil in production): proves
@@ -1546,6 +1557,7 @@ extension Lattice {
                                     """)
                                 if let encoded = try? JSONEncoder().encode(
                                     ServerSentEvent.floorReset(durableHead: head?.globalId, reason: reason)) {
+                                    try requireActiveCatchUp()
                                     let sent = ws.eventLoop.makePromise(of: Void.self)
                                     ws.send(encoded, promise: sent)
                                     try await sent.futureResult.get()
@@ -1553,6 +1565,7 @@ extension Lattice {
                             }
                         }
 
+                        try requireActiveCatchUp()
                         ackPath?.record(.catchUpReadBegin)
                         let events = lattice.eventsAfter(globalId: lastEventId)
                         guard lattice.lastQueryError() == nil else { throw BoundedAuditFrame.Failure.queryFailed }
@@ -1561,6 +1574,12 @@ extension Lattice {
                         // COUNT on a closed handle may return zero without a sealed error.
                         // Do not activate a supposedly caught-up socket from that default.
                         if count == 0 { _ = try lattice.auditCursor() }
+                        // Keep a finite audit-ID bound: pruning may shorten
+                        // the initial count, and later writes belong to push.
+                        let upper = events.sortedBy(\.primaryKey, order: .reverse)
+                            .materializedSnapshot(limit: 1).first?.primaryKey
+                        guard lattice.lastQueryError() == nil else { throw BoundedAuditFrame.Failure.queryFailed }
+                        if upper == nil { _ = try lattice.auditCursor() }
                         ackPath?.record(.catchUpReadEnd, count: count)
                         // Observer-push activation boundary: the pk of the last
                         // catch-up entry this socket was sent, taken from the
@@ -1570,20 +1589,22 @@ extension Lattice {
                         // already up to date; else 0 on an empty log. The first
                         // pump reads strictly beyond it.
                         var boundary: Int64 = 0
-                        if count > 0 {
+                        if let upper {
                             print(">>> Bringing channel \(channel.id) connection up to date with \(count) events")
+                            let boundedEvents = events.where { $0.primaryKey <= upper }
                             var offset = 0
-                            while offset < count {
-                                guard !state.revocation.isRevoked else { break }
+                            while boundary < upper {
+                                try requireActiveCatchUp()
                                 var preparedCursor = boundary
-                                let frame = try BoundedAuditFrame.encode(start: offset, maxCount: min(initialCatchUpPageSize, count - offset),
+                                let frame = try BoundedAuditFrame.encode(start: offset, maxCount: initialCatchUpPageSize,
                                     including: { !downloadExcludedTables.contains($0.tableName.lowercased()) },
                                     didPrepare: sendBoundaryProbe.map { probe in { rows in
                                         _ = probe.capture(page: rows, route: .catchup)
                                     } }) { _ in
+                                    try requireActiveCatchUp()
                                     let after = preparedCursor
-                                    guard let row = try BoundedAuditFrame.nextRow(in: lattice, events: events, after: after) else {
-                                        throw BoundedAuditFrame.Failure.missingRow
+                                    guard let row = try BoundedAuditFrame.nextRow(in: lattice, events: boundedEvents, after: after) else {
+                                        return nil // A pruned tail ends catch-up normally.
                                     }
                                     guard let nextID = row.primaryKey, nextID > after else {
                                         throw BoundedAuditFrame.Failure.missingRow
@@ -1591,19 +1612,22 @@ extension Lattice {
                                     preparedCursor = nextID // local only; excluded rows are read again next page
                                     return row
                                 }
-                                guard frame.scannedCount > 0 else { throw BoundedAuditFrame.Failure.missingRow }
+                                guard frame.scannedCount > 0 else { break }
+                                if let observeCatchUp { await observeCatchUp(channel.id, .pageRead(offset: offset)) }
+                                try requireActiveCatchUp()
                                 if frame.count > 0 {
                                     ackPath?.record(.catchUpSendBegin, bytes: frame.data.count, count: frame.count)
                                     let sent = ws.eventLoop.makePromise(of: Void.self)
                                     ws.send(raw: frame.data, opcode: .binary, promise: sent)
                                     try await sent.futureResult.get()
-                                    guard !state.revocation.isRevoked, !ws.isClosed else { break }
+                                    try requireActiveCatchUp()
                                     ackPath?.record(.catchUpSendReturn)
                                 }
                                 boundary = frame.scannedLastID ?? boundary
                                 offset += frame.scannedCount // byte-excluded visible rows remain unconsumed
                             }
                         } else if let lastEventId, state.pushSubscription != nil {
+                            try requireActiveCatchUp()
                             // The boundary only feeds push activation — legacy
                             // mounts (and sockets whose watcher open failed)
                             // skip this SELECT entirely rather than paying it
@@ -1615,7 +1639,8 @@ extension Lattice {
                             if checkpoint.isEmpty { _ = try lattice.auditCursor() }
                             boundary = checkpoint.first?.primaryKey ?? 0
                         }
-                        if wantsCatchUpComplete && !state.revocation.isRevoked && !ws.isClosed {
+                        try requireActiveCatchUp()
+                        if wantsCatchUpComplete {
                             let encoded = try JSONEncoder().encode(ServerSentEvent.catchUpComplete)
                             let sent = ws.eventLoop.makePromise(of: Void.self)
                             ws.send(encoded, promise: sent)
@@ -1628,12 +1653,24 @@ extension Lattice {
                             if state.revocation.isRevoked || ws.isClosed {
                                 await watchManager?.unsubscribe(sub)
                             } else {
+                                try requireActiveCatchUp()
                                 await watchManager?.activate(sub, cursor: boundary)
+                                if let observeCatchUp { await observeCatchUp(channel.id, .activated) }
                             }
                         }
-                    }.value
+                    }
+                    // Close can race task creation. Registration immediately
+                    // cancels a task when onClose already marked the connection.
+                    state.installCatchUp(catchUp)
+                    try await withTaskCancellationHandler {
+                        try await catchUp.value
+                    } onCancel: {
+                        catchUp.cancel()
+                    }
                 } catch {
-                    print("Error bringing channel connection up to date: \(error.localizedDescription)")
+                    if !(error is CancellationError) {
+                        print("Error bringing channel connection up to date: \(error.localizedDescription)")
+                    }
                     // A throw here (encode failure, a send that fails mid-page)
                     // used to leave the push subscription PARKED: never
                     // activated, never unsubscribed. That pins the file's watch
@@ -1649,9 +1686,13 @@ extension Lattice {
                         state.pushSubscription = nil
                         await watchManager?.unsubscribe(sub)
                     }
-                    ws.pingInterval = .seconds(5)   // drop a peer that ignores the close
-                    try? await ws.close(code: .unexpectedServerError)
+                    if !ws.isClosed {
+                        ws.pingInterval = .seconds(5)   // drop a peer that ignores the close
+                        try? await ws.close(code: error is CancellationError ? .goingAway : .unexpectedServerError)
+                    }
                 }
+                state.finishCatchUp()
+                if let observeCatchUp { await observeCatchUp(channel.id, .finished) }
             }
         }
         routes.webSocket(path, maxFrameSize: WebSocketMaxFrameSize(integerLiteral: 300 * 1024 * 1024),
@@ -1722,6 +1763,31 @@ final class ConnectionRelayState: @unchecked Sendable {
     var applyConsumer: Task<Void, Never>?
     var queuedApplyBytes: Int = 0
 
+    /// Catch-up runs off-loop. Closure and task registration race, so both
+    /// use one lock. Cancel outside it: cancellation handlers may run inline.
+    private let catchUpBox = NIOLockedValueBox<(stopped: Bool, task: Task<Void, Error>?)>((false, nil))
+    var catchUpStopped: Bool { catchUpBox.withLockedValue { $0.stopped } }
+
+    func installCatchUp(_ task: Task<Void, Error>) {
+        let stopped = catchUpBox.withLockedValue {
+            $0.task = task
+            return $0.stopped
+        }
+        if stopped { task.cancel() }
+    }
+
+    func cancelCatchUp() {
+        let task = catchUpBox.withLockedValue {
+            $0.stopped = true
+            return $0.task
+        }
+        task?.cancel()
+    }
+
+    func finishCatchUp() {
+        catchUpBox.withLockedValue { $0.task = nil }
+    }
+
     /// Late-bound channel id. Written on the event loop, READ from the
     /// detached onClose task — so it lives in a lock, not in loop
     /// confinement. nil = never registered with the SocketManager.
@@ -1780,3 +1846,12 @@ private let maxBufferedFrameBytes = 64 * 1024 * 1024
 /// suites run in parallel). Nil in production: one lock-protected read per
 /// connection, alongside the catch-up query.
 let _catchUpFaultForTesting = NIOLockedValueBox<(@Sendable (String) throws -> Void)?>(nil)
+
+/// Nil in production. A channel-scoped test can pause after a real page
+/// query and observe completion without sleeps or artificial wire frames.
+enum CatchUpObservation: Sendable {
+    case pageRead(offset: Int)
+    case activated
+    case finished
+}
+let _catchUpObservationForTesting = NIOLockedValueBox<(@Sendable (String, CatchUpObservation) async -> Void)?>(nil)
