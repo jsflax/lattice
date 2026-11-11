@@ -655,6 +655,12 @@ public struct Lattice {
         /// nil preserves normal open behavior. Invalid or conflicting values throw at open.
         public var requiredExistingSchemaVersion: Int?
 
+        /// Whether opening file-backed storage may create a missing file.
+        /// Disabling creation still allows normal schema initialization and
+        /// migration of an existing file. This is independent of strict
+        /// `requiredExistingSchemaVersion` admission and does not affect memory storage.
+        public var allowsFileCreation: Bool = true
+
         /// Read-only mode. When true:
         /// - Database is opened with SQLITE_OPEN_READONLY
         /// - No WAL mode (uses existing journal mode)
@@ -792,6 +798,7 @@ public struct Lattice {
             lhs.uploadsEnabled == rhs.uploadsEnabled &&
             lhs.scheduler == rhs.scheduler &&
             lhs.isReadOnly == rhs.isReadOnly &&
+            lhs.allowsFileCreation == rhs.allowsFileCreation &&
             lhs.requiredExistingSchemaVersion == rhs.requiredExistingSchemaVersion &&
             lhs.syncFilter == rhs.syncFilter &&
             lhs.ipcTargets == rhs.ipcTargets &&
@@ -812,6 +819,7 @@ public struct Lattice {
             hasher.combine(uploadsEnabled)
             hasher.combine(scheduler)
             hasher.combine(isReadOnly)
+            hasher.combine(allowsFileCreation)
             hasher.combine(requiredExistingSchemaVersion)
             hasher.combine(syncFilter)
             hasher.combine(ipcTargets)
@@ -846,7 +854,8 @@ public struct Lattice {
                     syncTuning: SyncTuning? = nil,
                     syncStartup: SyncStartup = .automatic,
                     backgroundSync: BackgroundSync? = nil,
-                    requiredExistingSchemaVersion: Int? = nil) {
+                    requiredExistingSchemaVersion: Int? = nil,
+                    allowsFileCreation: Bool = true) {
             // storage wins; fileURL is the long-standing convenience spelling;
             // neither → the default documents-directory database.
             self.storage = storage ?? .file(fileURL ?? Self.defaultDatabaseDirectory()
@@ -858,6 +867,7 @@ public struct Lattice {
             self.backgroundSync = backgroundSync
             self.scheduler = Scheduler()
             self.isReadOnly = isReadOnly
+            self.allowsFileCreation = allowsFileCreation
             self.migration = migration
             self.requiredExistingSchemaVersion = requiredExistingSchemaVersion
             self.syncFilter = syncFilter
@@ -889,6 +899,7 @@ public struct Lattice {
             // A read-only handle can never advance an upload floor: its slot
             // (if it dials anything) is an observer's by construction.
             config.sync_is_observer = isReadOnly || (syncTuning?.registersAsObserver ?? false)
+            config.create_if_missing = allowsFileCreation
             if let t = syncTuning {
                 if let v = t.chunkSize { config.set_sync_chunk_size(Int64(v)) }
                 if let v = t.maxReconnectAttempts { config.set_sync_max_reconnect_attempts(Int32(v)) }
