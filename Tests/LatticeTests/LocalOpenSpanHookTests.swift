@@ -90,14 +90,21 @@ struct LocalOpenSpanHookTests {
         #expect(store.isolation === MainActor.shared)
         #expect(LatticePerf.spanHook == nil)
         let entries = events.entries
-        #expect(entries.map(\.name) == [
+        // A scoped implementation may release its temporary native owner after
+        // adoption. That is the only optional phase, and it must be one complete
+        // worker interval before returning, with no caller interval left open.
+        let hasDisposal = entries.contains { $0.name == "Lattice.openLocal.dispose" }
+        let expectedNames = [
             "Lattice.openLocal.prepare", "Lattice.openLocal.prepare",
             "Lattice.openLocal.worker.open", "Lattice.openLocal.worker.open",
             "Lattice.openLocal.adopt", "Lattice.openLocal.adopt",
-            "Lattice.openLocal.return", "Lattice.openLocal.return",
-        ])
-        #expect(entries.map(\.isBegin) == [true, false, true, false, true, false, true, false])
-        #expect(entries.map(\.scope) == [.caller, .caller, .worker, .worker, .caller, .caller, .caller, .caller])
+        ] + (hasDisposal ? ["Lattice.openLocal.dispose", "Lattice.openLocal.dispose"] : [])
+          + ["Lattice.openLocal.return", "Lattice.openLocal.return"]
+        let expectedScopes: [LatticePerf.SpanScope] = [.caller, .caller, .worker, .worker, .caller, .caller]
+            + (hasDisposal ? [.worker, .worker] : []) + [.caller, .caller]
+        #expect(entries.map(\.name) == expectedNames)
+        #expect(entries.map(\.scope) == expectedScopes)
+        #expect(entries.map(\.isBegin) == expectedNames.indices.map { $0.isMultiple(of: 2) })
         #if os(macOS)
         #expect(entries.filter { $0.scope == .worker }.allSatisfy { !$0.isMainThread })
         #endif
