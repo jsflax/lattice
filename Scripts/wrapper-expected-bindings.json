@@ -11,8 +11,8 @@
       "identity": "swift-sdk",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/swift-sdk.git",
-      "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
-      "selection": "revision"
+      "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
+      "version": "0.13.0"
     }
   ],
   "qualificationNote": "Qualified refers only to explicitly reviewed upstream source identities. Core and Swift SDK use exact revisions. Prior release evidence is historical; it does not qualify this wrapper graph, compilation, tests or products.",
