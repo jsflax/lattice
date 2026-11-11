@@ -15,20 +15,36 @@ public struct LatticeToolDescriptor: Sendable {
 public enum LatticeToolCatalog {
     public static let version = "0.2.1"
     public static var toolNames: [String] { tools.map(\.name) }
-    public static let tools: [LatticeToolDescriptor] = {
-        let string: [String: Any] = ["type": "string", "minLength": 1]
-        let db: [String: Any] = ["type": "string", "minLength": 1,
-            "description": "Absolute database path; optional with --db. No filesystem discovery."]
+    /// The standalone server and unscoped providers retain the original defaults.
+    public static let tools: [LatticeToolDescriptor] = makeTools(scoped: false)
+    private static let scopedTools: [LatticeToolDescriptor] = makeTools(scoped: true)
+
+    /// Embedders passing a read policy advertise the matching strict limits.
+    public static func tools(readPolicy: LatticeReadPolicy?) -> [LatticeToolDescriptor] {
+        readPolicy == nil ? tools : scopedTools
+    }
+
+    private static func makeTools(scoped: Bool) -> [LatticeToolDescriptor] {
+        let limits = LatticeQueryLimits(scoped: scoped)
+        var string: [String: Any] = ["type": "string"]
+        if scoped { string["minLength"] = 1 }
+        let db = string.merging(["description": "Absolute database path; optional with --db. No filesystem discovery."]) { _, new in new }
         let fields: [String: Any] = ["type": "array", "items": string, "uniqueItems": true,
             "description": "Selected top-level properties; identities remain included."]
-        let depth: [String: Any] = ["type": "integer", "minimum": 0, "maximum": 3, "default": 0]
-        let limit: [String: Any] = ["type": "integer", "minimum": 1, "maximum": 500, "default": 25]
+        func integer(default value: Int, range: ClosedRange<Int>) -> [String: Any] {
+            var schema: [String: Any] = ["type": "integer", "default": value]
+            if scoped { schema["minimum"] = range.lowerBound; schema["maximum"] = range.upperBound }
+            return schema
+        }
+        let depth = integer(default: limits.defaultDepth, range: 0...limits.maxDepth)
+        let limit = integer(default: limits.defaultRows, range: limits.rowRange)
+        let nearest = integer(default: limits.defaultNearest, range: limits.nearestRange)
         let predicate: [String: Any] = ["type": "object",
             "description": "{field:{$op:value}}; $eq $ne $gt $gte $lt $lte $contains $hasPrefix $hasSuffix $in $between; $and/$or/$not."]
         let view: [String: Any] = ["db": db, "model": string, "fields": fields, "depth": depth]
         func tool(_ name: String, _ description: String, _ properties: [String: Any],
                   required: [String] = [], extra: [String: Any] = [:]) -> LatticeToolDescriptor {
-            var schema: [String: Any] = ["type": "object", "properties": properties, "additionalProperties": false]
+            var schema: [String: Any] = ["type": "object", "properties": properties, "additionalProperties": !scoped]
             if !required.isEmpty { schema["required"] = required }
             schema.merge(extra) { _, new in new }
             // Catalog values are static JSON literals, never user input.
@@ -41,8 +57,8 @@ public enum LatticeToolCatalog {
         return [
             tool("lattice_schema", "Inspect model properties, links and search capabilities. Filter by model for a smaller result.",
                  ["db": db, "model": string]),
-            tool("lattice_query", "Read matching objects. Default 25 rows, depth 0; use fields and pagination for smaller responses.",
-                 withView(["where": predicate, "limit": limit, "offset": ["type": "integer", "minimum": 0, "default": 0],
+            tool("lattice_query", "Read matching objects. Default \(limits.defaultRows) rows, depth \(limits.defaultDepth); use fields and pagination for smaller responses.",
+                 withView(["where": predicate, "limit": limit, "offset": integer(default: 0, range: 0...Int.max),
                     "sort": ["type": "array", "items": ["type": "object", "properties": ["field": string,
                         "order": ["type": "string", "enum": ["asc", "desc"]]], "required": ["field"], "additionalProperties": false]]]),
                  required: ["model"]),
@@ -55,7 +71,7 @@ public enum LatticeToolCatalog {
                  withView(["field": string, "match": string, "limit": limit]), required: ["model", "field", "match"]),
             tool("lattice_nearest", "Search a vector field, ordered by distance. Supply every numeric vector component.",
                  withView(["field": string, "vector": ["type": "array", "items": ["type": "number"], "minItems": 1],
-                    "k": limit, "metric": ["type": "string", "enum": ["l2", "cosine", "l1"], "default": "l2"]]),
+                    "k": nearest, "metric": ["type": "string", "enum": ["l2", "cosine", "l1"], "default": "l2"]]),
                  required: ["model", "field", "vector"]),
             tool("lattice_geo", "Search a geo field near a point, ordered by distanceMeters.",
                  withView(["field": string, "limit": limit, "near": ["type": "object", "properties": [
@@ -74,5 +90,5 @@ public enum LatticeToolCatalog {
                   "waitMs": ["type": "integer", "minimum": 0, "maximum": 25000, "default": 0],
                   "includeValues": ["type": "boolean", "default": false]], extra: ["not": ["required": ["cursor", "start"]]])
         ]
-    }()
+    }
 }
