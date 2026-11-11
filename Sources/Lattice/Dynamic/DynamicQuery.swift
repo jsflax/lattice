@@ -8,6 +8,7 @@ import Foundation
 //   * Only same-named primitive columns without geo-bounds are admitted from
 //     the reconstructed schema, plus id and globalId. Relationships and geo
 //     properties use separate storage and cannot be compared as row columns.
+//     Union properties are also refused, even when stored in a same-named column.
 //     Admitted identifiers are quoted so SQL keywords keep their column meaning.
 //   * Operators are whitelisted — unknown operators throw.
 //   * Operands must be JSON scalars; string literals use single-quote doubling.
