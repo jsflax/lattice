@@ -258,6 +258,26 @@ final class LatticeMCPDefaultPolicyTests {
         #expect(nearestProperties["k"]?["default"] as? Int == 10)
     }
 
+    @Test func explicitPolicyCatalogAdvertisesBoundedDefaults() throws {
+        let tools = LatticeToolCatalog.tools(readPolicy: policy)
+        var schemas: [String: [String: Any]] = [:]
+        for tool in tools {
+            let schema = try #require(JSONSerialization.jsonObject(
+                with: Data(tool.inputSchemaJSON.utf8)) as? [String: Any])
+            #expect(schema["additionalProperties"] as? Bool == false)
+            schemas[tool.name] = schema
+        }
+        let query = try #require(schemas["lattice_query"])
+        let properties = try #require(query["properties"] as? [String: [String: Any]])
+        #expect(properties["limit"]?["default"] as? Int == 25)
+        #expect(properties["limit"]?["maximum"] as? Int == 500)
+        #expect(properties["depth"]?["default"] as? Int == 0)
+        #expect(properties["depth"]?["maximum"] as? Int == 3)
+        let nearest = try #require(schemas["lattice_nearest"])
+        let nearestProperties = try #require(nearest["properties"] as? [String: [String: Any]])
+        #expect(nearestProperties["k"]?["default"] as? Int == 25)
+    }
+
     @Test func standaloneDoctorUsesTheUnscopedDefaults() async throws {
         // Executable target dependencies share the test products directory.
         // Match the existing cross-process fixture on macOS and Linux, including
