@@ -8,6 +8,14 @@
 // Additive diagnostic helpers over the published Core API. Every function
 // contains C++ exceptions and reports them through lattice::last_bridge_error.
 namespace lattice_debug {
+// Test-only forwarding to Core's existing generation active-read witness.
+// No new Core behavior. Configure a quiescent reader; callback runs after
+// in_flight increments and before SQL. The internal Swift wrapper is DEBUG-only.
+bool set_generation_query_gap_for_testing(const lattice::swift_lattice_ref& reference,
+                                          void* context,
+                                          void (*callback)(void*),
+                                          void (*destroy)(void*))
+    SWIFT_NAME(setGenerationQueryGapForTesting(_:context:callback:destroy:));
 #if LATTICE_HAS_FRT
 lattice::dynamic_object_ref* get_object(const lattice::dynamic_object_ref& parent,
                                       const std::string& name)

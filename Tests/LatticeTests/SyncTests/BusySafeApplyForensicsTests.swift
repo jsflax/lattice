@@ -384,6 +384,7 @@ private func rowCount(inChannelFile url: URL) throws -> (rows: Int, audit: Int) 
     return (l.objects(SimpleSyncObject.self).count, l.objects(AuditLog.self).count)
 }
 
+extension RelayApplyFaultScope {
 @Suite("BusySafeApplyForensics", .serialized, .timeLimit(.minutes(10)))
 final class BusySafeApplyForensicsTests: BaseTest {
 
@@ -1091,4 +1092,5 @@ final class BusySafeApplyForensicsTests: BaseTest {
         try? FileManager.default.removeItem(at: harness.storageURL)
         phase("storage_remove_returned", -1, nil, nil)
     }
+}
 }
