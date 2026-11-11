@@ -2,6 +2,7 @@ import Foundation
 
 extension LatticePerf {
     /// Where a library operation executes relative to the actor that requested it.
+    @_spi(LatticeInternals)
     public enum SpanScope: Sendable, Equatable {
         case caller
         case worker
@@ -11,22 +12,27 @@ extension LatticePerf {
     /// The hook must be thread-safe, must not throw, and must not retain managed
     /// values from an open. It can attach application correlation without making
     /// the library depend on a tracing backend or an application identifier.
+    /// This hook is SPI in 3.0.0; its span names are not yet a stable contract.
+    @_spi(LatticeInternals)
     public typealias SpanHook = @Sendable (StaticString, SpanScope) -> (@Sendable () -> Void)
 
     /// Optional diagnostics for the current task. Child tasks inherit the hook;
     /// local-open workers explicitly carry it across their detached boundary.
     /// A nil hook allocates no span state and emits no callbacks.
+    @_spi(LatticeInternals)
     @TaskLocal public static var spanHook: SpanHook?
 
     /// An interval whose captured completion callback runs at most once.
     /// Ending a copy, or ending after the task-local hook changes, uses the
     /// callback returned by the original hook. Callers must explicitly end it.
+    @_spi(LatticeInternals)
     public struct Span: Sendable {
         private let state: SpanState?
         fileprivate init(_ state: SpanState?) { self.state = state }
-        public func end() { state?.finish() }
+        @_spi(LatticeInternals) public func end() { state?.finish() }
     }
 
+    @_spi(LatticeInternals)
     public static func beginSpan(_ name: StaticString, scope: SpanScope) -> Span {
         guard let spanHook else { return Span(nil) }
         return Span(SpanState(spanHook(name, scope)))

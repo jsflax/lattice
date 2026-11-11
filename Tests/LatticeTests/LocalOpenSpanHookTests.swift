@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import LatticeTestSupport
-@testable import Lattice
+@_spi(LatticeInternals) @testable import Lattice
 
 @Model private final class SpanHookItem {
     var value: String = ""
