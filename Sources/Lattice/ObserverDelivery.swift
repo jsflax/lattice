@@ -118,8 +118,11 @@ struct ObserverDeliveryStoreQueue {
 /// BLOCKS — waits on a semaphore, joins a thread, or synchronously awaits
 /// work that itself needs observer delivery to progress — now stalls all
 /// observers instead of only its own batch. Observer blocks must return
-/// promptly: do the read, hand the result to a queue/actor, return. Blocks
-/// bound to an isolation are unaffected (they hop to their actor per batch).
+/// promptly: do the read, hand the result to a queue/actor, return. A collection
+/// block bound to an isolation runs on that owning actor and must also return
+/// promptly. Blocking it parks the owner (the main thread for MainActor stores)
+/// and deadlocks when the work being waited for needs the same actor. It does
+/// not occupy this shared worker while the actor runs the block.
 final class ObserverDeliveryWorker: @unchecked Sendable {
     static let shared = ObserverDeliveryWorker()
 
