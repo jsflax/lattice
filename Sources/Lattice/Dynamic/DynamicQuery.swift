@@ -52,7 +52,8 @@ public enum DynamicQuery {
                 clauses.append("NOT (\(try whereSQL(obj, schema: schema)))")
             default:
                 guard allowed.contains(key) else { throw DynamicQueryError.unknownProperty(key) }
-                clauses.append(try fieldClause(column: key, value: value))
+                let identifier = "\"" + key.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+                clauses.append(try fieldClause(column: identifier, value: value))
             }
         }
         if clauses.isEmpty { return "1=1" }
@@ -69,20 +70,23 @@ public enum DynamicQuery {
             }
             return "(\(try whereSQL(obj, schema: schema)))"
         }
-        return parts.isEmpty ? "1=1" : parts.joined(separator: separator)
+        return parts.isEmpty ? (separator == " OR " ? "0=1" : "1=1") : parts.joined(separator: separator)
     }
 
     private static func fieldClause(column: String, value: Any) throws -> String {
         // { col: { $op: operand } } — one or more operators (ANDed).
         if let opObject = value as? [String: Any] {
+            guard !opObject.isEmpty else { throw DynamicQueryError.malformed("field operator object cannot be empty") }
             let parts = try opObject.map { try opClause(column: column, op: $0.key, operand: $0.value) }
             return parts.isEmpty ? "1=1" : parts.joined(separator: " AND ")
         }
         // Bare value → equality (or IS NULL for null).
+        try requireScalar(value)
         return eqClause(column: column, operand: value)
     }
 
     private static func opClause(column c: String, op: String, operand: Any) throws -> String {
+        if op != "$in" && op != "$between" { try requireScalar(operand) }
         switch op {
         case "$eq":  return eqClause(column: c, operand: operand)
         case "$ne":  return (operand is NSNull) ? "\(c) IS NOT NULL" : "\(c) != \(lit(operand))"
@@ -96,12 +100,14 @@ public enum DynamicQuery {
         case "$hasSuffix": return "substr(\(c), -length(\(lit(operand)))) = \(lit(operand))"
         case "$in":
             guard let arr = operand as? [Any] else { throw DynamicQueryError.malformed("$in expects an array") }
+            try arr.forEach(requireScalar)
             let vals = arr.map { lit($0) }.joined(separator: ", ")
             return "\(c) IN (\(vals))"
         case "$between":
             guard let arr = operand as? [Any], arr.count == 2 else {
                 throw DynamicQueryError.malformed("$between expects [low, high]")
             }
+            try arr.forEach(requireScalar)
             return "\(c) BETWEEN \(lit(arr[0])) AND \(lit(arr[1]))"
         default:
             throw DynamicQueryError.unsupportedOperator(op)
@@ -110,6 +116,12 @@ public enum DynamicQuery {
 
     private static func eqClause(column c: String, operand: Any) -> String {
         (operand is NSNull) ? "\(c) IS NULL" : "\(c) = \(lit(operand))"
+    }
+
+    private static func requireScalar(_ value: Any) throws {
+        guard value is NSNull || value is String || value is NSNumber else {
+            throw DynamicQueryError.malformed("comparison operands must be scalar JSON values")
+        }
     }
 
     /// Render a JSON scalar as an escaped SQL literal.
