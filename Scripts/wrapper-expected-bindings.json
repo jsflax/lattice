@@ -4,7 +4,7 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "899e307df0a876aee3f29f94e2f596784f901c61",
+      "revision": "d08d4df47df5009e92e173f7741e8a85a50b349c",
       "selection": "revision"
     },
     {
@@ -42,8 +42,8 @@
   },
   "sourceEvidence": {
     "latticecore": {
-      "revision": "899e307df0a876aee3f29f94e2f596784f901c61",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/899e307df0a876aee3f29f94e2f596784f901c61",
+      "revision": "d08d4df47df5009e92e173f7741e8a85a50b349c",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/d08d4df47df5009e92e173f7741e8a85a50b349c",
       "selection": "revision",
       "parents": [
         "c82ff2d4688b1be412b4decf44d2e27b29a10ddf"
