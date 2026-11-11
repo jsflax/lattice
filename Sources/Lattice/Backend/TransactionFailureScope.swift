@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// Keep the first reported backend failure until a synchronous transaction
 /// finishes. The bridge's last-error slot is cleared by the next successful
@@ -21,7 +26,10 @@ internal final class TransactionFailureScope {
                 // Missing identity preserves ordinary single-store operation
                 // but refuses nesting, rather than guessing an alias is safe.
                 guard let checker = backend as? any MainFileCurrentnessBackend else { return .unavailable }
-                let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+                // Foundation can remove a leading /private after resolving a
+                // Darwin path. SQLite retains the realpath spelling, and the
+                // currentness probe deliberately compares that name byte-for-byte.
+                guard let path = canonicalFilePath(url) else { return .unavailable }
                 do {
                     try checker.requireMainFileUnmoved(expectedPath: path)
                     let attributes = try FileManager.default.attributesOfItem(atPath: path)
@@ -32,6 +40,20 @@ internal final class TransactionFailureScope {
                     return .file(device: device.uint64Value, inode: inode.uint64Value)
                 } catch { return .unavailable }
             }
+        }
+
+        private static func canonicalFilePath(_ url: URL) -> String? {
+            #if canImport(Darwin) || canImport(Glibc)
+            return url.withUnsafeFileSystemRepresentation { path in
+                guard let path, let resolved = realpath(path, nil) else { return nil }
+                defer { free(resolved) }
+                // Keep the result as a string: creating another URL can apply
+                // Foundation's /private normalization again.
+                return String(cString: resolved)
+            }
+            #else
+            return nil
+            #endif
         }
 
         var isKnown: Bool {
