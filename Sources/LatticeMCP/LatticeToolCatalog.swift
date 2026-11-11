@@ -24,7 +24,7 @@ public enum LatticeToolCatalog {
         let depth: [String: Any] = ["type": "integer", "minimum": 0, "maximum": 3, "default": 0]
         let limit: [String: Any] = ["type": "integer", "minimum": 1, "maximum": 500, "default": 25]
         let predicate: [String: Any] = ["type": "object",
-            "description": "{field:{$op:value}}; $eq $ne $gt $gte $lt $lte $contains $hasPrefix $hasSuffix $in $between; $and/$or/$not."]
+            "description": "{field:{$op:value}} on primitive non-geo columns; $eq $ne $gt $gte $lt $lte $contains $hasPrefix $hasSuffix $in $between; $and/$or/$not. Operands are JSON scalars ($in/$between use arrays of scalars). Empty $or matches no rows; empty $and matches all rows."]
         let view: [String: Any] = ["db": db, "model": string, "fields": fields, "depth": depth]
         func tool(_ name: String, _ description: String, _ properties: [String: Any],
                   required: [String] = [], extra: [String: Any] = [:]) -> LatticeToolDescriptor {
