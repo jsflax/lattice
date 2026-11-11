@@ -33,28 +33,34 @@ private final class SpanHookEvents: @unchecked Sendable {
     }
 }
 
-private final class SpanHookWorkerGate: @unchecked Sendable {
+/// Cancels the caller at worker entry without blocking a cooperative worker
+/// while another executor waits to observe that entry.
+private final class SpanHookCancellation: @unchecked Sendable {
     private let lock = NSLock()
-    private let released = DispatchSemaphore(value: 0)
-    private var entered = false
-    private var expired = false
-    var state: (entered: Bool, expired: Bool) { lock.withLock { (entered, expired) } }
+    private var cancelTask: (@Sendable () -> Void)?
+    private var requests = 0
+    private var eventsWhenCancelled: [SpanHookEvents.Entry]?
 
-    func hold() {
-        lock.withLock { entered = true }
-        if released.wait(timeout: .now() + 8) == .timedOut {
-            lock.withLock { expired = true }
-        }
+    func install(_ cancel: @escaping @Sendable () -> Void) {
+        lock.withLock { cancelTask = cancel }
     }
 
-    func release() { released.signal() }
-
-    func waitUntilEntered() async throws -> Bool {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while !state.entered && ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
+    func request(at entries: [SpanHookEvents.Entry]) {
+        let cancel = lock.withLock {
+            requests += 1
+            let callback = cancelTask
+            cancelTask = nil
+            return callback
         }
-        return state.entered
+        guard let cancel else { return }
+        cancel()
+        lock.withLock { eventsWhenCancelled = entries }
+    }
+
+    func clear() { lock.withLock { cancelTask = nil } }
+
+    var snapshot: (requests: Int, eventsWhenCancelled: [SpanHookEvents.Entry]?) {
+        lock.withLock { (requests, eventsWhenCancelled) }
     }
 }
 
@@ -114,12 +120,14 @@ struct LocalOpenSpanHookTests {
         let directory = try directory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let events = SpanHookEvents()
-        let gate = SpanHookWorkerGate()
-        defer { gate.release() }
+        let cancellation = SpanHookCancellation()
+        defer { cancellation.clear() }
         let task = Task { @MainActor in
             try await LatticePerf.$spanHook.withValue({ name, scope in
                 let finish = events.hook(name, scope)
-                if String(describing: name) == "Lattice.openLocal.worker.open" { gate.hold() }
+                if String(describing: name) == "Lattice.openLocal.worker.open" {
+                    cancellation.request(at: events.entries)
+                }
                 return finish
             }) {
                 let store = try await Lattice.openLocal(for: [SpanHookItem.self],
@@ -127,22 +135,41 @@ struct LocalOpenSpanHookTests {
                 store.close()
             }
         }
-        let entered = try await gate.waitUntilEntered()
-        try #require(entered)
-        task.cancel()
-        gate.release()
+        // This uninterrupted MainActor turn installs the cancellation before
+        // the MainActor task above can begin. Its worker requests it directly,
+        // before native open returns, without a scheduler-dependent handshake.
+        cancellation.install { task.cancel() }
         switch await task.result {
         case .success: Issue.record("The cancelled local open published a handle")
         case .failure(let error): #expect(error is CancellationError)
         }
-        #expect(!gate.state.expired)
-        let disposal = events.entries.filter { $0.name == "Lattice.openLocal.dispose" }
+        let cancelled = cancellation.snapshot
+        #expect(cancelled.requests == 1)
+        let beforeCancellation = try #require(cancelled.eventsWhenCancelled)
+        #expect(beforeCancellation.map(\.name) == [
+            "Lattice.openLocal.prepare", "Lattice.openLocal.prepare",
+            "Lattice.openLocal.worker.open",
+        ])
+        #expect(beforeCancellation.map(\.scope) == [.caller, .caller, .worker])
+        #expect(beforeCancellation.map(\.isBegin) == [true, false, true])
+        let entries = events.entries
+        let expectedNames = [
+            "Lattice.openLocal.prepare", "Lattice.openLocal.prepare",
+            "Lattice.openLocal.worker.open", "Lattice.openLocal.worker.open",
+            "Lattice.openLocal.dispose", "Lattice.openLocal.dispose",
+            "Lattice.openLocal.return", "Lattice.openLocal.return",
+        ]
+        #expect(entries.map(\.name) == expectedNames)
+        #expect(entries.map(\.scope) == [.caller, .caller, .worker, .worker,
+                                         .worker, .worker, .caller, .caller])
+        #expect(entries.map(\.isBegin) == expectedNames.indices.map { $0.isMultiple(of: 2) })
+        let disposal = entries.filter { $0.name == "Lattice.openLocal.dispose" }
         #expect(disposal.map(\.isBegin) == [true, false])
         #expect(disposal.allSatisfy { $0.scope == .worker })
         #if os(macOS)
         #expect(disposal.allSatisfy { !$0.isMainThread })
         #endif
-        #expect(!events.entries.contains { $0.name == "Lattice.openLocal.adopt" })
+        #expect(!entries.contains { $0.name == "Lattice.openLocal.adopt" })
         #expect(LatticePerf.spanHook == nil)
     }
 
