@@ -1362,9 +1362,17 @@ public struct Lattice {
         case unsafeMigrationCallbacks
     }
 
+    /// Per-call observation of the real ownership-clearing boundary. Tests can
+    /// hold this boundary without installing a process-global callback.
+    internal enum LocalOpenCleanupEvent: Sendable {
+        case willRelease
+        case didRelease(temporaryOwnerReleased: Bool)
+    }
+    @TaskLocal internal static var localOpenCleanupObserver: (@Sendable (LocalOpenCleanupEvent) -> Void)?
+
     /// A one-shot ownership handoff, not a concurrently accessed handle. Only
     /// run() touches the prepared C++ inputs; after its task is joined, the
-    /// destination either takes the reference or joins discard() on a worker.
+    /// destination synchronously borrows the reference, then joins discard().
     /// No partially initialized facade or managed model crosses this boundary.
     private final class LocalOpenWorker: @unchecked Sendable {
         private var configuration: lattice.swift_configuration?
@@ -1372,12 +1380,15 @@ public struct Lattice {
         private var reference: lattice.swift_lattice_ref?
         private var failure: (any Swift.Error)?
         private let storage: Configuration.Storage
+        private let cleanupObserver: (@Sendable (LocalOpenCleanupEvent) -> Void)?
         private(set) var transactionStoreState: TransactionFailureScope.StoreState?
 
-        init(configuration: lattice.swift_configuration, schemas: lattice.SchemaVector, storage: Configuration.Storage) {
+        init(configuration: lattice.swift_configuration, schemas: lattice.SchemaVector, storage: Configuration.Storage,
+             cleanupObserver: (@Sendable (LocalOpenCleanupEvent) -> Void)?) {
             self.configuration = configuration
             self.schemas = schemas
             self.storage = storage
+            self.cleanupObserver = cleanupObserver
         }
 
         func run(independentConnection: Bool) {
@@ -1409,19 +1420,23 @@ public struct Lattice {
             return Lattice.internTransactionStoreState(for: backend, storage: storage)
         }
 
-        func takeReference() throws -> lattice.swift_lattice_ref {
+        func withReference<Value>(_ body: (lattice.swift_lattice_ref) throws -> Value) throws -> Value {
             if let failure { throw failure }
             guard let reference else { preconditionFailure("Local open has no joined result") }
-            self.reference = nil
-            return reference
+            return try body(reference)
         }
 
         func discard() {
             // Never close(): a cached open may share Core with an older facade.
-            // Last-reference teardown can block, so do it on this joined worker.
+            // Both native owners remain here until the synchronous adoption
+            // frame has ended. Last-reference teardown runs on this joined worker.
+            weak var owner = transactionStoreState?.owner
+            let hadOwner = owner != nil
+            cleanupObserver?(.willRelease)
             reference = nil
             transactionStoreState = nil
             failure = nil
+            cleanupObserver?(.didRelease(temporaryOwnerReleased: hadOwner && owner == nil))
         }
     }
 
@@ -1443,8 +1458,8 @@ public struct Lattice {
     public static func openLocal(isolation: isolated (any Actor)? = #isolation,
                                  for schema: [any Model.Type],
                                  configuration: Configuration = defaultConfiguration) async throws -> Lattice {
-        try await openLocal(isolation: isolation, for: schema, configuration: configuration,
-                            independentConnection: false)
+        try await withLocalOpen(isolation: isolation, for: schema, configuration: configuration,
+                                independentConnection: false, reuseCachedBackend: false) { $0 }
     }
 
     /// The local async-open contract above, using a distinct native connection.
@@ -1452,14 +1467,46 @@ public struct Lattice {
     public static func openLocal(isolation: isolated (any Actor)? = #isolation,
                                  independentFor schema: [any Model.Type],
                                  configuration: Configuration = defaultConfiguration) async throws -> Lattice {
-        try await openLocal(isolation: isolation, for: schema, configuration: configuration,
-                            independentConnection: true)
+        try await withLocalOpen(isolation: isolation, for: schema, configuration: configuration,
+                                independentConnection: true, reuseCachedBackend: false) { $0 }
     }
 
-    private static func openLocal(isolation: isolated (any Actor)?,
-                                  for schema: [any Model.Type],
-                                  configuration: Configuration,
-                                  independentConnection: Bool) async throws -> Lattice {
+    /// Open local storage and synchronously accept or reject it on the caller's
+    /// actor. A body may publish ownership by retaining or returning the handle.
+    /// After the body returns or throws, temporary native ownership is released
+    /// on a joined worker; no temporary facade survives in the async frame.
+    /// Cleanup never closes another published or same-store handle.
+    ///
+    /// Scoped adoption reuses an existing same-actor Swift backend when Core
+    /// returns its cached connection, preserving that owner's error collector
+    /// and trampoline lookup. Ordinary openLocal keeps a separate facade backend.
+    /// The same local-only and Sendable-migration admission rules apply.
+    /// Cancellation before adoption joins cleanup and throws; cancellation after
+    /// a successful body cannot discard ownership that body has published.
+    public static func withLocalOpen<Value>(isolation: isolated (any Actor)? = #isolation,
+                                            for schema: [any Model.Type],
+                                            configuration: Configuration = defaultConfiguration,
+                                            _ body: (Lattice) throws -> Value) async throws -> Value {
+        try await withLocalOpen(isolation: isolation, for: schema, configuration: configuration,
+                                independentConnection: false, reuseCachedBackend: true, body)
+    }
+
+    /// Scoped local open using a distinct native connection. The body and joined
+    /// cleanup have the same ownership and actor guarantees as the cached form.
+    public static func withLocalOpen<Value>(isolation: isolated (any Actor)? = #isolation,
+                                            independentFor schema: [any Model.Type],
+                                            configuration: Configuration = defaultConfiguration,
+                                            _ body: (Lattice) throws -> Value) async throws -> Value {
+        try await withLocalOpen(isolation: isolation, for: schema, configuration: configuration,
+                                independentConnection: true, reuseCachedBackend: false, body)
+    }
+
+    private static func withLocalOpen<Value>(isolation: isolated (any Actor)?,
+                                             for schema: [any Model.Type],
+                                             configuration: Configuration,
+                                             independentConnection: Bool,
+                                             reuseCachedBackend: Bool,
+                                             _ body: (Lattice) throws -> Value) async throws -> Value {
         try Task.checkCancellation()
         let preparation = LatticePerf.beginSpan("Lattice.openLocal.prepare", scope: .caller)
         defer { preparation.end() }
@@ -1490,7 +1537,8 @@ public struct Lattice {
         for type in allTypes { ModelTypeRegistry.shared.register(type) }
         var swiftConfig = configuration.cxxConfiguration(isolation: isolation)
         Self.configureMigration(configuration, swiftConfig: &swiftConfig)
-        let worker = LocalOpenWorker(configuration: swiftConfig, schemas: allTypes.cxxSchema, storage: configuration.storage)
+        let worker = LocalOpenWorker(configuration: swiftConfig, schemas: allTypes.cxxSchema,
+                                     storage: configuration.storage, cleanupObserver: localOpenCleanupObserver)
         try Task.checkCancellation()
         // A detached task does not inherit cancellation or the caller executor.
         // Awaiting its nonthrowing value always joins the checked native open.
@@ -1503,42 +1551,62 @@ public struct Lattice {
                 worker.run(independentConnection: independentConnection)
             }
         }.value
-        if Task.isCancelled {
-            await Task.detached {
-                LatticePerf.$spanHook.withValue(spanHook) {
-                    let disposal = LatticePerf.beginSpan("Lattice.openLocal.dispose", scope: .worker)
-                    defer { disposal.end() }
-                    worker.discard()
-                }
-            }.value
-            throw CancellationError()
-        }
-        let adoption = LatticePerf.beginSpan("Lattice.openLocal.adopt", scope: .caller)
-        defer { adoption.end() }
-        // No await from ownership transfer through cache publication. Form one
-        // facade on the original actor, never a temporary worker-bound Lattice.
-        let backend = CxxBackend(try worker.takeReference())
-        let result = Lattice(backend: backend, configuration: configuration,
-                             modelTypes: allTypes, schema: SchemaCompat(modelTypes: schema),
-                             isolation: isolation, observerActorDelivery: delivery,
-                             transactionStoreState: worker.transactionStoreState)
-        let tuning = configuration.resultsTuning
-        backend.setReadGenerationTTLMs(Int64((tuning.generationTTLSeconds * 1000).rounded()))
-        backend.setWALKeeperEvictionThresholdBytes(Int64(tuning.walKeeperEvictionThresholdBytes))
-        let key = CacheKey(backend)
-        let entry = WeakCacheEntry(result)
-        let retired = Self.cacheLock.withLockUnchecked {
-            let previous = Self.cache[key]
-            let live = previous?.liveBackends ?? []
-            entry.preserveBackends(live)
-            Self.cache[key] = entry
-            return (previous, live)
-        }
-        withExtendedLifetime(retired) {}
-        adoption.end()
+        let result: Result<Value, any Swift.Error>
+        do {
+            try Task.checkCancellation()
+            let adoption = LatticePerf.beginSpan("Lattice.openLocal.adopt", scope: .caller)
+            defer { adoption.end() }
+            result = .success(try adoptLocalOpen(isolation: isolation, worker: worker,
+                schema: schema, allTypes: allTypes, configuration: configuration,
+                delivery: delivery, reuseCachedBackend: reuseCachedBackend, body))
+        } catch { result = .failure(error) }
+        // No temporary Lattice or copied raw reference crosses this await. The
+        // worker holder keeps the final native owner until this joined release,
+        // including when adoption throws or the caller has been cancelled.
+        await Task.detached(priority: .utility) {
+            LatticePerf.$spanHook.withValue(spanHook) {
+                let disposal = LatticePerf.beginSpan("Lattice.openLocal.dispose", scope: .worker)
+                defer { disposal.end() }
+                worker.discard()
+            }
+        }.value
+        // A successful body may already have published the handle. A later
+        // cancellation must not destroy that accepted ownership on the caller.
         let returning = LatticePerf.beginSpan("Lattice.openLocal.return", scope: .caller)
         defer { returning.end() }
-        return result
+        return try result.get()
+    }
+
+    private static func adoptLocalOpen<Value>(isolation: isolated (any Actor)?, worker: LocalOpenWorker,
+                                              schema: [any Model.Type], allTypes: [any Model.Type],
+                                              configuration: Configuration, delivery: ObserverActorDelivery?,
+                                              reuseCachedBackend: Bool,
+                                              _ body: (Lattice) throws -> Value) throws -> Value {
+        try worker.withReference { reference in
+            let cachedBackend: (any LatticeBackend)? = reuseCachedBackend ? Self.cacheLock.withLockUnchecked {
+                guard let entry = Self.cache[CacheKey(reference)], entry.isolation === isolation else { return nil }
+                return entry.backend
+            } : nil
+            let backend = cachedBackend ?? CxxBackend(reference)
+            let store = Lattice(backend: backend, configuration: configuration,
+                                modelTypes: allTypes, schema: SchemaCompat(modelTypes: schema),
+                                isolation: isolation, observerActorDelivery: delivery,
+                                transactionStoreState: worker.transactionStoreState)
+            let tuning = configuration.resultsTuning
+            backend.setReadGenerationTTLMs(Int64((tuning.generationTTLSeconds * 1000).rounded()))
+            backend.setWALKeeperEvictionThresholdBytes(Int64(tuning.walKeeperEvictionThresholdBytes))
+            let key = CacheKey(backend)
+            let entry = WeakCacheEntry(store)
+            let retired = Self.cacheLock.withLockUnchecked {
+                let previous = Self.cache[key]
+                let live = previous?.liveBackends ?? []
+                entry.preserveBackends(live.filter { $0 !== backend })
+                Self.cache[key] = entry
+                return (previous, live)
+            }
+            withExtendedLifetime(retired) {}
+            return try body(store)
+        }
     }
 
     // MARK: Public Inits
