@@ -232,9 +232,9 @@ struct RelayFrame {
     }
 
     /// The frame reduced to the entries that actually committed — the fan-out
-    /// payload on a PARTIAL apply. A full apply fans the original bytes out
-    /// verbatim (byte-for-byte pre-1.7.1 behavior); only the degraded path
-    /// pays a re-encode. `nil` when nothing is left to fan out.
+    /// payload on a PARTIAL apply. Full frames within the outbound budget
+    /// retain their original bytes; partial or oversized frames are re-encoded.
+    /// `nil` when nothing is left to fan out.
     func reencoded(keeping applied: Set<UUID>) -> Data? {
         guard var root, let entries = rawEntries else { return nil }
         let kept = entries.filter { element in
@@ -246,6 +246,45 @@ struct RelayFrame {
         guard !kept.isEmpty else { return nil }
         root["auditLog"] = kept
         return try? JSONSerialization.data(withJSONObject: root)
+    }
+
+    /// Repack a legacy audit batch in the canonical audit envelope without
+    /// decoding away unknown row fields. Small healthy frames retain their
+    /// original bytes at the call site. A row larger than the budget travels alone so it cannot
+    /// block every later row in the batch.
+    func boundedAuditFrames(keeping applied: Set<UUID>,
+                            maximumBytes: Int = Lattice.maximumEncodedSyncMessageBytes) throws -> [Data] {
+        let prefix = Data(#"{"kind":"auditLog","auditLog":["#.utf8)
+        let suffix = Data("]}".utf8)
+        guard maximumBytes > prefix.count + suffix.count, let entries = rawEntries else {
+            throw BoundedAuditFrame.Failure.invalidLimit
+        }
+        // Never repeat arbitrary outer metadata: it could dwarf the rows and
+        // amplify one bounded inbound frame into many oversized output pages.
+        var pages: [Data] = []
+        var page = prefix
+        var rows = 0
+        func finishPage() {
+            page.append(suffix)
+            pages.append(page)
+            page = prefix
+            rows = 0
+        }
+        for element in entries {
+            guard let entry = element as? [String: Any],
+                  let rawID = entry["globalId"] as? String,
+                  let id = UUID(uuidString: rawID), applied.contains(id) else { continue }
+            let encoded = try JSONSerialization.data(withJSONObject: entry)
+            if rows > 0, page.count + 1 + encoded.count + suffix.count > maximumBytes {
+                finishPage()
+            }
+            if rows > 0 { page.append(0x2c) }
+            page.append(encoded)
+            rows += 1
+            if page.count + suffix.count >= maximumBytes { finishPage() }
+        }
+        if rows > 0 { finishPage() }
+        return pages
     }
 }
 

@@ -9,7 +9,8 @@ import LatticeSwiftCppBridge
 
 extension Lattice {
     /// Maximum encoded audit JSON bytes per sync message. The same Core value
-    /// governs client upload and relay ingress/catch-up/observer publication.
+    /// governs client upload and relay fan-out/catch-up/observer publication. Relay
+    /// ingress retains its larger legacy limit for older clients.
     public static var maximumEncodedSyncMessageBytes: Int {
         Int(lattice.sync_max_encoded_message_bytes_value())
     }
