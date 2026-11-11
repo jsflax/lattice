@@ -163,7 +163,8 @@ public enum ServerSentEvent: Codable {
     case catchUpComplete
     /// Server refused a client frame (relay write-policy). The frame was
     /// neither applied nor fanned out; its entries stay unACKed client-side.
-    /// Legacy clients ignore the unknown kind (C++ `from_json` → nullopt).
+    /// Clients without explicit support may ignore this control or reconnect;
+    /// nullopt is not a universal compatibility guarantee.
     case rejected(reason: String)
     /// Server ACCEPTED the frame but could not store these entries (write-lock
     /// contention that outlived the relay's bounded retry, or a per-entry
@@ -173,13 +174,10 @@ public enum ServerSentEvent: Codable {
     /// an already-applied probe per entry), so an immediate resend is safe
     /// even if one of them raced to completion.
     ///
-    /// Wire-compatible with every existing client: the C++
-    /// `server_sent_event::from_json` dispatches on the presence of
-    /// `auditLog` / `ack` / `replayRequest` and returns `nullopt` for anything
-    /// else, so a nack frame — which carries neither key — is ignored, and
-    /// those clients still recover through their own ack-timeout resend.
-    /// Acting on it (an immediate resend) is a client-side change; see the
-    /// 1.7.1 changelog.
+    /// Older clients may ignore an unsupported nack or reconnect when their
+    /// download parser fails closed. A nack must never decode as an ACK of
+    /// data that was not stored. Immediate resend requires explicit client
+    /// support; otherwise recovery depends on the client's retry policy.
     case nack(ids: [UUID], reason: String)
 
     /// §1.7.2 FLOOR HONESTY: the client's claimed catch-up floor (`last-event-id`) names a globalId
@@ -192,9 +190,10 @@ public enum ServerSentEvent: Codable {
     ///
     /// Downlink semantics are unchanged (full replay proceeds; applies are idempotent). This event is
     /// the UPLINK instruction for 1.7.2+ clients: verify local AuditLog above `durableHead`, re-mark
-    /// unsynchronized, re-upload. Wire-compatible with every shipped client — fresh JSON keys, so the
-    /// C++ `from_json` (dispatching on auditLog/ack/replayRequest presence) returns nullopt and
-    /// ignores it: the same discipline nack rode in on. nack itself is NOT reusable here: its ids mean
+    /// unsynchronized, re-upload. Clients with explicit floorReset support validate it as an informational
+    /// control: it preserves its committed cursor and upload policy while ordinary downlink replay
+    /// applies. Validation alone does not implement uplink repair. Older clients may ignore the control or
+    /// reconnect on nullopt; compatibility cannot be inferred from fresh keys. nack is NOT reusable: its ids mean
     /// "not stored — resend these", and a relay that lost history cannot name the ids it lost.
     case floorReset(durableHead: UUID?, reason: String)
 
@@ -255,16 +254,15 @@ public enum ServerSentEvent: Codable {
             try container.encode("rejected", forKey: .kind)
             try container.encode(reason, forKey: .rejected)
         case .nack(let ids, let reason):
-            // Deliberately NOT keyed `ack`/`auditLog`: the C++ client's
-            // `from_json` dispatches on those keys, and a nack must decode to
-            // nullopt (ignored) on clients that predate this case — never to
-            // an ack of entries the server did not store.
+            // Deliberately NOT keyed `ack`/`auditLog`: a nack must never
+            // decode to an ack of entries the server did
+            // not store. Unsupported clients may ignore it or reconnect.
             try container.encode("nack", forKey: .kind)
             try container.encode(ids, forKey: .nack)
             try container.encode(reason, forKey: .nackReason)
         case .floorReset(let durableHead, let reason):
-            // Fresh keys, same rationale as nack: the C++ dispatch must see
-            // none of auditLog/ack/replayRequest and return nullopt.
+            // Distinct validated control, never an audit entry or ACK. The
+            // client must earn its next cursor by applying the replay.
             try container.encode("floorReset", forKey: .kind)
             try container.encodeIfPresent(durableHead, forKey: .floorReset)
             try container.encode(reason, forKey: .floorReason)
