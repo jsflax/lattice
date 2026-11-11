@@ -3092,6 +3092,12 @@ public struct Lattice {
         }
     }
 
+    /// Observes collection changes on this store's owning actor, or on the
+    /// shared observation worker when the store has no actor isolation.
+    /// The callback must return promptly. A blocking wait parks its executor
+    /// (the main thread for a MainActor store) and deadlocks if the awaited
+    /// work needs that same actor. Pass a sendable reference to another
+    /// executor and resolve its own reader there when a read must be handed off.
     public func observe<T: Model>(_ modelType: T.Type, where: LatticePredicate<T>? = nil,
                                   block: @escaping (CollectionChange) -> ()) -> AnyCancellable {
         observe(modelType, where: `where`?(Query()), block: block)

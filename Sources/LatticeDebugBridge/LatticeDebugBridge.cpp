@@ -5,6 +5,34 @@
 #include <limits>
 
 namespace lattice_debug {
+
+bool set_generation_query_gap_for_testing(const lattice::swift_lattice_ref& reference,
+                                          void* context,
+                                          void (*callback)(void*),
+                                          void (*destroy)(void*)) {
+    lattice::last_bridge_error().clear();
+    try {
+        // Own the callback context on every path, including an invalid handle.
+        auto shared_ctx = std::shared_ptr<void>(context, destroy ? destroy : [](void*){});
+        if (!reference.valid()) throw std::runtime_error("Invalid test reader handle");
+        // The reference wrapper is shallow-const, just like its existing const
+        // generation forwarders: the pointed-to instance remains mutable.
+        auto* reader = const_cast<lattice::swift_lattice*>(reference.get());
+        if (!callback) {
+            reader->test_hook_generation_query_gap_ = nullptr;
+            return true;
+        }
+        reader->test_hook_generation_query_gap_ = [shared_ctx, callback] {
+            callback(shared_ctx.get());
+        };
+        return true;
+    } catch (const std::exception& error) {
+        lattice::last_bridge_error() = error.what();
+    } catch (...) {
+        lattice::last_bridge_error() = "Unknown exception installing test generation hook";
+    }
+    return false;
+}
 namespace {
 std::string identifier(const std::string& name) {
     std::string quoted = "\"";

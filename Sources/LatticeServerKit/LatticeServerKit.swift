@@ -1552,7 +1552,7 @@ extension Lattice {
                         // previously swallowed (the probe returned nil, the filter dropped, and a
                         // full replay proceeded with NO signal) — the exact shape under which a client
                         // whose acked rows were lost never learns to re-upload them. Detect it, say it
-                        // on the wire BEFORE the pages (shipped C++ clients ignore the unknown kind),
+                        // on the wire BEFORE the pages (clients need explicit floorReset support),
                         // attribute it via the boot ledger, and keep the socket open — the full replay
                         // that follows is now explicit, not accidental.
                         if let claimed = lastEventId, let url = latticeURL {
