@@ -11,6 +11,12 @@ Lattice follows semantic versioning from 1.0.0. Scope notes:
   hidden. The audited list and tiering live in `docs/spi-audit-1.0.md`.
   Consumers must not call them directly.
 - **`@_spi(LatticeInternals)`**: SPI-gated symbols are exempt from semver.
+  This includes `DynamicObject.debugJSON`, `debugPrimaryKey`, and
+  `DynamicDebugReadError`. Diagnostic consumers explicitly use
+  `@_spi(LatticeInternals) import Lattice`; ordinary `import Lattice` does not
+  expose them. `LatticeDebugBridge` is an implementation target, not a package
+  library product or a supported direct-import surface. SwiftPM has no
+  product-level SPI annotation; the Swift declarations carry the boundary.
 - **C++ interop contract**: clients must compile with
   `.interoperabilityMode(.Cxx)`; the bridge modules
   (`LatticeSwiftCppBridge`, `LatticeSwiftModule`) are `@_exported` by design
