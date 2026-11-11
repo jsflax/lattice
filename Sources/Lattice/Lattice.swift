@@ -2683,9 +2683,21 @@ public struct Lattice {
     /// synchronously at stream creation (a leaf-lock map insert — no SQL) so
     /// no commit between "stream created" and "query handle ready" can be
     /// lost; raw batches buffer here until the blocking query-Lattice open
-    /// completes off-task, then flush in arrival order. The lock serializes
-    /// the buffered flush against live callback delivery, preserving order.
+    /// completes off-task, then flush in arrival order. `emitLock` serializes
+    /// the buffered flush against live callback delivery, preserving order;
+    /// `lock` guards the fields and is never held across an emit.
+    ///
+    /// An emit ends in `Continuation.yield`, whose task-resume path takes the
+    /// consumer's status-record lock. Cancelling that consumer runs
+    /// `onTermination` → `terminate()` while holding the same runtime lock.
+    /// Termination must therefore never wait for a lock held across an emit:
+    /// both delivery paths release `lock` before emitting, and `terminate()`
+    /// never takes `emitLock`. Otherwise cancellation and delivery can park
+    /// each other, including the process-wide observer-delivery worker.
+    /// A late emit is dropped by a finished stream or left unread by its
+    /// cancelled consumer; its query handle stays alive until the emit returns.
     private final class ChangeStreamState: @unchecked Sendable {
+        private let emitLock = NSLock()
         private let lock = NSLock()
         private var buffered: [(changes: [TableChangeEvent], diagnostic: PayloadObserverDiagnosticBatch?)] = []
         private var queryLattice: UncheckedSendable<Lattice>?
@@ -2695,33 +2707,42 @@ public struct Lattice {
         /// resolve + emit inline once ready.
         func deliver(_ batch: [TableChangeEvent], diagnostic: PayloadObserverDiagnosticBatch?,
                      _ emit: (Lattice, [TableChangeEvent], PayloadObserverDiagnosticBatch?) -> Void) {
-            lock.lock(); defer { lock.unlock() }
+            emitLock.lock(); defer { emitLock.unlock() }
+            lock.lock()
             guard !terminated else {
+                lock.unlock()
                 diagnostic?.record("batch_ignored_after_termination")
                 return
             }
-            if let queryLattice {
-                diagnostic?.record("ready_batch_delivery")
-                emit(queryLattice.value, batch, diagnostic)
-            } else {
-                diagnostic?.record("batch_buffered")
+            guard let queryLattice else {
                 buffered.append((batch, diagnostic))
+                lock.unlock()
+                diagnostic?.record("batch_buffered")
+                return
             }
+            lock.unlock()
+            diagnostic?.record("ready_batch_delivery")
+            emit(queryLattice.value, batch, diagnostic)
         }
 
         /// Open-complete path: flush the buffer in order, then deliver inline.
         func ready(_ lattice: UncheckedSendable<Lattice>,
                    _ emit: (Lattice, [TableChangeEvent], PayloadObserverDiagnosticBatch?) -> Void) {
-            lock.lock(); defer { lock.unlock() }
-            guard !terminated else { return }
+            emitLock.lock(); defer { emitLock.unlock() }
+            lock.lock()
+            guard !terminated else { lock.unlock(); return }
             queryLattice = lattice
-            for batch in buffered {
+            let pending = buffered
+            buffered.removeAll()
+            lock.unlock()
+            for batch in pending {
                 batch.diagnostic?.record("buffered_batch_flush")
                 emit(lattice.value, batch.changes, batch.diagnostic)
             }
-            buffered.removeAll()
         }
 
+        /// Cancellation may hold the consumer's runtime lock: flag and release
+        /// only, without waiting for an in-flight emit.
         func terminate() {
             lock.lock(); defer { lock.unlock() }
             terminated = true
@@ -2730,6 +2751,7 @@ public struct Lattice {
         }
     }
 
+    /// A batch already in flight at cancellation may finish resolving afterward.
     public var changeStream: AsyncThrowingStream<[AnySendableReference<AuditLog>], any Swift.Error> {
         _changeStream(diagnostic: nil)
     }
@@ -2848,6 +2870,7 @@ public struct Lattice {
     /// Same registration and exactly-once, commit-ordered delivery contract as
     /// `changeStream`; use this when you branch on table/operation and re-read
     /// live rows yourself (every in-repo consumer does).
+    /// A batch already in flight at cancellation may finish resolving afterward.
     public var changeHeaders: AsyncThrowingStream<[ChangeHeader], any Swift.Error> {
         _changeHeaders(diagnostic: nil)
     }
