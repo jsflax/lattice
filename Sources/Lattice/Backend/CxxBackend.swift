@@ -1,4 +1,7 @@
 import Foundation
+#if DEBUG
+internal import LatticeDebugBridge
+#endif
 import LatticeSwiftCppBridge
 import LatticeSwiftModule
 import CxxStdlib
@@ -884,6 +887,31 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditCursorBackend,
     func removeInvalidationHook(token: UInt64) {
         ref.remove_invalidation_hook(token)
     }
+
+    #if DEBUG
+    /// Test-only access to Core's existing active-generation-read seam. The
+    /// callback runs on the querying thread after in_flight is acquired but
+    /// before SQL starts. Install/clear only when that fixture reader is quiet.
+    @discardableResult
+    func setGenerationQueryGapForTesting(_ callback: (@Sendable () -> Void)?) -> Bool {
+        guard let callback else {
+            return lattice_debug.setGenerationQueryGapForTesting(ref, context: nil, callback: nil, destroy: nil)
+        }
+        let box = _CxxClosureBox(callback)
+        let ptr = Unmanaged.passRetained(box).toOpaque()
+        return lattice_debug.setGenerationQueryGapForTesting(
+            ref, context: ptr,
+            callback: { ctx in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable () -> Void>>.fromOpaque(ctx).takeUnretainedValue().fn()
+            },
+            destroy: { ctx in
+                guard let ctx else { return }
+                Unmanaged<_CxxClosureBox<@Sendable () -> Void>>.fromOpaque(ctx).release()
+            }
+        )
+    }
+    #endif
 
     func acquireReadGeneration() -> UInt64 { ref.acquire_read_generation() }
     func retainReadGeneration(_ generationID: UInt64) -> Bool {
