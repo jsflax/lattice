@@ -27,6 +27,8 @@ struct BoundedAuditFrame {
     /// that does not fit after an emitted row is left for the next page. A first
     /// visible row that exceeds the byte budget is sent alone so it cannot block
     /// the cursor or the rows after it.
+    /// The relay re-encodes stored rows and adds an envelope, so the client's
+    /// per-row hard limit must not be applied to the resulting one-row frame.
     /// A single row encoder may allocate that row; this is not a hostile-parser
     /// or pre-hydration allocation limit.
     /// `nil` means a successful end-of-page read. Query failures must throw;

@@ -93,6 +93,38 @@ struct BoundedAuditFrameTests {
         #expect(received == rows.map(\.globalId))
     }
 
+    @Test func coreHardLimitRowTravelsAloneWithEnvelopeHeadroom() throws {
+        // LatticeCore's per-row hard limit. Replace with its bridge accessor
+        // when the pinned core exports it; this pin currently exposes only the
+        // 4 MiB page budget. The relay frame also includes its own envelope.
+        let coreMaximumEncodedAuditRowBytes = 8 * 1024 * 1024
+        let large = row(0, bytes: 0)
+        let encoder = JSONEncoder()
+        let emptyRowBytes = try encoder.encode(large).count
+        let payloadBytes = coreMaximumEncodedAuditRowBytes - emptyRowBytes
+        try #require(payloadBytes > 0)
+        large.changedFields = ["payload": .string(String(repeating: "x", count: payloadBytes))]
+        let encodedRowBytes = try encoder.encode(large).count
+        try #require(encodedRowBytes == coreMaximumEncodedAuditRowBytes)
+
+        let rows = [large, row(1, bytes: 16)]
+        let frame = try BoundedAuditFrame.encode(start: 0, maxCount: rows.count) { rows[$0] }
+        #expect(frame.count == 1 && frame.scannedCount == 1)
+        #expect(frame.data.count > coreMaximumEncodedAuditRowBytes)
+        #expect(frame.ids == [large.globalId])
+        #expect(frame.lastID == large.primaryKey && frame.scannedLastID == large.primaryKey)
+        let decoded = try JSONDecoder().decode(ServerSentEvent.self, from: frame.data)
+        guard case let .auditLog(logs) = decoded else { Issue.record("Wrong wire kind"); return }
+        let payload = try #require(logs.first?.changedFields["payload"]?.stringValue)
+        #expect(logs.count == 1 && payload == String(repeating: "x", count: payloadBytes))
+
+        let next = try BoundedAuditFrame.encode(start: frame.scannedCount,
+            maxCount: rows.count - frame.scannedCount) { rows[$0] }
+        #expect(next.count == 1 && next.scannedCount == 1)
+        #expect(next.ids == [rows[1].globalId])
+        #expect(next.data.count <= Lattice.maximumEncodedSyncMessageBytes)
+    }
+
     @Test func oversizedFirstVisibleRowConsumesOnlyItsScannedPrefix() throws {
         let rows = [row(0, bytes: 16), row(1, bytes: 4096), row(2, bytes: 16)]
         rows[0].tableName = "PrivateFence"

@@ -832,34 +832,44 @@ final class ServerRelayTests: BaseTest {
             let firstAcknowledged = await writer.wait { $0.acks == [firstID] }
             try #require(firstAcknowledged)
 
+            // Put a later row in durable history before the reader connects:
+            // catch-up must advance past the oversized row, not merely send it.
+            try donor.add(SyncChild(name: "after-oversized-row"))
+            let followingEntries = Array(donor.eventsAfter(globalId: firstID))
+            try #require(followingEntries.count == 1)
+            let followingID = try #require(followingEntries.first?.globalId)
+            let followingFrame = try makeFrame(entries: followingEntries)
+            try #require(followingFrame.count <= Lattice.maximumEncodedSyncMessageBytes)
+            try await socket.send(followingFrame)
+            let followingAcknowledged = await writer.wait { $0.acks == [firstID, followingID] }
+            try #require(followingAcknowledged)
+
             let reader = try await harness.connect(
                 pathSuffix: "sync/group/oversized-row?lattice-catch-up-complete=1", user: UUID(),
                 maxFrameSize: 16 * 1024 * 1024)
             let caughtUp = await reader.wait { $0.count(of: "catchUpComplete") == 1 }
             try #require(caughtUp)
-            #expect(reader.receivedAuditIds == [firstID])
-            #expect(reader.receivedAuditPageSizes == [1])
-            #expect(reader.receivedAuditPageBytes.count == 1)
-            #expect(reader.receivedAuditPageBytes.allSatisfy { $0 > Lattice.maximumEncodedSyncMessageBytes })
+            #expect(reader.receivedAuditIds == [firstID, followingID])
+            #expect(reader.receivedAuditPageSizes == [1, 1])
+            #expect(reader.receivedAuditPageBytes.map { $0 > Lattice.maximumEncodedSyncMessageBytes } == [true, false])
             #expect(!reader.isClosed)
 
             // On a push mount legacy fan-out is disabled: this later upload
             // must cross the observer's live page encoder, not initial catch-up.
             try donor.add(SyncChild(name: "later-" + payload))
-            let laterEntries = Array(donor.eventsAfter(globalId: firstID))
+            let laterEntries = Array(donor.eventsAfter(globalId: followingID))
             try #require(laterEntries.count == 1)
             let secondID = try #require(laterEntries.first?.globalId)
             let secondFrame = try makeFrame(entries: laterEntries)
             try #require(secondFrame.count > Lattice.maximumEncodedSyncMessageBytes)
             try await socket.send(secondFrame)
-            let secondAcknowledged = await writer.wait { $0.acks == [firstID, secondID] }
+            let secondAcknowledged = await writer.wait { $0.acks == [firstID, followingID, secondID] }
             try #require(secondAcknowledged)
-            let deliveredLive = await reader.wait { $0.receivedAuditIds.count >= 2 }
+            let deliveredLive = await reader.wait { $0.receivedAuditIds.count >= 3 }
             try #require(deliveredLive)
-            #expect(reader.receivedAuditIds == [firstID, secondID])
-            #expect(reader.receivedAuditPageSizes == [1, 1])
-            #expect(reader.receivedAuditPageBytes.count == 2)
-            #expect(reader.receivedAuditPageBytes.allSatisfy { $0 > Lattice.maximumEncodedSyncMessageBytes })
+            #expect(reader.receivedAuditIds == [firstID, followingID, secondID])
+            #expect(reader.receivedAuditPageSizes == [1, 1, 1])
+            #expect(reader.receivedAuditPageBytes.map { $0 > Lattice.maximumEncodedSyncMessageBytes } == [true, false, true])
             #expect(reader.count(of: "catchUpComplete") == 1)
             #expect(!reader.isClosed)
             #expect(writer.count(of: "nack") == 0)
