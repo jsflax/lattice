@@ -255,7 +255,7 @@ struct ReceiveRecoveryTests {
             // not disconnect its healthy successor or initiate a third dial.
             if recovered { try await Task.sleep(nanoseconds: 300_000_000) }
             let failure = fault.snapshot
-            #expect(failure.errors == ["Download incomplete: applied 0 of 120 entries. Reconnecting from the committed checkpoint."])
+            #expect(failure.errors == ["Download incomplete: applied 0 of 120 entries; reconnecting from the committed checkpoint."])
             #expect(failure.removalCode == SQLITE_OK)
             #expect(failure.auditCount == 0, "Both failed attempts must roll back the first chunk")
             let network = server.snapshot
