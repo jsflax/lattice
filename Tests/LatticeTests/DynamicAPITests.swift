@@ -17,6 +17,10 @@ import CLatticeTestSQLite
     var breed: String = ""
 }
 
+@Model final class DynPack {
+    var dogs: [DynDog] = []
+}
+
 @Suite("Dynamic API Tests")
 final class DynamicAPITests {
     private static func fixtureURL(_ prefix: String) throws -> URL {
@@ -217,6 +221,14 @@ final class DynamicAPITests {
         // $or
         #expect(try run(["$or": [["name": "Alice"], ["name": "Bob"]]]).count == 2)
 
+        let emptyDisjunction = try run(["$or": []])
+        let negatedDisjunction = try run(["$not": ["$or": []]])
+        #expect(emptyDisjunction.isEmpty)
+        #expect(negatedDisjunction.count == 2)
+        #expect(throws: DynamicQueryError.malformed("field \"name\": $eq operands must be scalar JSON values")) {
+            _ = try run(["name": []])
+        }
+
         // Security: unknown property / operator throw before any SQL is built.
         #expect(throws: DynamicQueryError.self) {
             _ = try DynamicQuery.whereSQL(["ssn": ["$eq": "x"]], schema: schema)
@@ -228,6 +240,43 @@ final class DynamicAPITests {
         // Security: an injection attempt in a VALUE is escaped to a literal — it
         // can't alter query structure, so it simply matches nothing.
         #expect(try run(["name": "Alice' OR '1'='1"]).isEmpty)
+    }
+
+    @Test func testDynamicPredicatesRejectRelationshipAndGeoColumns() throws {
+        let url = try Self.fixtureURL("dyn_column_predicates")
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        do {
+            let writer = try Lattice(DynPerson.self, DynDog.self, DynPack.self, GeoPlace.self,
+                                     configuration: .init(fileURL: url))
+            let dog = DynDog(); dog.name = "Rex"
+            let person = DynPerson(); person.name = "Alice"
+            let pack = DynPack()
+            try writer.add(dog)
+            try writer.add(person)
+            try writer.add(pack)
+            try writer.add(GeoPlace())
+            person.dog = dog
+            pack.dogs = [dog]
+            writer.checkpoint()
+            writer.close()
+        }
+
+        let dynamic = try Lattice.dynamic(fileURL: url)
+        defer { dynamic.close() }
+        for (table, field, expectedKind) in [("DynPerson", "dog", PropertyKind.link),
+                                           ("DynPack", "dogs", .list),
+                                           ("GeoPlace", "location", .primitive)] {
+            let schema = try #require(dynamic.dynamicSchema.first { $0.name == table })
+            let property = try #require(schema.property(named: field))
+            #expect(property.kind == expectedKind)
+            #expect(property.isGeoBounds == (field == "location"))
+            // Quoting a missing SQLite column can turn it into a string literal.
+            // Equality to its own name would then silently select every row.
+            #expect(throws: DynamicQueryError.unknownProperty(field)) {
+                let clause = try DynamicQuery.whereSQL([field: field], schema: schema.properties)
+                _ = dynamic.dynamicObjects(table).where(clause).snapshot()
+            }
+        }
     }
 
     @Test func testDynamicSerialization() async throws {
