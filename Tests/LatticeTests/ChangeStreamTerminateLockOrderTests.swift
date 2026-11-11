@@ -95,7 +95,7 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
                     let handle = try Lattice(ChangeStreamLockOrderObject.self,
                                              configuration: .init(fileURL: fileURL))
                     for _ in 0..<Self.framesPerBurst {
-                        try handle.transaction {
+                        try handle.withTransaction {
                             for row in 0..<Self.rowsPerFrame {
                                 let object = ChangeStreamLockOrderObject()
                                 object.value = row
