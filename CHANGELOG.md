@@ -1,5 +1,41 @@
 # Changelog
 
+## [3.1.0] - Unreleased
+
+### Changed
+
+- Require LatticeCore 3.1.0 for compatible read-only legacy attachments.
+  SQL union-view queries admit older source tables whose missing columns are
+  nullable or have a declared default and are not primary, identity or
+  UNIQUE-index keys. Each source arm projects columns by name and supplies
+  the declared default or NULL only for absent columns; existing NULLs remain
+  NULL. Validation reads the source's own connection before ATTACH and does
+  not alter or migrate its tables.
+- File-backed sources opened read-only retain that policy on the receiver's
+  attachment aliases and after connection reopening. Writes through those
+  aliases are refused, including writes attempted during receiver cleanup.
+  Receiver-main writes and writable attachment access remain supported.
+
+### Compatibility and limits
+
+- Writable column-set mismatches, missing keys, extra or renamed columns,
+  and required columns without defaults remain refused. A missing-column
+  subset is also refused when an expression key's dependencies cannot be
+  established from column metadata.
+- Read-only attachments require a file-backed source. Memory and temporary
+  sources, duplicate URI parameters, and URI parameters other than `mode`,
+  `cache` and `vfs` are refused before ATTACH. Reattaching an existing path
+  with a different access mode is refused. Equal-column and attached-only
+  schema admission and query projection behavior is unchanged.
+- Uncached typed-object getters still query the physical source table. An
+  absent column causes a missing-column SQL error in direct C++ access.
+  Sealed bridge getters record the error and return a type fallback such as
+  zero, false or an empty string; a failed optional-presence check can appear
+  as nil in Swift. These values are not the declared default from the SQL
+  union projection. Typed missing-column reads remain separate follow-up work.
+- There is no new storage-format epoch or public API change relative to
+  3.0.0. Its one-way storage changes and ordinary-open behavior still apply.
+
 ## [3.0.0] - 2026-11-12
 
 **One-way storage change. Read this before you upgrade.** Lattice 3.0.0
