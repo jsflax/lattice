@@ -4,9 +4,9 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+      "revision": "992bf3e26a6eaca8ba235de1156bbfbbac8564b0",
       "selection": "version",
-      "version": "3.0.0"
+      "version": "3.1.0"
     },
     {
       "identity": "swift-sdk",
@@ -16,7 +16,7 @@
       "version": "0.13.1"
     }
   ],
-  "qualificationNote": "Qualified identifies reviewed upstream source identities only. Core uses released version 3.0.0; the SDK uses exact version 0.13.1. This binding does not qualify the wrapper graph, tests, products or a wrapper release.",
+  "qualificationNote": "Qualified identifies reviewed upstream source identities only. Core uses released version 3.1.0; the SDK uses exact version 0.13.1. This binding does not qualify the wrapper graph, tests, products or a wrapper release.",
   "qualificationScope": "reviewed-upstream-source-identities-only",
   "qualified": true,
   "schema": "lattice.wrapper-dependency-bindings/1",
@@ -43,15 +43,15 @@
   },
   "sourceEvidence": {
     "latticecore": {
-      "revision": "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+      "revision": "992bf3e26a6eaca8ba235de1156bbfbbac8564b0",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/992bf3e26a6eaca8ba235de1156bbfbbac8564b0",
       "selection": "version",
       "parents": [
-        "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
-        "9bc323ccdf0d0fdb53e83f7d80e90a84ceff63ec"
+        "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+        "53474d03506e79218047ebca478c636328f514ee"
       ],
-      "scope": "Published LatticeCore 3.0.0 source identity. The release includes checked local opens, bounded synchronization and the documented one-way storage change. Wrapper compilation, tests and runtime qualification remain separate.",
-      "version": "3.0.0"
+      "scope": "Published LatticeCore 3.1.0 source identity. The release adds read-only legacy-subset attachment admission and per-arm SQL projection, with the documented typed-read and search-filter limitations. It adds no storage-format epoch relative to 3.0.0. Wrapper compilation, tests and runtime qualification remain separate.",
+      "version": "3.1.0"
     },
     "swift-sdk": {
       "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
@@ -194,5 +194,16 @@
       "c089b94a53f52eda843e9c1480b9c1c79f3921ef"
     ],
     "scope": "Source-reviewed optional logical WSS identity separates transport URL from durable receipt/cursor/slot ownership. Defaults preserve endpoint-derived identity; bounded explicit identity participates in native cache and logical registry, with same-dial no-eviction preserved. Existing parent-reference repair and epoch9 behavior remain. Original Core and SDK full qualification are pending; no installed-product acceptance inferred."
+  },
+  "previousCore300SourceEvidence": {
+    "revision": "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+    "selection": "version",
+    "parents": [
+      "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+      "9bc323ccdf0d0fdb53e83f7d80e90a84ceff63ec"
+    ],
+    "scope": "Published LatticeCore 3.0.0 source identity. The release includes checked local opens, bounded synchronization and the documented one-way storage change. Wrapper compilation, tests and runtime qualification remain separate.",
+    "version": "3.0.0"
   }
 }

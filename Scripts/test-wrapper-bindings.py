@@ -40,9 +40,9 @@ class WrapperBindingTests(unittest.TestCase):
     def test_current_version_pin_matches_released_source(self):
         expected = self.expected()
         self.assertEqual(expected["latticecore"]["selection"], "version")
-        self.assertEqual(expected["latticecore"]["version"], "3.0.0")
+        self.assertEqual(expected["latticecore"]["version"], "3.1.0")
         self.assertEqual(self.core(self.lock)["state"], {
-            "revision": "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8", "version": "3.0.0"})
+            "revision": "992bf3e26a6eaca8ba235de1156bbfbbac8564b0", "version": "3.1.0"})
         self.assertEqual(checks.verify_resolved(self.lock, expected), [])
 
     def test_version_expectation_requires_release_identity(self):
