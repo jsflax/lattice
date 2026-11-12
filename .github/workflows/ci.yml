@@ -1,5 +1,6 @@
-name: CI
+name: Linux observation isolation control
 
+# Temporary isolation control. Never merge this branch.
 # Strict consumer verifies committed dependency bindings and complete lock integrity.
 # Build and test outcomes remain independent qualification gates.
 
@@ -17,12 +18,9 @@ jobs:
   linux:
     name: linux (${{ matrix.image }})
     runs-on: ubuntu-latest
-    # Keep the job budget for compilation/artifact upload. The unchanged test
-    # command has its own 15-minute diagnostic deadline; a hang remains a failure.
+    # Temporary control: each isolated suite process has a bounded watchdog.
     timeout-minutes: 90
     strategy:
-      # Never let an informational nightly failure cancel the release-gating
-      # stable leg.
       fail-fast: false
       matrix:
         include:
@@ -32,14 +30,7 @@ jobs:
           - image: swift:6.3-noble
             experimental: false
             consumerLeg: linux-stable
-          # Early warning against the next toolchain. Informational only
-          # (continue-on-error). Nightly images live under the swiftlang/
-          # Docker org — `swift:nightly-*` does NOT exist.
-          - image: swiftlang/swift:nightly-main-noble
-            experimental: true
-            consumerLeg: linux-nightly
-    # Marks the job green even when the nightly leg fails; the stable leg
-    # still gates.
+    # This control runs only the stable Linux toolchain.
     continue-on-error: ${{ matrix.experimental }}
     container: ${{ matrix.image }}
     env:
@@ -162,7 +153,7 @@ jobs:
       - name: Build
         id: build
         working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
-        run: swift build --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions
+        run: swift build --build-tests --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions
 
       - &after_build
         name: Capture and verify complete lock integrity after build
@@ -181,33 +172,60 @@ jobs:
         working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
         run: python3 Scripts/verify-wrapper-lock-integrity.py --workspace "$WRAPPER_JOB_ROOT/source" --phase before-test --evidence-dir "$WRAPPER_JOB_ROOT/consumer"
 
-      - name: Check suite watchdog fixtures
-        working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
-        run: LATTICE_WATCHDOG_FIXTURE_ROOT="$WRAPPER_JOB_ROOT/tmp/watchdog-fixtures" python3 -B Scripts/test-linux-suite-watchdog.py -v
+      - name: Record Linux observation resource limits
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'max_user_instances='; cat /proc/sys/fs/inotify/max_user_instances
+            printf 'max_user_watches='; cat /proc/sys/fs/inotify/max_user_watches
+            printf 'ulimit_n='; ulimit -n
+          } | tee "$WRAPPER_JOB_ROOT/consumer/linux-observation-limits.txt"
 
-      - name: Test
+      - name: Cross-Process Observation Tests alone, 20 fresh processes
         id: test
+        shell: bash
         env:
           LATTICE_ACK_PATH_DIAGNOSTICS: '1'
-          LATTICE_OBSERVER_WORKER_DIAGNOSTICS: ${{ matrix.consumerLeg == 'linux-stable' && '1' || '0' }}
+          LATTICE_OBSERVER_WORKER_DIAGNOSTICS: '1'
         working-directory: ${{ env.WRAPPER_JOB_ROOT }}/source
-        # Keep unrelated parallel work out of the bounded timing probes.
-        # Both partitions run once under the same watchdog, even if one fails.
         run: |
-          python3 Scripts/linux-suite-watchdog.py --evidence "$WRAPPER_JOB_ROOT/consumer/linux-suite-watchdog" \
-            --timeout-seconds 900 -- bash -c '
-              echo "[lattice-test-partition] ordinary start"
-              ordinary_status=0
-              swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --skip "^LatticeTests[.]AsyncLocalOpenTests(/|$)|^LatticeTests[.]ServerRelayTests/initialCatchUpPageSizePreservesHistoryAndResume([(]|$)" || ordinary_status=$?
-              echo "[lattice-test-partition] ordinary end exit=$ordinary_status"
-              echo "[lattice-test-partition] timing-sensitive start"
-              async_status=0
-              swift test --scratch-path "$WRAPPER_JOB_ROOT/source/.build" --cache-path "$WRAPPER_JOB_ROOT/swift-cache" --config-path "$WRAPPER_JOB_ROOT/swift-config" --security-path "$WRAPPER_JOB_ROOT/swift-security" --force-resolved-versions --skip-build --no-parallel --filter "^LatticeTests[.]AsyncLocalOpenTests(/|$)|^LatticeTests[.]ServerRelayTests/initialCatchUpPageSizePreservesHistoryAndResume([(]|$)" || async_status=$?
-              echo "[lattice-test-partition] timing-sensitive end exit=$async_status"
-              status=$ordinary_status
-              if [ "$async_status" -ne 0 ]; then status=$async_status; fi
-              exit "$status"
-            '
+          set -euo pipefail
+          control="$WRAPPER_JOB_ROOT/consumer/linux-observation-control"
+          mkdir -p "$control"
+          printf 'iteration\texit_code\n' > "$control/results.tsv"
+          for iteration in $(seq 1 20); do
+            printf -v label '%02d' "$iteration"
+            receipt="$control/run-$label"
+            mkdir -p "$receipt"
+            export LATTICE_TEST_LOG_PATH="$WRAPPER_JOB_ROOT/test-logs/observation-$label.log"
+            export LATTICE_PERF_TEST_LOG_PATH="$WRAPPER_JOB_ROOT/test-logs/observation-perf-$label.log"
+            echo "[observation-isolation] run=$label start"
+            status=0
+            python3 Scripts/linux-suite-watchdog.py --evidence "$receipt/watchdog" \
+              --timeout-seconds 900 -- swift test \
+              --scratch-path "$WRAPPER_JOB_ROOT/source/.build" \
+              --cache-path "$WRAPPER_JOB_ROOT/swift-cache" \
+              --config-path "$WRAPPER_JOB_ROOT/swift-config" \
+              --security-path "$WRAPPER_JOB_ROOT/swift-security" \
+              --force-resolved-versions --skip-build \
+              --filter '^LatticeTests[.]CrossProcessTests(/|$)' \
+              > "$receipt/stdout.log" 2> "$receipt/stderr.log" || status=$?
+            cat "$receipt/stdout.log" "$receipt/stderr.log"
+            if [ "$status" -eq 0 ]; then
+              python3 - "$receipt" <<'CHECK' || status=$?
+          import pathlib, re, sys
+          path = pathlib.Path(sys.argv[1])
+          text = (path / "stdout.log").read_text() + (path / "stderr.log").read_text()
+          assert 'Suite "Cross-Process Observation Tests" passed' in text, text
+          assert re.search(r'Test run with 9 tests in 1 suite passed', text), text
+          assert not re.search(r'\bskipped\b', text, re.I), "Selected tests skipped"
+          CHECK
+            fi
+            printf '%s\t%s\n' "$label" "$status" >> "$control/results.tsv"
+            echo "[observation-isolation] run=$label end exit=$status"
+            if [ "$status" -ne 0 ]; then exit "$status"; fi
+          done
 
       - &after_test
         name: Capture and verify complete lock integrity after test
@@ -240,7 +258,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wrapper-strict-consumer-${{ env.CONSUMER_LEG }}-attempt-${{ github.run_attempt }}
-          path: ${{ env.WRAPPER_JOB_ROOT }}/consumer
+          path: |
+            ${{ env.WRAPPER_JOB_ROOT }}/consumer
+            ${{ env.WRAPPER_JOB_ROOT }}/test-logs
+            ${{ env.WRAPPER_JOB_ROOT }}/tmp/*.log
           include-hidden-files: true
           if-no-files-found: error
 
@@ -250,6 +271,7 @@ jobs:
   # committed. -skipMacroValidation is MANDATORY: Lattice depends on a .macro
   # target and xcodebuild refuses to run unvalidated macros non-interactively.
   ios-build:
+    if: ${{ false }} # The temporary control executes only Linux 6.3.
     env:
       CONSUMER_LEG: ios-xcode
     runs-on: macos-26
@@ -278,6 +300,7 @@ jobs:
       - *consumer_upload
 
   macos:
+    if: ${{ false }} # The temporary control executes only Linux 6.3.
     env:
       CONSUMER_LEG: macos-swiftpm
     runs-on: macos-26
