@@ -179,7 +179,7 @@ private extension NSLock {
 /// A partial download apply must halt the failed connection and redial from
 /// the committed cursor. This server sends only auditLog frames; informational
 /// control-frame handling has separate coverage in the core test suite.
-@Suite("Darwin download apply recovery", .serialized, .timeLimit(.minutes(1)))
+@Suite("Darwin download apply recovery", .serialized, .timeLimit(.minutes(2)))
 @MainActor
 struct ReceiveRecoveryTests {
     @Test func failedFirstChunkRedialsQuietServerWithoutSkippingHistory() async throws {
@@ -237,9 +237,13 @@ struct ReceiveRecoveryTests {
             try fault.install()
             server.beginInitialDelivery()
 
-            let deadline = Date().addingTimeInterval(15)
+            // Parallel suite load can delay this actor past a polling wakeup.
+            // The old 15-second deadline-first loop could miss completed recovery
+            // when it resumed. Check readiness first and budget for loaded runs.
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: .seconds(60))
             var recovered = false
-            while Date() < deadline {
+            while true {
                 let network = server.snapshot
                 if client.objects(SimpleSyncObject.self).count == 120,
                    network.cursors.count >= 2, network.closedConnections.contains(1),
@@ -247,10 +251,15 @@ struct ReceiveRecoveryTests {
                     recovered = true
                     break
                 }
+                if clock.now >= deadline { break }
                 try await Task.sleep(nanoseconds: 25_000_000)
             }
 
-            #expect(recovered, "A quiet download-only replica must recover without a new server write or manual reconnect")
+            let readiness = server.snapshot
+            #expect(recovered, """
+                A quiet download-only replica must recover without a new server write or manual reconnect.
+                Connections: \(readiness.cursors.count); closed: \(readiness.closedConnections.sorted()); ACK count: \(readiness.acknowledgedIDs.count).
+                """)
             // Let completions from the canceled Darwin task arrive. They must
             // not disconnect its healthy successor or initiate a third dial.
             if recovered { try await Task.sleep(nanoseconds: 300_000_000) }
@@ -264,6 +273,7 @@ struct ReceiveRecoveryTests {
             #expect(network.closedConnections == [1], "Darwin redial must close the superseded socket while retaining its successor")
             #expect(network.uploadedFrames == 0)
             #expect(network.protocolFailures == 0)
+            #expect(network.acknowledgedIDs.count == expectedAuditIDs.count)
             #expect(Set(network.acknowledgedIDs) == Set(expectedAuditIDs.map { $0.uuidString.lowercased() }))
             #expect(client.isSyncConnected)
             let actualRows = Dictionary(uniqueKeysWithValues:
