@@ -120,6 +120,8 @@ class CrossProcessChildRunner: XCTestCase {
         let op = ProcessInfo.processInfo.environment["LATTICE_XPROC_CHILD_OP"] ?? "insert"
 
         switch op {
+        case "query-predicate-fact":
+            try queryPredicateFactChild(fileURL: fileURL)
         case "update", "insert":
             CrossProcessObservationDiagnostic.childPoint(.open_begin)
             let lattice = try Lattice(
@@ -206,7 +208,7 @@ class CrossProcessChildRunner: XCTestCase {
 /// Returns (executableURL, arguments) for spawning the child test process.
 /// Handles SPM on macOS (`swiftpm-testing-helper`), SPM on Linux (direct test binary),
 /// and Xcode (`xctest`) runners.
-private func childProcessConfig(
+func childProcessConfig(
     filter: String = "crossProcessObservation",
     arguments args: [String] = ProcessInfo.processInfo.arguments
 ) -> (URL, [String])? {
