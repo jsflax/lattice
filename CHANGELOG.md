@@ -333,6 +333,8 @@ history and sync inspection calls.
   a neighbouring operation: `detach(lattice:)` reports its in-transaction
   refusal as `attachFailed`, and snapshot publication, history publication
   and the applied-event lookup report failures as `syncReceiveFailed`.
+  `transactionError` also reports refusals before a transaction begins, so
+  its prefix does not prove that BEGIN ran.
 - Span hook. The five span names are string literals and are not yet
   documented on the declarations. The hook runs synchronously inside the
   open, so it should return quickly.
