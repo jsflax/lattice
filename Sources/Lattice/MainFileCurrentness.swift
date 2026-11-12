@@ -8,10 +8,12 @@ public protocol MainFileCurrentnessBackend: LatticeBackend {
 
 extension Lattice {
     /// Ask the exact owned primary SQLite connection's VFS whether its main file
-    /// still occupies the opened pathname. `expectedPath` must be the caller's
-    /// expected opened main filename, matching the Core `mainFilePath()` accessor
-    /// byte-for-byte (at most 4096 UTF-8 bytes, without NUL). This checks the open
-    /// filename, not whether a separately configured alias still resolves to it.
+    /// still occupies the opened pathname. `expectedPath` must equal, byte for byte,
+    /// the name SQLite holds for the open main file (at most 4096 UTF-8 bytes,
+    /// without NUL). That name is normally the fully resolved absolute path of
+    /// the file as it was opened, which is what realpath(3) returns. A spelling
+    /// that differs in letter case or Unicode form does not match. This checks
+    /// the open filename, not whether a separately configured alias still resolves to it.
     /// No SQL, schema writes, new connection,
     /// credential access or network work is performed. Closed/memory databases and
     /// unsupported VFS/backends fail closed.
