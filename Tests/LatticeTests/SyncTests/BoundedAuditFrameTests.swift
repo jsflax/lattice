@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import LatticeSwiftCppBridge
 @testable import Lattice
 @testable import LatticeServerKit
 
@@ -94,10 +95,10 @@ struct BoundedAuditFrameTests {
     }
 
     @Test func coreHardLimitRowTravelsAloneWithEnvelopeHeadroom() throws {
-        // LatticeCore's per-row hard limit. Replace with its bridge accessor
-        // when the pinned core exports it; this pin currently exposes only the
-        // 4 MiB page budget. The relay frame also includes its own envelope.
-        let coreMaximumEncodedAuditRowBytes = 8 * 1024 * 1024
+        // Core's per-row limit includes the auditLog envelope. This fixture's
+        // row alone reaches that value, so its relay frame exceeds the limit:
+        // a stored legacy row must still be served without blocking later rows.
+        let coreMaximumEncodedAuditRowBytes = Int(lattice.sync_max_encoded_row_bytes_value())
         let large = row(0, bytes: 0)
         let encoder = JSONEncoder()
         let emptyRowBytes = try encoder.encode(large).count
