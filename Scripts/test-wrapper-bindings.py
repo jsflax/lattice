@@ -41,7 +41,7 @@ class WrapperBindingTests(unittest.TestCase):
         expected = self.expected()
         self.assertEqual(expected["latticecore"]["selection"], "revision")
         self.assertNotIn("version", expected["latticecore"])
-        self.assertEqual(self.core(self.lock)["state"], {"revision": "80730e4da0789c0263ca73bf123fbb7efbce86f7"})
+        self.assertEqual(self.core(self.lock)["state"], {"revision": "0f3dcb1ac7d7a461fedeebacb041aba14988cb1b"})
         self.assertEqual(checks.verify_resolved(self.lock, expected), [])
 
     def test_revision_expectation_refuses_mixed_or_unknown_selection(self):

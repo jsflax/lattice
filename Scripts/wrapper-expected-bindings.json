@@ -4,7 +4,7 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "80730e4da0789c0263ca73bf123fbb7efbce86f7",
+      "revision": "0f3dcb1ac7d7a461fedeebacb041aba14988cb1b",
       "selection": "revision"
     },
     {
@@ -15,7 +15,7 @@
       "version": "0.13.1"
     }
   ],
-  "qualificationNote": "Qualified refers only to explicitly reviewed upstream source identities. Core and Swift SDK use exact revisions. Prior release evidence is historical; it does not qualify this wrapper graph, compilation, tests or products.",
+  "qualificationNote": "Qualified identifies reviewed upstream source identities only. Core uses a release-candidate revision; the SDK uses exact version 0.13.1. This binding does not qualify compilation, tests, products or a release.",
   "qualificationScope": "reviewed-upstream-source-identities-only",
   "qualified": true,
   "schema": "lattice.wrapper-dependency-bindings/1",
@@ -42,22 +42,23 @@
   },
   "sourceEvidence": {
     "latticecore": {
-      "revision": "80730e4da0789c0263ca73bf123fbb7efbce86f7",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/80730e4da0789c0263ca73bf123fbb7efbce86f7",
+      "revision": "0f3dcb1ac7d7a461fedeebacb041aba14988cb1b",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/0f3dcb1ac7d7a461fedeebacb041aba14988cb1b",
       "selection": "revision",
       "parents": [
-        "c82ff2d4688b1be412b4decf44d2e27b29a10ddf"
+        "e396ebbb51bfa8f4911c1c603c3ab8a3bcf6b214"
       ],
-      "scope": "Source-reviewed owned history snapshot identifier quoting and two populated union history regressions, preserving the existing replay fixture correction. Existing original Core CI and this SDK consumer graph, tests and products require fresh qualification; no runtime or installed-product acceptance is inferred."
+      "scope": "Release candidate integrates accepted link-list and append-only documentation with no-create sidecar fixture cleanup and 3.0.0 compatibility notes. Exact-head hosted compilation and tests remain required; no release or runtime acceptance is inferred."
     },
     "swift-sdk": {
       "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
       "sourceURL": "https://github.com/jsflax/swift-sdk/tree/82951cc9cd05de216e8dd6425f951ce31d76fa0a",
-      "selection": "revision",
+      "selection": "version",
       "parents": [
         "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac"
       ],
-      "scope": "Reviewed original typed request dispatch and negotiated protocol-version transport bridge. All five original upstream jobs passed in run41626069052 attempt1; macOS564 and Linux484 tests include the four new regressions. Actual CI merge tree equals this revision. The SDK wrapper graph, Swift tests, iOS product and downstream HUD/Orbital qualification remain separate."
+      "scope": "Version 0.13.1 names the same negotiated-version and typed-request-identity source revision used by the integration candidate. This binding does not qualify the consumer graph.",
+      "version": "0.13.1"
     }
   },
   "earlierReleaseEvidence": {

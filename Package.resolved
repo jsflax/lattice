@@ -42,7 +42,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jsflax/LatticeCore.git",
       "state" : {
-        "revision" : "80730e4da0789c0263ca73bf123fbb7efbce86f7"
+        "revision" : "0f3dcb1ac7d7a461fedeebacb041aba14988cb1b"
       }
     },
     {
