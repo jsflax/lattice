@@ -983,4 +983,25 @@ struct CheckedTransactionTests {
             #expect(value(independent) == 9)
         }
     }
+
+    @Test func fileIdentityUsesTheOpenHandleRatherThanTheConfiguredPath() throws {
+        let (opened, openedURL) = try database()
+        defer { opened.close(); try? Lattice.delete(for: .init(fileURL: openedURL)) }
+        let (other, otherURL) = try database()
+        defer { other.close(); try? Lattice.delete(for: .init(fileURL: otherURL)) }
+        let attributes = try FileManager.default.attributesOfItem(atPath: openedURL.path)
+        let expectedDevice = try #require(attributes[.systemNumber] as? NSNumber).uint64Value
+        let expectedInode = try #require(attributes[.systemFileNumber] as? NSNumber).uint64Value
+
+        // The configured spelling is deliberately different from the handle's
+        // file. Identity must describe the open handle, not a new path lookup.
+        let captured = TransactionFailureScope.StoreIdentity.capture(
+            storage: .file(otherURL), backend: opened.backend)
+        guard case let .file(device, inode) = captured else {
+            Issue.record("The open native handle must supply its file identity")
+            return
+        }
+        #expect(device == expectedDevice)
+        #expect(inode == expectedInode)
+    }
 }

@@ -105,6 +105,7 @@ final class LatticeMCPPoolTests {
         let replaced = await pool.handle(tool: "lattice_status", argumentsJSON: "{}")
         #expect(replaced.isError)
         #expect(replaced.json.contains("source_unavailable"))
+        #expect(replaced.json.contains("The authorized store was replaced. Reopen the source to establish a new reader."))
         #expect(!replaced.json.contains(url.path))
     }
 

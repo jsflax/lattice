@@ -2,7 +2,7 @@ import Foundation
 import CLatticeDiagnosticsSQLite
 
 /// Optional host guard for a physically scoped store. A malformed foreign-container row
-/// must not be exposed merely because it was written into the authorized room's file.
+/// must not be exposed merely because it was written into the authorized source's file.
 public enum LatticeScopeValidation {
     public enum Failure: Error, Sendable, CustomStringConvertible, LocalizedError {
         case unavailable, invalidIdentitySchema, scopeMismatch

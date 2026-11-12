@@ -432,8 +432,19 @@ final class CxxBackend: LatticeBackend, GroupedCountBackend, AuditCursorBackend,
         return AuditCursor(head: Int64(value.head), headID: id, floor: Int64(value.floor))
     }
 
+    func mainFilePath() throws -> std.string {
+        let path = ref.mainFilePath()
+        if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
+        guard !path.empty() else { throw Lattice.Error.databaseError("Main file path is unavailable") }
+        return path
+    }
+
     func requireMainFileUnmoved(expectedPath: String) throws {
-        let admitted = ref.requireMainFileUnmoved(std.string(expectedPath))
+        try requireMainFileUnmoved(expectedPath: std.string(expectedPath))
+    }
+
+    func requireMainFileUnmoved(expectedPath: std.string) throws {
+        let admitted = ref.requireMainFileUnmoved(expectedPath)
         // Consume the exact bridge seal before another call can overwrite it.
         if let error = reportQueryFailureIfAny() { throw Lattice.Error.databaseError(error) }
         guard admitted else { throw Lattice.Error.databaseError("Main file currentness failed") }

@@ -65,7 +65,7 @@ public actor LatticeProviderPool {
             if readPolicy != nil {
                 let identity = LatticeFilePreflight.identity(signature)
                 guard authorizedIdentity == nil || authorizedIdentity == identity else {
-                    return .error("source_unavailable", "The authorized store was replaced. Reopen the room to establish a new reader.")
+                    return .error("source_unavailable", "The authorized store was replaced. Reopen the source to establish a new reader.")
                 }
                 authorizedIdentity = identity
             }

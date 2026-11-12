@@ -2,8 +2,9 @@
 
 Lattice follows semantic versioning from 1.0.0. Scope notes:
 
-- **Semver surface**: the public API of the `Lattice`, `LatticeServerKit`, and
-  `LatticeMCP` library products.
+- **Semver surface**: the public API of the `Lattice`, `LatticeServerKit`,
+  `LatticeMCP`, and `LatticeMCPTransport` library products. This includes
+  `LatticeSerializedStdioTransport.compatibleCodexInitialize`.
 - **Underscore exemption**: public symbols whose name begins with `_` (or
   `_$`) are macro-support / structural plumbing and are **exempt from semver**
   — they exist because macro-generated code compiles in the client module (so
