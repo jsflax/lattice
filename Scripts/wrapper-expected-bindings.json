@@ -4,8 +4,9 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "0f3dcb1ac7d7a461fedeebacb041aba14988cb1b",
-      "selection": "revision"
+      "revision": "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+      "selection": "version",
+      "version": "3.0.0"
     },
     {
       "identity": "swift-sdk",
@@ -15,11 +16,11 @@
       "version": "0.13.1"
     }
   ],
-  "qualificationNote": "Qualified identifies reviewed upstream source identities only. Core uses a release-candidate revision; the SDK uses exact version 0.13.1. This binding does not qualify compilation, tests, products or a release.",
+  "qualificationNote": "Qualified identifies reviewed upstream source identities only. Core uses released version 3.0.0; the SDK uses exact version 0.13.1. This binding does not qualify the wrapper graph, tests, products or a wrapper release.",
   "qualificationScope": "reviewed-upstream-source-identities-only",
   "qualified": true,
   "schema": "lattice.wrapper-dependency-bindings/1",
-  "status": "EXACT_REVISION_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",
+  "status": "EXACT_VERSION_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",
   "wrapperGraphAccepted": false,
   "previousReleaseEvidence": {
     "receiptSHA256": "98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde",
@@ -42,13 +43,15 @@
   },
   "sourceEvidence": {
     "latticecore": {
-      "revision": "0f3dcb1ac7d7a461fedeebacb041aba14988cb1b",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/0f3dcb1ac7d7a461fedeebacb041aba14988cb1b",
-      "selection": "revision",
+      "revision": "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+      "selection": "version",
       "parents": [
-        "e396ebbb51bfa8f4911c1c603c3ab8a3bcf6b214"
+        "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+        "9bc323ccdf0d0fdb53e83f7d80e90a84ceff63ec"
       ],
-      "scope": "Release candidate integrates accepted link-list and append-only documentation with no-create sidecar fixture cleanup and 3.0.0 compatibility notes. Exact-head hosted compilation and tests remain required; no release or runtime acceptance is inferred."
+      "scope": "Published LatticeCore 3.0.0 source identity. The release includes checked local opens, bounded synchronization and the documented one-way storage change. Wrapper compilation, tests and runtime qualification remain separate.",
+      "version": "3.0.0"
     },
     "swift-sdk": {
       "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
@@ -127,7 +130,7 @@
       "846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
       "db81e0ced019803ffa5fd5c7fc5ee80d17b8aac9"
     ],
-    "scope": "Reviewed shared Core9 browser/native convergence preserves the native epoch9 durable-outbox, finite background, currentness and filtered-reconciliation behavior; adds dynamic descriptors/migrations, pending-import savepoint isolation with selected audit export, and transport-managed authentication. Original upstream macOS, Linux and two C ABI jobs passed at this exact revision. SDK wrapper graph, Swift tests, iOS package and HUD/native-JS interop qualification remain separate."
+    "scope": "Reviewed shared Core9 browser/native convergence preserves the native epoch9 durable-outbox, finite background, currentness and filtered-reconciliation behavior; adds dynamic descriptors/migrations, pending-import savepoint isolation with selected audit export, and transport-managed authentication. Original upstream macOS, Linux and two C ABI jobs passed at this exact revision. SDK wrapper graph, Swift tests, iOS package and native-JavaScript interoperability qualification remain separate."
   },
   "previousCheckedReadSourceEvidence": {
     "revision": "648d2093a6840cdf813a27b262003e624982ca45",
@@ -145,7 +148,7 @@
     "parents": [
       "648d2093a6840cdf813a27b262003e624982ca45"
     ],
-    "scope": "Source-reviewed restoration of genuine Orbital upload suppression and certificate-pin transport admission over the accepted closed-query Core. Current Core runtime tests and this SDK consumer graph remain pending; prior release and checked-read evidence is historical and preserved separately."
+    "scope": "Source-reviewed restoration of configured upload suppression and certificate-pin transport admission over the accepted closed-query Core. Current Core runtime tests and this SDK consumer graph remain pending; prior release and checked-read evidence is historical and preserved separately."
   },
   "previousSharedAPISourceEvidence": {
     "revision": "ed05c91e8e60e46057ce07864c4a6daaa9b9d1f7",

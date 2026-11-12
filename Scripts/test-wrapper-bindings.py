@@ -37,28 +37,35 @@ class WrapperBindingTests(unittest.TestCase):
             self.core(mismatch)["state"][key] = changed
             self.assertTrue(checks.verify_resolved(mismatch, expected))
 
-    def test_exact_current_revision_needs_no_invented_version(self):
+    def test_current_version_pin_matches_released_source(self):
         expected = self.expected()
-        self.assertEqual(expected["latticecore"]["selection"], "revision")
-        self.assertNotIn("version", expected["latticecore"])
-        self.assertEqual(self.core(self.lock)["state"], {"revision": "0f3dcb1ac7d7a461fedeebacb041aba14988cb1b"})
+        self.assertEqual(expected["latticecore"]["selection"], "version")
+        self.assertEqual(expected["latticecore"]["version"], "3.0.0")
+        self.assertEqual(self.core(self.lock)["state"], {
+            "revision": "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8", "version": "3.0.0"})
         self.assertEqual(checks.verify_resolved(self.lock, expected), [])
 
-    def test_revision_expectation_refuses_mixed_or_unknown_selection(self):
-        for key, value in [("version", None), ("version", "2.2.8"), ("branch", None),
-                           ("branch", "main"), ("selection", "anything"), ("revision", "short")]:
+    def test_version_expectation_requires_release_identity(self):
+        for key, value in [("version", None), ("version", ""), ("version", 3),
+                           ("selection", "anything"), ("revision", "short")]:
             document = copy.deepcopy(self.document)
             next(row for row in document["pins"] if row["identity"] == "latticecore")[key] = value
             with self.subTest(key=key, value=value), self.assertRaises(checks.BindingError):
                 self.expected(document)
+        document = copy.deepcopy(self.document)
+        next(row for row in document["pins"] if row["identity"] == "latticecore").pop("version")
+        with self.assertRaises(checks.BindingError):
+            self.expected(document)
 
-    def test_revision_pin_refuses_changed_scope_and_extra_state(self):
+    def test_version_pin_refuses_changed_release_and_source_scope(self):
         expected = self.expected()
-        for state in [{"revision": "0" * 40}, {},
-                      {"revision": expected["latticecore"]["revision"], "version": None},
-                      {"revision": expected["latticecore"]["revision"], "version": "2.2.8"},
-                      {"revision": expected["latticecore"]["revision"], "branch": None},
-                      {"revision": expected["latticecore"]["revision"], "branch": "main"}]:
+        revision = expected["latticecore"]["revision"]
+        version = expected["latticecore"]["version"]
+        for state in [{"revision": "0" * 40, "version": version}, {},
+                      {"revision": revision},
+                      {"revision": revision, "version": None},
+                      {"revision": revision, "version": "2.2.8"},
+                      {"revision": revision, "version": version, "branch": "main"}]:
             lock = copy.deepcopy(self.lock)
             self.core(lock)["state"] = state
             with self.subTest(state=state):

@@ -1,10 +1,6 @@
 # Changelog
 
-## [3.0.0] - Unreleased
-
-Release candidate: the core dependency remains pinned by revision during
-qualification. It must move to the real LatticeCore 3.0.0 version before
-this package is tagged; this entry describes that intended version pair.
+## [3.0.0] - 2026-11-12
 
 **One-way storage change. Read this before you upgrade.** Lattice 3.0.0
 requires LatticeCore 3.0.0. That core writes storage epoch 9 and installs
@@ -40,6 +36,7 @@ history and sync inspection calls.
   the system SQLite library, the same library LatticeCore already links. No
   new install step is needed. On Linux the existing `libsqlite3-dev`
   requirement covers it. See Known limits for LatticeMCP on iOS.
+- iOS 15 remains the declared minimum and has not been tested for 3.0.0.
 - A typed optional link on a managed object now reads `nil` when its target
   row is gone, for example after a synced delete left the link row in place,
   or when another connection removes the link between the presence check and
@@ -345,6 +342,9 @@ history and sync inspection calls.
 - Relay rows. The relay does not apply the core's 8 MiB per-row limit to what
   it serves. See the LatticeCore 3.0.0 changelog for the client-side row
   limits and the other sync limits of this release.
+  The [LatticeCore 3.0.0 notes](https://github.com/jsflax/LatticeCore/blob/3.0.0/CHANGELOG.md)
+  also cover replaced store files, link and list rows of immutable tables,
+  and unknown frame kinds.
 
 ## [2.6.1] - 2026-11-02
 

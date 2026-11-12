@@ -68,9 +68,9 @@ let package = Package(
         // validates their transport metadata against physical field nullability.
         // Released checked dynamic-open errors, reverse-link indexes/storage epoch 7,
         // and native NACK/decode diagnostics.
-        // Release candidate revision; replace with the real 3.0.0 version before
-        // tagging this package so version-required consumers can resolve it.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", revision: "0f3dcb1ac7d7a461fedeebacb041aba14988cb1b"),
+        // 3.0.0 supplies the checked local opens, storage writer protection,
+        // and bounded synchronization APIs required by this wrapper.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "3.0.0"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
