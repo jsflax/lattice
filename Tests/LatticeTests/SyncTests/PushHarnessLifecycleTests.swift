@@ -95,7 +95,8 @@ struct PushHarnessLifecycleTests {
         let closedAtApplicationShutdown = try #require(observed.withLockedValue { $0 })
         #expect(closedAtApplicationShutdown == [true, true, true, true],
                 "The fixture must join actual client closes before releasing its HTTP server")
-        #expect(clients.allSatisfy(\.isClosed))
+        let allClientsClosed = clients.allSatisfy { $0.isClosed }
+        #expect(allClientsClosed)
         let app = try #require(application)
         #expect(app.didShutdown)
         let directory = try #require(storageURL)
