@@ -122,6 +122,8 @@ class CrossProcessChildRunner: XCTestCase {
         switch op {
         case "query-predicate-fact":
             try queryPredicateFactChild(fileURL: fileURL)
+        case "query-dynamic-open-fact":
+            try queryDynamicOpenFactChild(fileURL: fileURL)
         case "update", "insert":
             CrossProcessObservationDiagnostic.childPoint(.open_begin)
             let lattice = try Lattice(
