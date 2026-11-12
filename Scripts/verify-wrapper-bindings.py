@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check committed SwiftPM pins against an explicitly qualified binding record."""
+"""Check committed SwiftPM pins against explicitly reviewed source bindings."""
 
 import argparse
 import json
@@ -53,7 +53,7 @@ def expected_pins(document):
     if not isinstance(document, dict) or document.get("schema") != SCHEMA:
         raise BindingError("expected-binding schema is unsupported")
     if document.get("qualified") is not True:
-        raise BindingError("expected bindings are NOT QUALIFIED; release identities are required")
+        raise BindingError("expected bindings are NOT QUALIFIED; reviewed source identities are required")
     rows = document.get("pins")
     if not isinstance(rows, list):
         raise BindingError("expected bindings must contain a pins array")
@@ -71,12 +71,19 @@ def expected_pins(document):
         location = repository(row.get("repository"))
         if location != REPOSITORIES[identity]:
             raise BindingError(f"{identity}: expected repository must match the wrapper manifest")
-        version = row.get("version")
-        if not isinstance(version, str) or not version:
-            raise BindingError(f"{identity}: expected exact version is missing")
+        selection = row.get("selection", "version")
+        if selection == "version":
+            version = row.get("version")
+            if not isinstance(version, str) or not version:
+                raise BindingError(f"{identity}: expected exact version is missing")
+        elif selection == "revision":
+            if "version" in row or "branch" in row:
+                raise BindingError(f"{identity}: revision binding must not name a version or branch")
+        else:
+            raise BindingError(f"{identity}: unsupported expected selection")
         revision = row.get("revision")
         if not isinstance(revision, str) or not REVISION.fullmatch(revision):
-            raise BindingError(f"{identity}: expected full 40-character release revision is missing")
+            raise BindingError(f"{identity}: expected full 40-character source revision is missing")
         expected[identity] = row
     if set(expected) != IDENTITIES:
         raise BindingError("expected bindings must name latticecore and swift-sdk exactly once")
@@ -116,12 +123,15 @@ def verify_resolved(document, expected):
         if not isinstance(state, dict):
             errors.append(f"{identity}: resolved state is missing or malformed")
             continue
-        if state.get("version") != want["version"]:
+        if want.get("selection", "version") == "revision":
+            if set(state) != {"revision"}:
+                errors.append(f"{identity}: revision pin must contain only its exact revision")
+        elif state.get("version") != want["version"]:
             errors.append(f"{identity}: exact version does not match qualified binding")
         if state.get("revision") != want["revision"]:
             errors.append(f"{identity}: full revision does not match qualified binding")
         if state.get("branch") is not None:
-            errors.append(f"{identity}: a versioned release pin must not select a branch")
+            errors.append(f"{identity}: a qualified source pin must not select a branch")
     return errors
 
 

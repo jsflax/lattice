@@ -77,4 +77,59 @@ final class LatticeMCPPoolTests {
         #expect(!r.isError)
         #expect(r.json.contains("Ada"))
     }
+
+    @Test func testScopedPoolRefusesForeignAndReplacedFiles() async throws {
+        let url = try makeDB()
+        let foreign = try makeDB()
+        let retired = url.appendingPathExtension("retired")
+        defer {
+            try? Lattice.delete(for: .init(fileURL: url))
+            try? Lattice.delete(for: .init(fileURL: foreign))
+            try? FileManager.default.removeItem(at: retired)
+        }
+        let pool = LatticeProviderPool(defaultDB: url,
+            readPolicy: LatticeReadPolicy(permittedFields: ["DynPerson": ["name"]]), sourceID: "selected-room")
+        // Status pins the authorized file without opening a dynamic reader or writer.
+        let accepted = await pool.handle(tool: "lattice_status", argumentsJSON: "{}")
+        #expect(!accepted.isError)
+        let foreignArguments = String(decoding: try JSONSerialization.data(
+            withJSONObject: ["db": foreign.path, "model": "DynPerson"]), as: UTF8.self)
+        let refused = await pool.handle(tool: "lattice_query", argumentsJSON: foreignArguments)
+        #expect(refused.isError)
+        #expect(refused.json.contains("source_unavailable"))
+        #expect(!refused.json.contains(foreign.path))
+
+        // A valid replacement at the same path is still a different authorization target.
+        try FileManager.default.moveItem(at: url, to: retired)
+        try FileManager.default.copyItem(at: foreign, to: url)
+        let replaced = await pool.handle(tool: "lattice_status", argumentsJSON: "{}")
+        #expect(replaced.isError)
+        #expect(replaced.json.contains("source_unavailable"))
+        #expect(replaced.json.contains("The authorized store was replaced. Reopen the source to establish a new reader."))
+        #expect(!replaced.json.contains(url.path))
+    }
+
+    @Test func testScopeValidationRejectsForeignIdentityAndUnavailableStore() async throws {
+        let url = try makeDB()
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        try await LatticeScopeValidation.validate(fileURL: url,
+            requiredValues: ["DynPerson": ["name": "Ada"]])
+        do {
+            try await LatticeScopeValidation.validate(fileURL: url,
+                requiredValues: ["DynPerson": ["name": "another-room"]])
+            Issue.record("The physically scoped source accepted a foreign container identity")
+        } catch LatticeScopeValidation.Failure.scopeMismatch { }
+        do {
+            try await LatticeScopeValidation.validate(fileURL: url,
+                requiredValues: ["DynPerson": ["absentIdentity": "required"]])
+            Issue.record("A missing identity column was treated as an authorized empty scope")
+        } catch LatticeScopeValidation.Failure.invalidIdentitySchema { }
+        let missing = url.appendingPathExtension("missing")
+        do {
+            try await LatticeScopeValidation.validate(fileURL: missing,
+                requiredValues: ["DynPerson": ["name": "Ada"]])
+            Issue.record("An unavailable source was treated as an authorized empty store")
+        } catch LatticeScopeValidation.Failure.unavailable { }
+        #expect(!FileManager.default.fileExists(atPath: missing.path))
+    }
 }

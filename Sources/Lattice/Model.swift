@@ -424,6 +424,8 @@ public protocol Model: AnyObject, ObservableObject, Hashable, Identifiable, Sche
 //    var lattice: Lattice? { get set }
     static var entityName: String { get }
     static var properties: [(String, any SchemaProperty.Type)] { get }
+    /// Authored declaration metadata, independent of storage/type defaults.
+    static var authoredInitializers: AuthoredInitializers { get }
     var primaryKey: Int64? { get set }
     var globalId: UUID? { get }
 
@@ -483,6 +485,14 @@ extension Model {
     public static var fullTextProperties: Set<String> { [] }
     public static var indexedProperties: Set<String> { [] }
     public static var noHistoryProperties: Set<String> { [] }
+    public static var authoredInitializers: AuthoredInitializers { .unavailable }
+
+    /// Exact coverage for export; never instantiates Self or reads defaultValue.
+    public static func validatedAuthoredInitializers() throws -> [AuthoredPropertyInitializer]? {
+        try authoredInitializers.validated(propertyNames: properties.map(\.0).filter {
+            $0 != "id" && $0 != "globalId"
+        })
+    }
 
     public var lattice: Lattice? {
         _dynamicObject._ref.lattice?.asCxxLatticeRef.flatMap { Lattice.init(ref: $0) }

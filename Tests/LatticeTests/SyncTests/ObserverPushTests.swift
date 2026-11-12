@@ -164,11 +164,17 @@ private struct PushCoWriterOpenFailure: Error, CustomStringConvertible {
     }
 }
 
+@Model private final class PushPrivateFence {
+    var token: String
+    init(_ token: String) { self.token = token }
+}
+
 /// One app, two mounts, one storage dir — the rooms topology in miniature.
 final class PushHarness: @unchecked Sendable {
     let app: Application
     let storageURL: URL
     let port: Int
+    private let schema: [any Lattice.Model.Type]
     private let diagnostics: PushHarnessDiagnostics?
     /// Legacy mount: verbatim same-channel fan-out, no push.
     let writerHandle: SyncRelayHandle
@@ -178,7 +184,10 @@ final class PushHarness: @unchecked Sendable {
     /// per-process manager must resolve both to ONE watch group per file.
     let watch2Handle: SyncRelayHandle
 
-    init(push: SyncObserverPush = SyncObserverPush(reconcileInterval: nil)) async throws {
+    init(push: SyncObserverPush = SyncObserverPush(reconcileInterval: nil),
+         schema: [any Lattice.Model.Type] = [SimpleSyncObject.self],
+         downloadExcludedTables: Set<String> = [], initialCatchUpPageSize: Int = 1000) async throws {
+        self.schema = schema
         let diagnostics = ProcessInfo.processInfo.environment["LATTICE_ACK_PATH_DIAGNOSTICS"] == "1"
             ? PushHarnessDiagnostics() : nil
         self.diagnostics = diagnostics
@@ -205,16 +214,17 @@ final class PushHarness: @unchecked Sendable {
         }
         writerHandle = Lattice.configureSyncRelay(
             on: app.routes, path: ["writer", "group", ":groupID"],
-            for: [SimpleSyncObject.self], storageURL: storageURL,
+            for: schema, storageURL: storageURL,
             channelExtractor: pushGroupExtractor)
         watchHandle = Lattice.configureSyncRelay(
             on: app.routes, path: ["watch", "group", ":groupID"],
-            for: [SimpleSyncObject.self], storageURL: storageURL,
-            observerPush: push,
+            for: schema, storageURL: storageURL,
+            observerPush: push, initialCatchUpPageSize: initialCatchUpPageSize,
+            downloadExcludedTables: downloadExcludedTables,
             channelExtractor: pushGroupExtractor)
         watch2Handle = Lattice.configureSyncRelay(
             on: app.routes, path: ["watch2", "group", ":groupID"],
-            for: [SimpleSyncObject.self], storageURL: storageURL,
+            for: schema, storageURL: storageURL,
             observerPush: push,
             channelExtractor: pushGroupExtractor)
         try await app.startup()
@@ -285,7 +295,7 @@ final class PushHarness: @unchecked Sendable {
         let existedBeforeOpen = FileManager.default.fileExists(atPath: file.path)
         let started = ContinuousClock.now
         do {
-            return try Lattice(SimpleSyncObject.self, configuration: configuration)
+            return try Lattice(for: schema, configuration: configuration)
         } catch let error as lattice.cxx_error {
             throw PushCoWriterOpenFailure(
                 nativeName: String(error.name), nativeMessage: String(error.msg),
@@ -325,9 +335,12 @@ final class PushHarness: @unchecked Sendable {
 /// binding.
 func withPushHarness(
     push: SyncObserverPush = SyncObserverPush(reconcileInterval: nil),
+    schema: [any Lattice.Model.Type] = [SimpleSyncObject.self],
+    downloadExcludedTables: Set<String> = [], initialCatchUpPageSize: Int = 1000,
     _ body: (PushHarness) async throws -> Void
 ) async throws {
-    let harness = try await PushHarness(push: push)
+    let harness = try await PushHarness(push: push, schema: schema,
+        downloadExcludedTables: downloadExcludedTables, initialCatchUpPageSize: initialCatchUpPageSize)
     do {
         try await body(harness)
     } catch {
@@ -756,6 +769,47 @@ final class ObserverPushTests: BaseTest {
             #expect(await m1.hasGroup(forFile: file))
             try await b.socket!.close(code: .goingAway)
             #expect(harness.diagnosticResult(await pollHasGroup(m1, file: file, equals: false)))
+        }
+    }
+
+    @Test func perSubscriptionExclusionsAdvancePastHiddenPagesWithoutLeakingToSibling() async throws {
+        try await withPushHarness(push: SyncObserverPush(pageSize: 1, reconcileInterval: nil),
+            schema: [SimpleSyncObject.self, PushPrivateFence.self],
+            downloadExcludedTables: ["PUSHPRIVATEFENCE"], initialCatchUpPageSize: 1) { harness in
+            let co = try harness.coWriter("gexcluded")
+            try co.withTransaction {
+                for i in 0..<4 { try co.add(PushPrivateFence("initial-\(i)")) }
+                try co.add(SimpleSyncObject(value: 1, floatValue: 1))
+            }
+            let visibleInitial = self.gids(Array(co.eventsAfter(globalId: nil)).filter { $0.tableName == "SimpleSyncObject" })
+            let filtered = try await harness.connect(
+                pathSuffix: "watch/group/gexcluded?lattice-catch-up-complete=1", user: UUID())
+            let all = try await harness.connect(
+                pathSuffix: "watch2/group/gexcluded?lattice-catch-up-complete=1", user: UUID())
+            try #require(await filtered.wait { $0.count(of: "catchUpComplete") == 1 })
+            try #require(await all.wait { $0.count(of: "catchUpComplete") == 1 })
+            #expect(filtered.receivedGlobalIds == visibleInitial)
+            let manager = try #require(harness.watchHandle.pushManager)
+            let siblingManager = try #require(harness.watch2Handle.pushManager)
+            #expect(manager === siblingManager)
+            #expect(harness.diagnosticResult(await pollSubscriberCount(manager, file: harness.channelFile("gexcluded"), equals: 2)))
+
+            // More excluded-only pages precede a visible row on the original
+            // socket. The sibling uses the same watcher but a different policy.
+            try co.withTransaction {
+                for i in 0..<4 { try co.add(PushPrivateFence("live-\(i)")) }
+                try co.add(SimpleSyncObject(value: 2, floatValue: 2))
+            }
+            let rows = Array(co.eventsAfter(globalId: nil))
+            let visible = self.gids(rows.filter { $0.tableName == "SimpleSyncObject" })
+            let every = self.gids(rows)
+            try #require(await filtered.wait { $0.receivedGlobalIds.count == visible.count })
+            try #require(await all.wait { $0.receivedGlobalIds.count == every.count })
+            #expect(filtered.receivedGlobalIds == visible)
+            #expect(all.receivedGlobalIds == every)
+            #expect(filtered.auditFrameEntryCounts.allSatisfy { $0 == 1 })
+            #expect(filtered.count(of: "auditLog") == visible.count)
+            #expect(!filtered.isClosed && !all.isClosed)
         }
     }
 

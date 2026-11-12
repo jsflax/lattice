@@ -22,7 +22,9 @@ extension Lattice.Configuration {
             // The inherited owner uploads this file. A derived reader never
             // opens another transport or carries account credentials itself.
             copy.wssEndpoint = nil
+            copy.wssSyncIdentity = nil
             copy.authorizationToken = nil
+            copy.pinnedServerCertificateSHA256 = nil
             copy.ipcTargets = nil
         }
         copy.backgroundSync = nil

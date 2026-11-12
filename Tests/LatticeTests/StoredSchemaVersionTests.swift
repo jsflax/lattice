@@ -32,6 +32,7 @@ struct StoredSchemaVersionTests {
         defer { if let pointer { sqlite3_close(pointer) } }
         #expect(opened == SQLITE_OK)
         let db = try #require(pointer)
+        try registerCurrentWriterForFixtureMutation(db)
         let result = sqlite3_exec(db, sql, nil, nil, nil)
         #expect(result == SQLITE_OK, "\(String(cString: sqlite3_errmsg(db)))")
         if result != SQLITE_OK { throw Lattice.Error.databaseError("fixture SQL failed") }

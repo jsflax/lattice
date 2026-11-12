@@ -54,6 +54,7 @@ private func foreignCommit(dbPath: String, sql: String) throws {
         throw ForeignWriteError(message: "cannot open \(dbPath)")
     }
     defer { sqlite3_close(db) }
+    try registerCurrentWriterForFixtureMutation(db)
     sqlite3_busy_timeout(db, 5000)
     guard sqlite3_create_function(db, "sync_disabled", 0, SQLITE_UTF8, nil,
                                   { ctx, _, _ in sqlite3_result_int(ctx, 0) },
@@ -203,6 +204,103 @@ class LiveResultsCrossProcessBeltTests: BaseTest {
         _ = results.count
         #expect(coord.beltCounters.probes > before,
                 "belt must probe again once the interval has elapsed")
+    }
+
+    @Test(arguments: [true, false])
+    @MainActor func currentReadScopeReadsFreshReadonlyWithoutReplacingRenderPin(beltDisabled: Bool) throws {
+        let url = testTemporaryDirectory.appending(path: "current_read_\(String.random(length: 12)).sqlite")
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        let writer = try Lattice(Gen6Item.self, configuration: .init(fileURL: url))
+        try seed(writer, count: 3)
+        writer.close()
+
+        var config = Lattice.Configuration(fileURL: url)
+        config.isReadOnly = true
+        config.resultsTuning.crossProcessBeltIntervalMs = beltDisabled ? nil : 60_000
+        let reader = try Lattice(Gen6Item.self, configuration: config)
+        defer { reader.close() }
+        let promoted = reader.objects(Gen6Item.self).where { $0.rank >= 900 }
+        #expect(promoted.count == 0)
+        let renderGeneration = promoted.generationID
+        let coord = coordinator(for: reader)
+        let probes = coord.beltCounters.probes
+        try foreignCommit(dbPath: url.path,
+                          sql: "UPDATE \(Gen6Item.entityName) SET rank = 999 WHERE rank = 0")
+        #expect(promoted.count == 0, "ordinary cached rendering remains at its prior generation")
+
+        Lattice.withCurrentReadScope {
+            #expect(promoted.count == 1)
+            Lattice.withCurrentReadScope {
+                #expect(promoted.materializedSnapshot().map(\.rank) == [999])
+            }
+            #expect(coord.beltCounters.probes == probes + 1,
+                    "nested admission reads probe each touched store only once")
+        }
+        #if canImport(CoreFoundation) && canImport(os)
+        #expect(promoted.count == 0, "current admission must not replace the main render pin")
+        #expect(promoted.generationID == renderGeneration)
+        #endif
+        promoted.refresh()
+        #expect(promoted.count == 1)
+        #expect(reader.lastQueryError() == nil)
+    }
+
+    @Test @MainActor func currentReadScopeKeepsStoresSeparateAndUnwindsAfterThrow() throws {
+        enum Stop: Error { case expected }
+        let firstURL = testTemporaryDirectory.appending(path: "scope_a_\(String.random(length: 12)).sqlite")
+        let secondURL = testTemporaryDirectory.appending(path: "scope_b_\(String.random(length: 12)).sqlite")
+        defer {
+            try? Lattice.delete(for: .init(fileURL: firstURL))
+            try? Lattice.delete(for: .init(fileURL: secondURL))
+        }
+        var firstConfig = Lattice.Configuration(fileURL: firstURL)
+        firstConfig.resultsTuning.crossProcessBeltIntervalMs = nil
+        var secondConfig = Lattice.Configuration(fileURL: secondURL)
+        secondConfig.resultsTuning.crossProcessBeltIntervalMs = nil
+        let first = try Lattice(Gen6Item.self, configuration: firstConfig)
+        let second = try Lattice(Gen6Item.self, configuration: secondConfig)
+        defer { first.close(); second.close() }
+        try seed(first, count: 1)
+        try seed(second, count: 2)
+        let firstRows = first.objects(Gen6Item.self), secondRows = second.objects(Gen6Item.self)
+        let firstCoordinator = coordinator(for: first), secondCoordinator = coordinator(for: second)
+        #expect(throws: Stop.self) {
+            try Lattice.withCurrentReadScope {
+                #expect(firstRows.count == 1)
+                #expect(secondRows.count == 2, "identical table shapes from different stores cannot share cached rows")
+                try Lattice.withCurrentReadScope {
+                    #expect(firstRows.materializedSnapshot().count == 1)
+                    #expect(secondRows.materializedSnapshot().count == 2)
+                    throw Stop.expected
+                }
+            }
+        }
+        #expect(firstCoordinator.beltCounters.probes == 1)
+        #expect(secondCoordinator.beltCounters.probes == 1)
+        Lattice.withCurrentReadScope {
+            #expect(firstRows.count == 1)
+            #expect(secondRows.count == 2)
+        }
+        #expect(firstCoordinator.beltCounters.probes == 2, "throwing the prior body must retire its thread-local scope")
+        #expect(secondCoordinator.beltCounters.probes == 2)
+    }
+
+    @Test @MainActor func currentReadScopeClosedHandleCannotServeCachedRows() throws {
+        let url = testTemporaryDirectory.appending(path: "scope_closed_\(String.random(length: 12)).sqlite")
+        defer { try? Lattice.delete(for: .init(fileURL: url)) }
+        var config = Lattice.Configuration(fileURL: url)
+        config.resultsTuning.crossProcessBeltIntervalMs = nil
+        let lattice = try Lattice(Gen6Item.self, configuration: config)
+        try seed(lattice, count: 1)
+        let rows = lattice.objects(Gen6Item.self)
+        #expect(rows.count == 1)
+        lattice.close()
+        let result = Lattice.withCurrentReadScope {
+            let count = rows.count
+            return (count, lattice.lastQueryError())
+        }
+        #expect(result.0 == 0)
+        #expect(result.1 != nil, "unavailable storage cannot be interpreted as an authoritative empty result")
     }
 
 #endif  // canImport(SQLite3)

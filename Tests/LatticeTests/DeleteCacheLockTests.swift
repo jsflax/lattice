@@ -94,4 +94,42 @@ final class DeleteCacheLockTests {
         let remaining = Lattice(isolation: nil, ref: otherRef)
         #expect(remaining?.backend.identityHash == other.backend.identityHash)
     }
+
+    @Test func absentSidecarsAfterClosedStoreDoNotFailDeletion() throws {
+        let directory = testTemporaryDirectory
+            .appending(path: "delete-closed-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = Lattice.Configuration(fileURL: directory.appending(path: "closed.sqlite"))
+        let db = try Lattice(isolation: nil, for: [Person.self], configuration: config)
+        defer { db.close() }
+        db.close()
+        let sidecars = ["sqlite-shm", "sqlite-wal"].map {
+            config.fileURL.deletingPathExtension().appendingPathExtension($0)
+        }
+        // Force the valid post-close state on every platform, regardless of
+        // whether SQLite already removed either file during its final close.
+        for sidecar in sidecars {
+            do { try FileManager.default.removeItem(at: sidecar) }
+            catch let error as CocoaError where error.code == .fileNoSuchFile { }
+        }
+        try #require(FileManager.default.fileExists(atPath: config.fileURL.path))
+        try Lattice.delete(for: config)
+        #expect(!FileManager.default.fileExists(atPath: config.fileURL.path))
+        #expect(sidecars.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+    }
+
+    @Test func missingPrimaryFileStillFailsDeletion() throws {
+        let directory = testTemporaryDirectory
+            .appending(path: "delete-missing-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = Lattice.Configuration(fileURL: directory.appending(path: "missing.sqlite"))
+        do {
+            try Lattice.delete(for: config)
+            Issue.record("A missing main database must remain a deletion error")
+        } catch let error as CocoaError {
+            #expect(error.code == .fileNoSuchFile)
+        }
+    }
 }

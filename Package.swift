@@ -68,7 +68,9 @@ let package = Package(
         // validates their transport metadata against physical field nullability.
         // Released checked dynamic-open errors, reverse-link indexes/storage epoch 7,
         // and native NACK/decode diagnostics.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "2.5.1"),
+        // 3.0.0 supplies the checked local opens, storage writer protection,
+        // and bounded synchronization APIs required by this wrapper.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "3.0.0"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
@@ -77,13 +79,22 @@ let package = Package(
         .package(url: "https://github.com/vapor/vapor.git", from: "4.76.0"),
         .package(url: "https://github.com/vapor/websocket-kit.git", from: "2.15.0"),
         // Owned SDK fork pins the cooperative transport lifetime correction.
-        .package(url: "https://github.com/jsflax/swift-sdk.git", exact: "0.13.0"),
+        // 0.13.1 is 0.13.0 plus the negotiated-version and typed-request-identity change.
+        .package(url: "https://github.com/jsflax/swift-sdk.git", exact: "0.13.1"),
         // Docs-time only: enables `swift package generate-documentation` over
         // the catalog at Sources/Lattice/Lattice.docc (and the docs.yml Pages
         // deploy). No target depends on it; it adds nothing to consumer builds.
         .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.4.0"),
     ],
     targets: [
+        .systemLibrary(name: "CLatticeDiagnosticsSQLite", providers: [.apt(["libsqlite3-dev"])]),
+        // Implementation target only, not a library product. Diagnostic Swift
+        // consumers opt into LatticeInternals SPI on the Lattice product.
+        .target(name: "LatticeDebugBridge",
+                dependencies: [.product(name: "LatticeSwiftCppBridge", package: "LatticeCore")],
+                publicHeadersPath: "include",
+                cxxSettings: [.unsafeFlags(["-std=c++20"]),
+                              .unsafeFlags(["-fno-implicit-module-maps"], .when(platforms: [.macOS, .iOS]))]),
         // Test-only real SQLite fault injection; the suite must compile on Linux.
         .systemLibrary(
             name: "CLatticeTestSQLite",
@@ -102,7 +113,7 @@ let package = Package(
         ),
         .target(
             name: "Lattice",
-            dependencies: ["LatticeMacros",
+            dependencies: ["LatticeMacros", "LatticeDebugBridge",
                 .product(name: "LatticeSwiftCppBridge", package: "LatticeCore"),
                 .product(name: "LatticeSwiftModule", package: "LatticeCore"),
                 .product(name: "Collections", package: "swift-collections"),
@@ -121,6 +132,7 @@ let package = Package(
                 "LatticeMCP",
                 "LatticeServerKit",
                 "WalEpochWriterChild",
+                "lattice-mcp", // Required by the unskipped standalone defaults regression.
                     .product(name: "Vapor", package: "vapor")
             ],
             swiftSettings: [.interoperabilityMode(.Cxx)]
@@ -163,7 +175,7 @@ let package = Package(
         // shell imports the MCP SDK WITHOUT Cxx interop so the SDK's dependency
         // graph (EventSource/swift-numerics) compiles normally.
         .target(name: "LatticeMCP",
-                dependencies: ["Lattice"],
+                dependencies: ["Lattice", "CLatticeDiagnosticsSQLite"],
                 swiftSettings: [.interoperabilityMode(.Cxx)]),
         .target(name: "LatticeMCPTransport", dependencies: [.product(name: "MCP", package: "swift-sdk"), .product(name: "Logging", package: "swift-log")]),
         .testTarget(
@@ -177,6 +189,7 @@ let package = Package(
         .executableTarget(name: "lattice-mcp",
                           dependencies: [
                             "LatticeMCP",
+                            "LatticeMCPTransport",
                             .product(name: "MCP", package: "swift-sdk"),
                           ],
                           swiftSettings: [.interoperabilityMode(.Cxx)])

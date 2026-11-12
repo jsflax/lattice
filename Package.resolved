@@ -1,5 +1,5 @@
 {
-  "originHash" : "fe78d4595bcc67f7d62fe6ccdd5014050c114b6d9988210e686caf31ff1f92cb",
+  "originHash" : "633097f5a259d8494f4910d2e8621713a5eb592c084b5ca9e8e022e98e3885ad",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jsflax/LatticeCore.git",
       "state" : {
-        "revision" : "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
-        "version" : "2.5.1"
+        "revision" : "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+        "version" : "3.0.0"
       }
     },
     {
@@ -249,8 +249,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jsflax/swift-sdk.git",
       "state" : {
-        "revision" : "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
-        "version" : "0.13.0"
+        "revision" : "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
+        "version" : "0.13.1"
       }
     },
     {

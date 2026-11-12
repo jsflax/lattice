@@ -107,11 +107,10 @@ public enum SyncRelayApplyPolicy: Sendable {
     /// deliberately sets 30_000 (matching a slow-volume foreign writer) is
     /// respected verbatim rather than silently clobbered to the relay budget.
     ///
-    /// Note on aliasing: LatticeCore's instance cache keys on
-    /// (path, scheduler, wss url, schema, target version, ipc, sync tuning) —
-    /// NOT on the busy timeout. Whichever open wins the race for a given file
-    /// installs its busy timeout for every later aliased handle, so the relay
-    /// applies the same budget in `FileWatchManager.openWatcher`.
+    /// LatticeCore includes the busy timeout in its connection cache key.
+    /// Opens with different budgets therefore do not alias the same native
+    /// instance. `FileWatchManager.openWatcher` uses this policy too so both
+    /// relay reads and applies have the same bounded default wait.
     static func configuration(
         fileURL: URL?,
         storeConfiguration: (@Sendable (URL) -> Lattice.Configuration)?
@@ -157,6 +156,11 @@ enum RelayApplyErrorClass: String, Sendable {
     static func classify(_ message: String?) -> RelayApplyErrorClass {
         guard let message else { return .containedChunkFailure }
         let text = message.lowercased()
+        // Policy detail can contain identifiers such as BusyCommand. These
+        // terminal refusals must never be mistaken for SQLite contention.
+        if text.contains("immutable sync violation:") || text.contains("sync authorization denied:") {
+            return .other
+        }
         if text.contains("cannot start a transaction within a transaction") {
             return .nestedTransaction
         }
@@ -201,6 +205,14 @@ struct RelayFrame {
     /// one) — i.e. it claims to be an upload.
     var claimsUpload: Bool { root?["auditLog"] != nil }
 
+    /// Exact no-content ACK form supported by a read-only download source.
+    /// Mixed uploads and malformed control frames never take this no-write path.
+    var isPureAcknowledgement: Bool {
+        guard let root, Set(root.keys) == Set(["kind", "ack"]), root["kind"] as? String == "ack",
+              let ids = root["ack"] as? [String] else { return false }
+        return ids.allSatisfy { UUID(uuidString: $0) != nil }
+    }
+
     init(_ data: Data) {
         byteCount = data.count
         json = try? JSONSerialization.jsonObject(with: data)
@@ -220,9 +232,9 @@ struct RelayFrame {
     }
 
     /// The frame reduced to the entries that actually committed — the fan-out
-    /// payload on a PARTIAL apply. A full apply fans the original bytes out
-    /// verbatim (byte-for-byte pre-1.7.1 behavior); only the degraded path
-    /// pays a re-encode. `nil` when nothing is left to fan out.
+    /// payload on a PARTIAL apply. Full frames within the outbound budget
+    /// retain their original bytes; partial or oversized frames are re-encoded.
+    /// `nil` when nothing is left to fan out.
     func reencoded(keeping applied: Set<UUID>) -> Data? {
         guard var root, let entries = rawEntries else { return nil }
         let kept = entries.filter { element in
@@ -234,6 +246,45 @@ struct RelayFrame {
         guard !kept.isEmpty else { return nil }
         root["auditLog"] = kept
         return try? JSONSerialization.data(withJSONObject: root)
+    }
+
+    /// Repack a legacy audit batch in the canonical audit envelope without
+    /// decoding away unknown row fields. Small healthy frames retain their
+    /// original bytes at the call site. A row larger than the budget travels alone so it cannot
+    /// block every later row in the batch.
+    func boundedAuditFrames(keeping applied: Set<UUID>,
+                            maximumBytes: Int = Lattice.maximumEncodedSyncMessageBytes) throws -> [Data] {
+        let prefix = Data(#"{"kind":"auditLog","auditLog":["#.utf8)
+        let suffix = Data("]}".utf8)
+        guard maximumBytes > prefix.count + suffix.count, let entries = rawEntries else {
+            throw BoundedAuditFrame.Failure.invalidLimit
+        }
+        // Never repeat arbitrary outer metadata: it could dwarf the rows and
+        // amplify one bounded inbound frame into many oversized output pages.
+        var pages: [Data] = []
+        var page = prefix
+        var rows = 0
+        func finishPage() {
+            page.append(suffix)
+            pages.append(page)
+            page = prefix
+            rows = 0
+        }
+        for element in entries {
+            guard let entry = element as? [String: Any],
+                  let rawID = entry["globalId"] as? String,
+                  let id = UUID(uuidString: rawID), applied.contains(id) else { continue }
+            let encoded = try JSONSerialization.data(withJSONObject: entry)
+            if rows > 0, page.count + 1 + encoded.count + suffix.count > maximumBytes {
+                finishPage()
+            }
+            if rows > 0 { page.append(0x2c) }
+            page.append(encoded)
+            rows += 1
+            if page.count + suffix.count >= maximumBytes { finishPage() }
+        }
+        if rows > 0 { finishPage() }
+        return pages
     }
 }
 
@@ -289,7 +340,9 @@ func applyWithRetry(
     data: Data,
     frame: RelayFrame,
     channelId: String,
-    userId: UUID
+    userId: UUID,
+    immutableTables: Set<String> = [],
+    authorize: (() -> Bool)? = nil
 ) -> RelayApplyOutcome {
     var outcome = RelayApplyOutcome()
     var appliedSet: Set<UUID> = []
@@ -308,7 +361,10 @@ func applyWithRetry(
             if let fault = _applyFaultForTesting.withLockedValue({ $0 }) {
                 try fault(channelId, outcome.attempts)
             }
-            for id in try lattice.receive(data) where appliedSet.insert(id).inserted {
+            let received = try immutableTables.isEmpty && authorize == nil
+                ? lattice.receive(data)
+                : lattice.receive(data, immutableTables: immutableTables, authorize: authorize)
+            for id in received where appliedSet.insert(id).inserted {
                 outcome.applied.append(id)
             }
         } catch {
@@ -321,19 +377,16 @@ func applyWithRetry(
         outcome.errorClass = RelayApplyErrorClass.classify(thrown)
         outcome.elapsedMs = elapsedMs()
 
-        // FIRST-OPENER-WINS DETECTOR: the core's instance cache does not key
-        // on busyTimeoutMs, so whichever open of this file happened first
-        // installed ITS budget for every aliased handle. A single contended
-        // attempt parking far beyond the relay's own budget is that exact
-        // signature — the incident's 30s park sneaking back in through a
-        // co-writer's default-budget open. Detection is the best a library
-        // can do here; the fix is aligning every co-writer's
-        // `Configuration.busyTimeoutMs` (as orbital-server does).
+        // Flag contention attempts that outlast the relay's default budget.
+        // A mount may explicitly select a larger timeout, and one apply can
+        // include multiple SQLite operations. The core cache keys on the
+        // timeout, so elapsed time alone does not prove a different opener
+        // replaced this connection's setting.
         let attemptMs = Double(DispatchTime.now().uptimeNanoseconds &- attemptStarted.uptimeNanoseconds) / 1e6
         if outcome.errorClass.isContention,
            attemptMs > Double(SyncRelayApplyPolicy.busyTimeoutMs) * 2 + 500 {
             relayLog.error("""
-                relay apply parked \(Int(attemptMs))ms against a \(SyncRelayApplyPolicy.busyTimeoutMs)ms                 budget: channel=\(channelId) — another open of this channel file installed a larger                 busyTimeoutMs (the instance cache does not key on it); align every co-writer's                 Configuration.busyTimeoutMs with the relay's
+                relay apply parked \(Int(attemptMs))ms against a \(SyncRelayApplyPolicy.busyTimeoutMs)ms                 default budget: channel=\(channelId) — inspect the mount's configured busyTimeoutMs                 and the SQLite operations within this apply
                 """)
         }
 

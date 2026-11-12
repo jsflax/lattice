@@ -285,7 +285,7 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
         }
         let backend = _lattice.backend
         backend.beginTransaction()
-        defer { backend.commit() }
+        defer { backend.commitReadGate() }
         return body()
     }
 
@@ -1204,6 +1204,10 @@ public final class TableResults<Element>: Results, ObservableObject, @unchecked 
 //        case delete(Int64)
 //    }
 
+    /// Observes these results on their store's owning actor, or the shared
+    /// observation worker for a store without actor isolation. Return promptly:
+    /// blocking parks that executor (MainActor means the main thread) and
+    /// deadlocks if the work being waited for needs the same actor.
     public func observe(_ observer: @escaping (CollectionChange) -> Void) -> AnyCancellable {
         _lattice.observe(Element.self, where: self.whereStatement) { change in
             observer(change)

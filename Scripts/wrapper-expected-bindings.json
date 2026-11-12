@@ -4,21 +4,25 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
-      "version": "2.5.1"
+      "revision": "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+      "selection": "version",
+      "version": "3.0.0"
     },
     {
       "identity": "swift-sdk",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/swift-sdk.git",
-      "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
-      "version": "0.13.0"
+      "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
+      "version": "0.13.1"
     }
   ],
-  "qualificationNote": "Qualified means the recorded Core and SDK release/source joins only. The strict consumer independently verifies a complete committed lock and drift; these expectations do not qualify the wrapper graph, compilation, tests or products.",
-  "qualificationScope": "upstream-release-source-joins-only",
+  "qualificationNote": "Qualified identifies reviewed upstream source identities only. Core uses released version 3.0.0; the SDK uses exact version 0.13.1. This binding does not qualify the wrapper graph, tests, products or a wrapper release.",
+  "qualificationScope": "reviewed-upstream-source-identities-only",
   "qualified": true,
-  "releaseEvidence": {
+  "schema": "lattice.wrapper-dependency-bindings/1",
+  "status": "EXACT_VERSION_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",
+  "wrapperGraphAccepted": false,
+  "previousReleaseEvidence": {
     "receiptSHA256": "98387165dccb7ff40286c4e5713389d0bdc7dbe04542f09689e201ae757eccde",
     "releases": [
       {
@@ -37,7 +41,158 @@
     "scope": "Observed published Core 2.5.1 tag/source/release receipt and complete source archive from managed release 41387813073, with unchanged Swift SDK 0.13.0 release/source binding. This records upstream releases only; wrapper graph and runtime qualification remain separate.",
     "previousReceiptSHA256": "33ba8806e25f225478c273b82e766738f249d3e0b17e778392d5e89085797667"
   },
-  "schema": "lattice.wrapper-dependency-bindings/1",
-  "status": "UPSTREAM_RELEASE_EXPECTATIONS_FOR_STRICT_WRAPPER_CONSUMER",
-  "wrapperGraphAccepted": false
+  "sourceEvidence": {
+    "latticecore": {
+      "revision": "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+      "selection": "version",
+      "parents": [
+        "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c",
+        "9bc323ccdf0d0fdb53e83f7d80e90a84ceff63ec"
+      ],
+      "scope": "Published LatticeCore 3.0.0 source identity. The release includes checked local opens, bounded synchronization and the documented one-way storage change. Wrapper compilation, tests and runtime qualification remain separate.",
+      "version": "3.0.0"
+    },
+    "swift-sdk": {
+      "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
+      "sourceURL": "https://github.com/jsflax/swift-sdk/tree/82951cc9cd05de216e8dd6425f951ce31d76fa0a",
+      "selection": "version",
+      "parents": [
+        "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac"
+      ],
+      "scope": "Version 0.13.1 names the same negotiated-version and typed-request-identity source revision used by the integration candidate. This binding does not qualify the consumer graph.",
+      "version": "0.13.1"
+    }
+  },
+  "earlierReleaseEvidence": {
+    "receiptSHA256": "7172df170950d1fe3601e9e9e7f608ad2f4fdd974fdbb4b7b2320f3d9d9e21a9",
+    "releases": [
+      {
+        "commit": "543ad0be9d69b65f116c487483b05becb6707990",
+        "releaseURL": "https://github.com/jsflax/LatticeCore/releases/tag/2.2.8",
+        "repository": "https://github.com/jsflax/LatticeCore",
+        "tagURL": "https://github.com/jsflax/LatticeCore/tree/2.2.8"
+      },
+      {
+        "commit": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
+        "releaseURL": "https://github.com/jsflax/swift-sdk/releases/tag/0.13.0",
+        "repository": "https://github.com/jsflax/swift-sdk",
+        "tagURL": "https://github.com/jsflax/swift-sdk/tree/0.13.0"
+      }
+    ],
+    "scope": "Observed upstream tag/source joins for Core 2.2.8 and Swift SDK 0.13.0. Receipts are evidence, not runtime dependencies.",
+    "previousReceiptSHA256": "ee009a1169b3e4bdbc276930fa1f611fa838cd8e55820c492d5121b7303d2f65"
+  },
+  "previousConnectorSourceEvidence": {
+    "revision": "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
+    "selection": "revision",
+    "scope": "Reviewed exact audit-fence Core source revision; not a fabricated versioned release."
+  },
+  "previousConnectorMergeSourceEvidence": {
+    "revision": "64abee4637a4e774b5a5c5d778146ddc9777797c",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/64abee4637a4e774b5a5c5d778146ddc9777797c",
+    "selection": "revision",
+    "parents": [
+      "0bc50e8cf8a4ebfbe2ba6fbba38ba05650fb209f",
+      "d2241191c1a630e0aaf0d8a5a38b0520c9614c4c"
+    ],
+    "scope": "Source-reviewed integration of existing connector audit/receipt APIs with released Core 2.5.1; upstream CI and this wrapper graph remain unqualified."
+  },
+  "previousSharedCoreSourceEvidence": {
+    "revision": "c55942e2eb7b5f2123b8e21faf215e39ddd0f163",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/c55942e2eb7b5f2123b8e21faf215e39ddd0f163",
+    "selection": "revision",
+    "parents": [
+      "27bdef11c818ab87d56fb93fe31d30d561ccc219"
+    ],
+    "scope": "Source-reviewed shared Core9 successor preserving finite background sync, durable outbox migration and currentness; upstream Linux, macOS and both C ABI CI passed at this exact revision. This wrapper graph, compilation, tests and products remain unqualified."
+  },
+  "previousFilteredReconciliationSourceEvidence": {
+    "revision": "846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
+    "selection": "revision",
+    "parents": [
+      "c4d8556525c1125d314bb8ee3537f34dc590f004"
+    ],
+    "scope": "Source-reviewed shared Core9 successor preserving finite background sync, durable outbox migration and currentness, with stack-owned registry callback depth valid during late thread cleanup and reuse of the exact bounded encoded entry in delivery admission/send fallback. Filtered reconciliation now selects only registered internal data tables, excluding vector/FTS/RTree index artifacts while preserving link and geo-list delivery. Upstream runtime evidence and this wrapper graph, compilation, tests and products are qualified separately; this binding makes no runtime acceptance claim."
+  },
+  "previousSwiftSDKSourceEvidence": {
+    "revision": "a2c3c188951448150fe34e8b9a5b17b3b00ca4ac",
+    "version": "0.13.0",
+    "scope": "Unchanged original released SDK source binding."
+  },
+  "previousClosedQuerySourceEvidence": {
+    "revision": "9a0616d6a130c3d20513674b9660cc5072f6cd43",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/9a0616d6a130c3d20513674b9660cc5072f6cd43",
+    "selection": "revision",
+    "parents": [
+      "846005414ff8bcdcd38234f6ed5bb2cb3b9d8132",
+      "db81e0ced019803ffa5fd5c7fc5ee80d17b8aac9"
+    ],
+    "scope": "Reviewed shared Core9 browser/native convergence preserves the native epoch9 durable-outbox, finite background, currentness and filtered-reconciliation behavior; adds dynamic descriptors/migrations, pending-import savepoint isolation with selected audit export, and transport-managed authentication. Original upstream macOS, Linux and two C ABI jobs passed at this exact revision. SDK wrapper graph, Swift tests, iOS package and native-JavaScript interoperability qualification remain separate."
+  },
+  "previousCheckedReadSourceEvidence": {
+    "revision": "648d2093a6840cdf813a27b262003e624982ca45",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/648d2093a6840cdf813a27b262003e624982ca45",
+    "selection": "revision",
+    "parents": [
+      "9a0616d6a130c3d20513674b9660cc5072f6cd43"
+    ],
+    "scope": "Source-reviewed closed Swift query and memory read-gate error preservation successor. Existing generic Core query tolerance and prior browser/native work remain. The five new C++ tests and this SDK graph are not yet accepted; original automatic upstream CI is in progress."
+  },
+  "previousTransportSourceEvidence": {
+    "revision": "6d54ae205102c6ad16105f6bdc98371bd25ef456",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/6d54ae205102c6ad16105f6bdc98371bd25ef456",
+    "selection": "revision",
+    "parents": [
+      "648d2093a6840cdf813a27b262003e624982ca45"
+    ],
+    "scope": "Source-reviewed restoration of configured upload suppression and certificate-pin transport admission over the accepted closed-query Core. Current Core runtime tests and this SDK consumer graph remain pending; prior release and checked-read evidence is historical and preserved separately."
+  },
+  "previousSharedAPISourceEvidence": {
+    "revision": "ed05c91e8e60e46057ce07864c4a6daaa9b9d1f7",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/ed05c91e8e60e46057ce07864c4a6daaa9b9d1f7",
+    "selection": "revision",
+    "parents": [
+      "6d54ae205102c6ad16105f6bdc98371bd25ef456"
+    ],
+    "scope": "Reviewed authoritative history/identity/applied-event and opt-in immutable/authorized receive restoration, preserving current transaction ownership, receipt handling and ordinary sync behavior. Includes an owned certificate-pin copy bridge for the Swift lifetime regression. Original Core CI and this complete Swift consumer graph remain pending; no runtime or installed-product acceptance is inferred."
+  },
+  "previousUnionReceiverSourceEvidence": {
+    "revision": "ffb84d0137e62b0ce9862e243a495eedafe63536",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/ffb84d0137e62b0ce9862e243a495eedafe63536",
+    "selection": "revision",
+    "parents": [
+      "ed05c91e8e60e46057ce07864c4a6daaa9b9d1f7"
+    ],
+    "scope": "Reviewed successor preserves authoritative history/identity/applied-event and opt-in immutable/authorized receive, current transaction ownership, receipt handling and owned certificate-pin copying. Restores canonical and legacy typed-union receiver decoding with owned schema metadata and quoted SQL identifiers. Original Core CI is running; this complete Swift consumer graph, tests and installed products remain unqualified."
+  },
+  "previousRealPrecisionSourceEvidence": {
+    "revision": "e678b10e9cdb8eabad65b0a16dcd05a2166f771e",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/e678b10e9cdb8eabad65b0a16dcd05a2166f771e",
+    "selection": "revision",
+    "parents": [
+      "ffb84d0137e62b0ce9862e243a495eedafe63536"
+    ],
+    "scope": "Source-reviewed successor preserves epoch9 history/identity, typed-union decoding, opt-in immutable/authorized receive, receipt ownership and transport behavior. Restores null-preserving 17-digit REAL audit encoding and upgrades affected audit triggers through the existing schema-owner path; adds test-local vector-filter phase observations with the unchanged watchdog. Actual upstream CI and this complete SDK consumer graph remain unqualified; no build, test or installed-product acceptance is inferred."
+  },
+  "previousParentReferenceSourceEvidence": {
+    "revision": "c089b94a53f52eda843e9c1480b9c1c79f3921ef",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/c089b94a53f52eda843e9c1480b9c1c79f3921ef",
+    "selection": "revision",
+    "parents": [
+      "cd202e30a94d228f4c7dde4b9d9bec2c3f7aa218"
+    ],
+    "scope": "Source-reviewed epoch9 successor restores all non-list parent-reference audit columns during trigger recreation, with exact fresh geo expansion and unchanged no_history policy. Trigger-template fingerprint revision 2 and three-trigger coverage repair already-affected precise-v1 stores without rewriting data/history. Preserves the qualified cd202 fixture-lifetime correction; upstream successor CI and this SDK graph remain pending, with no installed-product acceptance inferred."
+  },
+  "previousLogicalWSSIdentitySourceEvidence": {
+    "revision": "2d693dcf4f14a32699e02d901480312e3d90cdb4",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/2d693dcf4f14a32699e02d901480312e3d90cdb4",
+    "selection": "revision",
+    "parents": [
+      "c089b94a53f52eda843e9c1480b9c1c79f3921ef"
+    ],
+    "scope": "Source-reviewed optional logical WSS identity separates transport URL from durable receipt/cursor/slot ownership. Defaults preserve endpoint-derived identity; bounded explicit identity participates in native cache and logical registry, with same-dial no-eviction preserved. Existing parent-reference repair and epoch9 behavior remain. Original Core and SDK full qualification are pending; no installed-product acceptance inferred."
+  }
 }

@@ -1,5 +1,351 @@
 # Changelog
 
+## [3.0.0] - 2026-11-12
+
+**One-way storage change. Read this before you upgrade.** Lattice 3.0.0
+requires LatticeCore 3.0.0. That core writes storage epoch 9 and installs
+write-guard triggers when it first opens a store for writing. After that, a
+build with an older core cannot write to the store. A raw SQLite connection
+that lacks the core's guard function cannot write to it either. This holds even
+when the 3.0.0 open itself then fails. There is no downgrade. Upgrade and
+restart every process that shares a store together. If an older build must
+still write to a store, copy that store before 3.0.0 first opens it.
+
+This release also adds asynchronous and scoped local opens, checked
+transactions nested across different stores, a larger read-only MCP tool set
+with an optional host read policy, byte-bounded relay frames, and audit,
+history and sync inspection calls.
+
+### Compatibility
+- One-way storage change, as described above. Lattice 3.0.0 requires
+  LatticeCore 3.0.0. Once 3.0.0 has opened a store for writing, an older core
+  cannot write to it, and neither can a raw SQLite connection without the
+  core's guard function. There is no downgrade. Rebuild native and Swift
+  bridge consumers together. The LatticeCore 3.0.0 changelog lists which opens
+  convert a store, the error an older build reports, and the changed sync
+  storage and transport rules.
+- The conversion happens on the first ordinary writable open. Read-only opens
+  do not convert a store. That covers `isReadOnly` handles and
+  `Lattice.dynamic`, which LatticeMCP and `lattice-mcp` use. An open with
+  `requiredExistingSchemaVersion` does not convert a store, and attaching a
+  store to another handle does not convert the attached file.
+- The owned MCP SDK fork requirement moves from exact 0.13.0 to exact 0.13.1.
+  Only `LatticeMCPTransport` and the `lattice-mcp` executable depend on it.
+- Declared platforms are unchanged: macOS 14 and iOS 15, with Swift tools
+  6.3. `LatticeMCP` now opens its own read-only inspection connections through
+  the system SQLite library, the same library LatticeCore already links. No
+  new install step is needed. On Linux the existing `libsqlite3-dev`
+  requirement covers it. See Known limits for LatticeMCP on iOS.
+- iOS 15 remains the declared minimum and has not been tested for 3.0.0.
+- A typed optional link on a managed object now reads `nil` when its target
+  row is gone, for example after a synced delete left the link row in place,
+  or when another connection removes the link between the presence check and
+  the read. Earlier releases could crash on that read. The link also reads
+  `nil` while its target row is not yet visible to the reading connection. A
+  later read can return the object. Two cases are not covered: a link stored
+  inside a `@Union` payload, and a non-optional model-typed property. See
+  Known limits.
+- Dynamic query filters are stricter. `DynamicQuery.whereSQL`, and the `where`
+  argument of `lattice_query` and `lattice_count`, accept only primitive
+  columns that are not geo-bounds, plus `id` and `globalId`. A filter on a
+  link, list, geo-bounds or union property throws
+  `DynamicQueryError.unknownProperty`, which the MCP tools report as
+  `unknown_property`. Its message now ends "is not a filterable scalar column
+  of the model". Operands must be JSON scalars: string, number, boolean or
+  null. Convert Swift values such as `UUID` to a string first. A container
+  operand or an empty operator object returns `invalid_predicate`. An empty
+  `$or` now matches no rows.
+- LatticeMCP without a read policy keeps the 2.6.1 limits: 100 rows by
+  default, link depth 1, nearest `k` 10, a 10,000 row ceiling and a depth
+  ceiling of 5. For the seven query tools, out-of-range values of `limit`,
+  `offset`, `depth` and `k` are clamped and unknown top-level arguments are
+  ignored, as before. A top-level argument whose value is JSON null is treated
+  as omitted for those tools. Null is not treated as omitted in three places:
+  inside a `sort` entry, for `lattice_status` and `lattice_changes`, and
+  whenever a read policy is set.
+- Other LatticeMCP inputs are checked more strictly than in 2.6.1, with or
+  without a policy. Arguments must be a JSON object. These now return
+  `invalid_arguments`: a wrong-typed argument other than `limit`, `offset`,
+  `depth` and `k` (without a policy those four still fall back to their
+  default), a missing required argument, a negative `primaryKey`, a malformed
+  `sort` entry, a sort order other than `asc` or `desc`, both or neither of
+  `primaryKey` and `globalId`, a `globalId` that is not a UUID, an unknown
+  `metric`, a vector component that is not a finite number, and coordinates
+  out of range or a radius that is not positive. `order` and `metric` must be
+  exact lowercase; 2.6.1 ignored case. An empty `vector`, an empty `match`,
+  and extra keys inside `near` or inside a `sort` entry also return
+  `invalid_arguments`. A missing required argument returned
+  `invalid_predicate` in 2.6.1. The catch-all code `error` is gone; unexpected
+  failures now return `invalid_arguments`, `query_failed` or `open_failed`.
+  `lattice_schema` with an unknown `model` returns `invalid_table`. A search
+  on a field without the matching index returns `unsupported_search`.
+- LatticeMCP results changed. Query results carry a `source` object.
+  `source.id` is the absolute path of the store unless the pool was created
+  with `sourceID:`, which replaces the path in results and errors.
+  `lattice_query` adds `hasMore` and `nextOffset` and orders rows by `id`
+  after any requested sort. The search tools add `limited`. A backend read
+  failure returns `query_failed` where 2.6.1 returned an empty result. The
+  pool checks the file before and after each call and returns
+  `source_changed` when the file or its schema changed during the read. A
+  SQLite file without Lattice metadata is refused. Without a read policy, a
+  Lattice file with no readable model schema is refused too: the provider
+  initializer throws and the pool returns `open_failed`. `lattice-mcp`
+  reports server version 0.2.1, up from 0.1.0. In Swift,
+  `LatticeDataProvider.handle` is now `async`, `toolNames` is a computed
+  property with nine names, and the limit parameters of both initializers are
+  optional.
+- The relay still accepts inbound frames up to 64 MiB, so clients on earlier
+  releases, which batch uploads by row count, keep working. Audit frames the
+  relay sends are now bounded by `Lattice.maximumEncodedSyncMessageBytes`
+  (4 MiB) in fan-out, catch-up and observer push, so one large upload can
+  reach a peer as several frames. A stored row that exceeds the budget is
+  sent alone, with no upper limit on the relay side, so it cannot block the
+  rows behind it. Frames that are not audit uploads are forwarded unchanged.
+  On an unfiltered channel a LatticeCore 3.0.0 client sends an entry above
+  the ordinary 4 MiB budget alone when it and its audit-log envelope fit the
+  8 MiB hard bound. A filtered sender also charges retained identifiers and
+  routing metadata against its retained-byte bound, so its largest admitted
+  entry depends on those fields. A larger entry is refused before upload
+  with an error that names the audit id and table. The core does not impose
+  this sender bound on received rows.
+- Relay catch-up stops reading pages when its connection closes or is
+  revoked. A connection revoked while pages are being read is closed with
+  code 1001. Rows pruned ahead of a running catch-up are skipped and catch-up
+  ends normally. A page holds at most `initialCatchUpPageSize` rows (1 to
+  1000, default 1000) and is also bounded by bytes.
+- `Lattice.openLocal` and `Lattice.withLocalOpen` open local stores only. A
+  configuration with a WSS endpoint, sync identity, certificate pin, IPC
+  targets or background sync throws
+  `AsyncLocalOpenError.unsupportedConfiguration` before anything is opened.
+  Every migration block must be registered with `Migration.addSendable`, or
+  the open throws `unsafeMigrationCallbacks`. Those blocks run on a worker,
+  not on the caller's actor. Cancellation waits for the native open and its
+  cleanup. It cannot undo a migration that already committed.
+- Scoped local open guarantee. `withLocalOpen` runs its body synchronously on
+  the caller's actor with the opened handle. When the body returns or throws,
+  the temporary native ownership is released on a worker, and the call waits
+  for that release before it returns. The release never closes another handle
+  on the same store. A handle that the body kept or returned stays valid,
+  also if the task is cancelled after the body succeeded.
+- File creation on open. `Configuration.allowsFileCreation` defaults to
+  `true`, the earlier behaviour. With `false`, opening a missing file fails
+  and creates nothing, and an existing file still gets normal schema setup
+  and migration. Memory stores are not affected.
+- `withTransaction` no longer refuses every nested call. A nested call on a
+  different physical store now runs, and its commit survives a later rollback
+  of the outer transaction. Review code that relied on the old refusal. The
+  refusal message changed to "Nested checked transactions require a different
+  physical store". See Changed for the full rule.
+- Failure tracking in `withTransaction` is now per connection. In 2.6.1 a
+  failed write or query on any handle on the same thread failed the enclosing
+  transaction and rolled it back. From 3.0.0 only a failure on the connection
+  that owns the transaction does. A failure on another connection, for
+  example a handle on a second store or an independent handle on the same
+  file, no longer rolls the outer transaction back and is not reported by it,
+  unless that connection has a `withTransaction` of its own. Give a second
+  store its own nested `withTransaction`, or check `lastQueryError()` on the
+  other handle. Review blocks that write to more than one store.
+- `attach(lattice:)` and `detach(lattice:)` now throw inside the handle's own
+  `withTransaction`. `attach(lattice:)` and `attaching(lattice:)` throw when
+  either handle was opened with `requiredExistingSchemaVersion`.
+- `LatticeError` conforms to `LocalizedError`, and `localizedDescription` now
+  includes the underlying database message. Remove any `LocalizedError`
+  conformance your code adds to `LatticeError`.
+- The local-open span hook is public API: `LatticePerf.spanHook`, `SpanHook`,
+  `SpanScope`, `Span`, `Span.end()` and `beginSpan(_:scope:)`. 3.0.0 reports
+  five spans around each local open. The set of span names may grow in a
+  minor release, so a hook must accept names it does not know.
+- Debug reads on dynamic objects are SPI, not public API.
+  `DynamicObject.debugJSON`, `debugPrimaryKey` and `DynamicDebugReadError`
+  need `@_spi(LatticeInternals) import Lattice` and are exempt from semantic
+  versioning. `LatticeDebugBridge` is an implementation target, not a library
+  product.
+- Three protocol requirements were added with default implementations:
+  `Model.authoredInitializers`, `EmbeddedModel.embeddedCodec` and
+  `LatticeBackend.receiveSyncData(_:immutableTables:authorize:)`. The `@Model`
+  macro now generates `authoredInitializers`. The five new `Configuration`
+  fields listed under Added take part in equality and hashing, and handles
+  that differ in them do not share a cached connection.
+
+### Added
+- Add `Lattice.openLocal(for:configuration:)` and
+  `openLocal(independentFor:configuration:)`. They run the native open and
+  any migration off the caller's actor and return a handle that keeps the
+  caller's isolation. `Migration.addSendable(from:to:_:)` registers a
+  migration block that may run on that worker.
+- Add `Lattice.withLocalOpen(for:configuration:_:)` and
+  `withLocalOpen(independentFor:configuration:_:)`, the scoped form described
+  under Compatibility.
+- Add `Lattice.init(independentFor:configuration:)` for a distinct connection
+  outside the path and scheduler cache. Closing it does not close other
+  handles on the same store.
+- Add `Configuration.allowsFileCreation`, `requiredExistingSchemaVersion`,
+  `uploadsEnabled`, `wssSyncIdentity` and `pinnedServerCertificateSHA256`. A
+  required schema version opens an existing file at exactly that version with
+  no create, migration, repair or automatic maintenance. Such handles cannot
+  attach databases or own sync transports. `uploadsEnabled = false` stops
+  outbound sync data and keeps downloads and their acknowledgements.
+  `wssSyncIdentity` keeps a durable channel identity separate from the
+  address that is dialed. The certificate pin is the SHA-256 of the server's
+  leaf certificate in DER form, written as 64 lowercase hex characters, and
+  needs a `wss` endpoint. Any other value makes the open throw
+  `LatticeTLSPin.ConfigurationError.invalidPin`. `LatticeTLSPin` and
+  `LatticeTLSTrust` expose the checks.
+- Add the task-local `LatticePerf.spanHook` with `beginSpan(_:scope:)` and
+  `Span`. A local open reports `Lattice.openLocal.prepare`,
+  `Lattice.openLocal.worker.open`, `Lattice.openLocal.adopt`,
+  `Lattice.openLocal.dispose` and `Lattice.openLocal.return`. With no hook
+  installed, no callback runs.
+- Add `Lattice.withCurrentReadScope(_:)` to read current committed rows for a
+  synchronous decision while a renderer still holds an older batch.
+- Add checked audit reads: `auditCursor()`, `auditReadFence()` and
+  `latestAuditStamp(tableName:globalRowID:)`. Add `prepareForAuditedWrites()`
+  to turn auditing back on for a store where it was left disabled.
+- Add store-local metadata that is never synced or audited:
+  `localMetadata(namespace:key:)` and, inside `withTransaction`,
+  `insertLocalMetadataIfAbsent(_:namespace:key:)`.
+- Add `requireMainFileUnmoved(expectedPath:)`, a check that the open
+  connection's main file still occupies the path it was opened at.
+- Add sync receive and history calls:
+  `receive(_:immutableTables:authorize:)`,
+  `appendCurrentSnapshots(tables:publicationKey:)`, `ensureCurrentHistory()`,
+  `currentIdentitySnapshot()`, `hasAppliedSyncEvent(globalID:)`,
+  `lateBindNoHistoryChecked(_:)` (throws `Lattice.NoHistoryBindingError`),
+  `removeSyncChannelStateChecked(syncId:)`,
+  `removeSyncChannelStateChecked(ipcChannel:)` and
+  `Lattice.maximumEncodedSyncMessageBytes`.
+- Add optional capability protocols for custom backends:
+  `AuditCursorBackend`, `AuditReadFenceBackend`, `AuditedWritesBackend`,
+  `LocalMetadataBackend`, `MainFileCurrentnessBackend` and
+  `SyncChannelRetirementBackend`. A backend without a capability makes the
+  matching call throw.
+- Add `DynamicResults.groupedCounts(by:parameters:)`.
+- Add declaration metadata that is read without creating a model:
+  `Model.authoredInitializers`, `Model.validatedAuthoredInitializers()` and
+  `EmbeddedModel.embeddedCodec`, with their descriptor types.
+- LatticeMCP: add `LatticeReadPolicy` and the `readPolicy:` parameter on
+  `LatticeDataProvider` and `LatticeProviderPool`. The pool also takes
+  `sourceID:`. With a policy only the listed models and fields are readable.
+  Defaults are 25 rows, depth 0 and `k` 25. `limit` and `k` must be 1 to 500
+  and depth 0 to 3. Unknown arguments and out-of-range values are errors.
+  Arguments are limited to 64 KiB and results to 32 KiB.
+- LatticeMCP: add the `lattice_status` and `lattice_changes` tools, a
+  `fields` argument on the read tools, a `model` filter on `lattice_schema`,
+  `LatticeToolCatalog`, `LatticeToolDescriptor`, `LatticeDiagnostics` and
+  `LatticeScopeValidation`. A host that passes a read policy must advertise
+  `LatticeToolCatalog.tools(readPolicy:)` with the same policy. The plain
+  `tools` list describes the limits without a policy. `lattice-mcp` gains
+  `--version`, `--doctor` and `--help`.
+- LatticeMCPTransport: add
+  `LatticeSerializedStdioTransport.compatibleCodexInitialize(_:)`. The
+  transport applies it to incoming messages. It drops an empty
+  `codex/auth-change` experimental capability from an `initialize` request
+  and leaves every other message unchanged.
+- LatticeServerKit: `configureSyncRelay` gains `initialCatchUpPageSize:`,
+  `revalidateAfterRegistration:`, `transactionAuthorization:` and
+  `downloadExcludedTables:`. Add `SyncChannel.isCurrent` and
+  `SyncWritePolicy.immutableTables`. A mount with excluded tables delivers
+  through observer push. `initialCatchUpPageSize` outside 1 to 1000 stops the
+  process with a precondition failure. An upload refused by `immutableTables`
+  or by `transactionAuthorization` is answered with a `rejected` frame. It is
+  not acknowledged and not forwarded to peers.
+
+### Changed
+- `withTransaction` nesting rule. A nested checked transaction on a different
+  physical store is independent. Nesting is not a multi-store atomic commit,
+  and callers must take stores in a consistent order. Still refused before
+  BEGIN, all with the same message: the same handle, the same file through
+  another handle or link, a memory store with the same name, any handle with
+  attachments, a store whose file identity cannot be established, and any
+  call inside a sync `authorize` callback. A failure is recorded on the
+  connection that reported it, so a failure on an outer store does not stop
+  an inner store's commit.
+- The dynamic predicate translator quotes admitted column names, so a column
+  named like an SQL keyword keeps its meaning.
+- `LatticeProviderPool` drops a reader that was idle for 60 seconds and drops
+  the oldest idle readers when it holds more than eight. With a read policy
+  it serves only its default store and refuses a store that was replaced.
+- `lattice-mcp` now rejects unknown options and a second database path.
+- LatticeServerKit: on a mount whose store is opened read-only, a client
+  acknowledgement is now treated as a receipt for that connection only. The
+  relay writes nothing to the store and does not forward it. An
+  acknowledgement frame that is not exactly `kind` plus an `ack` list of UUID
+  strings is answered with a `rejected` frame.
+
+### Fixed
+- Cancelling a `changeStream` or `changeHeaders` consumer during delivery can
+  no longer park the shared observer delivery thread. A batch already in
+  flight at cancellation may finish resolving afterwards.
+- A typed optional link whose target row is gone reads `nil`. See
+  Compatibility.
+- Relay catch-up no longer keeps reading pages for a connection that has
+  closed.
+- `Lattice.delete(for:)` no longer fails when the WAL or SHM file is already
+  gone. A missing main file still fails.
+- A materialized snapshot on a closed store reports the failure through
+  `onQueryError` and `lastQueryError()`. It no longer looks like a successful
+  empty read.
+- Swift-encoded audit rows omit null placeholders from `changedFieldsNames`,
+  so native receivers accept local UPDATE entries that a Swift relay sends.
+
+### Known limits
+- Links. A link stored inside a `@Union` payload still returns a blank,
+  non-nil model when its target row is gone. A non-optional model-typed
+  property has no guard for a missing target. Declare model links as
+  optional properties.
+- Dynamic filters. The refusal of link, list, geo-bounds and union properties
+  relies on the schema snapshot stored in the file. A file without that
+  snapshot reports every column as primitive. `sort` in `lattice_query` is
+  not held to the filter rule and still accepts a link or list property name.
+- LatticeMCP null handling. Without a read policy a null `order` inside a
+  `sort` entry is refused, and `lattice_status` and `lattice_changes` refuse
+  a null `db`. Those two tools also refuse unknown arguments in every mode. A
+  wrong-typed optional argument other than `limit`, `offset`, `depth` and `k`
+  is refused even without a policy.
+- LatticeMCP schemas. Without a policy the advertised schemas of
+  `lattice_status` and `lattice_changes` allow extra properties although the
+  tools refuse them. `radiusMeters` advertises a minimum of 0 although the
+  value must be greater than 0.
+- LatticeMCP on iOS. `LatticeDiagnostics` uses Swift clock APIs that need
+  iOS 16, while the package declares iOS 15. Only the `Lattice` product is
+  built for iOS in this release's checks. Build LatticeMCP for macOS or
+  Linux.
+- Nested transactions. All refusals share one message, also when the cause is
+  an attachment, an unknown store identity or a sync callback. Store identity
+  for a file is read from the open connection. When it cannot be read, nested
+  calls that involve that store are refused. A failure reported
+  by a connection that has no checked transaction of its own is not recorded.
+  See Compatibility.
+- Local open. The last open wins: a local open republishes its own
+  configuration and results tuning for a store that already has a live
+  handle, as the synchronous initializer does. The scoped form does this
+  before the body runs, also when the body then rejects the handle.
+- No-create open. The refusal of a missing file is the ordinary native open
+  failure. There is no dedicated error case to match. An open that is served
+  from the connection cache does not check the file again, so it can succeed
+  after the file was removed while another handle is still open. "Existing"
+  means that the path exists.
+- Errors. Open failures and several checked reads still throw non-public
+  error types that cannot be matched by case. Some `LatticeError` cases name
+  a neighbouring operation: `detach(lattice:)` reports its in-transaction
+  refusal as `attachFailed`, and snapshot publication, history publication
+  and the applied-event lookup report failures as `syncReceiveFailed`.
+  `transactionError` also reports refusals before a transaction begins, so
+  its prefix does not prove that BEGIN ran.
+- Span hook. The five span names are string literals and are not yet
+  documented on the declarations. The hook runs synchronously inside the
+  open, so it should return quickly.
+- Certificate pins work with the Apple WebSocket transport only. On other
+  platforms an open with a pin throws.
+- `requireMainFileUnmoved` reports the current state only. It cannot detect a
+  file that was moved away and back between two checks.
+- Relay rows. The relay does not apply the core's 8 MiB per-row limit to what
+  it serves. See the LatticeCore 3.0.0 changelog for the client-side row
+  limits and the other sync limits of this release.
+  The [LatticeCore 3.0.0 notes](https://github.com/jsflax/LatticeCore/blob/3.0.0/CHANGELOG.md)
+  also cover replaced store files, link and list rows of immutable tables,
+  and unknown frame kinds.
+
 ## [2.6.1] - 2026-11-02
 
 ### Added
@@ -275,9 +621,11 @@ nuclear tool renumbered ids and silenced every other process.
   their owners finish. Its MCP dependency requires iOS 16; the plain Lattice
   product retains its existing platform declaration.
 - **`withTransaction`** provides synchronous checked BEGIN/COMMIT handling,
-  preserves the first captured operation failure, attempts rollback on
-  failure, and rejects nested checked transactions before the nested body
-  runs. Checked backend BEGIN/COMMIT hooks include default implementations.
+  preserves the first captured operation failure and attempts rollback on
+  failure. Through 2.6.1 it rejected every nested checked transaction before
+  the nested body ran. From 3.0.0 a nested transaction on a different
+  physical store is allowed; see the 3.0.0 entry. Checked backend
+  BEGIN/COMMIT hooks include default implementations.
 - **`@NoHistory`** property attribute: the column's UPDATE audit rows record
   the column name but not its value (INSERT/DELETE rows keep values). Live
   observers, `changeStream` and `changeHeaders` fire exactly as before. Sync
