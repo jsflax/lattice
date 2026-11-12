@@ -1505,11 +1505,15 @@ public struct Lattice {
     /// actor. A body may publish ownership by retaining or returning the handle.
     /// After the body returns or throws, temporary native ownership is released
     /// on a joined worker; no temporary facade survives in the async frame.
-    /// Cleanup never closes another published or same-store handle.
+    /// Automatic cleanup never closes another published or same-store handle.
     ///
     /// Scoped adoption reuses an existing same-actor Swift backend when Core
-    /// returns its cached connection, preserving that owner's error collector
-    /// and trampoline lookup. Ordinary openLocal keeps a separate facade backend.
+    /// returns its cached connection. A retained handle shares that backend and
+    /// the earlier handle's query-error handler. Each same-key scoped open
+    /// republishes its own configuration and results tuning, even when the body
+    /// throws or otherwise rejects the handle. Calling close() on a retained
+    /// handle closes the store for every same-key holder. Ordinary openLocal
+    /// keeps a separate facade backend.
     /// The same local-only and Sendable-migration admission rules apply.
     /// Cancellation before adoption joins cleanup and throws; cancellation after
     /// a successful body cannot discard ownership that body has published.

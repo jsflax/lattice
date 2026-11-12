@@ -59,7 +59,9 @@ struct MainFileCurrentnessTests {
     @Test func memoryAndMalformedExpectedPathsRefuse() throws {
         let owner = try Lattice(MainFileCurrentnessItem.self, configuration: .init(storage: .memory(named: "currentness-\(UUID())")))
         defer { owner.close() }
-        for path in ["", "bad\0path", String(repeating: "x", count: 4097), "/Users/jason/localdev/not-open.sqlite"] {
+        let unopenedPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lattice-not-open.sqlite").path
+        for path in ["", "bad\0path", String(repeating: "x", count: 4097), unopenedPath] {
             #expect(throws: (any Error).self) { try owner.requireMainFileUnmoved(expectedPath: path) }
         }
     }
