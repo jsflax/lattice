@@ -54,7 +54,21 @@ def main():
             diagnostic = re.search(
                 r"error:.*(?:'" + re.escape(hidden) + r"(?:\([^']*\))?'.*(?:inaccessible|scope)|"
                 r"has no member '" + re.escape(hidden) + r"')", output)
-            passed = completed.returncode != 0 and diagnostic is not None
+            dynamic_method_diagnostic = None
+            allowed_passed = any(item["probe"] == "Allowed.swift" and item["passed"]
+                                 for item in results)
+            if hidden in {"debugPrimaryKey", "debugJSON"} and allowed_passed:
+                # DynamicObject resolves unknown members dynamically, so an absent
+                # method surfaces as a call on a non-function value. Require the
+                # probe's own error and its matching quoted method-call line.
+                dynamic_method_diagnostic = re.search(
+                    r"^" + re.escape(str(PROBES / filename)) +
+                    r":(?P<probe_line>\d+):\d+: error: cannot call value of non-function type[^\n]*\n"
+                    r"(?:[ \t]*(?:\d+)?[ \t]*\|[^\n]*\n)*?"
+                    r"[ \t]*(?P=probe_line)[ \t]*\|[^\n]*\b" + re.escape(hidden) + r"\(",
+                    output, re.MULTILINE)
+            passed = completed.returncode != 0 and (
+                diagnostic is not None or dynamic_method_diagnostic is not None)
         results.append(dict(probe=filename, expected="hidden" if hidden else "available",
                             exit_code=completed.returncode, passed=passed))
     report = dict(manifest_bridge_target_only=True, probes=results,
