@@ -1,40 +1,73 @@
 # Changelog
 
-## [3.1.0] - Unreleased
+## [3.1.0] - 2026-11-12
 
 ### Changed
 
-- Require LatticeCore 3.1.0 for compatible read-only legacy attachments.
-  SQL union-view queries admit older source tables whose missing columns are
-  nullable or have a declared default and are not primary, identity or
-  UNIQUE-index keys. Each source arm projects columns by name and supplies
-  the declared default or NULL only for absent columns; existing NULLs remain
-  NULL. Validation reads the source's own connection before ATTACH and does
-  not alter or migrate its tables.
-- File-backed sources opened read-only retain that policy on the receiver's
-  attachment aliases and after connection reopening. Writes through those
-  aliases are refused, including writes attempted during receiver cleanup.
-  Receiver-main writes and writable attachment access remain supported.
+- Require LatticeCore 3.1.0 for the read-only attachment behavior described below.
+- SQL union-view queries can include a source opened read-only with an older
+  column subset. Every missing column must be nullable or have a declared
+  default, and no primary, identity or UNIQUE-index key may be missing.
+  Validation reads the source schema through its own connection before any
+  ATTACH operation.
+- Each union arm projects columns by name, so different physical column orders
+  retain their values. A permitted absent column uses its declared SQL default
+  or NULL; an existing NULL remains NULL. Admission and projection do not ALTER
+  or migrate the source table.
+- File-backed sources configured read-only retain that policy on the receiver's
+  attachment aliases and after connection reopening. SQLite rejects writes
+  through those aliases. Explicit receiver checkpoints target `main` and
+  writable aliases by name, leaving read-only source WAL files untouched even
+  when already fully backfilled. Receiver cleanup retains the read-only policy.
+  The explicit `checkpoint()` result reports frame counts summed over `main`
+  and writable aliases. On a store opened read-only, `checkpoint()` does no work
+  and reports not busy and not complete.
 
 ### Compatibility and limits
 
-- Writable column-set mismatches, missing keys, extra or renamed columns,
-  and required columns without defaults remain refused. A missing-column
-  subset is also refused when an expression key's dependencies cannot be
-  established from column metadata.
-- Read-only attachments require a file-backed source. Memory and temporary
-  sources, duplicate URI parameters, and URI parameters other than `mode`,
-  `cache` and `vfs` are refused before ATTACH. Reattaching an existing path
-  with a different access mode is refused. Equal-column and attached-only
-  schema admission and query projection behavior is unchanged.
-- Uncached typed-object getters still query the physical source table. An
-  absent column causes a missing-column SQL error in direct C++ access.
-  Sealed bridge getters record the error and return a type fallback such as
-  zero, false or an empty string; a failed optional-presence check can appear
-  as nil in Swift. These values are not the declared default from the SQL
-  union projection. Typed missing-column reads remain separate follow-up work.
-- There is no new storage-format epoch or public API change relative to
-  3.0.0. Its one-way storage changes and ordinary-open behavior still apply.
+- Writable column-set mismatches, missing keys, extra or renamed columns, and
+  required columns without defaults remain refused. A missing-column subset
+  is also refused when an expression key's dependencies cannot be established
+  from column metadata. For admitted sources, equal-column and attached-only
+  SQL projection is unchanged. The read-only source-form restrictions below
+  also apply when the schemas have equal columns.
+- Explicit attachment of writable sources retains the 3.0.0 tolerance for
+  an SQLite alias that is already in use; connection reopening remains strict.
+  A read-only source does not adopt an SQLite alias already in use; the attach
+  fails with SQLite's alias error.
+  If attachment fails on a later connection, cleanup
+  detaches only aliases created by that attempt and preserves existing ones.
+- There is no new storage-format epoch or public API change relative to 3.0.0.
+  The one-way storage changes and ordinary-open behavior documented for 3.0.0
+  still apply.
+- Compatibility is provided by the SQL union views. Uncached typed-object
+  getters still query the physical source table. Reading a column absent from
+  that table fails with a missing-column SQL error in C++. Sealed bridge
+  getters record the error and return a type fallback, such as zero, false or
+  an empty string; a failed optional-presence check can appear as nil in Swift.
+  Geographic-bounds and union-property bridge getters are not sealed: their
+  missing-column SQL error propagates instead of returning a fallback. A C++
+  exception crossing into Swift can terminate the process. These getters must
+  not be used for columns absent from the attached physical table. None of
+  these typed reads supplies the union projection's declared default.
+  Typed missing-column reads remain separate follow-up work.
+- Filtered vector searches and filtered full-text searches made through the
+  bridge's combined query apply filters to each source's physical table.
+  If a participating legacy source has the corresponding search index but lacks
+  a referenced filter column, the whole search returns
+  no rows and its count is zero, including otherwise matching receiver rows.
+  The bridge records the missing-column query error. Per-arm search projection
+  remains separate follow-up work.
+- Read-only attachment adds four source-form refusals relative to 3.0.0.
+  Each is refused before any ATTACH, with an error identifying the unsupported form:
+  - A source with no backing file: private memory, fileless temporary, or named
+    shared-memory databases.
+  - A source path with a repeated URI parameter or any parameter other than
+    `mode`, `cache` or `vfs`.
+  - A source handle that is already closed.
+  - The same path already attached in the other access mode.
+  Writable sources, including named memory databases, retain their existing
+  attachment access policy and the explicit-attachment alias tolerance above.
 
 ## [3.0.0] - 2026-11-12
 

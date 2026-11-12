@@ -71,7 +71,7 @@ let package = Package(
         // 3.0.0 supplies the checked local opens, storage writer protection,
         // and bounded synchronization APIs required by this wrapper.
         // 3.1.0 supplies compatible read-only legacy attachment SQL projection
-        // and preserves read-only aliases across reopen and receiver cleanup.
+        // and enforces read-only aliases across attachment and reopen.
         .package(url: "https://github.com/jsflax/LatticeCore.git", from: "3.1.0"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
