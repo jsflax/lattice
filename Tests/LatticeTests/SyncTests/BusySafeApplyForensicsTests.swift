@@ -148,6 +148,7 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
     let channelId: String
     let channelFileName: String
     private let ackPathRecorder: ACKPathRecorder?
+    private let clients = NIOLockedValueBox<[WebSocket]>([])
 
     var channelFileURL: URL { storageURL.appending(path: channelFileName) }
 
@@ -166,6 +167,7 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
         env.arguments = ["vapor"]
         app = try await Application.make(env)
         app.http.server.configuration.port = 0
+        app.http.server.configuration.shutdownTimeout = testHTTPServerShutdownTimeout
         let fileName = channelFileName
         let id = channelId
         let diagnosticMount = storageURL
@@ -212,6 +214,7 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
                 WebSocket.connect(to: url, headers: headers, configuration: config,
                                   on: app.eventLoopGroup) { [ackPath] ws in
+                    self.clients.withLockedValue { $0.append(ws) }
                     client.attach(ws, ackPath: ackPath)
                     if once.tryFire() { cont.resume() }
                 }.whenFailure { error in
@@ -227,13 +230,45 @@ private final class ForensicsRelayHarness: @unchecked Sendable {
     }
 
     func shutdown() async {
-        try? await app.asyncShutdown()
+        await shutdown_keepingStorage()
         try? FileManager.default.removeItem(at: storageURL)
     }
 
     /// Shuts the relay down but leaves the channel file for inspection.
     func shutdown_keepingStorage() async {
-        try? await app.asyncShutdown()
+        await closePushHarnessClients(clients.withLockedValue { $0 }, timeout: testHTTPServerShutdownTimeout)
+        do { try await app.asyncShutdown() }
+        catch { Issue.record(error, "Forensic fixture application teardown failed") }
+        clients.withLockedValue { $0.removeAll() }
+    }
+}
+
+private func withForensicsRelayHarness(
+    schema: [any Lattice.Model.Type], channelId: String = "forensics",
+    ackPathRecorder: ACKPathRecorder? = nil,
+    _ body: (ForensicsRelayHarness) async throws -> Void
+) async throws {
+    let harness = try await ForensicsRelayHarness(schema: schema, channelId: channelId,
+                                                  ackPathRecorder: ackPathRecorder)
+    do { try await body(harness) }
+    catch {
+        await harness.shutdown()
+        throw error
+    }
+    await harness.shutdown()
+}
+
+private enum ForensicsBodyFailure: Error { case expected }
+
+private struct ForensicsShutdownProbe: LifecycleHandler {
+    let sockets: [WebSocket]
+    let observed: NIOLockedValueBox<[Bool]?>
+
+    func shutdownAsync(_ application: Application) async {
+        // Record before bounded cleanup so the old fixture fails this boundary
+        // without leaving its control clients running.
+        observed.withLockedValue { $0 = sockets.map(\.isClosed) }
+        await closePushHarnessClients(sockets, timeout: testHTTPServerShutdownTimeout)
     }
 }
 
@@ -388,6 +423,70 @@ extension RelayApplyFaultScope {
 @Suite("BusySafeApplyForensics", .serialized, .timeLimit(.minutes(10)))
 final class BusySafeApplyForensicsTests: BaseTest {
 
+    @Test(arguments: [false, true])
+    func closesRawClientsBeforeApplicationShutdownOnEveryBodyExit(throwsFromBody: Bool) async throws {
+        let observed = NIOLockedValueBox<[Bool]?>(nil)
+        var application: Application?
+        var storageURL: URL?
+        var caughtExpectedFailure = false
+        do {
+            try await withForensicsRelayHarness(schema: [SimpleSyncObject.self]) { harness in
+                application = harness.app
+                storageURL = harness.storageURL
+                let a = ForensicClient(label: "lifecycle-a", autoAck: false)
+                let b = ForensicClient(label: "lifecycle-b", autoAck: false)
+                try await harness.connect(a)
+                try await harness.connect(b)
+                let first = try #require(a.socket)
+                let second = try #require(b.socket)
+                #expect(!first.isClosed && !second.isClosed)
+                harness.app.lifecycle.use(ForensicsShutdownProbe(
+                    sockets: [first, second], observed: observed))
+                if throwsFromBody { throw ForensicsBodyFailure.expected }
+            }
+        } catch ForensicsBodyFailure.expected {
+            caughtExpectedFailure = true
+        }
+        #expect(caughtExpectedFailure == throwsFromBody)
+        let closedAtShutdown = try #require(observed.withLockedValue { $0 })
+        #expect(closedAtShutdown == [true, true],
+                "Raw clients must be closed before application shutdown begins")
+        let app = try #require(application)
+        #expect(app.didShutdown)
+        let directory = try #require(storageURL)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    @Test func keepingStorageJoinsClientsAndPreservesTheChannelForInspection() async throws {
+        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self])
+        defer { try? FileManager.default.removeItem(at: harness.storageURL) }
+        let observed = NIOLockedValueBox<[Bool]?>(nil)
+        let seededCount: Int
+        do {
+            seededCount = try seedSummary(harness.channelFileURL, count: 1).count
+            let client = ForensicClient(label: "kept-storage", autoAck: false)
+            try await harness.connect(client)
+            let socket = try #require(client.socket)
+            #expect(!socket.isClosed)
+            let caughtUp = await poll(timeout: 60) { client.entries >= seededCount }
+            try #require(caughtUp, "The relay must read the seeded channel before teardown")
+            harness.app.lifecycle.use(ForensicsShutdownProbe(sockets: [socket], observed: observed))
+        } catch {
+            await harness.shutdown_keepingStorage()
+            throw error
+        }
+        await harness.shutdown_keepingStorage()
+        let closedAtShutdown = try #require(observed.withLockedValue { $0 })
+        #expect(closedAtShutdown == [true])
+        #expect(harness.app.didShutdown)
+        try #require(FileManager.default.fileExists(atPath: harness.channelFileURL.path))
+        let inspection = try Lattice(for: [SimpleSyncObject.self], configuration: .init(
+            fileURL: harness.channelFileURL, isReadOnly: true, allowsFileCreation: false))
+        defer { inspection.close() }
+        #expect(inspection.objects(SimpleSyncObject.self).count == 1)
+        #expect(inspection.objects(AuditLog.self).count == seededCount)
+    }
+
     // MARK: - (1) The bounded busy budget
 
     /// The relay must NOT open channel stores at the library default: 30s is
@@ -473,91 +572,91 @@ final class BusySafeApplyForensicsTests: BaseTest {
         }
         // Includes a thrown harness setup failure; finish is one-shot.
         defer { finishDiagnostic() }
-        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self], ackPathRecorder: recorder)
-        defer {
-            // Freeze/emit before scheduling existing asynchronous teardown.
-            finishDiagnostic()
-            harness.removeACKPathRecorder()
-            Task { [harness] in await harness.shutdown() }
+        try await withForensicsRelayHarness(schema: [SimpleSyncObject.self], ackPathRecorder: recorder) { harness in
+            defer {
+                // Freeze/emit before the wrapper joins teardown.
+                finishDiagnostic()
+                harness.removeACKPathRecorder()
+            }
+
+            // Seed the channel file BEFORE any socket opens, then release the
+            // seeding handle so the relay opens the file itself.
+            let seeded = try seedSummary(harness.channelFileURL, count: n)
+            let seededCount = seeded.count
+            let seededTail = try #require(seeded.tail)
+            print("FORENSIC seeded \(seededCount) audit entries into \(harness.channelFileURL.lastPathComponent)")
+
+            // Client A: joins already up to date (no catch-up of its own), so the
+            // ONLY contention it faces is peer B's burst.
+            let a = ForensicClient(label: "A", autoAck: true)
+            let uploadProbe = try await harness.connect(a, lastEventId: seededTail)
+
+            // Warm A's connection: prove its per-connection lattice is live and
+            // its apply pipeline acks, before the burst starts.
+            let warm = try makeUploadEntries(donorPath: "donor-warm-\(String.random(length: 8)).sqlite", value: -1)
+            let warmId = try #require(warm.first?.globalId)
+            try await a.socket!.send(Array(buffer: frame(warm)))
+            try #require(await poll(timeout: 60) { a.ackTime(for: warmId) != nil },
+                         "A's warmup upload was never acked; rejections=\(a.rejected) nacks=\(a.nacks)")
+
+            // Client B: fresh store, full catch-up, acks every page.
+            let b = ForensicClient(label: "B", autoAck: true)
+            try await harness.connect(b, diagnosticRole: .peer)
+
+            // Let the burst get going, then upload from A mid-burst.
+            _ = await poll(timeout: 60) { b.pages >= 2 }
+            let pagesAtUpload = b.pages
+            let upload = try makeUploadEntries(donorPath: "donor-a-\(String.random(length: 8)).sqlite", value: 42)
+            let uploadId = try #require(upload.first?.globalId)
+            let payload = Array(buffer: try frame(upload))
+            // The recorder's existing "warm" field selects this measured upload,
+            // never the preceding warmup. No payload or title is recorded.
+            uploadProbe?.selectWarmID(uploadId, entryCount: upload.count)
+
+            let t0 = DispatchTime.now()
+            diagnosticSendNS = t0.uptimeNanoseconds
+            uploadProbe?.record(.warmSendBegin, bytes: payload.count, count: upload.count)
+            do {
+                try await a.socket!.send(payload)
+                uploadProbe?.record(.warmSendReturn)
+            } catch {
+                uploadProbe?.record(.warmSendError)
+                throw error
+            }
+
+            uploadProbe?.record(.pollBegin)
+            let acked = await poll(timeout: 60) { a.ackTime(for: uploadId) != nil }
+            uploadProbe?.record(.pollEnd, result: acked)
+            let ackTimestamp = a.ackTime(for: uploadId)
+            let latencyMs = ackTimestamp.map {
+                Double($0.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
+            }
+            diagnosticAckNS = ackTimestamp?.uptimeNanoseconds
+            reachedLatencyCheck = true
+            if !acked || !(latencyMs ?? .infinity < 1_000) {
+                capturedFailure = recorder?.closeSnapshot(partial: true)
+            } else {
+                _ = recorder?.closeSnapshot(partial: false)
+            }
+
+            // Drain the rest of the burst so the numbers below describe a
+            // completed catch-up.
+            _ = await poll(timeout: 120) { b.entries >= seededCount }
+
+            print("""
+            FORENSIC peer-burst: seeded=\(seededCount) \
+            pages_at_upload=\(pagesAtUpload) b_pages=\(b.pages) b_entries=\(b.entries) \
+            a_upload_visible_ms=\(latencyMs.map { String(format: "%.0f", $0) } ?? "NEVER") \
+            acked=\(acked) nacks=\(a.nacks.count)
+            """)
+
+            #expect(acked, "A's live-socket upload was never applied server-side")
+            #expect(latencyMs ?? .infinity < 1_000,
+                    Comment(rawValue: "A's upload took \(latencyMs.map { String(format: "%.0f", $0) } ?? "NEVER")ms to become "
+                    + "visible under B's catch-up ack burst (budget: 1000ms)"))
+            #expect(a.nacks.isEmpty, "nothing should be nacked on the healthy path")
+            #expect(a.rejected.isEmpty)
         }
-
-        // Seed the channel file BEFORE any socket opens, then release the
-        // seeding handle so the relay opens the file itself.
-        let seeded = try seedSummary(harness.channelFileURL, count: n)
-        let seededCount = seeded.count
-        let seededTail = try #require(seeded.tail)
-        print("FORENSIC seeded \(seededCount) audit entries into \(harness.channelFileURL.lastPathComponent)")
-
-        // Client A: joins already up to date (no catch-up of its own), so the
-        // ONLY contention it faces is peer B's burst.
-        let a = ForensicClient(label: "A", autoAck: true)
-        let uploadProbe = try await harness.connect(a, lastEventId: seededTail)
-
-        // Warm A's connection: prove its per-connection lattice is live and
-        // its apply pipeline acks, before the burst starts.
-        let warm = try makeUploadEntries(donorPath: "donor-warm-\(String.random(length: 8)).sqlite", value: -1)
-        let warmId = try #require(warm.first?.globalId)
-        try await a.socket!.send(Array(buffer: frame(warm)))
-        try #require(await poll(timeout: 60) { a.ackTime(for: warmId) != nil },
-                     "A's warmup upload was never acked; rejections=\(a.rejected) nacks=\(a.nacks)")
-
-        // Client B: fresh store, full catch-up, acks every page.
-        let b = ForensicClient(label: "B", autoAck: true)
-        try await harness.connect(b, diagnosticRole: .peer)
-
-        // Let the burst get going, then upload from A mid-burst.
-        _ = await poll(timeout: 60) { b.pages >= 2 }
-        let pagesAtUpload = b.pages
-        let upload = try makeUploadEntries(donorPath: "donor-a-\(String.random(length: 8)).sqlite", value: 42)
-        let uploadId = try #require(upload.first?.globalId)
-        let payload = Array(buffer: try frame(upload))
-        // The recorder's existing "warm" field selects this measured upload,
-        // never the preceding warmup. No payload or title is recorded.
-        uploadProbe?.selectWarmID(uploadId, entryCount: upload.count)
-
-        let t0 = DispatchTime.now()
-        diagnosticSendNS = t0.uptimeNanoseconds
-        uploadProbe?.record(.warmSendBegin, bytes: payload.count, count: upload.count)
-        do {
-            try await a.socket!.send(payload)
-            uploadProbe?.record(.warmSendReturn)
-        } catch {
-            uploadProbe?.record(.warmSendError)
-            throw error
-        }
-
-        uploadProbe?.record(.pollBegin)
-        let acked = await poll(timeout: 60) { a.ackTime(for: uploadId) != nil }
-        uploadProbe?.record(.pollEnd, result: acked)
-        let ackTimestamp = a.ackTime(for: uploadId)
-        let latencyMs = ackTimestamp.map {
-            Double($0.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
-        }
-        diagnosticAckNS = ackTimestamp?.uptimeNanoseconds
-        reachedLatencyCheck = true
-        if !acked || !(latencyMs ?? .infinity < 1_000) {
-            capturedFailure = recorder?.closeSnapshot(partial: true)
-        } else {
-            _ = recorder?.closeSnapshot(partial: false)
-        }
-
-        // Drain the rest of the burst so the numbers below describe a
-        // completed catch-up.
-        _ = await poll(timeout: 120) { b.entries >= seededCount }
-
-        print("""
-        FORENSIC peer-burst: seeded=\(seededCount) \
-        pages_at_upload=\(pagesAtUpload) b_pages=\(b.pages) b_entries=\(b.entries) \
-        a_upload_visible_ms=\(latencyMs.map { String(format: "%.0f", $0) } ?? "NEVER") \
-        acked=\(acked) nacks=\(a.nacks.count)
-        """)
-
-        #expect(acked, "A's live-socket upload was never applied server-side")
-        #expect(latencyMs ?? .infinity < 1_000,
-                Comment(rawValue: "A's upload took \(latencyMs.map { String(format: "%.0f", $0) } ?? "NEVER")ms to become "
-                + "visible under B's catch-up ack burst (budget: 1000ms)"))
-        #expect(a.nacks.isEmpty, "nothing should be nacked on the healthy path")
-        #expect(a.rejected.isEmpty)
     }
 
     /// SECOND MECHANISM, kept as a guard. The incident's client A had itself
@@ -567,40 +666,40 @@ final class BusySafeApplyForensicsTests: BaseTest {
     /// without it a single 1000-id ack frame is one enormous transaction.
     @Test func liveUploadBehindOwnCatchUpAckBacklog() async throws {
         let n = Int(ProcessInfo.processInfo.environment["FORENSIC_N"] ?? "") ?? 4_000
-        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self])
-        defer { Task { [harness] in await harness.shutdown() } }
+        try await withForensicsRelayHarness(schema: [SimpleSyncObject.self]) { harness in
 
-        let seededCount = try seedSummary(harness.channelFileURL, count: n).count
-        print("FORENSIC seeded \(seededCount) audit entries")
+            let seededCount = try seedSummary(harness.channelFileURL, count: n).count
+            print("FORENSIC seeded \(seededCount) audit entries")
 
-        // A redials with an empty store: full catch-up, acks every page.
-        let a = ForensicClient(label: "A-redial", autoAck: true)
-        try await harness.connect(a)
+            // A redials with an empty store: full catch-up, acks every page.
+            let a = ForensicClient(label: "A-redial", autoAck: true)
+            try await harness.connect(a)
 
-        // The user types the moment the page paints — well before catch-up drains.
-        _ = await poll(timeout: 60) { a.pages >= 2 }
-        let pagesAtUpload = a.pages
-        let upload = try makeUploadEntries(donorPath: "donor-redial-\(String.random(length: 8)).sqlite", value: 7)
-        let uploadId = try #require(upload.first?.globalId)
-        let payload = Array(buffer: try frame(upload))
+            // The user types the moment the page paints — well before catch-up drains.
+            _ = await poll(timeout: 60) { a.pages >= 2 }
+            let pagesAtUpload = a.pages
+            let upload = try makeUploadEntries(donorPath: "donor-redial-\(String.random(length: 8)).sqlite", value: 7)
+            let uploadId = try #require(upload.first?.globalId)
+            let payload = Array(buffer: try frame(upload))
 
-        let t0 = DispatchTime.now()
-        try await a.socket!.send(payload)
-        let acked = await poll(timeout: 120) { a.ackTime(for: uploadId) != nil }
-        let latencyMs = a.ackTime(for: uploadId).map {
-            Double($0.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
+            let t0 = DispatchTime.now()
+            try await a.socket!.send(payload)
+            let acked = await poll(timeout: 120) { a.ackTime(for: uploadId) != nil }
+            let latencyMs = a.ackTime(for: uploadId).map {
+                Double($0.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
+            }
+            _ = await poll(timeout: 120) { a.entries >= seededCount }
+
+            print("""
+            FORENSIC own-backlog: seeded=\(seededCount) pages_at_upload=\(pagesAtUpload) \
+            a_pages=\(a.pages) a_entries=\(a.entries) \
+            a_upload_visible_ms=\(latencyMs.map { String(format: "%.0f", $0) } ?? "NEVER") \
+            acked=\(acked) nacks=\(a.nacks.count)
+            """)
+
+            #expect(acked, "A's upload was never applied server-side")
+            #expect(a.nacks.isEmpty, "an ack backlog is a queue, not a failure")
         }
-        _ = await poll(timeout: 120) { a.entries >= seededCount }
-
-        print("""
-        FORENSIC own-backlog: seeded=\(seededCount) pages_at_upload=\(pagesAtUpload) \
-        a_pages=\(a.pages) a_entries=\(a.entries) \
-        a_upload_visible_ms=\(latencyMs.map { String(format: "%.0f", $0) } ?? "NEVER") \
-        acked=\(acked) nacks=\(a.nacks.count)
-        """)
-
-        #expect(acked, "A's upload was never applied server-side")
-        #expect(a.nacks.isEmpty, "an ack backlog is a queue, not a failure")
     }
 
     /// NEGATIVE RESULT (kept as a regression guard). An entry naming a table
@@ -838,33 +937,32 @@ final class BusySafeApplyForensicsTests: BaseTest {
     /// `_catchUpFaultForTesting`.)
     @Test func transientApplyFailureIsRetriedAndAcked() async throws {
         let channelId = "forensics-retry-\(String.random(length: 8))"
-        let harness = try await ForensicsRelayHarness(schema: [SimpleSyncObject.self],
-                                                      channelId: channelId)
-        defer { Task { [harness] in await harness.shutdown() } }
-        let attempts = LockedBox(0)
-        _applyFaultForTesting.withLockedValue { box in
-            box = { channel, attempt in
-                guard channel == channelId else { return }
-                attempts.withLock { $0 = max($0, attempt) }
-                if attempt <= 2 {
-                    throw LatticeError.syncReceiveFailed(
-                        "Failed to begin transaction: database is locked")
+        try await withForensicsRelayHarness(schema: [SimpleSyncObject.self], channelId: channelId) { harness in
+            let attempts = LockedBox(0)
+            _applyFaultForTesting.withLockedValue { box in
+                box = { channel, attempt in
+                    guard channel == channelId else { return }
+                    attempts.withLock { $0 = max($0, attempt) }
+                    if attempt <= 2 {
+                        throw LatticeError.syncReceiveFailed(
+                            "Failed to begin transaction: database is locked")
+                    }
                 }
             }
+            defer { _applyFaultForTesting.withLockedValue { $0 = nil } }
+
+            let client = ForensicClient(label: "retry", autoAck: false)
+            try await harness.connect(client)
+            let upload = try makeUploadEntries(donorPath: "donor-retry-\(String.random(length: 8)).sqlite", value: 5)
+            let uploadId = try #require(upload.first?.globalId)
+            try await client.socket!.send(Array(buffer: try frame(upload)))
+
+            let acked = await poll(timeout: 60) { client.ackTime(for: uploadId) != nil }
+            print("FORENSIC retry-ladder: acked=\(acked) attempts=\(attempts.withLock { $0 }) nacks=\(client.nacks.count)")
+            #expect(acked, "a transient failure must be retried, not dropped")
+            #expect(attempts.withLock { $0 } == 3, "the third attempt should be the one that applies")
+            #expect(client.nacks.isEmpty, "a recovered apply must not nack")
         }
-        defer { _applyFaultForTesting.withLockedValue { $0 = nil } }
-
-        let client = ForensicClient(label: "retry", autoAck: false)
-        try await harness.connect(client)
-        let upload = try makeUploadEntries(donorPath: "donor-retry-\(String.random(length: 8)).sqlite", value: 5)
-        let uploadId = try #require(upload.first?.globalId)
-        try await client.socket!.send(Array(buffer: try frame(upload)))
-
-        let acked = await poll(timeout: 60) { client.ackTime(for: uploadId) != nil }
-        print("FORENSIC retry-ladder: acked=\(acked) attempts=\(attempts.withLock { $0 }) nacks=\(client.nacks.count)")
-        #expect(acked, "a transient failure must be retried, not dropped")
-        #expect(attempts.withLock { $0 } == 3, "the third attempt should be the one that applies")
-        #expect(client.nacks.isEmpty, "a recovered apply must not nack")
     }
 
     /// Retry EXHAUSTION: every attempt fails, so the relay stops after

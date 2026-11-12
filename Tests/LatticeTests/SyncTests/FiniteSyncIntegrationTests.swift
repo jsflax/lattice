@@ -92,7 +92,7 @@ final class FiniteRelayHarness: @unchecked Sendable {
         }
         self.app = app
         app.http.server.configuration.port = 0
-        app.http.server.configuration.shutdownTimeout = .milliseconds(500)
+        app.http.server.configuration.shutdownTimeout = testHTTPServerShutdownTimeout
         let user = UUID()
         let channel = channelID
         self.handle = Lattice.configureSyncRelay(

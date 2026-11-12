@@ -211,7 +211,7 @@ struct ReceiveRecoveryTests {
         let app = try await Application.make(environment)
         app.http.server.configuration.hostname = "127.0.0.1"
         app.http.server.configuration.port = 0
-        app.http.server.configuration.shutdownTimeout = .milliseconds(500)
+        app.http.server.configuration.shutdownTimeout = testHTTPServerShutdownTimeout
         app.webSocket("download", maxFrameSize: .init(integerLiteral: 1 << 20)) { request, socket in
             server.accept(socket, cursor: try? request.query.get(String.self, at: "last-event-id"))
         }

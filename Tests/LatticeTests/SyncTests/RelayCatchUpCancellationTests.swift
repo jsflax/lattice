@@ -102,7 +102,7 @@ private final class CatchUpFixture: @unchecked Sendable {
             let app = try await Application.make(environment)
             application = app
             app.http.server.configuration.port = 0
-            app.http.server.configuration.shutdownTimeout = .milliseconds(500)
+            app.http.server.configuration.shutdownTimeout = testHTTPServerShutdownTimeout
             let handle = Lattice.configureSyncRelay(on: app.routes, for: [CatchUpCancellationRecord.self],
                 storageURL: root, observerPush: SyncObserverPush(reconcileInterval: nil),
                 initialCatchUpPageSize: pageSize,
