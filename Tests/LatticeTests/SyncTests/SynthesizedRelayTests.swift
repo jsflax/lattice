@@ -151,7 +151,7 @@ struct SynthesizedRelayTests {
         environment.arguments = ["vapor"]
         let app = try await Application.make(environment)
         app.http.server.configuration.port = 0
-        app.http.server.configuration.shutdownTimeout = .milliseconds(500)
+        app.http.server.configuration.shutdownTimeout = testHTTPServerShutdownTimeout
         let options = SyncObserverPush(copying: SyncObserverPush(reconcileInterval: nil), sendBoundaryProbe: probe)
         let handle = Lattice.configureSyncRelay(on: app.routes, path: ["snapshot"],
             for: [SynthesizedRelayRecord.self], storageURL: storage, observerPush: options,

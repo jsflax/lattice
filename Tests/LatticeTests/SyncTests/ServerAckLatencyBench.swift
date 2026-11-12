@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import Vapor
 import NIOWebSocket
+import NIOConcurrencyHelpers
 import WebSocketKit
 import Lattice
 @testable import LatticeServerKit
@@ -211,6 +212,7 @@ private final class BenchRelayHarness: @unchecked Sendable {
     let storageURL: URL
     let port: Int
     private let ackPathRecorder: ACKPathRecorder?
+    private let clients = NIOLockedValueBox<[WebSocket]>([])
 
     init(schema: [any Lattice.Model.Type], ackPathRecorder: ACKPathRecorder? = nil) async throws {
         self.ackPathRecorder = ackPathRecorder
@@ -220,6 +222,7 @@ private final class BenchRelayHarness: @unchecked Sendable {
         env.arguments = ["vapor"]
         app = try await Application.make(env)
         app.http.server.configuration.port = 0
+        app.http.server.configuration.shutdownTimeout = testHTTPServerShutdownTimeout
         let diagnosticMount = storageURL
         var initialized = false
         if let ackPathRecorder { ACKPathDiagnostics.install(ackPathRecorder, for: diagnosticMount) }
@@ -262,6 +265,7 @@ private final class BenchRelayHarness: @unchecked Sendable {
                     configuration: config,
                     on: app.eventLoopGroup
                 ) { ws in
+                    self.clients.withLockedValue { $0.append(ws) }
                     collector.attach(ws)
                     if once.tryFire() { cont.resume() }
                 }.whenFailure { error in
@@ -281,8 +285,37 @@ private final class BenchRelayHarness: @unchecked Sendable {
     }
 
     func shutdown() async {
-        try? await app.asyncShutdown()
+        await closePushHarnessClients(clients.withLockedValue { $0 }, timeout: testHTTPServerShutdownTimeout)
+        do { try await app.asyncShutdown() }
+        catch { Issue.record(error, "Benchmark fixture application teardown failed") }
+        clients.withLockedValue { $0.removeAll() }
         try? FileManager.default.removeItem(at: storageURL)
+    }
+}
+
+private func withBenchRelayHarness(
+    schema: [any Lattice.Model.Type], ackPathRecorder: ACKPathRecorder? = nil,
+    _ body: (BenchRelayHarness) async throws -> Void
+) async throws {
+    let harness = try await BenchRelayHarness(schema: schema, ackPathRecorder: ackPathRecorder)
+    do { try await body(harness) }
+    catch {
+        await harness.shutdown()
+        throw error
+    }
+    await harness.shutdown()
+}
+
+private enum BenchBodyFailure: Error { case expected }
+
+private struct BenchShutdownProbe: LifecycleHandler {
+    let sockets: [WebSocket]
+    let observed: NIOLockedValueBox<[Bool]?>
+
+    func shutdownAsync(_ application: Application) async {
+        observed.withLockedValue { $0 = sockets.map(\.isClosed) }
+        // Rescue the control only after recording the real lifecycle boundary.
+        await closePushHarnessClients(sockets, timeout: testHTTPServerShutdownTimeout)
     }
 }
 
@@ -303,6 +336,37 @@ private func poll(timeout: TimeInterval, _ predicate: @escaping @Sendable () -> 
 
 @Suite("ServerAckLatencyBench", .timeLimit(.minutes(5)))
 final class ServerAckLatencyBench: BaseTest {
+
+    @Test(arguments: [false, true])
+    func closesRawClientsBeforeApplicationShutdownOnEveryBodyExit(throwsFromBody: Bool) async throws {
+        let observed = NIOLockedValueBox<[Bool]?>(nil)
+        var application: Application?
+        var storageURL: URL?
+        var caughtExpectedFailure = false
+        do {
+            try await withBenchRelayHarness(schema: [SimpleSyncObject.self]) { harness in
+                application = harness.app
+                storageURL = harness.storageURL
+                let first = try await harness.connect(user: UUID())
+                let second = try await harness.connect(user: UUID())
+                let a = try #require(first.socket)
+                let b = try #require(second.socket)
+                #expect(!a.isClosed && !b.isClosed)
+                harness.app.lifecycle.use(BenchShutdownProbe(sockets: [a, b], observed: observed))
+                if throwsFromBody { throw BenchBodyFailure.expected }
+            }
+        } catch BenchBodyFailure.expected {
+            caughtExpectedFailure = true
+        }
+        #expect(caughtExpectedFailure == throwsFromBody)
+        let closedAtShutdown = try #require(observed.withLockedValue { $0 })
+        #expect(closedAtShutdown == [true, true],
+                "Raw clients must be closed before application shutdown begins")
+        let app = try #require(application)
+        #expect(app.didShutdown)
+        let directory = try #require(storageURL)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
 
     @Test func ackLatencyForSingleUploadedFrame() async throws {
         let n = ProcessInfo.processInfo.environment["LATTICE_BENCH_FULL"] == "1" ? 5000 : 1000
@@ -342,73 +406,72 @@ final class ServerAckLatencyBench: BaseTest {
                 "expected \(n) audit entries, donor produced \(benchEntries.count)")
         try #require(benchIds.count == benchEntries.count)
 
-        let harness = try await BenchRelayHarness(schema: [SimpleSyncObject.self], ackPathRecorder: recorder)
-        defer {
-            // Freeze failure evidence before asynchronous teardown can add a
-            // close event. The outer defer also covers failures before init.
-            finishDiagnostics()
-            Task { [harness] in await harness.shutdown() }
-        }
-        defer { harness.removeACKPathRecorder() }
+        try await withBenchRelayHarness(schema: [SimpleSyncObject.self], ackPathRecorder: recorder) { harness in
+            defer {
+                // Freeze evidence before awaited teardown can add close events.
+                finishDiagnostics()
+                harness.removeACKPathRecorder()
+            }
 
-        let client = try await harness.connect(user: UUID())
-        diagnosticClient = client
+            let client = try await harness.connect(user: UUID())
+            diagnosticClient = client
 
-        // Warmup: the relay opens its per-channel lattice lazily after the
-        // upgrade and buffers frames until then. One acked warmup entry
-        // guarantees the pipeline is live, so the measured window is frame
-        // apply+ack latency — not connection/open latency.
-        failurePhase = "warmup"
-        client.beginMeasurement(expecting: warmupIds)
-        if let warmID = warmupEntries.first?.globalId {
-            client.ackPath?.selectWarmID(warmID, entryCount: warmupEntries.count)
-        }
-        client.ackPath?.record(.warmEncodeBegin, count: warmupEntries.count)
-        let warmupFrame: [UInt8]
-        do {
-            warmupFrame = try makeBenchFrame(entries: warmupEntries)
-            client.ackPath?.record(.warmEncodeEnd, bytes: warmupFrame.count, count: warmupEntries.count)
-        } catch {
-            client.ackPath?.record(.warmEncodeError)
-            throw error
-        }
-        client.ackPath?.record(.warmSendBegin, bytes: warmupFrame.count, count: warmupEntries.count)
-        do {
-            try await client.socket!.send(warmupFrame)
-            client.ackPath?.record(.warmSendReturn)
-        } catch {
-            client.ackPath?.record(.warmSendError)
-            throw error
-        }
-        client.ackPath?.record(.pollBegin)
-        let warmedUp = await poll(timeout: 30) { client.measurement.covered != nil }
-        client.ackPath?.record(.pollEnd, result: warmedUp)
-        if !warmedUp { finishDiagnostics() }
-        try #require(warmedUp,
-                     "warmup frame was never acked; rejected_frames=\(client.rejectionCount)")
+            // Warmup: the relay opens its per-channel lattice lazily after the
+            // upgrade and buffers frames until then. One acked warmup entry
+            // guarantees the pipeline is live, so the measured window is frame
+            // apply+ack latency — not connection/open latency.
+            failurePhase = "warmup"
+            client.beginMeasurement(expecting: warmupIds)
+            if let warmID = warmupEntries.first?.globalId {
+                client.ackPath?.selectWarmID(warmID, entryCount: warmupEntries.count)
+            }
+            client.ackPath?.record(.warmEncodeBegin, count: warmupEntries.count)
+            let warmupFrame: [UInt8]
+            do {
+                warmupFrame = try makeBenchFrame(entries: warmupEntries)
+                client.ackPath?.record(.warmEncodeEnd, bytes: warmupFrame.count, count: warmupEntries.count)
+            } catch {
+                client.ackPath?.record(.warmEncodeError)
+                throw error
+            }
+            client.ackPath?.record(.warmSendBegin, bytes: warmupFrame.count, count: warmupEntries.count)
+            do {
+                try await client.socket!.send(warmupFrame)
+                client.ackPath?.record(.warmSendReturn)
+            } catch {
+                client.ackPath?.record(.warmSendError)
+                throw error
+            }
+            client.ackPath?.record(.pollBegin)
+            let warmedUp = await poll(timeout: 30) { client.measurement.covered != nil }
+            client.ackPath?.record(.pollEnd, result: warmedUp)
+            if !warmedUp { finishDiagnostics() }
+            try #require(warmedUp,
+                         "warmup frame was never acked; rejected_frames=\(client.rejectionCount)")
 
-        // Measured upload: ONE frame carrying all N entries. Encode before
-        // t0 so serialization cost stays out of the measurement.
-        failurePhase = "measured"
-        let frame = try makeBenchFrame(entries: benchEntries)
-        client.beginMeasurement(expecting: benchIds)
-        let t0 = DispatchTime.now()
-        try await client.socket!.send(frame)
+            // Measured upload: ONE frame carrying all N entries. Encode before
+            // t0 so serialization cost stays out of the measurement.
+            failurePhase = "measured"
+            let frame = try makeBenchFrame(entries: benchEntries)
+            client.beginMeasurement(expecting: benchIds)
+            let t0 = DispatchTime.now()
+            try await client.socket!.send(frame)
 
-        let deadline: TimeInterval = 120
-        let allAcked = await poll(timeout: deadline) { client.measurement.covered != nil }
-        let m = client.measurement
-        if !allAcked { finishDiagnostics() }
-        #expect(allAcked,
-                "only \(m.ackedCount)/\(benchEntries.count) entries acked within \(Int(deadline))s; rejected_frames=\(client.rejectionCount)")
+            let deadline: TimeInterval = 120
+            let allAcked = await poll(timeout: deadline) { client.measurement.covered != nil }
+            let m = client.measurement
+            if !allAcked { finishDiagnostics() }
+            #expect(allAcked,
+                    "only \(m.ackedCount)/\(benchEntries.count) entries acked within \(Int(deadline))s; rejected_frames=\(client.rejectionCount)")
 
-        if let first = m.first, let covered = m.covered {
-            let firstMs = Double(first.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
-            let lastMs = Double(covered.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
-            print("BENCH ServerAckLatency: n=\(benchEntries.count) "
-                  + "first_ack_ms=\(String(format: "%.1f", firstMs)) "
-                  + "last_ack_ms=\(String(format: "%.1f", lastMs))")
+            if let first = m.first, let covered = m.covered {
+                let firstMs = Double(first.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
+                let lastMs = Double(covered.uptimeNanoseconds &- t0.uptimeNanoseconds) / 1e6
+                print("BENCH ServerAckLatency: n=\(benchEntries.count) "
+                      + "first_ack_ms=\(String(format: "%.1f", firstMs)) "
+                      + "last_ack_ms=\(String(format: "%.1f", lastMs))")
+            }
+            if allAcked { failurePhase = nil }
         }
-        if allAcked { failurePhase = nil }
     }
 }
