@@ -176,6 +176,8 @@ final class PushHarness: @unchecked Sendable {
     let port: Int
     private let schema: [any Lattice.Model.Type]
     private let diagnostics: PushHarnessDiagnostics?
+    private let clientLock = NSLock()
+    private var clients: [WebSocket] = []
     /// Legacy mount: verbatim same-channel fan-out, no push.
     let writerHandle: SyncRelayHandle
     /// Push-enabled watch mount over the same channel files.
@@ -197,12 +199,10 @@ final class PushHarness: @unchecked Sendable {
         env.arguments = ["vapor"]
         app = try await Application.make(env)
         app.http.server.configuration.port = 0
-        // Awaited teardown (see `withPushHarness`) means we actually wait for
-        // the graceful server stop — and these tests deliberately end with
-        // observer sockets still open, which is exactly what the default 10s
-        // shutdownTimeout waits out, once per test. Half a second is plenty
-        // for a loopback close and keeps the awaited cleanup cheap.
-        app.http.server.configuration.shutdownTimeout = .milliseconds(500)
+        // This is a failure budget, not a delay: teardown closes the raw
+        // clients first. A 500 ms budget can expire before a loaded event loop
+        // even closes its listener, triggering Vapor's deinit assertion.
+        app.http.server.configuration.shutdownTimeout = testHTTPServerShutdownTimeout
         let diagnosticMount = storageURL
         var initialized = false
         if let diagnostics { ACKPathDiagnostics.install(diagnostics.recorder, for: diagnosticMount) }
@@ -268,6 +268,7 @@ final class PushHarness: @unchecked Sendable {
                 configuration: config,
                 on: group ?? app.eventLoopGroup
             ) { ws in
+                self.clientLock.withLock { self.clients.append(ws) }
                 collector.attach(ws)
                 diagnostic?.record(.connectEnd)
                 if once.tryFire() { cont.resume() }
@@ -317,7 +318,11 @@ final class PushHarness: @unchecked Sendable {
         // The first failed predicate freezes earlier; a passing harness closes silently.
         diagnostics?.finish()
         if let diagnostics { ACKPathDiagnostics.remove(diagnostics.recorder, for: storageURL) }
-        try? await app.asyncShutdown()
+        let sockets = clientLock.withLock { clients }
+        await closePushHarnessClients(sockets, timeout: testHTTPServerShutdownTimeout)
+        do { try await app.asyncShutdown() }
+        catch { Issue.record(error, "Push fixture application teardown failed") }
+        clientLock.withLock { clients.removeAll() }
         try? FileManager.default.removeItem(at: storageURL)
     }
 }

@@ -12,6 +12,11 @@ import Lattice
 import Observation
 import Vapor
 
+// A failure budget, not a delay: shutdown completes when the listener closes.
+// Under parallel load, a 500 ms timer can win before Vapor's quiescing work
+// reaches the event loop and release an active HTTPServerConnection.
+let testHTTPServerShutdownTimeout: TimeAmount = .seconds(60)
+
 /// Thread-safe one-shot flag for guarding continuation resume.
 final class AtomicOnce: @unchecked Sendable {
     private let _lock = NSLock()
