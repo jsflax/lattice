@@ -80,9 +80,41 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
             // Delivery is FIFO per store and rotates between stores. Both
             // gate and probe use the stream's store identity.
             let gate = DispatchSemaphore(value: 0)
-            defer { gate.signal() }
-            ObserverDeliveryWorker.shared.enqueue(kind: .headers, table: AuditLog.entityName,
-                                                  storeIdentity: storeIdentity, batchID: nil) { gate.wait() }
+            // Scalar receipts only: never log or hold their lock across the wait.
+            let points = LockedBox([String: UInt64]())
+            let gateID = UUID()
+            let probeID = UUID()
+            @Sendable func mark(_ event: String) {
+                let now = DispatchTime.now().uptimeNanoseconds
+                points.withLock { $0[event] = now }
+            }
+            @Sendable func signalGate(_ reason: String) {
+                mark("\(reason)_signal_before")
+                let result = gate.signal()
+                let now = DispatchTime.now().uptimeNanoseconds
+                points.withLock {
+                    $0["\(reason)_signal_after"] = now
+                    $0["\(reason)_signal_woke_waiter"] = result == 0 ? 0 : 1
+                }
+            }
+            let context = "store_identity=\(storeIdentity) iteration=\(iteration)"
+                + " gate_id=\(gateID.uuidString.lowercased()) probe_id=\(probeID.uuidString.lowercased())"
+            defer {
+                signalGate("scope_exit")
+                let copy = points.withLock { $0 }
+                let fields = copy.keys.sorted().map { "\($0)=\(copy[$0]!)" }.joined(separator: " ")
+                print("DIAGNOSTIC ChangeHeadersGate: stage=snapshot \(context) \(fields)"
+                    + " clock=dispatch_uptime late_events_unobserved=true")
+            }
+            print("DIAGNOSTIC ChangeHeadersGate: stage=context \(context)")
+            mark("gate_enqueue_before")
+            ObserverDeliveryWorker.shared.enqueue(kind: .headers, table: "TestChangeHeadersGate",
+                                                  storeIdentity: storeIdentity, batchID: gateID) {
+                mark("wait_enter")
+                gate.wait()
+                mark("wait_return")
+            }
+            mark("gate_enqueue_after")
 
             // The burst: a sibling same-process handle on its own thread, so
             // the SQL never blocks a cooperative-pool thread.
@@ -90,11 +122,16 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
             let committedFrames = LockedBox(0)
             let writerFailure = LockedBox<String?>(nil)
             let writer = Thread {
-                defer { writerDone.withLock { $0 = true } }
+                defer {
+                    mark("writer_done")
+                    writerDone.withLock { $0 = true }
+                }
+                mark("writer_started")
                 do {
                     let handle = try Lattice(ChangeStreamLockOrderObject.self,
                                              configuration: .init(fileURL: fileURL))
-                    for _ in 0..<Self.framesPerBurst {
+                    mark("writer_open_returned")
+                    for frame in 0..<Self.framesPerBurst {
                         try handle.withTransaction {
                             for row in 0..<Self.rowsPerFrame {
                                 let object = ChangeStreamLockOrderObject()
@@ -103,16 +140,18 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
                             }
                         }
                         committedFrames.withLock { $0 += 1 }
+                        mark("writer_committed_\(frame + 1)")
                     }
                 } catch {
                     writerFailure.withLock { $0 = String(describing: error) }
+                    mark("writer_failed")
                 }
             }
             burstStarted.withLock { $0 = true }
             writer.start()
             guard await poll(until: { writerDone.withLock { $0 } }, within: .seconds(60)) else {
                 Issue.record("iteration \(iteration): the writer thread did not finish its burst within 60 s")
-                gate.signal()
+                signalGate("writer_timeout")
                 consumer.cancel()
                 return
             }
@@ -121,7 +160,7 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
             let failure = writerFailure.withLock { $0 }
             #expect(committed == Self.framesPerBurst, "iteration \(iteration): committed \(committed) burst frames; writer failure: \(failure ?? "none")")
             guard committed == Self.framesPerBurst else {
-                gate.signal()
+                signalGate("writer_incomplete")
                 consumer.cancel()
                 return
             }
@@ -130,9 +169,11 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
             // inside `deliver` with the consumer parked on `next()`.
             let cancelReturned = LockedBox(false)
             let canceller = Thread {
-                gate.signal()
+                signalGate("canceller")
                 Thread.sleep(forTimeInterval: 0.005)
+                mark("cancel_before")
                 consumer.cancel()
+                mark("cancel_after")
                 cancelReturned.withLock { $0 = true }
             }
             canceller.start()
@@ -152,10 +193,13 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
             // The worker must still be answering once the backlog drains (a
             // probe job queued behind it) before the next iteration begins.
             let workerAlive = LockedBox(false)
-            ObserverDeliveryWorker.shared.enqueue(kind: .headers, table: AuditLog.entityName,
-                                                  storeIdentity: storeIdentity, batchID: nil) {
+            mark("probe_enqueue_before")
+            ObserverDeliveryWorker.shared.enqueue(kind: .headers, table: "TestChangeHeadersProbe",
+                                                  storeIdentity: storeIdentity, batchID: probeID) {
+                mark("probe_body_done")
                 workerAlive.withLock { $0 = true }
             }
+            mark("probe_enqueue_after")
             let workerOK = await poll(until: { workerAlive.withLock { $0 } }, within: .seconds(30))
             #expect(workerOK, "iteration \(iteration): the observer-delivery worker did not run a probe job within 30 s")
             guard workerOK else { return }

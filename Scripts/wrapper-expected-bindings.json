@@ -4,9 +4,9 @@
       "identity": "latticecore",
       "kind": "remoteSourceControl",
       "repository": "https://github.com/jsflax/LatticeCore.git",
-      "revision": "992bf3e26a6eaca8ba235de1156bbfbbac8564b0",
+      "revision": "4cc4085bd19b8da3efc8fb6127a4cad8af950fb7",
       "selection": "version",
-      "version": "3.1.0"
+      "version": "3.1.1"
     },
     {
       "identity": "swift-sdk",
@@ -16,7 +16,7 @@
       "version": "0.13.1"
     }
   ],
-  "qualificationNote": "Qualified identifies reviewed upstream source identities only. Core uses released version 3.1.0; the SDK uses exact version 0.13.1. This binding does not qualify the wrapper graph, tests, products or a wrapper release.",
+  "qualificationNote": "Qualified identifies reviewed upstream source identities only. Core uses released version 3.1.1; the SDK uses exact version 0.13.1. This binding does not qualify the wrapper graph, tests, products or a wrapper release.",
   "qualificationScope": "reviewed-upstream-source-identities-only",
   "qualified": true,
   "schema": "lattice.wrapper-dependency-bindings/1",
@@ -43,15 +43,15 @@
   },
   "sourceEvidence": {
     "latticecore": {
-      "revision": "992bf3e26a6eaca8ba235de1156bbfbbac8564b0",
-      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/992bf3e26a6eaca8ba235de1156bbfbbac8564b0",
+      "revision": "4cc4085bd19b8da3efc8fb6127a4cad8af950fb7",
+      "sourceURL": "https://github.com/jsflax/LatticeCore/tree/4cc4085bd19b8da3efc8fb6127a4cad8af950fb7",
       "selection": "version",
       "parents": [
-        "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
-        "53474d03506e79218047ebca478c636328f514ee"
+        "bc51c2ac94a31579af61f8cfe031559cf5a6621f",
+        "9cc6f988596fbbe5453f24dd357c08417da16027"
       ],
-      "scope": "Published LatticeCore 3.1.0 source identity. The release adds read-only legacy-subset attachment admission and per-arm SQL projection, with the documented typed-read and search-filter limitations. It adds no storage-format epoch relative to 3.0.0. Wrapper compilation, tests and runtime qualification remain separate.",
-      "version": "3.1.0"
+      "scope": "Published LatticeCore 3.1.1 source identity. Linux and Android paths share notification resources and a later same-path open retries an inactive listener. Apple retains 3.1.0 listener behavior. Per-path watch limits, recovery without catch-up, and the fork-without-exec restriction remain documented. Read-only legacy attachment behavior and the storage format are unchanged from 3.1.0. Wrapper compilation, tests and runtime qualification remain separate.",
+      "version": "3.1.1"
     },
     "swift-sdk": {
       "revision": "82951cc9cd05de216e8dd6425f951ce31d76fa0a",
@@ -205,5 +205,16 @@
     ],
     "scope": "Published LatticeCore 3.0.0 source identity. The release includes checked local opens, bounded synchronization and the documented one-way storage change. Wrapper compilation, tests and runtime qualification remain separate.",
     "version": "3.0.0"
+  },
+  "previousCore310SourceEvidence": {
+    "revision": "992bf3e26a6eaca8ba235de1156bbfbbac8564b0",
+    "sourceURL": "https://github.com/jsflax/LatticeCore/tree/992bf3e26a6eaca8ba235de1156bbfbbac8564b0",
+    "selection": "version",
+    "parents": [
+      "f6eb64e0ccd3f1bef04371f3049c24a1467ba2f8",
+      "53474d03506e79218047ebca478c636328f514ee"
+    ],
+    "scope": "Published LatticeCore 3.1.0 source identity. The release adds read-only legacy-subset attachment admission and per-arm SQL projection, with the documented typed-read and search-filter limitations. It adds no storage-format epoch relative to 3.0.0. Wrapper compilation, tests and runtime qualification remain separate.",
+    "version": "3.1.0"
   }
 }
