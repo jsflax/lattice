@@ -72,7 +72,9 @@ let package = Package(
         // and bounded synchronization APIs required by this wrapper.
         // 3.1.0 supplies compatible read-only legacy attachment SQL projection
         // and enforces read-only aliases across attachment and reopen.
-        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "3.1.0"),
+        // 3.1.1 shares Linux notification resources and retries inactive listeners
+        // on a later same-path open instead of reusing an inactive listener.
+        .package(url: "https://github.com/jsflax/LatticeCore.git", from: "3.1.1"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", from: "603.0.0"),
         .package(
           url: "https://github.com/apple/swift-collections.git",
