@@ -52,6 +52,9 @@ private final class ForensicClient: @unchecked Sendable {
     private var ackFrameCount = 0
     private var catchUpPages = 0
     private var catchUpEntries = 0
+    private var auditArrival: [UUID: DispatchTime] = [:]
+    /// Undecodable frames and audit pages with missing/invalid identities cannot prove non-delivery.
+    private var malformedAuditFrames = 0
     private var ackArrival: [UUID: DispatchTime] = [:]
     private var nackArrival: [UUID: DispatchTime] = [:]
     private var nackReasons: [String] = []
@@ -72,6 +75,9 @@ private final class ForensicClient: @unchecked Sendable {
             guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
                   let kind = root["kind"] as? String else {
                 ackPath?.record(.clientDecodeError)
+                self.lock.lock()
+                self.malformedAuditFrames += 1
+                self.lock.unlock()
                 return
             }
             switch kind {
@@ -97,12 +103,16 @@ private final class ForensicClient: @unchecked Sendable {
                 self.lock.unlock()
             case "auditLog":
                 ackPath?.record(.clientDecodedAudit)
-                let logs = root["auditLog"] as? [[String: Any]] ?? []
+                let parsedLogs = root["auditLog"] as? [[String: Any]]
+                let logs = parsedLogs ?? []
                 let ids = logs.compactMap { $0["globalId"] as? String }
                     .compactMap(UUID.init(uuidString:))
+                let malformed = parsedLogs == nil || ids.count != logs.count
                 self.lock.lock()
                 self.catchUpPages += 1
                 self.catchUpEntries += logs.count
+                for id in ids where self.auditArrival[id] == nil { self.auditArrival[id] = now }
+                if malformed { self.malformedAuditFrames += 1 }
                 self.lock.unlock()
                 // The write burst: the real client acks every applied page,
                 // and the relay turns each ack into a write transaction on
@@ -116,9 +126,13 @@ private final class ForensicClient: @unchecked Sendable {
                 self.lock.lock()
                 self.rejections.append(String(decoding: data, as: UTF8.self))
                 self.lock.unlock()
+            case "catchUpComplete", "floorReset":
+                ackPath?.record(.clientDecodedOther)
             default:
                 ackPath?.record(.clientDecodedOther)
-                break
+                self.lock.lock()
+                self.malformedAuditFrames += 1
+                self.lock.unlock()
             }
         }
         ackPath?.record(.clientHandlersAttached)
@@ -126,6 +140,8 @@ private final class ForensicClient: @unchecked Sendable {
 
     func ackTime(for id: UUID) -> DispatchTime? { lock.withLock { ackArrival[id] } }
     func nackTime(for id: UUID) -> DispatchTime? { lock.withLock { nackArrival[id] } }
+    func auditTime(for id: UUID) -> DispatchTime? { lock.withLock { auditArrival[id] } }
+    var malformedAuditFrameCount: Int { lock.withLock { malformedAuditFrames } }
     var pages: Int { lock.withLock { catchUpPages } }
     var entries: Int { lock.withLock { catchUpEntries } }
     var ackFrames: Int { lock.withLock { ackFrameCount } }
@@ -826,8 +842,11 @@ final class BusySafeApplyForensicsTests: BaseTest {
         let warm = try makeUploadEntries(donorPath: "donor-lockwarm-\(String.random(length: 8)).sqlite", value: -1)
         let warmId = try #require(warm.first?.globalId)
         try await uploader.socket!.send(Array(buffer: try frame(warm)))
-        try #require(await poll(timeout: 60) { uploader.ackTime(for: warmId) != nil },
-                     "warmup frame was not acked — harness is wrong, not the relay")
+        try #require(await poll(timeout: 60) {
+            uploader.ackTime(for: warmId) != nil && peer.auditTime(for: warmId) != nil
+        }, "warmup frame was not acked and observed by the peer — harness is wrong, not the relay")
+        try #require(peer.malformedAuditFrameCount == 0,
+                     "malformed peer frames cannot establish a healthy warmup")
 
         // Complete donor I/O and encoding before starting the finite lock
         // window; fixture work must not consume the contention coverage.
@@ -885,7 +904,11 @@ final class BusySafeApplyForensicsTests: BaseTest {
         // frame deliberately and told the client to resend it.
         try? await Task.sleep(nanoseconds: 2_000_000_000)
         let ackedEventually = uploader.ackTime(for: uploadId) != nil
-        let fannedOut = await poll(timeout: 3) { peer.pages > peerPagesBefore }
+        let fannedOut = await poll(timeout: 3) { peer.auditTime(for: uploadId) != nil }
+        let peerPagesAfter = peer.pages
+        let peerMalformedFrames = peer.malformedAuditFrameCount
+        let warmPeerReceipt = peer.auditTime(for: warmId)
+        let rejectedPeerReceipt = peer.auditTime(for: uploadId)
 
         if let recorder, capturedFailure != nil {
             print("DIAGNOSTIC ContendedApplyFailure: test=\(recorder.testRunID) send_begin_ns=\(t0.uptimeNanoseconds) send_return_ns=\(sendReturnedNS) nack_callback_ns=\(nackTime.map { String($0.uptimeNanoseconds) } ?? "NONE") answer_observed_ns=\(answerObservedNS) frozen_before_post_answer_waits=true")
@@ -904,6 +927,11 @@ final class BusySafeApplyForensicsTests: BaseTest {
         nack_ms=\(nackMs.map { String(format: "%.0f", $0) } ?? "NEVER") \
         acked_while_locked=\(ackedWhileLocked) acked_eventually=\(ackedEventually) \
         nacks=\(uploader.nacks.count) fanned_out_to_peer=\(fannedOut) \
+        peer_pages_before=\(peerPagesBefore) peer_pages_after=\(peerPagesAfter) \
+        warmup_id=\(warmId.uuidString.lowercased()) rejected_upload_id=\(uploadId.uuidString.lowercased()) \
+        warmup_peer_ns=\(warmPeerReceipt.map { String($0.uptimeNanoseconds) } ?? "NONE") \
+        rejected_upload_peer_ns=\(rejectedPeerReceipt.map { String($0.uptimeNanoseconds) } ?? "NONE") \
+        peer_malformed_frames=\(peerMalformedFrames) \
         reason=\(uploader.nacks.first ?? "-")
         """)
 
@@ -917,6 +945,7 @@ final class BusySafeApplyForensicsTests: BaseTest {
         #expect(!ackedWhileLocked, "nothing can be acked while the write lock is held elsewhere")
         #expect(!ackedEventually, "a nacked frame is dropped, not applied behind the client's back")
         #expect(!fannedOut, "a frame the relay could not store must never reach a peer")
+        #expect(peerMalformedFrames == 0, "malformed peer frames cannot prove the rejected upload was absent")
         #expect(uploader.nacks.first?.contains("SQLITE") == true
                 || uploader.nacks.first?.contains("no-throw-shortfall") == true,
                 "the nack must name the SQLite classification: \(uploader.nacks.first ?? "-")")
