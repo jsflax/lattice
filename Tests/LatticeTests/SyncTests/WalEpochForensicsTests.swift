@@ -334,11 +334,84 @@ private func poll(timeout: TimeInterval, _ predicate: @escaping @Sendable () -> 
 
 /// Spawns Sources/WalEpochWriterChild — a separate process holding the
 /// relay-shaped handle — and tracks its stdout protocol.
+#if os(Linux)
+/// Test-only scalar observations. No Process, FileHandle or WriterChild is retained.
+private final class WriterChildDiagnostic: @unchecked Sendable {
+    private struct State {
+        var pid: Int32 = 0
+        var outRead: Int32 = -1
+        var outWrite: Int32 = -1
+        var errRead: Int32 = -1
+        var errWrite: Int32 = -1
+        var outEOFReported = false
+        var errEOFReported = false
+        var killReports = 0
+    }
+    private let id = UUID().uuidString
+    private let state = LockedBox(State())
+
+    func descriptors(outRead: Int32, outWrite: Int32, errRead: Int32, errWrite: Int32) {
+        state.withLock {
+            $0.outRead = outRead; $0.outWrite = outWrite
+            $0.errRead = errRead; $0.errWrite = errWrite
+        }
+    }
+
+    func spawned(pid: Int32) { state.withLock { $0.pid = pid } }
+
+    func firstEOF(stdout: Bool) -> Bool {
+        state.withLock {
+            if stdout {
+                guard !$0.outEOFReported else { return false }
+                $0.outEOFReported = true
+            } else {
+                guard !$0.errEOFReported else { return false }
+                $0.errEOFReported = true
+            }
+            return true
+        }
+    }
+
+    func admitKillReport() -> Bool {
+        state.withLock {
+            guard $0.killReports < 2 else { return false }
+            $0.killReports += 1
+            return true
+        }
+    }
+
+    /// At most 16 records per child, each <=384 bytes; no per-byte transcript logging.
+    /// A setter-return marker is not a dispatch-source cancellation/FD-close acknowledgment.
+    func emit(_ stage: String, result: Int32? = nil, error: Int32? = nil, running: Bool? = nil) {
+        let s = state.withLock { $0 }
+        let line = "DIAGNOSTIC WriterChild id=\(id) stage=\(stage) parent=\(Glibc.getpid()) child=\(s.pid) out_r=\(s.outRead) out_w=\(s.outWrite) err_r=\(s.errRead) err_w=\(s.errWrite) result=\(result.map(String.init) ?? "NA") errno=\(error.map(String.init) ?? "NA") running=\(running.map { $0 ? "1" : "0" } ?? "NA")\n"
+        let bytes = Array(line.utf8)
+        guard bytes.count <= 384 else { return }
+        // Avoid Foundation FileHandle from its own readability callbacks.
+        bytes.withUnsafeBytes { buffer in
+            var offset = 0
+            var attempts = 0
+            while offset < buffer.count && attempts < 4 {
+                let written = Glibc.write(STDERR_FILENO, buffer.baseAddress!.advanced(by: offset), buffer.count - offset)
+                let savedErrno = errno
+                attempts += 1
+                if written > 0 { offset += written }
+                else if written < 0 && savedErrno == EINTR { continue }
+                else { break }
+            }
+        }
+    }
+}
+#endif
+
 private final class WriterChild: @unchecked Sendable {
     let process = Process()
     private let out = Pipe()
     private let errAcc = LockedBox("")
     private let outAcc = LockedBox("")
+#if os(Linux)
+    private let diagnostic = WriterChildDiagnostic()
+#endif
 
     static var binaryURL: URL {
         // Executable target deps are in the products directory. On macOS the
@@ -361,6 +434,36 @@ private final class WriterChild: @unchecked Sendable {
         // otherwise re-fires the handler in a hot loop — enough spinning
         // handlers across sequential kill tests starve waitUntilExit and
         // wedge the suite.
+#if os(Linux)
+        let diagnostic = self.diagnostic
+        diagnostic.descriptors(outRead: out.fileHandleForReading.fileDescriptor,
+                               outWrite: out.fileHandleForWriting.fileDescriptor,
+                               errRead: errPipe.fileHandleForReading.fileDescriptor,
+                               errWrite: errPipe.fileHandleForWriting.fileDescriptor)
+        out.fileHandleForReading.readabilityHandler = { [outAcc, diagnostic] h in
+            let d = h.availableData
+            if d.isEmpty {
+                let report = diagnostic.firstEOF(stdout: true)
+                if report { diagnostic.emit("stdout_eof_before_handler_nil") }
+                h.readabilityHandler = nil
+                if report { diagnostic.emit("stdout_eof_after_handler_nil") }
+                return
+            }
+            outAcc.withLock { $0 += String(decoding: d, as: UTF8.self) }
+        }
+        errPipe.fileHandleForReading.readabilityHandler = { [errAcc, diagnostic] h in
+            let d = h.availableData
+            if d.isEmpty {
+                let report = diagnostic.firstEOF(stdout: false)
+                if report { diagnostic.emit("stderr_eof_before_handler_nil") }
+                h.readabilityHandler = nil
+                if report { diagnostic.emit("stderr_eof_after_handler_nil") }
+                return
+            }
+            errAcc.withLock { $0 += String(decoding: d, as: UTF8.self) }
+        }
+        diagnostic.emit("spawn_begin")
+#else
         out.fileHandleForReading.readabilityHandler = { [outAcc] h in
             let d = h.availableData
             if d.isEmpty { h.readabilityHandler = nil; return }
@@ -371,7 +474,12 @@ private final class WriterChild: @unchecked Sendable {
             if d.isEmpty { h.readabilityHandler = nil; return }
             errAcc.withLock { $0 += String(decoding: d, as: UTF8.self) }
         }
+#endif
         try process.run()
+#if os(Linux)
+        diagnostic.spawned(pid: process.processIdentifier)
+        diagnostic.emit("spawn_returned")
+#endif
     }
 
     var transcript: String { outAcc.withLock { $0 } }
@@ -402,16 +510,37 @@ private final class WriterChild: @unchecked Sendable {
     /// fds either way — so a bounded poll for the transcript to settle is
     /// both sufficient and hang-proof.
     func killNine() {
+#if os(Linux)
+        let killResult = kill(process.processIdentifier, SIGKILL)
+        let killErrno = errno // Capture immediately; meaningful as an error only when result == -1.
+#else
         kill(process.processIdentifier, SIGKILL)
+#endif
         var lastLen = -1
         let deadline = Date().addingTimeInterval(2)
+#if os(Linux)
+        let report = diagnostic.admitKillReport()
+        if report {
+            diagnostic.emit("kill_returned", result: killResult, error: killErrno)
+            diagnostic.emit("poll_entered", running: process.isRunning)
+        }
+#endif
         while Date() < deadline {
             let len = outAcc.withLock { $0.count }
             if len == lastLen && !process.isRunning { break }
             lastLen = len
             Thread.sleep(forTimeInterval: 0.05)
         }
+#if os(Linux)
+        if report {
+            diagnostic.emit("poll_returned", running: process.isRunning)
+            diagnostic.emit("stdout_cancel_before_handler_nil")
+        }
+#endif
         out.fileHandleForReading.readabilityHandler = nil
+#if os(Linux)
+        if report { diagnostic.emit("stdout_cancel_after_handler_nil") }
+#endif
     }
 
     func terminateIfRunning() {

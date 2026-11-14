@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.2] - 2026-11-14
+
+### Fixed
+
+- Relay catch-up test cleanup cancels its detached watcher before joining the
+  waiting group, and initialization errors reach the waiting test.
+
 ## [3.1.1] - 2026-11-14
 
 ### Fixed

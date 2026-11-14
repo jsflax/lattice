@@ -377,9 +377,16 @@ actor NIORelaySyncTests {
 
         // Watch for catch-up inside a detached task
         var catchUpTask: Task<Bool, any Error>?
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        defer { catchUpTask?.cancel() }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             catchUpTask = Task.detached {
-                let client = try Lattice(SimpleSyncObject.self, configuration: clientConfig)
+                let client: Lattice
+                do {
+                    client = try Lattice(SimpleSyncObject.self, configuration: clientConfig)
+                } catch {
+                    continuation.resume(throwing: error)
+                    throw error
+                }
                 let stream = client.changeStream
                 continuation.resume()
                 for try await changes in stream {
@@ -398,6 +405,8 @@ actor NIORelaySyncTests {
             group.addTask { _ = try await catcher.value }
             group.addTask { try await Task.sleep(for: .seconds(15)) }
             _ = try? await group.next()
+            // Cancelling the waiter does not cancel the detached task it awaits.
+            catcher.cancel()
             group.cancelAll()
         }
 
