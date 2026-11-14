@@ -48,7 +48,22 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
             let burstStarted = LockedBox(false)
             let burstBatches = LockedBox(Set<UUID>())
             let terminatedBatches = LockedBox(Set<UUID>())
+            // Scalar receipts only: never log or hold their lock across the wait.
+            let points = LockedBox([String: UInt64]())
+            @Sendable func mark(_ event: String) {
+                let now = DispatchTime.now().uptimeNanoseconds
+                points.withLock { $0[event] = now }
+            }
             let diagnostic = PayloadObserverDiagnostic(observer: "terminationLockOrder") { event in
+                // These lifecycle events have no batch; retain their first scalar point
+                // before the batch-only receipt path below.
+                switch event.stage {
+                case "stream_cancelled", "stream_finished", "stream_termination_unknown", "stream_termination_returned":
+                    points.withLock {
+                        if $0[event.stage] == nil { $0[event.stage] = event.uptime }
+                    }
+                default: break
+                }
                 guard let batch = event.batch else { return }
                 if event.stage == "callback_entry", burstStarted.withLock({ $0 }) {
                     burstBatches.withLock { $0.insert(batch) }
@@ -62,7 +77,14 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
             let finished = LockedBox(false)
             // Exercise delivery to a consumer isolated on the main executor.
             let consumer = Task { @MainActor in
-                defer { finished.withLock { $0 = true } }
+                mark("consumer_body_entered")
+                points.withLock { $0["consumer_cancelled_at_entry"] = Task.isCancelled ? 1 : 0 }
+                defer {
+                    finished.withLock { $0 = true }
+                    // This marks body exit, not an independently joined task completion.
+                    mark("consumer_body_exiting")
+                    points.withLock { $0["consumer_cancelled_at_exit"] = Task.isCancelled ? 1 : 0 }
+                }
                 do {
                     for try await _ in stream { frames.withLock { $0 += 1 } }
                 } catch {}
@@ -80,14 +102,8 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
             // Delivery is FIFO per store and rotates between stores. Both
             // gate and probe use the stream's store identity.
             let gate = DispatchSemaphore(value: 0)
-            // Scalar receipts only: never log or hold their lock across the wait.
-            let points = LockedBox([String: UInt64]())
             let gateID = UUID()
             let probeID = UUID()
-            @Sendable func mark(_ event: String) {
-                let now = DispatchTime.now().uptimeNanoseconds
-                points.withLock { $0[event] = now }
-            }
             @Sendable func signalGate(_ reason: String) {
                 mark("\(reason)_signal_before")
                 let result = gate.signal()
@@ -178,7 +194,14 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
             }
             canceller.start()
 
+            mark("cancel_poll_before")
             let cancelOK = await poll(until: { cancelReturned.withLock { $0 } }, within: .seconds(5))
+            mark("cancel_poll_after")
+            points.withLock {
+                $0["cancel_poll_result"] = cancelOK ? 1 : 0
+                $0["cancel_poll_parent_cancelled"] = Task.isCancelled ? 1 : 0
+                $0["cancel_poll_consumer_cancelled"] = consumer.isCancelled ? 1 : 0
+            }
             #expect(cancelOK, """
                 iteration \(iteration): Task.cancel() on the changeHeaders consumer has not returned after 5 s — \
                 ChangeStreamState.terminate() is parked behind the delivery thread's yield (lock-order \
@@ -186,7 +209,14 @@ final class ChangeStreamTerminateLockOrderTests: BaseTest {
                 """)
             guard cancelOK else { return }
 
+            mark("consumer_poll_before")
             let consumerOK = await poll(until: { finished.withLock { $0 } }, within: .seconds(5))
+            mark("consumer_poll_after")
+            points.withLock {
+                $0["consumer_poll_result"] = consumerOK ? 1 : 0
+                $0["consumer_poll_parent_cancelled"] = Task.isCancelled ? 1 : 0
+                $0["consumer_poll_consumer_cancelled"] = consumer.isCancelled ? 1 : 0
+            }
             #expect(consumerOK, "iteration \(iteration): the cancelled consumer did not end within 5 s")
             guard consumerOK else { return }
 

@@ -54,13 +54,24 @@ public final class DynamicResults: @unchecked Sendable {
     /// One live scalar query on the existing read route, without model/payload hydration.
     /// Predicate placeholders use the supplied typed parameters. As with `where`, SQL
     /// structure is caller-authored; variable values must be bound, never interpolated.
-    /// Grouping keys must name a stored schema column. Ordering is unspecified; a
-    /// sorted results shape is refused rather than silently discarding its ordering.
+    /// Grouping keys must name a stored schema column. Core's built-in AuditLog also
+    /// supports its globalId, tableName, globalRowId, operation and changedFieldsNames
+    /// headers without adding AuditLog to the application's model schema.
+    /// Ordering is unspecified; a sorted results shape is refused rather than silently
+    /// discarding its ordering.
     /// This inherits DynamicResults live-read semantics and sees own transaction writes.
     public func groupedCounts(by column: String, parameters: [QueryParameter] = []) throws -> [GroupedCount] {
-        guard orderByClause == nil, let schema = backend as? any DynamicSchemaProviding,
-              schema.dynamicTableNames().contains(tableName),
-              Set(schema.dynamicProperties(table: tableName).map(\.name)).union(["id", "globalId"]).contains(column),
+        guard orderByClause == nil, let schema = backend as? any DynamicSchemaProviding else {
+            throw Lattice.Error.databaseError("Unsupported dynamic grouped count query")
+        }
+        let declaredTable = schema.dynamicTableNames().contains(tableName)
+        let declaredColumn = declaredTable
+            && Set(schema.dynamicProperties(table: tableName).map(\.name)).union(["id", "globalId"]).contains(column)
+        // Declared tables keep their column validation, including an explicitly supplied AuditLog.
+        // Only Core's unregistered built-in audit table receives this header-only fallback.
+        let builtInAuditHeader = !declaredTable && tableName == "AuditLog"
+            && (backend as? any BuiltInAuditHeaderGrouping)?.supportsBuiltInAuditHeader(column) == true
+        guard declaredColumn || builtInAuditHeader,
               let grouped = backend as? any GroupedCountBackend else {
             throw Lattice.Error.databaseError("Unsupported dynamic grouped count query")
         }
