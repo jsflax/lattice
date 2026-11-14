@@ -16,6 +16,21 @@ public protocol DynamicSchemaProviding {
     func dynamicProperties(table: String) -> [PropertyInfo]
 }
 
+/// Scalar access to Core-owned audit headers does not register an application model.
+/// Keep this capability separate from the schema used for migration and sync identity.
+protocol BuiltInAuditHeaderGrouping {
+    func supportsBuiltInAuditHeader(_ column: String) -> Bool
+}
+
+extension CxxBackend: BuiltInAuditHeaderGrouping {
+    func supportsBuiltInAuditHeader(_ column: String) -> Bool {
+        switch column {
+        case "globalId", "tableName", "globalRowId", "operation", "changedFieldsNames": return true
+        default: return false
+        }
+    }
+}
+
 extension CxxBackend: DynamicSchemaProviding {
     func dynamicTableNames() -> [String] {
         let names = ref.dynamicTableNames()
