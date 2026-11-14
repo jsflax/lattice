@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.1.1] - 2026-11-14
+
+### Fixed
+
+- Core-backed dynamic grouped counts support the five built-in `AuditLog`
+  header columns without adding `AuditLog` to the application model schema.
+  Stored scalar values and bound query behavior remain intact.
+
 ## [3.1.0] - 2026-11-13
 
 ### Changed
